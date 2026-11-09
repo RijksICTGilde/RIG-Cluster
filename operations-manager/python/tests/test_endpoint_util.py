@@ -1,7 +1,7 @@
 """
 Tests for opi.api.endpoint_util module.
 
-Tests parse_ports, normalize_project_name and validate_api_token.
+Tests parse_ports and validate_api_token.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -15,7 +15,6 @@ from opi.api.endpoint_util import (
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
     image_push_refusal,
-    normalize_project_name,
     parse_ports,
     validate_api_token,
     validate_metrics_scrape_token,
@@ -55,31 +54,6 @@ class TestParsePorts:
 
     def test_trailing_comma(self):
         assert parse_ports("80,443,") == [80, 443]
-
-
-class TestNormalizeProjectName:
-    """Tests for normalize_project_name pure function."""
-
-    def test_lowercase_conversion(self):
-        assert normalize_project_name("MyProject") == "myproject"
-
-    def test_removes_special_chars(self):
-        assert normalize_project_name("my-project!@#") == "myproject"
-
-    def test_keeps_underscores(self):
-        assert normalize_project_name("my_project") == "my_project"
-
-    def test_keeps_numbers(self):
-        assert normalize_project_name("project123") == "project123"
-
-    def test_empty_string(self):
-        assert normalize_project_name("") == ""
-
-    def test_all_special_chars(self):
-        assert normalize_project_name("!@#$%^&*()") == ""
-
-    def test_spaces_removed(self):
-        assert normalize_project_name("my project") == "myproject"
 
 
 class TestValidateApiToken:

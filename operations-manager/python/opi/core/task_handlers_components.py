@@ -23,7 +23,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
     """
     from opi.manager.project_manager import ProjectManager
     from opi.utils.naming import sanitize_kubernetes_name
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     component_name: str = payload["name"]
@@ -176,7 +176,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
     new manifests are generated. Mirrors handle_add_component's shape.
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     component_name: str = payload["name"]
@@ -292,7 +292,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
     """
     from opi.manager.project_manager import ProjectManager
     from opi.utils.naming import sanitize_kubernetes_name
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
@@ -436,7 +436,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
     Adds a service to a project and processes affected deployments.
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     service_name: str = payload["service"]
@@ -549,7 +549,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
     no-op).
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     service_name: str = payload["service"]
@@ -698,7 +698,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
         rollout
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     service_name: str = payload["service"]
@@ -814,7 +814,7 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
         project_name, operation, postfix, description, forget, rollout
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     operation: str = payload["operation"]

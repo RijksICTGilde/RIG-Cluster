@@ -1,5 +1,4 @@
 import logging
-import re
 import secrets
 from collections.abc import Callable, Iterable  # noqa: TC003 -- used in decorator signatures at runtime
 from functools import wraps
@@ -412,10 +411,6 @@ def parse_ports(ports_str: str) -> list[int]:
         return [int(port.strip()) for port in ports_str.split(",") if port.strip()]
     except ValueError:
         return []
-
-
-def normalize_project_name(text: str) -> str:
-    return re.sub(r"[^a-z0-9_]", "", text.lower())
 
 
 def _require_shared_secret(

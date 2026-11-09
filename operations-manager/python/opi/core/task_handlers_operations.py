@@ -24,7 +24,7 @@ from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import ProjectStoreError, get_project_store
 from opi.utils.age import decrypt_password_smart_auto, get_decoded_project_private_key, wrap_project_key
 from opi.utils.key_rotation import ConversionError, rotate_project_key
-from opi.utils.project_utils import validate_project_name
+from opi.utils.project_names import validate_project_name
 from opi.utils.sops import generate_sops_key_pair
 
 logger = logging.getLogger(__name__)
@@ -303,7 +303,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     """
 
     from opi.manager.project_manager import create_project_manager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
@@ -478,7 +478,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     """
 
     from opi.manager.project_manager import create_project_manager
-    from opi.utils.project_utils import validate_project_name
+    from opi.utils.project_names import validate_project_name
 
     project_name: str = payload["project_name"]
     force_clone: bool = payload.get("force_clone", False)

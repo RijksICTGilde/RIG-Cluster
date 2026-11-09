@@ -421,7 +421,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -463,7 +463,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -496,7 +496,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -525,7 +525,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=False,
             ),
             pytest.raises(ValueError, match="Invalid project name"),
@@ -600,7 +600,7 @@ class TestHandleUpsertDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -643,7 +643,7 @@ class TestHandleUpsertDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -701,7 +701,7 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
@@ -727,7 +727,7 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
@@ -754,7 +754,7 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
@@ -783,7 +783,7 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
@@ -815,7 +815,7 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
@@ -842,7 +842,7 @@ class TestHandleCreateProject:
         payload = {"project_name": "test-project", "yaml_content": "name: test-project\n"}
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
             patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),

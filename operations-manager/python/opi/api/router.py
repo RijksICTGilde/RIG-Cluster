@@ -53,11 +53,11 @@ from opi.services.step_up_conditions import deployment_environment_change
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
+from opi.utils.project_names import validate_project_name
 from opi.utils.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
     generate_self_service_project_yaml,
     normalize_container_image,
-    validate_project_name,
 )
 
 logger = logging.getLogger(__name__)

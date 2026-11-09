@@ -34,11 +34,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
     from opi.services.project_store import ConflictError, get_project_store
-    from opi.utils.project_utils import (
-        RESERVED_PROJECT_NAME_MESSAGE,
-        generate_self_service_project_yaml,
-        validate_project_name,
-    )
+    from opi.utils.project_names import validate_project_name
+    from opi.utils.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
 
     start_time = time.time()
     project_name: str = payload["project_name"]
@@ -338,7 +335,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     """Handle async upsert deployment task."""
     from opi.manager.project_manager import ProjectManager
     from opi.utils.naming import sanitize_kubernetes_name
-    from opi.utils.project_utils import normalize_container_image, validate_project_name
+    from opi.utils.project_names import validate_project_name
+    from opi.utils.project_utils import normalize_container_image
 
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]

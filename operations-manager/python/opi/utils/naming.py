@@ -12,6 +12,7 @@ import re
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.utils.patterns import PROJECT_NAME
 from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
@@ -2232,14 +2233,13 @@ def ensure_fqdn(hostname: str) -> str:
 
 #: Separates the owning project from the rest of a registry tag.
 #:
-#: A project name matches ``^[a-z][a-z0-9-]*$`` and therefore never contains an
-#: underscore, so the part before the FIRST underscore is unambiguously the owner --
-#: also when the image name itself contains one. Two different projects can never
-#: produce the same tag.
+#: A project name never contains an underscore, so the part before the FIRST underscore is
+#: unambiguously the owner, also when the image name itself contains one. Two different
+#: projects can never produce the same tag.
 REGISTRY_TAG_OWNER_SEPARATOR = "_"
 
 #: The project-name shape the registry tag relies on for its unambiguous prefix.
-REGISTRY_TAG_OWNER_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+REGISTRY_TAG_OWNER_RE = re.compile(PROJECT_NAME)
 
 
 def build_registry_tag(project_name: str, image_name: str, tag: str) -> str:

@@ -5,7 +5,6 @@ creation API and the add-component API all reach these functions.
 """
 
 import logging
-import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -337,15 +336,6 @@ def namespace_level_deployment(
     if not in_namespace:
         return None
     return min(in_namespace, key=lambda d: str(d["name"]))
-
-
-def validate_project_name(name: str) -> bool:
-    """A project name starts on a lowercase letter and holds a-z, 0-9 and dashes, max 20."""
-    if not name:
-        return False
-    if len(name) > 20:
-        return False
-    return re.match(r"^[a-z][a-z0-9-]*$", name) is not None
 
 
 # should_encrypt_user_env_var function removed - all user env vars are now always encrypted

@@ -22,6 +22,7 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.schema import FormMeta
+from opi.utils.patterns import PROJECT_NAME_PYDANTIC
 
 
 class DomainHistoryEntry(BaseModel):
@@ -575,7 +576,7 @@ class ProjectFileModel(BaseModel):
             section="basic",
             readonly_on_edit=True,  # Project name cannot be changed after creation
         ),
-    ] = Field(min_length=1, pattern=r"^[a-z][a-z0-9-]*$")
+    ] = Field(min_length=1, pattern=PROJECT_NAME_PYDANTIC)
 
     display_name: Annotated[
         str,

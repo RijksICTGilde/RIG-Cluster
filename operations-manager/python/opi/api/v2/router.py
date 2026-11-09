@@ -182,12 +182,11 @@ from opi.utils.naming import (
     generate_schema_variable_name,
     sanitize_kubernetes_name,
 )
-from opi.utils.project_names import ensure_unique_project_name
+from opi.utils.project_names import ensure_unique_project_name, validate_project_name
 from opi.utils.project_utils import (
     ProjectApiKeyError,
     affected_deployments,
     generate_base_project_file,
-    validate_project_name,
 )
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 from opi.utils.yaml_util import dump_yaml_to_string
@@ -1415,10 +1414,9 @@ async def create_project_v2(
     user = get_current_user(request) or {}
     owner_email = str(user.get("email", ""))
 
-    # The technical name is generated here, not supplied: same function as the portal
-    # (``ensure_unique_project_name``), so both roads produce the same shape of name and
-    # uniqueness stays a property of the name instead of a race for short ones. The set of
-    # existing names comes from the store, which is what that helper avoids.
+    # The technical name is generated here, not supplied, and checked against the store. The
+    # wizard builds its name with ``generate_project_name`` and checks no uniqueness, so a
+    # collision there only surfaces when the create task runs.
     store = get_project_store()
     await store.reconcile()
     existing_names = {summary.name for summary in store.get_all()}

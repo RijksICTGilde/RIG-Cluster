@@ -287,7 +287,7 @@ class TestHandleCreateProjectExistenceCheck:
         monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
 
         # Stub the small helpers used before the file_exists check.
-        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
 
         # Progress object the handler calls into.
         progress = AsyncMock()
@@ -324,7 +324,7 @@ class TestHandleCreateProjectExistenceCheck:
                 return fake_connector
 
         monkeypatch.setattr("opi.connectors.git.GitConnector", _FakeGitConnector)
-        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
 
         # Stub ProjectManager so the handler doesn't try to process the project.
         # We only care that the write happened (and the existence check did not block).

@@ -112,7 +112,7 @@ async def test_create_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
     git = AsyncMock(create_or_update_file=AsyncMock(), file_exists=AsyncMock(return_value=False))
 
     with (
-        patch("opi.utils.project_utils.validate_project_name", return_value=True),
+        patch("opi.utils.project_names.validate_project_name", return_value=True),
         patch("opi.connectors.git.GitConnector", return_value=git),
         patch(PM_PATH, return_value=_project_manager(gezien)),
         patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),

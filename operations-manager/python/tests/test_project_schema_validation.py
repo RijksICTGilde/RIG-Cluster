@@ -860,6 +860,12 @@ class TestHetSchemaEnDeConstantesZeggenHetzelfde:
 
         assert self._defs()["user"]["properties"]["email"]["pattern"] == EMAIL_PATTERN
 
+    def test_the_project_name(self) -> None:
+        from opi.core.project_schema import _load_latest_schema
+        from opi.utils.patterns import PROJECT_NAME
+
+        assert _load_latest_schema()["properties"]["name"]["pattern"] == PROJECT_NAME
+
     def test_de_image(self) -> None:
         from opi.utils.naming import CONTAINER_IMAGE_PATTERN
 

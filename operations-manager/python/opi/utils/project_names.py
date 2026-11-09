@@ -3,6 +3,7 @@ import re
 import string
 
 from opi.core.config import settings
+from opi.utils.patterns import PROJECT_NAME, PROJECT_NAME_MAX_LENGTH
 
 
 def generate_project_name(display_name: str) -> tuple[str, str]:
@@ -12,7 +13,7 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
     - several words: the first letter of each word
     - one word: its first 4 to 5 characters
     - always a dash plus 3 random characters (a-z, 0-9)
-    - always lowercase, starting on a letter, at most 20 characters
+    - always lowercase, starting on a letter, at most ``PROJECT_NAME_MAX_LENGTH`` characters
 
     Examples:
         "My New Application" -> "mna-x7k"
@@ -49,21 +50,20 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
     if not technical_name[0].isalpha():
         technical_name = random.choice(string.ascii_lowercase) + technical_name[1:]  # noqa: S311  # a letter to meet the name shape, with no security value
 
-    if len(technical_name) > 20:
-        available_chars = 20 - len(postfix) - 1
+    if len(technical_name) > PROJECT_NAME_MAX_LENGTH:
+        available_chars = PROJECT_NAME_MAX_LENGTH - len(postfix) - 1
         technical_name = f"{base[:available_chars]}-{postfix}"
 
     return technical_name, display_name
 
 
-def validate_generated_name(technical_name: str) -> bool:
-    if not technical_name:
+def validate_project_name(name: str) -> bool:
+    """Whether this is a name a project may carry: the one rule, read by every entrance."""
+    if not name:
         return False
-    if len(technical_name) > 20:
+    if len(name) > PROJECT_NAME_MAX_LENGTH:
         return False
-    if not technical_name[0].isalpha():
-        return False
-    return re.match(r"^[a-z][a-z0-9-]*$", technical_name) is not None
+    return re.match(PROJECT_NAME, name) is not None
 
 
 def ensure_unique_project_name(display_name: str, existing_names: set[str] | None = None) -> tuple[str, str]:
@@ -80,14 +80,14 @@ def ensure_unique_project_name(display_name: str, existing_names: set[str] | Non
     for _attempt in range(max_attempts):
         technical_name, display = generate_project_name(display_name)
 
-        if technical_name not in existing_names and validate_generated_name(technical_name):
+        if technical_name not in existing_names and validate_project_name(technical_name):
             return technical_name, display
 
     # No unique name out of the regenerations: number the last character instead.
     base_technical, display = generate_project_name(display_name)
     for i in range(1, 100):
         technical_name = f"{base_technical[:-1]}{i % 10}"
-        if technical_name not in existing_names and validate_generated_name(technical_name):
+        if technical_name not in existing_names and validate_project_name(technical_name):
             return technical_name, display
 
     raise ValueError(f"Could not generate unique project name for '{display_name}' after {max_attempts} attempts")

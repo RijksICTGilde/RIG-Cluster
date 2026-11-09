@@ -274,7 +274,7 @@ async def _create_project(fout: Exception | None) -> dict:
     with (
         patch("opi.services.project_store.get_project_store", return_value=_store()),
         patch("opi.manager.project_manager.ProjectManager", return_value=manager),
-        patch("opi.utils.project_utils.validate_project_name", return_value=True),
+        patch("opi.utils.project_names.validate_project_name", return_value=True),
     ):
         return await handle_create_project(
             {

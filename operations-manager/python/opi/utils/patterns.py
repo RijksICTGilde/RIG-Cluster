@@ -51,3 +51,14 @@ ENDPOINT_URL_OR_HOST_PORT = (
 #: that, because the id comes from kopia and the edge should not describe it more narrowly
 #: than it takes to refuse text with newlines and quotes.
 KOPIA_SNAPSHOT_ID = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+#: A project name: a lowercase letter first, then lowercase letters, digits and dashes.
+#: ``validate_project_name`` in ``opi/utils/project_names.py`` is the guard that reads it.
+PROJECT_NAME = r"^[a-z][a-z0-9-]*\Z"
+
+#: ``PROJECT_NAME`` for a ``pydantic`` ``pattern=``: that engine rejects ``\Z``, and its ``$``
+#: already means end of string.
+PROJECT_NAME_PYDANTIC = PROJECT_NAME.replace(r"\Z", "$")
+
+#: The longest project name ``validate_project_name`` accepts.
+PROJECT_NAME_MAX_LENGTH = 20
