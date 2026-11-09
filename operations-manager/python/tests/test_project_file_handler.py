@@ -4,10 +4,17 @@ Tests for opi.handlers.project_file_handler module.
 Tests for _parse_deepdiff_path, set_deployment_service_generation, and related methods.
 """
 
+import shutil
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     is_image_pull_disable_reason,
 )
+from opi.utils.age import encrypt_age_content_sync
+from opi.utils.yaml_util import dump_yaml_for_go
 
 
 class TestExtractComponentInboundPorts:
@@ -442,3 +449,78 @@ class TestImagePullDisableReenable:
         assert reenabled == [("prd", "web")]
         assert project_data["deployments"][0]["components"][0]["disabled"] is False
         assert project_data["deployments"][1]["components"][0]["disabled"] is True
+
+
+@pytest.mark.skipif(shutil.which("age") is None, reason="het AGE-blok wordt met het age-binary gemaakt")
+async def test_user_env_vars_stored_as_a_yaml_mapping_are_extracted(
+    age_keypair: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user-env-vars block holding ``KEY: value`` is a supported input form, and the
+    deployment path reads it through extract_component_user_env_vars."""
+    private_key, public_key = age_keypair
+    monkeypatch.setattr(
+        "opi.handlers.project_file_handler.get_decoded_project_private_key",
+        AsyncMock(return_value=private_key),
+    )
+    project_data = {
+        "components": [
+            {"name": "api", "user-env-vars": encrypt_age_content_sync("PORT: 8080\nMODE: dev\n", public_key)}
+        ]
+    }
+
+    assert await ProjectFileHandler().extract_component_user_env_vars(project_data, "api") == {
+        "PORT": "8080",
+        "MODE": "dev",
+    }
+
+
+class TestHelmValuesTextVariantKeepsItsSourceForm:
+    """The four helm-values lookups share a text-variant branch for a value stored as a
+    plain YAML string without an AGE block (the form web/router.py::ontsleutel_helm_values
+    also accepts; see test_helm_values_weergave.py). The result is written back out by a
+    project_manager.py writer, so a numeric scalar must keep the form it was typed in.
+    """
+
+    SOURCE = "defaultMode: 0755\ntag: 1.10\n"
+
+    @pytest.mark.parametrize(
+        ("project_data", "method", "args"),
+        [
+            (
+                {"helm-charts": [{"name": "mb-docs", "helm-values": SOURCE}]},
+                "extract_helm_chart_values",
+                ("mb-docs",),
+            ),
+            (
+                {"deployments": [{"name": "prd", "helm-charts": [{"reference": "mb-docs", "helm-values": SOURCE}]}]},
+                "extract_deployment_helm_chart_values",
+                ("prd", "mb-docs"),
+            ),
+            (
+                {"helmfile": [{"name": "mb-docs", "helm-values": SOURCE}]},
+                "extract_helmfile_values",
+                ("mb-docs",),
+            ),
+            (
+                {"deployments": [{"name": "prd", "helmfile": [{"reference": "mb-docs", "helm-values": SOURCE}]}]},
+                "extract_deployment_helmfile_values",
+                ("prd", "mb-docs"),
+            ),
+        ],
+    )
+    async def test_a_numeric_scalar_keeps_the_form_it_had(
+        self,
+        project_data: dict[str, Any],
+        method: str,
+        args: tuple[str, ...],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "opi.handlers.project_file_handler.get_decoded_project_private_key",
+            AsyncMock(return_value=""),
+        )
+        handler = ProjectFileHandler()
+
+        result = await getattr(handler, method)(project_data, *args)
+
+        assert dump_yaml_for_go(result) == self.SOURCE

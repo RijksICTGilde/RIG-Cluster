@@ -9,8 +9,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from opi.connectors.keycloak import (
     AUTO_LINK_FIRST_BROKER_LOGIN_FLOW,
     KeycloakConnector,
@@ -19,6 +17,7 @@ from opi.connectors.keycloak import (
 )
 from opi.core.cluster_config import get_mail_from_address
 from opi.core.config import settings
+from opi.utils.yaml_util import load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +117,6 @@ class KeycloakYamlHandler:
             keycloak_connector: Configured Keycloak connector instance
         """
         self.keycloak = keycloak_connector
-        self.yaml = YAML()
-        self.yaml.preserve_quotes = True
         self.outputs: dict[str, Any] = {}  # Store outputs from operations with 'as' key
 
     async def execute_config(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
@@ -259,8 +256,7 @@ class KeycloakYamlHandler:
             msg = f"YAML configuration file not found: {yaml_path}"
             raise FileNotFoundError(msg)
 
-        with path.open("r") as f:
-            config = self.yaml.load(f)
+        config = load_yaml_safe(path.read_text(encoding="utf-8"))
 
         if not isinstance(config, dict):
             msg = f"Invalid YAML configuration: expected dict, got {type(config)}"

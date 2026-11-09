@@ -892,7 +892,11 @@ ENTRY_SCRIPTS = (
     "replace-git-pat.py",
     "set-sops-key-secret.py",
     "scan-secrets.py",
+    "check-code-conventions.py",
 )
+
+#: The entry points that import no ``opi`` and therefore run on a bare python3.
+_STANDALONE_ENTRIES = frozenset({"scan-secrets.py", "check-code-conventions.py"})
 
 #: The documents that hand an operator a command line to paste.
 COMMAND_DOCS = (
@@ -1056,7 +1060,7 @@ def test_the_scripts_hand_out_the_same_launcher_the_docs_do() -> None:
     for path in sorted((tool.REPO / "scripts").glob("*.py")):
         for before, name in written.findall(path.read_text()):
             seen += 1
-            expected = BARE_PYTHON if name == "scan-secrets.py" else LAUNCHER
+            expected = BARE_PYTHON if name in _STANDALONE_ENTRIES else LAUNCHER
             assert before.endswith(f"{expected} "), f"{path.name} hands out a bare scripts/{name}: ...{before}"
 
     assert seen >= 15, "the scripts stopped naming each other, or the names changed"

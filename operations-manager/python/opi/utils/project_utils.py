@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
-from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.core.config import settings
@@ -21,7 +20,7 @@ from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
 from opi.utils.age import encrypt_age_content, generate_age_key_pair, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
-from opi.utils.yaml_util import load_yaml_from_string
+from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_from_string, load_yaml_round_trip
 
 logger = logging.getLogger(__name__)
 
@@ -100,14 +99,15 @@ def parse_aliases(aliases_str: str) -> dict[str, Any]:
     Raises:
         ComponentValidationError: when the string is not valid YAML.
     """
+    # Round-trip: without a public key the mapping is written back into the project file
+    # unencrypted, and a scalar must keep the form it was typed in.
     try:
-        yaml_instance = YAML()
-        aliases_dict = yaml_instance.load(aliases_str)
-        if aliases_dict and isinstance(aliases_dict, dict):
-            return aliases_dict
-        return {}
-    except Exception as e:
+        aliases_dict = load_yaml_round_trip(aliases_str)
+    except YAMLError as e:
         raise ComponentValidationError(f"Invalid aliases format: {e!s}") from e
+    if aliases_dict and isinstance(aliases_dict, dict):
+        return aliases_dict
+    return {}
 
 
 def apply_resource_limits(
@@ -521,8 +521,6 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         }
     )
     project_config["users"] = users
-
-    from opi.utils.yaml_util import dump_yaml_to_string
 
     # Handle multiline password with literal block scalar
     password = project_config["repositories"][0]["password"]

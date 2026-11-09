@@ -10,6 +10,8 @@ and storage/display formats. Common use cases:
 
 from typing import Any, Protocol
 
+from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_safe
+
 
 class Converter(Protocol):
     """
@@ -229,12 +231,7 @@ class YAMLConverter:
             return ""
         if isinstance(value, str):
             return value
-        try:
-            import yaml
-
-            return yaml.dump(value, default_flow_style=False)
-        except ImportError:
-            return str(value)
+        return dump_yaml_to_string(value)
 
     async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:
         """Convert YAML string from form to Python object."""
@@ -243,12 +240,10 @@ class YAMLConverter:
         if not isinstance(value, str):
             return value
         try:
-            import yaml
-
-            parsed = yaml.safe_load(value)
-            return parsed if parsed is not None else {}
-        except ImportError, yaml.YAMLError:
+            parsed = load_yaml_safe(value)
+        except YAMLError:
             return value
+        return parsed if parsed is not None else {}
 
 
 class KeyValueConverter:

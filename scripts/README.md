@@ -218,6 +218,13 @@ task code-conventions               # de conventiecheck (~17s over 1663 bestande
 task code-conventions-baseline      # verlaagt de aantallen naar wat de code nu is
 ```
 
+`check-code-conventions.py` importeert `opi` niet en draait, net als `scan-secrets.py`, op een
+kale Python 3, dus die heeft de shebang en het x-bit wel:
+
+```bash
+python3 scripts/check-code-conventions.py
+```
+
 De conventiecheck herkent Nederlands met een woordenlijst en niets anders: een taaldetector zou
 een afhankelijkheid en een kans zijn waar een reviewer een reden nodig heeft. De lijst bevat
 alleen woorden die niet als Engels te lezen zijn, en een woord dat beide kan (`met`, `op`, `na`,

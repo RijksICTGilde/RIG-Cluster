@@ -9,8 +9,9 @@ import logging
 import re
 from typing import Final
 
-from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+
+from opi.utils.yaml_util import load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
             number or a boolean.
     """
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        data = yaml.load(yaml_text)
+        data = load_yaml_safe(yaml_text)
 
         if data is None:
             return {}

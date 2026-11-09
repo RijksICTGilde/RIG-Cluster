@@ -1,7 +1,12 @@
 """Loading, querying and updating YAML files, with JSONPath for the queries.
 
-The canonical writer lives here: every write path to a project file goes through
-``_create_yaml_writer``, so the styling rules hold once instead of per caller.
+The only place in ``opi`` that builds a YAML parser or emitter. Each profile below is a
+pair of functions, and a caller picks the pair that matches its file:
+
+- project files: round-trip, quotes preserved, a multi-line value as a | block
+- a file that is read and written back: ``load_yaml_round_trip`` plus one of the
+  ``dump_yaml_for_go`` writers, which Helm, kustomize and kubectl read
+- read-only parsing: ``load_yaml_safe`` and ``load_yaml_documents_safe``
 """
 
 import functools
@@ -21,6 +26,9 @@ if TYPE_CHECKING:
     from jsonpath_ng import JSONPath
 
 logger = logging.getLogger(__name__)
+
+#: Wide enough that the emitter never breaks a scalar across lines.
+_NO_FOLDING_WIDTH = 10**9
 
 
 @functools.lru_cache(maxsize=4096)
@@ -96,6 +104,32 @@ def _create_yaml_writer() -> YAML:
     return yaml
 
 
+def _create_yaml_loader() -> YAML:
+    """Create the round-trip loader that matches the project-file writer."""
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    return yaml
+
+
+def _create_plain_yaml() -> YAML:
+    """Create ruamel's unconfigured round-trip parser and emitter.
+
+    Round-trip, so a scalar keeps the source form it was written in: the safe loader
+    resolves ``0755`` to 755, and go-yaml then reads a different value than the file had.
+
+    Helm, kustomize and kubectl parse YAML 1.1, where ``on`` and ``0755`` are a bool and
+    an octal int; ruamel emits 1.2, where they are strings and stay unquoted. A value that
+    reads differently on the two sides is a known gap, not something this profile fixes.
+    """
+    return YAML()
+
+
+def _create_safe_loader() -> YAML:
+    """Create the loader for read-only parsing: no custom tags, no round-trip types."""
+    return YAML(typ="safe")
+
+
 def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
     """The parsed YAML, or None when the file is missing or does not parse."""
     try:
@@ -103,9 +137,7 @@ def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
             logger.error(f"YAML file not found: {file_path}")
             return None
 
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
+        yaml = _create_yaml_loader()
 
         with open(file_path, encoding="utf-8") as f:
             data = yaml.load(f)
@@ -178,9 +210,7 @@ def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = 
 def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
     """The parsed YAML, or None when the text does not parse."""
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
+        yaml = _create_yaml_loader()
 
         data = yaml.load(StringIO(yaml_string))
 
@@ -217,9 +247,7 @@ def load_yaml_documents_from_string(yaml_string: str) -> list[Any] | None:
     Returns:
         Every document in order, or None when the text does not parse.
     """
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.width = 4096
+    yaml = _create_yaml_loader()
 
     try:
         return list(yaml.load_all(StringIO(yaml_string)))
@@ -271,3 +299,68 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
     except Exception as e:
         logger.exception(f"Error updating JSONPath '{json_path}': {e}")
         return False
+
+
+def load_yaml_safe(yaml_string: str) -> Any:
+    """Parse YAML for reading only: a mapping of plain dicts, lists and scalars.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return _create_safe_loader().load(StringIO(yaml_string))
+
+
+def load_yaml_documents_safe(yaml_string: str) -> list[Any]:
+    """Parse every document of a possibly multi-document YAML string, for reading only.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return list(_create_safe_loader().load_all(StringIO(yaml_string)))
+
+
+def load_yaml_round_trip(yaml_string: str) -> Any:
+    """Parse YAML whose result is emitted again, by one of the ``dump_yaml_for_go`` writers.
+
+    A rewrite keeps the comments and the source form of every scalar, so a file in which
+    nothing changed comes out byte-identical.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return _create_plain_yaml().load(StringIO(yaml_string))
+
+
+def dump_yaml_for_go(data: Any) -> str:
+    """Dump a file that a Go consumer reads.
+
+    Folds a scalar past the emitter's default width, which collapses runs of whitespace in
+    it. Use ``dump_yaml_for_go_unfolded`` for a file whose values must survive verbatim.
+    """
+    output = StringIO()
+    _create_plain_yaml().dump(data, output)
+    return output.getvalue()
+
+
+def dump_yaml_for_go_unfolded(data: Any) -> str:
+    """Dump a file that a Go consumer reads, keeping every scalar on one line."""
+    yaml = _create_plain_yaml()
+    yaml.width = _NO_FOLDING_WIDTH
+    output = StringIO()
+    yaml.dump(data, output)
+    return output.getvalue()
+
+
+def dump_yaml_double_quoted_scalar(value: str) -> str:
+    """Dump a single string as a double-quoted YAML scalar, without a trailing newline.
+
+    Escapes exactly what YAML requires and nothing else, so the value survives a
+    round-trip through a manifest.
+    """
+    emitter = YAML(typ="safe", pure=True)
+    emitter.default_style = '"'
+    emitter.allow_unicode = True
+    emitter.width = _NO_FOLDING_WIDTH
+    output = StringIO()
+    emitter.dump(value, output)
+    return output.getvalue().rstrip("\n")

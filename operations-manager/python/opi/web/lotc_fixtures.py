@@ -26,8 +26,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
@@ -36,6 +34,7 @@ from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.services.user_otp_service import OtpStatus
 from opi.utils.qr import qr_svg
+from opi.utils.yaml_util import load_yaml_safe
 from opi.web.lotc_switch import PROJECT_TABS
 from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
 from opi.web.security_policy import security_policy_html
@@ -56,7 +55,7 @@ def load_project_data(name: str) -> dict[str, Any] | None:
     """
     if name not in available_projects():
         return None
-    data: dict[str, Any] = yaml.safe_load((FIXTURES_DIR / f"{name}.yaml").read_text())
+    data: dict[str, Any] = load_yaml_safe((FIXTURES_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
     return data
 
 

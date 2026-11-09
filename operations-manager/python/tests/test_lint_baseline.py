@@ -56,6 +56,65 @@ def test_the_repository_is_green_under_the_baseline() -> None:
     assert completed.returncode == 0, completed.stdout
 
 
+class TestYamlBannedApiGate:
+    """TID251 in pyproject.toml: ``yaml`` and every import path to ``ruamel.yaml.YAML``
+    are banned outside ``opi/utils/yaml_util.py``, which owns every YAML parser and emitter
+    in opi (docs/development/coding-rules.md, chapter 5)."""
+
+    @ruff_missing
+    def test_yaml_and_ruamel_yaml_are_banned_outside_yaml_util(self, tmp_path: Path) -> None:
+        """No --select: this is what `ruff check .` flags by default, the command the
+        gate actually runs as. A gate that only fires under an explicit --select is off."""
+        probe = tmp_path / "probe.py"
+        probe.write_text(
+            "import yaml\nfrom ruamel.yaml import YAML\nfrom ruamel.yaml.main import YAML as Y\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "--no-cache", str(probe)],
+            cwd=BASELINE_FILE.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode != 0, "the banned-api gate no longer flags yaml or ruamel.yaml.YAML"
+        assert "`yaml` is banned" in completed.stdout
+        assert "`ruamel.yaml.YAML` is banned" in completed.stdout
+        assert "`ruamel.yaml.main.YAML` is banned" in completed.stdout
+
+    @ruff_missing
+    def test_the_ruamel_types_stay_available(self, tmp_path: Path) -> None:
+        """Only the parser and emitter are banned. CommentedMap and the scalar-string types
+        are what the profiles hand back, so every caller needs them."""
+        probe = tmp_path / "types.py"
+        probe.write_text(
+            "from ruamel.yaml.comments import CommentedMap\n"
+            "from ruamel.yaml.error import YAMLError\n"
+            "from ruamel.yaml.scalarstring import LiteralScalarString\n"
+            "__all__ = ['CommentedMap', 'YAMLError', 'LiteralScalarString']\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "--no-cache", str(probe)],
+            cwd=BASELINE_FILE.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert "TID251" not in completed.stdout, completed.stdout
+
+    @ruff_missing
+    def test_yaml_util_itself_is_exempt(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "--no-cache", "opi/utils/yaml_util.py"],
+            cwd=BASELINE_FILE.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert "TID251" not in completed.stdout, completed.stdout
+
+
 def test_stale_entries_names_the_rule_a_file_no_longer_breaks() -> None:
     baseline = {"opi/a.py": {"C901", "BLE001"}, "opi/b.py": {"ANN401"}}
     current = {"opi/a.py": {"C901"}}

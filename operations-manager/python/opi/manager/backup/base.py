@@ -14,8 +14,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-import yaml
-
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.backup_constants import (
@@ -29,6 +27,7 @@ from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
 from opi.utils.naming import generate_backup_prefix, generate_project_service_account_name
+from opi.utils.yaml_util import dump_yaml_for_go_unfolded
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -655,7 +654,7 @@ class BaseBackupManager:
     ) -> None:
         """Apply credentials Secret and pod; the Secret is never in the pod spec."""
         secret_name = pod_credentials_secret_name(pod_name)
-        secret_manifest = yaml.safe_dump(
+        secret_manifest = dump_yaml_for_go_unfolded(
             {
                 "apiVersion": "v1",
                 "kind": "Secret",

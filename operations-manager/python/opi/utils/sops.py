@@ -6,9 +6,8 @@ import os
 import subprocess
 from typing import NamedTuple
 
-import yaml
-
 from opi.utils.subprocess_env import child_env
+from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +53,10 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
     encryption can be skipped and the existing ciphertext kept verbatim.
 
     Compares parsed YAML (not raw bytes) so key-order or formatting differences
-    never count as a change. Returns False on any doubt (no existing file, a decrypt
-    failure after a key rotation, or an unparseable side), so the caller re-encrypts.
+    never count as a change. Both sides go through the same loader: a reader that resolves
+    scalars differently from the writer turns an unchanged value into a change, or the
+    other way round. Returns False on any doubt (no existing file, a decrypt failure after
+    a key rotation, or an unparseable side), so the caller re-encrypts.
     """
     if not os.path.exists(encrypted_path):
         return False
@@ -66,9 +67,9 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
 
     try:
         with open(plaintext_path) as f:
-            new_doc = yaml.safe_load(f)
-        old_doc = yaml.safe_load(decrypted)
-    except yaml.YAMLError:
+            new_doc = load_yaml_safe(f.read())
+        old_doc = load_yaml_safe(decrypted)
+    except YAMLError:
         return False
     return new_doc == old_doc
 

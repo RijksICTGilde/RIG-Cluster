@@ -10,9 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from opi.connectors.http import HttpConnector
+from opi.utils.yaml_util import load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +21,6 @@ class BootstrapApiHandler:
 
     def __init__(self) -> None:
         """Initialize handler."""
-        self.yaml = YAML()
-        self.yaml.preserve_quotes = True
         self.outputs: dict[str, Any] = {}  # Store outputs from actions with 'as' key
 
     async def execute_config(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
@@ -76,8 +73,7 @@ class BootstrapApiHandler:
             msg = f"Bootstrap API configuration file not found: {yaml_path}"
             raise FileNotFoundError(msg)
 
-        with path.open("r") as f:
-            config = self.yaml.load(f)
+        config = load_yaml_safe(path.read_text(encoding="utf-8"))
 
         if not isinstance(config, dict):
             msg = f"Invalid YAML configuration: expected dict, got {type(config)}"

@@ -26,8 +26,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import asyncpg
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
@@ -235,7 +233,14 @@ from opi.utils.sops import (
     encrypt_to_sops_files_or_fail,
     sops_filenames,
 )
-from opi.utils.yaml_util import compiled_jsonpath
+from opi.utils.yaml_util import (
+    YAMLError,
+    compiled_jsonpath,
+    dump_yaml_for_go,
+    dump_yaml_for_go_unfolded,
+    load_yaml_round_trip,
+    load_yaml_safe,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -396,7 +401,7 @@ def _existing_secret_pairs(sops_path: str, private_key: str | None) -> dict[str,
     if decrypted is None:
         return {}
     try:
-        doc = YAML(typ="safe").load(decrypted)
+        doc = load_yaml_safe(decrypted)
     except YAMLError:
         logger.info(f"Could not parse decrypted {os.path.basename(sops_path)}, writing fresh values")
         return {}
@@ -4983,9 +4988,8 @@ class ProjectManager:
             # Check for chart dependencies (common chart)
             chart_yaml_path = os.path.join(dest_chart_path, "Chart.yaml")
             if os.path.exists(chart_yaml_path):
-                yaml = YAML()
                 with open(chart_yaml_path) as f:
-                    chart_data = yaml.load(f)
+                    chart_data = load_yaml_round_trip(f.read())
 
                 dependencies = chart_data.get("dependencies", [])
                 for dep in dependencies:
@@ -5014,7 +5018,7 @@ class ProjectManager:
 
                 # Write updated Chart.yaml if dependencies were modified
                 with open(chart_yaml_path, "w") as f:
-                    yaml.dump(chart_data, f)
+                    f.write(dump_yaml_for_go(chart_data))
 
             await git_connector.close()
 
@@ -5203,10 +5207,8 @@ class ProjectManager:
             values_file_to_sops = sops_filenames(values_file_sops).plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
-            yaml = YAML()
-            yaml.default_flow_style = False
             with open(values_path, "w") as f:
-                yaml.dump(resolved_values, f)
+                f.write(dump_yaml_for_go(resolved_values))
 
             logger.info(f"Created helm values file (to be encrypted): {values_path}")
 
@@ -5604,13 +5606,8 @@ class ProjectManager:
             if cmp_env_vars:
                 # Vaste sleutelvolgorde, zodat de skip-if-unchanged van SOPS een
                 # ongewijzigde map ook echt als ongewijzigd ziet.
-                cmp_env_writer = YAML()
-                cmp_env_writer.default_flow_style = False
-                # Zonder deze breedte vouwt de emitter een lange waarde over regels, en
-                # vouwen trekt een reeks spaties samen: het secret komt gewijzigd terug.
-                cmp_env_writer.width = 10**9
                 with open(cmp_env_to_sops_path, "w") as f:
-                    cmp_env_writer.dump({key: cmp_env_vars[key] for key in sorted(cmp_env_vars)}, f)
+                    f.write(dump_yaml_for_go_unfolded({key: cmp_env_vars[key] for key in sorted(cmp_env_vars)}))
                 logger.info(f"Created CMP environment file (to be encrypted): {cmp_env_to_sops_path}")
             elif os.path.exists(cmp_env_sops_path):
                 # Weggehaalde env-vars moeten ook uit de render verdwijnen.
@@ -5652,10 +5649,8 @@ class ProjectManager:
             values_file_to_sops = sops_filenames("values").plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
-            yaml = YAML()
-            yaml.default_flow_style = False
             with open(values_path, "w") as f:
-                yaml.dump(resolved_values, f)
+                f.write(dump_yaml_for_go(resolved_values))
 
             logger.info(f"Created helmfile values file (to be encrypted): {values_path}")
 

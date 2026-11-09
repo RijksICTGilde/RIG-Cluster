@@ -54,6 +54,7 @@ from opi.services.project_roles import CREATOR_ROLES
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
+from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import authorize, authorized_project
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
@@ -2711,8 +2712,6 @@ async def _start_project_creation(
     original form.  This handles git commit, ProjectManager deployment,
     ArgoCD sync, and progress tracking.
     """
-    from opi.utils.yaml_util import dump_yaml_to_string
-
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")

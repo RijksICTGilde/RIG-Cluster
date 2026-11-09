@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 from keycloak.exceptions import KeycloakError
-from ruamel.yaml import YAML
 
 from opi.connectors.keycloak import REQUIRED_OTP_BROWSER_FLOW, create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
@@ -26,6 +25,7 @@ from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.utils.naming import extract_domain_from_url
+from opi.utils.yaml_util import load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -256,9 +256,7 @@ class KeycloakSetup:
         logger.info(f"Setting up OPI realm from project file: {project_filename}")
 
         # Read bundled project file
-        yaml_parser = YAML()
-        with project_file.open() as f:
-            project_data = yaml_parser.load(f)
+        project_data = load_yaml_safe(project_file.read_text(encoding="utf-8"))
 
         # Extract keycloak config from services section
         keycloak_config = self._extract_keycloak_service_config(project_data)

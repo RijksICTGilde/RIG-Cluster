@@ -13,16 +13,20 @@ import glob
 import logging
 import os
 import re
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, Template
-from ruamel.yaml import YAML
 
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
+from opi.utils.yaml_util import (
+    dump_yaml_double_quoted_scalar,
+    dump_yaml_for_go,
+    load_yaml_documents_safe,
+    load_yaml_round_trip,
+)
 
 #: Absolute directory of the Jinja manifest templates, derived from this file and so
 #: independent of the cwd and of the caller's depth. ``render_template`` resolves via settings.
@@ -99,15 +103,7 @@ def yaml_scalar(value: object) -> str:
             f"yaml_scalar verwacht een str, kreeg {type(value).__name__}. Een ontbrekende of "
             "optionele sjabloonvariabele hoort achter een if-blok, niet door dit filter."
         )
-    emitter = YAML(typ="safe", pure=True)
-    emitter.default_style = '"'
-    emitter.allow_unicode = True
-    # A width this large keeps the scalar on one line; the emitter would otherwise
-    # fold a long value across lines, and folding rewrites runs of whitespace.
-    emitter.width = 10**9
-    buffer = StringIO()
-    emitter.dump(value, buffer)
-    return buffer.getvalue().rstrip("\n")
+    return dump_yaml_double_quoted_scalar(value)
 
 
 #: De filters die elk manifestsjabloon mag gebruiken. Een tweede omgeving (een test die
@@ -192,15 +188,13 @@ def check_duplicate_resource_identities(output_dir: str, regular_files: list[str
     Raises:
         RuntimeError: When two distinct files declare the same resource identity.
     """
-    yaml = YAML(typ="safe")
     seen: dict[tuple[str, str, str, str], str] = {}
     for rel in regular_files:
         path = os.path.join(output_dir, rel)
         if not os.path.isfile(path):
             continue
         try:
-            with open(path) as f:
-                docs = list(yaml.load_all(f))
+            docs = load_yaml_documents_safe(Path(path).read_text(encoding="utf-8"))
         except Exception as exc:
             logger.debug("Skipping duplicate-identity scan for %s: %s", rel, exc)
             continue
@@ -574,10 +568,8 @@ class ManifestGenerator:
             )
 
             # Load kustomization.yaml template
-            yaml = YAML()
             kustomization_template_path = os.path.join(settings.MANIFESTS_PATH, "kustomization.yaml.jinja")
-            with open(kustomization_template_path) as f:
-                kustomization_data = yaml.load(f)
+            kustomization_data = load_yaml_round_trip(Path(kustomization_template_path).read_text(encoding="utf-8"))
 
             # Determine namespace with correct prefix
             prefixed_namespace = self._determine_namespace_with_prefix(namespace, deployment)
@@ -603,16 +595,14 @@ class ManifestGenerator:
 
             # Write kustomization.yaml
             kustomization_path = os.path.join(output_dir, "kustomization.yaml")
-            with open(kustomization_path, "w") as f:
-                yaml.dump(kustomization_data, f)
+            Path(kustomization_path).write_text(dump_yaml_for_go(kustomization_data), encoding="utf-8")
 
             logger.info(f"Created kustomization.yaml: {kustomization_path}")
 
             # Create decrypt-sops.yaml if there are SOPS files
             if sops_files:
                 decrypt_sops_template_path = os.path.join(settings.MANIFESTS_PATH, "decrypt-sops.yaml.jinja")
-                with open(decrypt_sops_template_path) as f:
-                    decrypt_sops_data = yaml.load(f)
+                decrypt_sops_data = load_yaml_round_trip(Path(decrypt_sops_template_path).read_text(encoding="utf-8"))
 
                 # decrypt-sops.yaml lists the names the files carry after encryption, so both
                 # halves of one pair collapse onto the same name, hence the deduplication.
@@ -623,8 +613,7 @@ class ManifestGenerator:
 
                 # Write decrypt-sops.yaml
                 decrypt_sops_path = os.path.join(output_dir, "decrypt-sops.yaml")
-                with open(decrypt_sops_path, "w") as f:
-                    yaml.dump(decrypt_sops_data, f)
+                Path(decrypt_sops_path).write_text(dump_yaml_for_go(decrypt_sops_data), encoding="utf-8")
 
                 logger.info(f"Created decrypt-sops.yaml: {decrypt_sops_path}")
 

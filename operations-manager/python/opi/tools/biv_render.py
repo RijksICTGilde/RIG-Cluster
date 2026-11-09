@@ -25,8 +25,9 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from opi.utils.yaml_util import load_yaml_safe
 
 #: De inventaris, gezien vanaf de repo-root. Ook het kenmerk waaraan die root te herkennen is.
 INVENTARIS_VANAF_ROOT = Path("architecture") / "biv-inventaris.yaml"
@@ -145,7 +146,7 @@ def load_inventaris(path: Path = INVENTARIS) -> Inventaris:
     Raises:
         pydantic.ValidationError: Als een entry onvolledig is of een as zonder mitigatie laat.
     """
-    return Inventaris.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return Inventaris.model_validate(load_yaml_safe(path.read_text(encoding="utf-8")))
 
 
 def gaten(inventaris: Inventaris, repo_root: Path = REPO_ROOT) -> list[str]:

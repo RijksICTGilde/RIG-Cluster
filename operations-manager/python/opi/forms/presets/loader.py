@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ def load_presets(section_key: str) -> list[Preset]:
         return []
 
     try:
-        raw = yaml.safe_load(preset_file.read_text())
-    except yaml.YAMLError:
+        raw = load_yaml_safe(preset_file.read_text(encoding="utf-8"))
+    except YAMLError:
         logger.warning("Failed to parse preset file: %s", preset_file)
         return []
 

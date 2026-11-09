@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import yaml
+from opi.utils.yaml_util import load_yaml_safe
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -80,7 +80,7 @@ def grendel(doelwit: str) -> None:
 
 def geldige_uitzonderingen(soort: str, vandaag: date, pad: Path = UITZONDERINGEN) -> set[str]:
     """De id's die voor deze scanner zwijgen, zonder de verlopen en de onvolledige regels."""
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8")) or {}
+    inhoud = load_yaml_safe(pad.read_text(encoding="utf-8")) or {}
     geldig = set()
     for regel in inhoud.get(soort) or []:
         vervalt = regel.get("expired_at")

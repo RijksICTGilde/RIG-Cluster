@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from deepdiff import DeepDiff
-from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
@@ -29,7 +28,7 @@ from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_syn
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.project_utils import apply_resource_limits
 from opi.utils.url_paths import sanitize_path_value
-from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string
+from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, load_yaml_round_trip
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -624,9 +623,9 @@ class ProjectFileHandler:
                 logger.debug(f"No previous version found for {file_path}")
                 return None
 
-            # Parse the YAML content
-            yaml = YAML()
-            previous_content = yaml.load(previous_content_str)
+            # The same loader as read_committed_project_file: DeepDiff is type-sensitive, and a
+            # scalar read without preserve_quotes hides every real change behind a type change.
+            previous_content = load_yaml_from_string(previous_content_str)
             logger.debug(f"Successfully retrieved and parsed previous version of {file_path}")
             return previous_content
 
@@ -2811,8 +2810,7 @@ class ProjectFileHandler:
         elif helm_values_str and isinstance(helm_values_str, str):
             # Try parsing as YAML if it's a string
             try:
-                yaml = YAML()
-                parsed_values = yaml.load(helm_values_str)
+                parsed_values = load_yaml_round_trip(helm_values_str)
                 if isinstance(parsed_values, dict):
                     logger.info(f"Parsed helm values for chart '{chart_name}'")
                     return parsed_values
@@ -2856,8 +2854,7 @@ class ProjectFileHandler:
         elif helm_values_str and isinstance(helm_values_str, str):
             # Try parsing as YAML if it's a string
             try:
-                yaml = YAML()
-                parsed_values = yaml.load(helm_values_str)
+                parsed_values = load_yaml_round_trip(helm_values_str)
                 if isinstance(parsed_values, dict):
                     logger.info(
                         f"Parsed deployment-level helm values for chart '{chart_reference}' "
@@ -3060,8 +3057,7 @@ class ProjectFileHandler:
         elif helm_values_str and isinstance(helm_values_str, str):
             # Try parsing as YAML if it's a string
             try:
-                yaml = YAML()
-                parsed_values = yaml.load(helm_values_str)
+                parsed_values = load_yaml_round_trip(helm_values_str)
                 if isinstance(parsed_values, dict):
                     logger.info(f"Parsed helm values for helmfile '{helmfile_name}'")
                     return parsed_values
@@ -3105,8 +3101,7 @@ class ProjectFileHandler:
         elif helm_values_str and isinstance(helm_values_str, str):
             # Try parsing as YAML if it's a string
             try:
-                yaml = YAML()
-                parsed_values = yaml.load(helm_values_str)
+                parsed_values = load_yaml_round_trip(helm_values_str)
                 if isinstance(parsed_values, dict):
                     logger.info(
                         f"Parsed deployment-level helm values for helmfile '{helmfile_reference}' "

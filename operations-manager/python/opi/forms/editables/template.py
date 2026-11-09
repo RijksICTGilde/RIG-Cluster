@@ -10,10 +10,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from opi.core.config import settings
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
+from opi.utils.yaml_util import load_yaml_safe
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-template.yaml"
 _PLACEHOLDER_RE = re.compile(r"\$\{(\w+)\}")
@@ -40,9 +39,7 @@ def load_project_template() -> dict[str, Any]:
     file and fails the provisioning task with a ``ConflictError``. Emitting the
     latest version on create avoids the migration entirely.
     """
-    yaml = YAML()
-    with _TEMPLATE_PATH.open() as f:
-        data = yaml.load(f)
+    data = load_yaml_safe(_TEMPLATE_PATH.read_text(encoding="utf-8"))
     resolved = _resolve_placeholders(data or {})
     resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
     return resolved

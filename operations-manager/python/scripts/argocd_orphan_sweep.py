@@ -103,7 +103,7 @@ from opi.utils.naming import (  # noqa: E402
     generate_project_level_manifest_path,
 )
 from opi.utils.rendered_kinds import rendered_kinds, rendered_types  # noqa: E402
-from ruamel.yaml import YAML, YAMLError  # noqa: E402
+from opi.utils.yaml_util import YAMLError, load_yaml_safe  # noqa: E402
 
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
@@ -130,8 +130,6 @@ ARGO_APPLICATION_GLOB = "*/*-argocd-application.yaml"
 
 #: The projects repo keeps its files here.
 PROJECTS_DIR = "projects"
-
-_yaml = YAML(typ="safe")
 
 
 class SweepRefused(RuntimeError):
@@ -205,7 +203,7 @@ def orphaned_paths(repo_root: Path, referenced: set[str]) -> list[str]:
 
 def _load_yaml(path: Path) -> object:
     try:
-        return _yaml.load(path.read_text())
+        return load_yaml_safe(path.read_text(encoding="utf-8"))
     except YAMLError as e:
         # A file that cannot be read is a file whose content is unknown, and unknown is
         # exactly where this tool would otherwise draw a wrong conclusion.

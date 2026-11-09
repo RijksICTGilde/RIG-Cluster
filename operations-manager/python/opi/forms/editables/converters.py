@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import yaml
-
 from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
 from opi.utils.age import (
     carries_encrypted_value,
@@ -13,6 +11,7 @@ from opi.utils.age import (
     project_private_key_or_none,
 )
 from opi.utils.url_paths import normalize_logout_path
+from opi.utils.yaml_util import dump_yaml_to_string
 
 logger = logging.getLogger(__name__)
 
@@ -330,8 +329,7 @@ class KeyValueConverter:
             if self.fmt == "env":
                 return "\n".join(f"{k}={v}" for k, v in value.items())
             # YAML format: KEY: value text for the editor.
-            # dict() strips ruamel CommentedMap so stdlib yaml.dump works.
-            return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
+            return dump_yaml_to_string(dict(value)).rstrip("\n")
         return str(value or "")
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> dict[str, str] | str | None:

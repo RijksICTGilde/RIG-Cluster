@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
@@ -53,6 +52,7 @@ from opi.utils.naming import (
     get_output_filename_from_template,
 )
 from opi.utils.project_utils import project_level_deployment
+from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +192,8 @@ def _application_files(project_dir: str) -> tuple[list[tuple[str, str, str]], li
     for path in sorted(glob.glob(os.path.join(project_dir, "*.yaml"))):
         try:
             with open(path, encoding="utf-8") as handle:
-                document = yaml.safe_load(handle)
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+                document = load_yaml_safe(handle.read())
+        except (OSError, UnicodeDecodeError, YAMLError) as e:
             logger.warning(f"Could not read '{path}' in the ArgoCD folder of this project: {e}")
             unreadable.append(os.path.basename(path))
             continue

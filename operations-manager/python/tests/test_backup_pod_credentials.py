@@ -27,6 +27,7 @@ from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import mc_endpoint_is_usable, mc_host_url, pod_credentials_secret_name
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.pvc_backup import PVCBackupManager
+from opi.utils.yaml_util import dump_yaml_for_go_unfolded
 from tests.test_backup_pod_service_account import POD_CREATORS, PROJECT, _manager
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
@@ -235,6 +236,18 @@ class TestDeManagerZetHetSecretVoorDePod:
         assert secret["metadata"]["namespace"] == pod["metadata"]["namespace"]
         assert set(secret["stringData"]) == _credential_env_names(pod)
         assert all(secret["stringData"].values()), secret["stringData"]
+
+    def test_a_credential_with_spaces_reaches_the_secret_unchanged(self) -> None:
+        """The emitter must not fold a long value across lines.
+
+        Folding collapses a run of spaces, and kopia then logs in with a different
+        password than the one that was set.
+        """
+        secret = "a" + " " * 40 + "b" * 120
+        manifest = dump_yaml_for_go_unfolded({"stringData": {"KOPIA_PASSWORD": secret}})
+
+        assert "\n" not in manifest.split("KOPIA_PASSWORD: ")[1].rstrip("\n")
+        assert yaml.safe_load(manifest)["stringData"]["KOPIA_PASSWORD"] == secret
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind", POD_CREATORS)

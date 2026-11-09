@@ -63,6 +63,7 @@ from opi.services.catalog.cross_domain_access.context import build_cross_domain_
 from opi.services.project import Project
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
+from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import (
     authorize,
     authorized_project,
@@ -638,7 +639,6 @@ async def _start_deployment(
     project_file_already_saved tells the task not to rewrite: the modal already saved.
     """
     from opi.core.task_helpers import create_async_task
-    from opi.utils.yaml_util import dump_yaml_to_string
 
     yaml_content = dump_yaml_to_string(result_yaml)
 

@@ -24,8 +24,9 @@ from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from opi.utils.yaml_util import load_yaml_safe
 
 #: Repo-root: vier mappen boven dit bestand (opi/tools -> opi -> python -> operations-manager).
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -78,13 +79,13 @@ class Oordeel(BaseModel):
 
 
 def laad_eisen(pad: Path = EISEN) -> list[Eis]:
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8"))
+    inhoud = load_yaml_safe(pad.read_text(encoding="utf-8"))
     return [Eis(**eis) for eis in inhoud["eisen"]]
 
 
 def laad_beoordeling(pad: Path = BEOORDELING) -> tuple[str, list[Oordeel]]:
     """Het gekozen niveau en de oordelen."""
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8"))
+    inhoud = load_yaml_safe(pad.read_text(encoding="utf-8"))
     return str(inhoud["niveau"]), [Oordeel(**regel) for regel in inhoud["oordelen"]]
 
 
@@ -101,7 +102,7 @@ def toets_bestaat(verwijzing: str, wortel: Path = REPO_ROOT) -> bool:
         return False
     if not job:
         return True
-    inhoud = yaml.safe_load(bestand.read_text(encoding="utf-8")) or {}
+    inhoud = load_yaml_safe(bestand.read_text(encoding="utf-8")) or {}
     return job in (inhoud.get("jobs") or {})
 
 

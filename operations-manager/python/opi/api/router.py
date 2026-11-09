@@ -59,6 +59,7 @@ from opi.utils.project_utils import (
     generate_self_service_project_yaml,
     normalize_container_image,
 )
+from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -2865,7 +2866,6 @@ async def create_self_service_project(
         # Persist through the single validated save path so the self-service API
         # uses the same chokepoint as the UI and the other API endpoints: schema +
         # structural validation before the commit, canonical dumper, cache refresh.
-        from opi.utils.yaml_util import load_yaml_from_string
 
         # No connector injected: ProjectManager then reads through the store's warm
         # copy, which has the commit this handler is about to make. An injected

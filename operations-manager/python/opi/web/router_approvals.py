@@ -42,6 +42,7 @@ from opi.services.approvals import collect_approval_items
 from opi.services.project_store import ConflictError, get_project_store
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.lotc_switch import render_fragment
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import to_nldd_icon
@@ -528,8 +529,6 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     logger.info("Project %s domains updated via admin approval (by %s)", project_name, user.get("email"))
 
     # Trigger full project processing
-    from opi.utils.yaml_util import dump_yaml_to_string
-
     yaml_content = dump_yaml_to_string(existing_data)
 
     from opi.core.task_helpers import create_async_task

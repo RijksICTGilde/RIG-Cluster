@@ -235,6 +235,37 @@ class TestValidateAndParseEnvVars:
             validate_and_parse_env_vars(cm)
 
 
+class TestYamlEnvVarValuesKeepTheirParsedForm:
+    """Known gap, pinned on purpose: an unquoted value is parsed as YAML 1.2 and then
+    stringified, so the text the author typed is not always the text the container gets.
+    Quoting the value is the way out today."""
+
+    @pytest.mark.parametrize(
+        ("text", "value"),
+        [
+            ("A: 0123", "123"),
+            ("A: 010", "10"),
+            ("A: 0o17", "15"),
+            ("A: 0x1F", "31"),
+            ("A: 1.10", "1.1"),
+            ("A: 1e3", "1000.0"),
+            ("A: true", "true"),
+            ("A: yes", "yes"),
+            ("A: on", "on"),
+        ],
+    )
+    def test_an_unquoted_value_comes_back_as_its_parsed_form(self, text, value):
+        assert validate_and_parse_env_vars(text) == {"A": value}
+
+    @pytest.mark.parametrize("text", ["A: '0123'", 'A: "0123"', "A: '1.10'"])
+    def test_a_quoted_value_survives_verbatim(self, text):
+        assert validate_and_parse_env_vars(text)["A"] in ("0123", "1.10")
+
+    def test_a_date_is_rejected_instead_of_stringified(self):
+        with pytest.raises(ValueError, match="unsupported value type date"):
+            validate_and_parse_env_vars("A: 2026-11-09")
+
+
 class TestExtractVariableReferences:
     """Tests for extract_variable_references."""
 

@@ -9,6 +9,7 @@ from opi.utils.project_utils import (
     parse_aliases,
     validate_root_component,
 )
+from opi.utils.yaml_util import dump_yaml_for_go
 
 
 class TestNormalizeContainerImage:
@@ -113,3 +114,8 @@ class TestParseAliases:
     def test_single_alias(self):
         result = parse_aliases("DB_URL: $DATABASE_SERVER_HOST")
         assert result == {"DB_URL": "$DATABASE_SERVER_HOST"}
+
+    def test_a_numeric_scalar_keeps_the_form_it_had(self):
+        # build_component_config writes this mapping back without a public key (0755 -> 755 otherwise).
+        source = "RETRY_CODE: 0755\n"
+        assert dump_yaml_for_go(parse_aliases(source)) == source

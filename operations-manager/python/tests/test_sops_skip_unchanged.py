@@ -118,6 +118,23 @@ class TestSkipUnchanged:
         encrypt_to_sops_files(d, public_key, private_key)
         assert _read(_encrypted_path(d, "demo")) == first
 
+    def test_an_unquoted_yes_is_not_re_encrypted_every_round(self, tmp_path, keypair):
+        """``FEATURE: yes`` is the string "yes" on both sides, so nothing changed.
+
+        SOPS writes the value back quoted, and a YAML 1.1 reader turns the unquoted half
+        into the bool True. The two halves then never compared equal and every deployment
+        rewrote the ciphertext, which is the churn this skip exists to prevent.
+        """
+        public_key, private_key = keypair
+        d = str(tmp_path)
+        _write_to_sops(d, "demo", "stringData:\n  FEATURE: yes\n")
+        encrypt_to_sops_files(d, public_key, private_key)
+        first = _read(_encrypted_path(d, "demo"))
+
+        _write_to_sops(d, "demo", "stringData:\n  FEATURE: yes\n")
+        encrypt_to_sops_files(d, public_key, private_key)
+        assert _read(_encrypted_path(d, "demo")) == first
+
     def test_no_private_key_always_reencrypts(self, tmp_path, keypair):
         public_key, private_key = keypair
         d = str(tmp_path)

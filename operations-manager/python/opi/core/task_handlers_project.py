@@ -15,6 +15,7 @@ from opi.core.cluster_config import is_reserved_project_name
 from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
+from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +115,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     git_task = progress.add_task(steps.PROJECT_FILE_SAVE)
 
     try:
-        from opi.utils.yaml_util import load_yaml_from_string
-
         project_file_path = f"projects/{project_name}.yaml"
         commit_message = (
             f"Create project {project_name}"
