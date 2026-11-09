@@ -86,8 +86,8 @@ Future migrations will increment this number and run in sequence (v2 → v3 → 
 
 ### Modified
 - `opi/manager/project_manager.py` - Auto-migration hook in `process_project_from_git()`
-- `opi/handlers/project_file_handler.py` - Updated all read sites to use `component["services"]` format
-- `opi/utils/project_utils.py` - Updated write paths to produce v2 format
+- `opi/services/project_file_handler.py` - Updated all read sites to use `component["services"]` format
+- `opi/services/project_utils.py` - Updated write paths to produce v2 format
 - `opi/forms/editables/fields/components.py` - Updated editable paths using `{K}` filter syntax for storage
 - `opi/forms/editables/path.py` - Extended with `{K}` dict-key and `{F=V}` field-match filter syntax
 - Various managers and routers - Updated to read from new format

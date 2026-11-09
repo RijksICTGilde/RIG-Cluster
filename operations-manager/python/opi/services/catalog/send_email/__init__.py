@@ -72,6 +72,7 @@ from opi.services.catalog.send_email.actions import send_email_actions
 from opi.services.catalog.send_email.config_model import SendEmailConfig, SendEmailDeploymentConfig
 from opi.services.catalog.send_email.variables import SendEmailVariables
 from opi.services.project import Project
+from opi.services.secrets import SendEmailSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.naming import (
@@ -79,7 +80,6 @@ from opi.utils.naming import (
     generate_network_policy_name,
     generate_unique_name,
 )
-from opi.utils.secrets import SendEmailSecret
 
 logger = logging.getLogger(__name__)
 

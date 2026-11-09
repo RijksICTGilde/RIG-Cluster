@@ -33,7 +33,7 @@ from opi.api.restore_router import (
     restore_router,
 )
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.services.secrets import DatabaseSecret, MinIOSecret
 from pydantic import ValidationError
 
 API_KEY = "test-restore-api-key"

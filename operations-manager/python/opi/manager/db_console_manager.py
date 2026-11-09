@@ -60,13 +60,13 @@ from opi.manager.run_support import (
 from opi.services.project_leden import human_emails
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
     generate_db_console_client_id,
     generate_db_console_hostname,
     generate_db_console_name,
     generate_project_service_account_name,
 )
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 

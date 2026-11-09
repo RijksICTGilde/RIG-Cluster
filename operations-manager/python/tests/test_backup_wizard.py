@@ -14,7 +14,7 @@ Covers:
 from typing import Any
 
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     create_project_file_handler,
     extract_service_names_from_component,
 )

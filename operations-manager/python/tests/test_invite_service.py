@@ -17,10 +17,10 @@ from opi.core.authz.actions import Action
 from opi.forms.editables.enforcers import FieldError, UniqueInviteKeyEnforcer
 from opi.forms.editables.validators import InviteKeyValidator
 from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.base import ConfigLayer, ProjectPageContext
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.services_enums import ServiceType, UIEvent
 from pydantic import ValidationError
 
@@ -155,7 +155,7 @@ class TestDeSchrijfwegMeldtDeGegenereerdeCode:
     def _manager(self) -> Any:
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

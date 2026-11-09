@@ -27,17 +27,10 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
-from opi.connectors.subdomain import (
-    BaseDomainValidationError,
-    SubdomainNotAvailableError,
-    SubdomainValidationError,
-)
 from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
-from opi.core.project_environment import Omgeving
-from opi.core.step_up import StepUpAction
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -47,18 +40,25 @@ from opi.services.catalog.image_registries.config_model import (
     SECRET_NAME_PATTERN,
     UPSTREAM_PATTERN,
 )
+from opi.services.catalog.publish_on_web.subdomain import (
+    BaseDomainValidationError,
+    SubdomainNotAvailableError,
+    SubdomainValidationError,
+)
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
+from opi.services.project_environment import Omgeving
 from opi.services.project_store import get_project_store
+from opi.services.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    generate_self_service_project_yaml,
+    normalize_container_image,
+)
+from opi.services.step_up import StepUpAction
 from opi.services.step_up_conditions import deployment_environment_change
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_names import validate_project_name
-from opi.utils.project_utils import (
-    RESERVED_PROJECT_NAME_MESSAGE,
-    generate_self_service_project_yaml,
-    normalize_container_image,
-)
 from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)

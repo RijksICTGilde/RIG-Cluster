@@ -10,8 +10,9 @@ from opi.connectors.argo import ArgoTransportError
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.metrics import PHASE_ARGO_WAIT_HEALTHY, PHASE_ARGO_WAIT_SYNCED, observe_rollout_phase
-from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
+from opi.services.project_utils import project_level_deployment
+from opi.services.tasks.task_supersede import raise_if_superseded
 from opi.utils.age import decrypt_password_smart
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.naming import (
@@ -30,7 +31,6 @@ from opi.utils.naming import (
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
-from opi.utils.project_utils import project_level_deployment
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 
 if TYPE_CHECKING:

@@ -22,7 +22,7 @@
 
 # Geheimen en beheer
 /operations-manager/python/opi/utils/passwords.py @uittenbroekrobbert
-/operations-manager/python/opi/utils/secrets.py @uittenbroekrobbert
+/operations-manager/python/opi/services/secrets.py @uittenbroekrobbert
 /scripts/edit-secret.py @uittenbroekrobbert
 /scripts/project_decrypt.py @uittenbroekrobbert
 /scripts/secret_rotate.py @uittenbroekrobbert

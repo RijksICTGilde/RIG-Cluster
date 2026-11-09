@@ -37,13 +37,13 @@ from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.session_guard import valid_session_user
-from opi.core.step_up import session_step_up_until, step_up_fresh
 from opi.manager.run_support import LABEL_RUN
 from opi.services.project import Project
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
 from opi.services.project_store import get_project_store
+from opi.services.step_up import session_step_up_until, step_up_fresh
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
 

@@ -26,7 +26,7 @@ from opi.api.endpoint_util import default_marking, deployment_in_body, handhaaf
 from opi.api.router import UpsertDeploymentRequest
 from opi.api.v2.router import upsert_deployment_v2
 from opi.core.authz.actions import Action, action, deployment_from, deployment_of, marking_if_absent
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser

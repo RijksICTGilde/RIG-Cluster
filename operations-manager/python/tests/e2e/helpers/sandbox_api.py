@@ -37,7 +37,7 @@ PROJECT_API_ACCOUNT = "project-api"
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
 
-#: De sessiesleutel met het moment van de laatste step-up (``opi/core/step_up.py``). Een
+#: De sessiesleutel met het moment van de laatste step-up (``opi/services/step_up.py``). Een
 #: token uitgeven vraagt een verse (RC-387), en wie zijn eigen sessie ondertekent zet hem
 #: er dus bij: zonder stempel antwoordt het portaal met een 403 in plaats van een token.
 STEP_UP_SESSION_KEY = "step_up_at"

@@ -33,11 +33,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from freezegun import freeze_time
 from opi.core.config import settings
-from opi.core.project_schema import validate_project_schema
 from opi.manager.project_manager import ProjectManager
+from opi.services.project_schema import validate_project_schema
+from opi.services.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.naming import generate_deployment_manifest_path
-from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
 from ruamel.yaml import YAML
 
 if TYPE_CHECKING:

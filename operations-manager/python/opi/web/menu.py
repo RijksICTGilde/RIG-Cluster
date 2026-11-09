@@ -8,7 +8,7 @@ that are used across different web routes.
 import logging
 from typing import Any
 
-from opi.core.step_up import is_elevated_admin
+from opi.services.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)

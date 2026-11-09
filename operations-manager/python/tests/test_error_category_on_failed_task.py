@@ -19,8 +19,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 from opi.api.task_models import TASK_RESULT_MODELS, task_response_from_dict
-from opi.api.v2.models import ErrorCategory, error_category_for
+from opi.api.v2.models import error_category_for
 from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
+from opi.core.errors import ErrorCategory
 
 
 @pytest.fixture(autouse=True)

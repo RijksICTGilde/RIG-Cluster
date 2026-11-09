@@ -24,9 +24,9 @@ from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.authz.actions import ACTION_ATTR, Action, action, action_of
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, RuleError, all_rules, decide, rule_for
-from opi.core.step_up import StepUpAction
 from opi.server import app
 from opi.services.project_roles import roles_from_value
+from opi.services.step_up import StepUpAction
 
 #: Welke handeling elke route achter de PROJECTSLEUTEL vraagt. Plan stap 5: niet alleen de
 #: verzameling handelingen staat vast maar de koppeling per route, want die koppeling IS de

@@ -1814,7 +1814,7 @@ def apply_domain_approval_fallback(
         project_data: Project YAML data (for approval check)
         cluster: Cluster name (for approval check)
     """
-    from opi.connectors.subdomain import is_deployment_domain_approved
+    from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
 
     if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
         return domain_format, base_domain
@@ -1955,9 +1955,9 @@ def get_deployment_hostnames(
         root_component: Component that serves the root address
             (``subdomain.base-domain``), or None when no component does
     """
-    # Local, like in apply_domain_approval_fallback: connectors.subdomain imports this
+    # Local, like in apply_domain_approval_fallback: services.catalog.publish_on_web.subdomain imports this
     # module, so a module-scope import would be a cycle.
-    from opi.connectors.subdomain import is_deployment_domain_approved
+    from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
 
     hostnames: list[str] = []
 

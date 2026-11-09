@@ -13,10 +13,10 @@ reach a project file.
 import logging
 from typing import TYPE_CHECKING
 
-from opi.core.step_up import is_elevated_admin
 from opi.services.project_leden import human_members
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES
 from opi.services.project_store import get_project_store
+from opi.services.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:

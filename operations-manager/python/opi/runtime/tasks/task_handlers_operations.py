@@ -12,15 +12,15 @@ from typing import Any
 
 from opi.connectors.git_repo import sync_platform_repos
 from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
-from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import format_age_key_file, settings
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.task_errors import platform_failure_fields
 from opi.manager.backup.base import BaseBackupManager
 from opi.services.oom_watcher import reset_oom_tune_attempts
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ProjectStoreError, get_project_store
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.task_errors import platform_failure_fields
 from opi.utils.age import (
     decrypt_password_smart_auto,
     generate_age_key_pair,

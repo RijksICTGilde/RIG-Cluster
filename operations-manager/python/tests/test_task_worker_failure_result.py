@@ -25,8 +25,8 @@ import pytest
 from fastapi import HTTPException
 from opi.api.task_models import task_response_from_dict
 from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
-from opi.core.task_errors import TaskInputError
 from opi.runtime.tasks.task_worker import TaskWorker
+from opi.services.tasks.task_errors import TaskInputError
 
 TASK_ID = "11111111-2222-3333-4444-555555555555"
 

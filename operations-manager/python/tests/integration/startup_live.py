@@ -26,8 +26,8 @@ import pyrage
 import yaml
 from opi.core.cluster_config import get_database_server, get_mail_from_address, get_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.project_schema import latest_schema_version, validate_project_schema
 from opi.runtime.startup.platform_database_access import PLATFORM_BACKUP_ROLE, PLATFORM_DATABASE_ROLES
+from opi.services.project_schema import latest_schema_version, validate_project_schema
 from opi.utils.age import wrap_project_key_sync
 from prometheus_client import REGISTRY
 from tests.integration import argocd_live, forgejo_live, keycloak_image, kubernetes_live, minio_live, postgres_live

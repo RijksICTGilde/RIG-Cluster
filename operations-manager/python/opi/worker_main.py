@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     """Initialize and run the standalone task worker."""
-    from opi.core.async_task_service import AsyncTaskService, TaskType
     from opi.core.database_pool import DatabasePool
     from opi.runtime.tasks.task_worker import TaskWorker
+    from opi.services.tasks.async_task_service import AsyncTaskService, TaskType
 
     # Initialize database pool. De app-rol, net als de hoofdpool van de frontend: de
     # worker raakt alleen OPI's eigen tabellen (RC-410).

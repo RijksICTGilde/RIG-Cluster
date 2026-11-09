@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.services.user_otp_service import OtpVerification
 from opi.web.router_step_up import step_up
 

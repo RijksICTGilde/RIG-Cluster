@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 
 from opi.core.authz.engine import role_label
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project import Project
 from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
 from opi.services.user_service import get_user_service

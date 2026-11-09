@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY, StepUpAction
+from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 from opi.web import router_user_admin
 from opi.web.router_user_admin import _FORMULIERVELDEN
 

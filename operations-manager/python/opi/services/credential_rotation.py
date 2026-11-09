@@ -7,8 +7,8 @@ opzij zetten.
 
 from typing import Any
 
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.project import Project
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.services_enums import CloneFromType, ServiceType
 
 # Dienstnaam in de aanvraag -> de servicetypes die tellen als "deze deployment gebruikt hem".

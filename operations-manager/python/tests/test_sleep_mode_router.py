@@ -22,10 +22,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from opi.core.members import MemberKind
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeResult
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.router import sleep_deployment_web, wake_deployment_web

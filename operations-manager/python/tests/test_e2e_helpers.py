@@ -1297,8 +1297,8 @@ def test_de_namen_in_sandbox_api_kloppen_met_het_portaal() -> None:
     (``TestDeMeetbankscripts`` meet dat). Deze toets is wat daarvoor in de plaats komt:
     verschuift een naam in het portaal, dan valt het hier op en niet pas op de sandbox.
     """
-    from opi.core.step_up import STEP_UP_SESSION_KEY
     from opi.services.schema_migration import PROJECT_API_ACCOUNT
+    from opi.services.step_up import STEP_UP_SESSION_KEY
     from opi.utils.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 
     assert sandbox_api.PROJECT_API_ACCOUNT == PROJECT_API_ACCOUNT

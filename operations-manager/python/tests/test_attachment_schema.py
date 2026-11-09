@@ -6,7 +6,8 @@ from typing import Any
 
 import jsonschema
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.catalog.attachments.config_model import AttachmentUse
+from opi.services.project_file_handler import (
     _assert_unique_attachment_targets,
     _merge_attachment_uses,
     attachment_is_referenced,
@@ -15,7 +16,6 @@ from opi.handlers.project_file_handler import (
     extract_deployment_component_attachment_uses,
     validate_attachment_references,
 )
-from opi.services.catalog.attachments.config_model import AttachmentUse
 from pydantic import ValidationError
 
 SCHEMA = json.loads((Path(__file__).resolve().parent.parent / "opi" / "schemas" / "project_v2.json").read_text())
@@ -242,7 +242,7 @@ def test_validate_attachment_couplings_flags_base_component_duplicate() -> None:
             }
         ],
     }
-    from opi.handlers.project_file_handler import validate_attachment_couplings
+    from opi.services.project_file_handler import validate_attachment_couplings
 
     errors = validate_attachment_couplings(project)
     assert len(errors) == 1
@@ -250,7 +250,7 @@ def test_validate_attachment_couplings_flags_base_component_duplicate() -> None:
 
 
 def test_validate_attachment_couplings_passes_valid_project() -> None:
-    from opi.handlers.project_file_handler import validate_attachment_couplings
+    from opi.services.project_file_handler import validate_attachment_couplings
 
     project = {
         "components": [
@@ -467,7 +467,7 @@ def test_wizard_session_catalog_removal_and_ids() -> None:
 def test_attachment_usage_includes_publish_on_web_provided() -> None:
     """A publish-on-web 'provided' certificate counts as usage (delete-guard + modal), at
     component and deployment-component level; a non-provided tls mode does not."""
-    from opi.handlers.project_file_handler import attachment_is_referenced, extract_attachment_usage
+    from opi.services.project_file_handler import attachment_is_referenced, extract_attachment_usage
 
     comp = {
         "components": [

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user
-from opi.core.step_up import STEP_UP_WINDOW
+from opi.services.step_up import STEP_UP_WINDOW
 from opi.services.user_otp_service import UserOtpService
 
 if TYPE_CHECKING:

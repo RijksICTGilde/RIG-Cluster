@@ -419,7 +419,7 @@ niet via deze routes. Vervangen doe je met
 ## Dependencies
 
 - Service registry and the `Service` config hooks (`opi/services/catalog/base.py`).
-- Async task system (`opi/core/async_task_service.py`, `opi/worker_main.py`).
+- Async task system (`opi/services/tasks/async_task_service.py`, `opi/worker_main.py`).
 - The save chokepoint `ProjectManager.save_and_commit_project` ->
   `validate_service_configs`.
 

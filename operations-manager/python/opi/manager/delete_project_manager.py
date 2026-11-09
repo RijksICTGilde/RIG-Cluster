@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
-from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
@@ -29,6 +28,7 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
+from opi.services.tasks import progress_steps as steps
 from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 from opi.utils.rendered_kinds import rendered_kinds, rendered_types
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
     from opi.utils.argocd_tracking import TrackedResource
+from opi.services.project_utils import project_level_deployment
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
@@ -51,7 +52,6 @@ from opi.utils.naming import (
     generate_project_level_manifest_path,
     get_output_filename_from_template,
 )
-from opi.utils.project_utils import project_level_deployment
 from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)

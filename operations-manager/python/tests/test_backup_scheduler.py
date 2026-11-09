@@ -19,13 +19,13 @@ from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 from opi.core.actor import scheduler_actor
-from opi.core.async_task_service import TaskType
 from opi.runtime.backup.backup_scheduler import (
     BackupScheduler,
     _is_freq_target_day,
     _seconds_to_next_tick,
     _target_today,
 )
+from opi.services.tasks.async_task_service import TaskType
 
 _AMS = ZoneInfo("Europe/Amsterdam")
 

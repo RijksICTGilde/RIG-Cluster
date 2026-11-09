@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Any
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
-from opi.handlers.project_file_handler import extract_storage_from_component_services
 from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 from opi.manager.backup.database_backup import create_database_backup_manager
 from opi.manager.backup.pvc_backup import create_backup_manager
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
+from opi.services.project_file_handler import extract_storage_from_component_services
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
@@ -21,10 +22,9 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_unique_name,
 )
-from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 

@@ -199,7 +199,7 @@ HANDLER_MUTATOREN: dict[str, str] = {
 
 def _handler_mutatoren() -> set[str]:
     """Elke functie in ``project_file_handler`` die project_data aanpast."""
-    pad = OPI_DIR / "handlers" / "project_file_handler.py"
+    pad = OPI_DIR / "services" / "project_file_handler.py"
     boom = ast.parse(pad.read_text(encoding="utf-8"))
     return {
         knoop.name

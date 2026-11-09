@@ -115,7 +115,7 @@ For paths into a service's config use `smart_get_value` / `smart_set_value`
 
 - `config_schema_version` is a quoted `major.minor` string, stored next to `config` in the
   file. MINOR counts up as a whole number, so the version after `1.9` is `1.10`, and every
-  comparison runs through `SchemaVersion` (`opi/core/project_schema.py`): as text or as a
+  comparison runs through `SchemaVersion` (`opi/services/project_schema.py`): as text or as a
   float `1.10` would land before `1.9`.
 - `migrate_config(config, from_version)` is forward-only: an old file is migrated to the
   current version before validation, because ZAD only ever reads a possibly-old file and

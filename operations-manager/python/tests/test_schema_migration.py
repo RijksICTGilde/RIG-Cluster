@@ -4,10 +4,10 @@ import copy
 import logging
 
 import pytest
-from opi.connectors.subdomain import get_domains_config
-from opi.core.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
 from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
+from opi.services.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,
@@ -1139,7 +1139,7 @@ def _project_with_top_level_invites(version: float = 2.5) -> dict:
 
 
 def test_relocate_invites_moves_the_block_and_validates():
-    from opi.core.project_schema import validate_project_schema
+    from opi.services.project_schema import validate_project_schema
 
     out, was_migrated = migrate_to_latest(_project_with_top_level_invites())
     assert was_migrated is True

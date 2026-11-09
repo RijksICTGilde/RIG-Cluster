@@ -11,7 +11,7 @@ The core bugs fixed:
 
 from io import StringIO
 
-from opi.handlers.project_file_handler import ProjectFileHandler, _apply_flat_resources
+from opi.services.project_file_handler import ProjectFileHandler, _apply_flat_resources
 from ruamel.yaml import YAML
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,6 @@ API tests live alongside the templates / router they exercise.
 from __future__ import annotations
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.cross_domain_access.config_model import CrossDomainAccessConfig
 from opi.services.catalog.cross_domain_access.merge import (
@@ -18,6 +17,7 @@ from opi.services.catalog.cross_domain_access.merge import (
     to_merged_rule,
 )
 from opi.services.catalog.cross_domain_access.resolve import resolve_rules
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
 

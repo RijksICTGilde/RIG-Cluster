@@ -157,7 +157,7 @@ class TestPublishOnWebCertificateGuard:
     record-form entry must not slip past it (else an in-use cert looks deletable)."""
 
     def test_provided_certificate_detected_in_every_format(self) -> None:
-        from opi.handlers.project_file_handler import attachment_is_referenced
+        from opi.services.project_file_handler import attachment_is_referenced
 
         cfg = {"tls": "provided", "attachment": "my-cert"}
         for entry in _formats(ServiceType.PUBLISH_ON_WEB.value, config=cfg):
@@ -172,7 +172,7 @@ class TestComponentsUsingServiceGuard:
     service in the component *record* form (``{reference, config}``) must be found."""
 
     def test_storage_component_found_in_record_form(self) -> None:
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         project = {
             "components": [
@@ -194,7 +194,7 @@ class TestFilterEmptyServiceEntries:
     the single-key assumption its ``break`` used to make."""
 
     def test_keeps_record_and_bare_string_drops_empty(self) -> None:
-        from opi.handlers.project_file_handler import _filter_empty_service_entries
+        from opi.services.project_file_handler import _filter_empty_service_entries
 
         kept = _filter_empty_service_entries(
             [
@@ -217,7 +217,7 @@ _FORBIDDEN_RAW_READS = [
     ("opi/manager/minio_manager.py", "next(iter(service.keys()))"),
     ("opi/manager/redis_manager.py", "next(iter(service.keys()))"),
     ("opi/bootstrap/keycloak_setup.py", '"keycloak" in service'),
-    ("opi/handlers/project_file_handler.py", "next(iter(service.keys()))"),
+    ("opi/services/project_file_handler.py", "next(iter(service.keys()))"),
 ]
 
 

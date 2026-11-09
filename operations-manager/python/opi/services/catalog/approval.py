@@ -7,7 +7,7 @@ the enforcers) consumes these ``ApprovalSpec``s uniformly.
 
 Publish-on-web's domain / subdomain approval is the exception to that shape: its state
 lives in the project's ``domains:`` block and its rules are the predicates in
-``connectors/subdomain.py``, which the spec wraps rather than owns.
+``services/catalog/publish_on_web/subdomain.py``, which the spec wraps rather than owns.
 """
 
 from __future__ import annotations

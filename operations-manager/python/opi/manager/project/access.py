@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
 
 class ProjectFileAccess(Protocol):

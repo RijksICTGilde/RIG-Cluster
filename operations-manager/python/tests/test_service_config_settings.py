@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.validators import ConfigSettingValidator
 from opi.forms.visualizers.config_setting_fields import setting_field
@@ -53,6 +52,7 @@ from opi.services.catalog.config_settings import (
 from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.catalog.shared.noncurrent_versions import MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS
 from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES, get_service

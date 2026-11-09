@@ -18,16 +18,16 @@ import ast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.subdomain import (
-    BARE_DOMAIN_PLATFORM_MESSAGE,
-    get_project_allowed_domain_config,
-    validate_bare_domain_allowed,
-)
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError, FieldWarning
 from opi.forms.editables.hooks import DomainRequestHook
 from opi.manager.project_validation import validate_project_structure
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.catalog.publish_on_web.subdomain import (
+    BARE_DOMAIN_PLATFORM_MESSAGE,
+    get_project_allowed_domain_config,
+    validate_bare_domain_allowed,
+)
+from opi.services.project_schema import ProjectIntegrityError
 from opi.utils.naming import get_deployment_hostnames
 from tests import project_manager_sources
 

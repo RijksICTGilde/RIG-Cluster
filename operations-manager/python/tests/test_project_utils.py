@@ -1,9 +1,9 @@
-"""Tests for opi.utils.project_utils module."""
+"""Tests for opi.services.project_utils module."""
 
 import logging
 
 import pytest
-from opi.utils.project_utils import (
+from opi.services.project_utils import (
     ComponentValidationError,
     normalize_container_image,
     parse_aliases,
@@ -50,14 +50,14 @@ class TestNormalizeContainerImage:
         assert was_normalized is False
 
     def test_logs_warning_on_normalization(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="opi.utils.project_utils"):
+        with caplog.at_level(logging.WARNING, logger="opi.services.project_utils"):
             normalize_container_image("ghcr.io/MyOrg/MyRepo:latest")
         assert "uppercase" in caplog.text
         assert "ghcr.io/MyOrg/MyRepo:latest" in caplog.text
         assert "ghcr.io/myorg/myrepo:latest" in caplog.text
 
     def test_no_warning_when_already_lowercase(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="opi.utils.project_utils"):
+        with caplog.at_level(logging.WARNING, logger="opi.services.project_utils"):
             normalize_container_image("ghcr.io/myorg/myrepo:latest")
         assert caplog.text == ""
 

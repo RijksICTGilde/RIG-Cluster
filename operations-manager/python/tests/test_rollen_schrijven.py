@@ -18,7 +18,6 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_LABELS, Role
-from opi.core.members import MemberKind
 from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
@@ -26,6 +25,7 @@ from opi.services.api_token_service import (
     schoon_rollen,
     zet_rollen_in_data,
 )
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import authorize, may
 

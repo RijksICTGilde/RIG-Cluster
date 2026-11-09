@@ -9,9 +9,9 @@ from opi.services.catalog.approval import ApprovalSpec, config_value_approval
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD, RedisConfig
 from opi.services.catalog.redis.variables import RedisVariables
+from opi.services.secrets import RedisSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
 

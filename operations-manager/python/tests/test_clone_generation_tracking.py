@@ -16,11 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.postgres import SchemaInventory
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.minio_manager import MinioManager
 from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceType
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.naming import generate_bucket_name, generate_database_name
 
 # --- Fixtures ---

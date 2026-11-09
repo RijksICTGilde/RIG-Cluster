@@ -26,7 +26,7 @@ from opi.api.principal import (
     tel_gebruik,
 )
 from opi.core.authz.actions import Action
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
-from opi.handlers.project_key_secret import SOPS_SECRET_NAME
+from opi.services.project_key_secret import SOPS_SECRET_NAME
 from opi.utils.argocd_tracking import INSTANCE_LABEL, TrackedResource
 from tests.integration.kubernetes_live import (
     DEPLOYMENT,

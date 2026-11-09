@@ -9,7 +9,7 @@ the nested form is written directly, and the memory request never exceeds the
 memory limit.
 """
 
-from opi.utils.project_utils import apply_resource_limits
+from opi.services.project_utils import apply_resource_limits
 
 
 def test_new_component_memory_sets_both_requests_and_limits() -> None:

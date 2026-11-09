@@ -32,14 +32,14 @@ from opi.core.authz.rules import check_register
 from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
-from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
-from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
 from opi.runtime.periodic.no_mail_reconciler import reconcile_no_mail_records
 from opi.runtime.startup.keycloak_client_startup import ensure_keycloak_credentials
 from opi.runtime.startup.platform_database_access import restrict_platform_databases
+from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
+from opi.services.project_schema import check_schema_versions
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS

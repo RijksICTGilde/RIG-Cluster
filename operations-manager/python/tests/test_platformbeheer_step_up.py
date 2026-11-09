@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from opi.api import admin_router as admin_module
 from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.v2 import router as v2_router_module
-from opi.core.step_up import StepUpAction
+from opi.services.step_up import StepUpAction
 
 Aanroep = Callable[[dict[str, str]], Awaitable[Any]]
 

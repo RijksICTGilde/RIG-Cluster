@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.config import settings
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.utils.fs_paths import reject_escaping_symlinks, safe_join, single_segment
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
 def _manager() -> Any:
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

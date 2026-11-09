@@ -49,8 +49,8 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
-from opi.core.members import MemberKind  # noqa: E402
 from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
+from opi.services.members import MemberKind  # noqa: E402
 from opi.services.project_leden import nieuw_token  # noqa: E402
 from opi.services.schema_migration import (  # noqa: E402
     PROJECT_API_ACCOUNT,

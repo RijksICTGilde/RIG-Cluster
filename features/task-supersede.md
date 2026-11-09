@@ -46,7 +46,7 @@ oorzaken, beide nu opgelost:
 
 ## Hoe het werkt
 
-`opi/core/task_supersede.py`. De worker bindt de identiteit én de berekende scope van de lopende
+`opi/services/tasks/task_supersede.py`. De worker bindt de identiteit én de berekende scope van de lopende
 taak aan een `ContextVar`. De wachtlussen (`argo_manager.wait_for_application_created` en
 `wait_for_application_synced`) roepen `raise_if_superseded()` aan; die vraagt de task-service om
 nieuwere actieve taken voor het project en gooit `TaskSuperseded` zodra er een de scope dekt.

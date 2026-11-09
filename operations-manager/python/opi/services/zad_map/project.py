@@ -18,11 +18,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.rrule_utils import format_rrule
-from opi.handlers.project_file_handler import (
-    ProjectFileHandler,
-    _parse_resources_block_partial,
-    extract_storage_from_component_services,
-)
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.cross_domain_access.merge import (
     IncompleteRuleError,
@@ -35,6 +30,11 @@ from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
 from opi.services.catalog.sleep_mode import config as sleep_mode_config
 from opi.services.help_text import render_service_help
 from opi.services.project import Project
+from opi.services.project_file_handler import (
+    ProjectFileHandler,
+    _parse_resources_block_partial,
+    extract_storage_from_component_services,
+)
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICE_DEFINITIONS
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name

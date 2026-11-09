@@ -32,14 +32,14 @@ import pytest
 from fastapi import HTTPException
 from opi.api.task_models import TASK_RESULT_MODELS
 from opi.api.v2.router import AddDatabaseSchemaRequest, v2_router
-from opi.core.async_task_service import TaskType
-from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
-from opi.core.task_rollout import DEFERRABLE_TASK_TYPES
 from opi.forms.editables.validators import SchemaPostfixValidator
 from opi.manager.project_validation import validate_project_structure, validate_service_configs
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
+from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.services.services_enums import ServiceType
+from opi.services.tasks.async_task_service import TaskType
+from opi.services.tasks.task_rollout import DEFERRABLE_TASK_TYPES
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN, generate_database_schema
 from pydantic import ValidationError
 
@@ -49,7 +49,7 @@ _SERVICE = ServiceType.POSTGRESQL_DATABASE.value
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

@@ -405,7 +405,7 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 | `opi/runtime/periodic/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
 | `opi/connectors/vpa.py` | Parse VPA `.status.recommendation` (CPU→m, memory→Mi) |
 | `opi/api/resource_router.py` | On-demand API endpoint |
-| `opi/handlers/project_file_handler.py` | YAML manipulation: read/write resources, opt-out flag |
+| `opi/services/project_file_handler.py` | YAML manipulation: read/write resources, opt-out flag |
 | `manifests/vpa.yaml.jinja` | Off-mode VPA generated per component on VPA-capable clusters |
 | `opi/connectors/prometheus.py` / `grafana_prometheus.py` | Prometheus connectors (fallback source) |
 

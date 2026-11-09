@@ -18,7 +18,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.members import MemberKind
 from opi.services import api_token_service as mod
 from opi.services.api_token_service import (
     TokenAanvraagGeweigerd,
@@ -31,6 +30,7 @@ from opi.services.api_token_service import (
     verwijder_service_account,
     voeg_service_account_toe,
 )
+from opi.services.members import MemberKind
 from opi.services.project_leden import TOKEN_PREFIX, hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 

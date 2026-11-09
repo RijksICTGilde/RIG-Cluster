@@ -6,22 +6,22 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.handlers.project_file_handler import ComponentInUseError, remove_component
 from opi.services import ServiceAdapter, ServiceValidationError
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     get_domain_setting,
     set_domain_setting,
 )
-from opi.services.services import service_entry_name
-from opi.utils.age import get_project_public_key
-from opi.utils.project_utils import (
+from opi.services.project_file_handler import ComponentInUseError, remove_component
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.services.project_utils import (
     ComponentValidationError,
     build_component_config,
     normalize_container_image,
     validate_root_component,
 )
+from opi.services.services import service_entry_name
+from opi.utils.age import get_project_public_key
 
 if TYPE_CHECKING:
     from opi.manager.project.access import ProjectFileAccess

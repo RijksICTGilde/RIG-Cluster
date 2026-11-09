@@ -28,8 +28,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.generation.manifests import CMP_ENV_RESERVED_NAMES, CMP_ENV_RESERVED_PREFIXES
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from tests.cmp_plugin import render_script
 from tests.programma import echt_programma

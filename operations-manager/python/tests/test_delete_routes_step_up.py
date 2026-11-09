@@ -20,9 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.members import MemberKind
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.web.authz import enforce_route_action
 from opi.web.router import delete_component_web, delete_deployment_web, delete_project_web
 

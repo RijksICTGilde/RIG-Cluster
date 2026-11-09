@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.seaweedfs_manager import SeaweedfsManager
-from opi.utils.secrets import SeaweedFSSecret
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.secrets import SeaweedFSSecret
 
 PROJECT = {
     "name": "proj",

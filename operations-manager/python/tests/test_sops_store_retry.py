@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlExecutionError
-from opi.handlers.project_key_secret import ProjectKeySecretHandler
 from opi.manager.project_manager import ProjectManager
+from opi.services.project_key_secret import ProjectKeySecretHandler
 
 
 def _handler_with(apply_side_effect):

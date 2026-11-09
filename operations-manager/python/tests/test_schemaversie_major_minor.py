@@ -6,13 +6,13 @@ wegschrijft.
 """
 
 import pytest
-from opi.core.project_schema import (
+from opi.services import schema_migration
+from opi.services.project_schema import (
     ProjectSchemaError,
     SchemaVersion,
     parse_schema_version,
     version_key,
 )
-from opi.services import schema_migration
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.yaml_util import load_yaml_from_string
 

@@ -14,7 +14,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_step_up
-from opi.core.step_up import StepUpAction
+from opi.services.step_up import StepUpAction
 
 ACTIE = StepUpAction.PROJECT_DELETE
 HANDELING = ACTIE.phrase

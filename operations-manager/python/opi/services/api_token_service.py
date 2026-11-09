@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.actor import user_actor
 from opi.core.authz.engine import Role, effective_roles
 from opi.core.config import settings
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import TOKEN_PREFIX, hash_van, is_verlopen, lid_met_naam, nieuw_token, vervaldatum
 from opi.services.project_roles import roles_from_value
 from opi.services.project_store import get_project_store

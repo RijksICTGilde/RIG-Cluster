@@ -10,8 +10,8 @@ import ast
 import pathlib
 
 import opi
-from opi.handlers.project_file_handler import image_is_confirmed_absent
 from opi.manager.project_manager import ProjectManager, _is_image_pull_auth_error
+from opi.services.project_file_handler import image_is_confirmed_absent
 
 
 def test_auth_failures_are_real_errors() -> None:

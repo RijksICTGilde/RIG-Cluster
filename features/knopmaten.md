@@ -96,7 +96,7 @@ dat er een regel bij moet.
 
 Waar de variant uit Python komt in plaats van uit het sjabloon -- `DeploymentAction.kind`
 en `ProjectAction.kind`, die rechtstreeks het `type`-attribuut worden -- struikelt de
-dataclass er zelf over, via `check_button_variant` in `opi/core/buttons.py`. Dat is de
+dataclass er zelf over, via `check_button_variant` in `opi/forms/buttons.py`. Dat is de
 enige plek waar de twee vocabulaires staan; de test en de dataclasses lezen allebei
 daaruit.
 

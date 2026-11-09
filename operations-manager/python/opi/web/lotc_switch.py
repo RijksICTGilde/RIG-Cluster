@@ -23,8 +23,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.config import settings
-from opi.core.step_up import step_up_until
 from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, AuditCursor, list_actions
+from opi.services.step_up import step_up_until
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:

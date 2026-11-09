@@ -6,10 +6,10 @@ Tests the state machine, hook collection, ordering, and concrete hooks
 """
 
 import pytest
-from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
 # ---------------------------------------------------------------------------
 # FormState tests

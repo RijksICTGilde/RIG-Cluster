@@ -19,9 +19,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_UNDIAGNOSED, classify_image_pull_failure
 from opi.services.image_pull_report import read_image_pull_failure
 from opi.services.oom_watcher import check_pod_health
+from opi.services.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_UNDIAGNOSED, classify_image_pull_failure
 
 # De vorm die de twee uit elkaar drijft: InvalidImageName zet GEEN tekst die iets over de
 # image zegt, dus alleen het reden-woord maakt dit een "absent".

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.manager.project.notices import approval_notices, config_advice_warnings
 from opi.services import ServiceAdapter, ServiceValidationError
 from opi.services.approvals import ensure_approval_requests
@@ -19,6 +18,7 @@ from opi.services.component_values import (
     validate_value_for_storage,
 )
 from opi.services.component_values import decode as decode_component_values
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.registry import generate_missing_values, get_service
 from opi.services.services_enums import ServiceType
 

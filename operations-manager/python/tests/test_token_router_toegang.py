@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from authlib.jose import JsonWebKey, jwt
 from opi.api.user_token_auth import get_metadata_cache
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 

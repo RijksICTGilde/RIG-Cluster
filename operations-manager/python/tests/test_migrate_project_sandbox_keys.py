@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.core.project_schema import find_plaintext_secret_violations, validate_project_schema
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
 from opi.services.project_leden import hash_van
+from opi.services.project_schema import find_plaintext_secret_violations, validate_project_schema
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.age import (
     decrypt_age_block_to_bytes_sync,

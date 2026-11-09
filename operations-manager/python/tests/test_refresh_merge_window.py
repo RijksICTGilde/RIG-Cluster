@@ -38,9 +38,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.async_task_service import AsyncTaskService
 from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
 from opi.services.project_reconciliation_service import record_reconciliation
+from opi.services.tasks.async_task_service import AsyncTaskService
 
 REFRESH_PAYLOAD = {"project_name": "p1", "force_clone": False}
 

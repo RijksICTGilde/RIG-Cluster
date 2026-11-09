@@ -1124,7 +1124,7 @@ def build_backup_schedule_section(deployment_index: int) -> FormSection:
     ]
 
     def _has_backupable_services(yaml_data: dict[str, Any], idx: int = deployment_index) -> bool:
-        from opi.handlers.project_file_handler import create_project_file_handler
+        from opi.services.project_file_handler import create_project_file_handler
 
         deployments = yaml_data.get("deployments", [])
         if not isinstance(deployments, list) or idx >= len(deployments):

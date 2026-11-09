@@ -1,7 +1,7 @@
 """De condities waarmee een route zich aanmeldt voor een step-up (RC-332).
 
 Een route noemt er een; de regel zelf staat in
-:func:`opi.core.step_up.requires_production_step_up`. Apart van ``opi.core.step_up``
+:func:`opi.services.step_up.requires_production_step_up`. Apart van ``opi.services.step_up``
 omdat dit de projectstore leest, en die leunt via de formulierlaag terug op ``core``.
 """
 
@@ -10,10 +10,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from opi.core.auth_decorators import get_current_user
-from opi.core.project_environment import Omgeving, effective_environment
-from opi.core.step_up import StepUpKind, deployment_by_name, requires_production_step_up
 from opi.services.project_authorization import is_user_authorized_for_project
+from opi.services.project_environment import Omgeving, effective_environment
 from opi.services.project_store import get_project_store
+from opi.services.step_up import StepUpKind, deployment_by_name, requires_production_step_up
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -51,7 +51,7 @@ def deployment_environment_change(
     """De aanroep ZET of VERLAAGT de OTAP-markering van deze deployment.
 
     Een aanroep zonder markering laat de bestaande staan. Welke wijzigingen meetellen
-    staat in :func:`opi.core.step_up.production_marking_change`; een deployment die nog niet
+    staat in :func:`opi.services.step_up.production_marking_change`; een deployment die nog niet
     bestaat gaat daar als nieuw naar binnen, zonder voor-staat.
     """
     gevraagd = getattr(deployment_data, "environment", None)

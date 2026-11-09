@@ -17,6 +17,7 @@ template directory or the session is the problem itself.
 from __future__ import annotations
 
 import html
+from enum import StrEnum
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,44 @@ if TYPE_CHECKING:
     import logging
 
     from starlette.requests import Request
+
+
+class ErrorCategory(StrEnum):
+    """Programmatic categorization of a cluster error. Use ``message`` for the raw text.
+
+    Categories are intentionally broader than literal Kubernetes reasons (e.g.
+    ``ImagePull`` covers ``ImagePullBackOff``, ``ErrImagePull``, manifest-unknown
+    pulls, etc.) so app-level categories can be added later without breaking
+    consumers tied to specific K8s state names.
+    """
+
+    ImagePull = "ImagePull"
+    CrashLoop = "CrashLoop"
+    # The destination the caller named could not be used: it did not resolve, refused
+    # the connection, or rejected the credentials. Not a cluster state at all -- it is
+    # what makes "your input" separable from "our platform" on a failed restore, so a
+    # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
+    # the destination; a restore into the project's own service can never be this.
+    InvalidTarget = "InvalidTarget"
+    # What the caller sent cannot be acted on: a name that does not exist, a service that
+    # needs a project-level decision first, a value the schema rejects. Retrying it changes
+    # nothing, and that is the point of separating it out (gemeld door zad-cli, punt 26):
+    # without a category a client must treat every failure as unattributable, so a plain
+    # input mistake came out of the CLI as "could not be attributed" instead of "your call
+    # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
+    # destination the caller supplied.
+    InvalidInput = "InvalidInput"
+    # Het platform zelf struikelde: een database die niet antwoordt, een connector die
+    # afbreekt, een sjabloon dat niet rendert. Bewust apart van ``Unknown``, want dat zegt
+    # "niet toe te wijzen" terwijl dit juist wel is toegewezen -- aan ons. Voor de aanroeper
+    # is dat het verschil tussen "corrigeer je verzoek" en "wacht even en probeer opnieuw".
+    InternalError = "InternalError"
+    OutOfMemory = "OutOfMemory"
+    HealthCheck = "HealthCheck"
+    SyncFailed = "SyncFailed"
+    ComparisonError = "ComparisonError"
+    Unknown = "Unknown"
+
 
 #: What a 5xx says when the place that raised it had nothing of its own to report. Not
 #: "something went wrong" and nothing else: the sentence has to say what you can do about it.

@@ -15,9 +15,9 @@ from opi.services.catalog.base import (
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
+from opi.services.secrets import MetricsAuthSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import MetricsAuthSecret
 
 logger = logging.getLogger(__name__)
 

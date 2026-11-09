@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.connectors.subdomain import is_deployment_domain_approved
 from opi.core import config as opi_config
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 

@@ -86,7 +86,7 @@ foutregel bij die stap.
 
 **Een uitrol toont drie fases.** "Wijziging controleren en opslaan" (bij een refresh
 "Projectbestand controleren"), "Configuratie bijwerken" en "Uitrollen". De
-task worker opent de eerste (`first_phase` in `opi/core/task_rollout.py`), `process_project`
+task worker opent de eerste (`first_phase` in `opi/services/tasks/task_rollout.py`), `process_project`
 de tweede en de ArgoCD-wacht is de derde. Een stap die start terwijl een fase open is, valt
 eronder (`begin_phase` op de progress manager); de aanroepen zelf weten niets van fases. Een
 fase houdt zijn stappen, ook als hij klaar is: een fase die ze na afloop wegklapte liet de
@@ -98,7 +98,7 @@ stappen omsluiten: de pagina toont één niveau nesting, dus zo'n stap stond tus
 stappen in met een vinkje dat pas aan het eind kwam. Mislukt een verwerking zonder dat een
 eigen stap faalde, dan staat de reden bovenaan de pagina, via `fail_project`.
 
-**Alle stapteksten staan in `opi/core/progress_steps.py`.** Wie een stap toevoegt, zet zijn
+**Alle stapteksten staan in `opi/services/tasks/progress_steps.py`.** Wie een stap toevoegt, zet zijn
 tekst daar en geeft de constante mee; het variabele deel (een deployment, component of
 repository) gaat als `subject` mee, niet in de naam.
 `tests/test_progress_step_texts.py` scant `opi/` en faalt op een letterlijke staptekst

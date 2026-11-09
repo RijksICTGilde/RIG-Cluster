@@ -44,7 +44,6 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from opi.core.actor import scheduler_actor, set_actor
-from opi.core.async_task_service import AsyncTaskService, TaskType
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -56,6 +55,7 @@ from opi.services.backup_schedule_report import (
     record_schedule_check,
 )
 from opi.services.project_store import get_project_store
+from opi.services.tasks.async_task_service import AsyncTaskService, TaskType
 
 if TYPE_CHECKING:
     from opi.manager.backup.base import SnapshotInfo

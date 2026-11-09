@@ -12,7 +12,7 @@ volgende GET base64-leesbaar op de schijf van de browser staan. Zelfde keuze als
 ``router_otp``, dat ook een vingerafdruk in de sessie zet en niet het geheim.
 
 Elke handeling hier vraagt een verse step-up (RC-387), met het venster uit
-``opi.core.step_up``. De dialoog neemt de plaats van het formulier in, dus de velden van de
+``opi.services.step_up``. De dialoog neemt de plaats van het formulier in, dus de velden van de
 handeling gaan mee in de herhaling: ``velden`` op de decorator somt ze per route op.
 """
 
@@ -30,8 +30,6 @@ from opi.core.auth_decorators import get_current_user, requires_sso, requires_st
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.config import settings
-from opi.core.members import MemberKind
-from opi.core.step_up import StepUpAction
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
@@ -43,6 +41,8 @@ from opi.services.api_token_service import (
     verwijder_service_account,
     voeg_service_account_toe,
 )
+from opi.services.members import MemberKind
+from opi.services.step_up import StepUpAction
 from opi.web.lotc_switch import project_tab_url
 
 logger = logging.getLogger(__name__)

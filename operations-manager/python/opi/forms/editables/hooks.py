@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.subdomain import ensure_domain_requests
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.processor import EditableFormProcessor
@@ -20,6 +19,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
     set_domain_setting,
 )
+from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class ResolveAttachmentsHook:
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         from opi.forms.editables.generators import AttachmentStagingResolveGenerator
-        from opi.handlers.project_file_handler import merge_staged_attachments
+        from opi.services.project_file_handler import merge_staged_attachments
 
         staged = context.get("staged_attachments") or {}
         if not staged:
@@ -143,7 +143,7 @@ class PreserveAttachmentContentHook:
     order: int = 1
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-        from opi.handlers.project_file_handler import find_attachment_data_list
+        from opi.services.project_file_handler import find_attachment_data_list
 
         original = context.get("original_attachment_content") or {}
         data = find_attachment_data_list(yaml_data.get("services")) if original else None

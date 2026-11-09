@@ -44,7 +44,7 @@ def _attachments_summary(data: dict[str, Any]) -> list[tuple[str, str]]:
     What a user does on this step is upload files, so that is what a summary shows. Not the
     services list this section happens to carry along to know which services are on.
     """
-    from opi.handlers.project_file_handler import extract_attachment_catalog
+    from opi.services.project_file_handler import extract_attachment_catalog
 
     catalog = extract_attachment_catalog(data)
     if not catalog:
@@ -231,7 +231,7 @@ class AttachmentsService(Service):
         with the walkers they lean on, in ``project_file_handler``.
         """
         # Lazy: that module reads this package through the services list.
-        from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
+        from opi.services.project_file_handler import validate_attachment_couplings, validate_attachment_references
 
         return [*validate_attachment_references(project_data), *validate_attachment_couplings(project_data)]
 
@@ -240,7 +240,7 @@ class AttachmentsService(Service):
         # The Bijlagen block is this service's, including the question whether it shows
         # at all. Being asked at all means the project uses the service, so there is no
         # condition left here.
-        from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+        from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 
         usage = extract_attachment_usage(ctx.project_data)
         attachments = [

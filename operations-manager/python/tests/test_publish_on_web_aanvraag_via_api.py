@@ -32,11 +32,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from opi.api.v2.models import ApprovalNoticeResponse, ApprovalNoticeStatus
-from opi.connectors.subdomain import get_domains_config
 from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.services.approvals import collect_approval_items, collect_deployment_approval_notices
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES
@@ -78,7 +78,7 @@ PUBLISH_ON_WEB = ServiceType.PUBLISH_ON_WEB.value
 def _make_manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

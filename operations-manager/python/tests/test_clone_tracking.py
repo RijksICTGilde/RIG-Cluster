@@ -14,8 +14,8 @@ from io import StringIO
 from unittest.mock import MagicMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.revision_manager import RevisionManager
+from opi.services.project_file_handler import ProjectFileHandler
 from ruamel.yaml import YAML
 
 # ============================================================================

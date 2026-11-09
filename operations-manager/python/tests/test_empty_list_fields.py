@@ -22,10 +22,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import SCHEMA_PATH
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.fields.components import COMPONENT_COMMAND
 from opi.forms.visualizers.flows import FLOW_REGISTRY
+from opi.services.project_schema import SCHEMA_PATH
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer

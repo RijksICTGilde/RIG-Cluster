@@ -33,12 +33,12 @@ from opi.core.authz.engine import (
     all_rules,
     rule_for,
 )
-from opi.core.members import MemberKind
-from opi.core.step_up import StepUpAction
 from opi.middleware.audit import AuditMiddleware, _schrijvers
 from opi.server import app
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van, vervaldatum
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
+from opi.services.step_up import StepUpAction
 from opi.utils.client_ip import PEER_SCOPE_KEY
 from opi.web.authz import enforce_route_action
 from starlette.requests import Request

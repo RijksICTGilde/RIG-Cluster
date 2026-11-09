@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 import yaml
-from opi.core.async_task_service import TaskType
+from opi.services.tasks.async_task_service import TaskType
 
 PYTHON_ROOT = Path(__file__).resolve().parent.parent
 MAP = PYTHON_ROOT / "tests" / "regression" / "actions.yaml"

@@ -21,12 +21,12 @@ from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.keycloak.account_link import realm_links_on_email
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
+from opi.services.project_utils import apply_resource_limits
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
-from opi.utils.project_utils import apply_resource_limits
 from opi.utils.url_paths import sanitize_path_value
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, load_yaml_round_trip
 

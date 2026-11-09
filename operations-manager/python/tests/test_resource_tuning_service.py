@@ -242,8 +242,8 @@ class TestGrowthCeiling:
         The override starts with the margin intact (request 64Mi under the limit), so
         the only thing that could produce a change here is the refused bump itself.
         """
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.resource_tuning.config import resource_tuning_config
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.resource_tuning_service import describe_growth_ceiling_block
 
         factor = resource_tuning_config().max_growth_factor

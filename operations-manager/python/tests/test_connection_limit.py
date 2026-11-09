@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, patch
 import asyncpg
 import pytest
 from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, PostgresValidationError
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.visualizers.bridge import editable_to_form_field
 from opi.forms.visualizers.providers import ConnectionLimitOptionsProvider
 from opi.manager.database_manager import DatabaseManager
@@ -30,6 +29,7 @@ from opi.services.catalog.postgresql_database.visualizers import (
     CONNECTION_LIMIT_FIELD,
     DEPLOYMENT_CONNECTION_LIMIT_FIELD,
 )
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import get_service
 from opi.services.services import deployment_index, service_entry_name
 from opi.services.services_enums import ServiceType

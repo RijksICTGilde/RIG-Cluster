@@ -14,8 +14,8 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
+from opi.services.project_schema import ProjectIntegrityError
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import ListSelectable

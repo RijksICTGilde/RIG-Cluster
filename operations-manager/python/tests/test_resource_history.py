@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.resource_tuning_service import (
     get_project_data,
     tune_deployment_resources,

@@ -33,7 +33,7 @@ LEZER = re.compile(r"""\.users\b|\[["']users["']\]|\.get\(\s*["']users["']""")
 BEKENDE_LEZERS: dict[str, str] = {
     "api/principal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
     "core/authz/actions.py": "de naam van de action platform.users, geen ledenlijst",
-    "core/members.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
+    "services/members.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
     "bootstrap/keycloak_setup.py": "de users van een Keycloak-sjabloon, niet van een project",
     "forms/i18n.py": "het label van de sectie",
     "forms/models/project.py": "de ledenlijst als formulierveld",
@@ -51,7 +51,7 @@ BEKENDE_LEZERS: dict[str, str] = {
     "services/user_admin_service.py": "de ORM-tabel users, niet de ledenlijst",
     "services/zad_map/project.py": "the team on the map, service accounts included",
     "services/user_otp_service.py": "de ORM-tabel users; OTP hangt aan een mens, niet aan een project",
-    "utils/project_utils.py": "schrijft de ledenlijst bij het aanmaken",
+    "services/project_utils.py": "schrijft de ledenlijst bij het aanmaken",
     "web/lotc_fixtures.py": "voorbeelddata voor de componentengalerij",
     "web/lotc_switch.py": "de ledenlijst op het scherm",
 }

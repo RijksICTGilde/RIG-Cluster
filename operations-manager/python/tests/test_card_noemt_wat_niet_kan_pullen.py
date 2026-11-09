@@ -16,9 +16,9 @@ hangende pods zijn in plaats van een schone nul:
 from __future__ import annotations
 
 from opi.core.templates_lotc import templates_lotc as templates
-from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from opi.services.deployment_diagnostics import ComponentImagePullFailure
 from opi.services.deployment_state import collect_deployment_state
+from opi.services.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 
 TEMPLATE = "bg/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"

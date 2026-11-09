@@ -26,7 +26,6 @@ import pytest
 from opi.connectors.keycloak import PLATFORM_IDP_ALIAS, role_gate_flow_alias
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.catalog.keycloak.templates import (
@@ -35,6 +34,7 @@ from opi.services.catalog.keycloak.templates import (
     SSO_SUPPORT_TEMPLATE,
 )
 from opi.services.project import Project
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 from opi.utils.totp import totp_now
 from tests.integration.keycloak_image import (
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     import httpx
     from opi.connectors.keycloak import KeycloakConnector
-    from opi.utils.secrets import BaseSecret
+    from opi.services.secrets import BaseSecret
 
     class HarnessFactory(Protocol):
         def __call__(

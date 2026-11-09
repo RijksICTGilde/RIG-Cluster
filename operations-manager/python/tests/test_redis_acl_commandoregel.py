@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.manager.redis_manager import ACL_COMMAND_RULES, RedisManager
-from opi.utils.secrets import RedisSecret
+from opi.services.secrets import RedisSecret
 
 ADMIN_PASSWORD = "admin1234"
 

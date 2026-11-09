@@ -24,7 +24,7 @@ from keycloak.exceptions import KeycloakGetError
 from opi.connectors.keycloak import KeycloakConnector
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.project import Project
-from opi.utils.secrets import KeycloakSecret
+from opi.services.secrets import KeycloakSecret
 
 
 class TestRealmExists:

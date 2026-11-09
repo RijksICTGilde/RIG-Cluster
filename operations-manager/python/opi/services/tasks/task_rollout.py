@@ -17,7 +17,7 @@ refuse ``rollout=false`` with an explanation instead of ignoring it.
 
 from typing import Any
 
-from opi.core.progress_steps import PHASE_CHECK, PHASE_CHECK_AND_SAVE, SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
+from opi.services.tasks.progress_steps import PHASE_CHECK, PHASE_CHECK_AND_SAVE, SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
 
 PAYLOAD_KEY = "rollout"
 

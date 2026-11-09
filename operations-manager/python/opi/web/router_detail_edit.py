@@ -19,9 +19,6 @@ from fastapi.responses import HTMLResponse
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
-from opi.core.project_environment import environment_markings, log_production_downgrades
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
@@ -56,12 +53,20 @@ from opi.forms.wizard.session import (
     load_modal_state_for,
     save_modal_state_by_token,
 )
-from opi.handlers.project_file_handler import extract_attachment_catalog
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project import Project
+from opi.services.project_environment import environment_markings, log_production_downgrades
+from opi.services.project_file_handler import extract_attachment_catalog
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
+from opi.services.step_up import (
+    has_fresh_step_up,
+    log_step_up_refusal,
+    production_marking_change,
+    save_requires_step_up,
+)
 from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import (
@@ -396,7 +401,7 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
     """
     import copy
 
-    from opi.handlers.project_file_handler import find_attachment_data_list
+    from opi.services.project_file_handler import find_attachment_data_list
 
     data = copy.deepcopy(project_data)
     for att in find_attachment_data_list(data.get("services")) or []:
@@ -1800,9 +1805,9 @@ async def _handle_backup_restore_submit(
     state,
 ) -> HTMLResponse:
     """Handle backup/restore wizard submission via the async task queue."""
-    from opi.core.async_task_service import TaskType
     from opi.core.config import settings
     from opi.core.task_helpers import get_task_service
+    from opi.services.tasks.async_task_service import TaskType
 
     merged_data = state.get_merged_data()
     task_service = get_task_service(request)
@@ -1965,8 +1970,8 @@ async def _build_backup_restore_context_async(
     """
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
-    from opi.handlers.project_file_handler import create_project_file_handler
     from opi.services import ServiceAdapter
+    from opi.services.project_file_handler import create_project_file_handler
 
     current_cluster = settings.CLUSTER_MANAGER
     project_file_handler = create_project_file_handler()

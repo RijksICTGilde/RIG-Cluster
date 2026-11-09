@@ -553,7 +553,7 @@ class SubdomainValidator:
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []
-        from opi.connectors.subdomain import validate_subdomain
+        from opi.services.catalog.publish_on_web.subdomain import validate_subdomain
 
         is_valid, error_msg = validate_subdomain(str(value))
         return [error_msg] if not is_valid and error_msg else []
@@ -567,7 +567,7 @@ class BaseDomainValidator:
             return []
         if str(value) == "__custom__":
             return []  # Sentinel; actual domain validated via CustomDomainValidator
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error_msg = validate_base_domain(str(value))
         return [error_msg] if not is_valid and error_msg else []
@@ -579,7 +579,7 @@ class CustomDomainValidator:
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []
-        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+        from opi.services.catalog.publish_on_web.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
 
         domain = str(value).strip().lower()
         if not DOMAIN_PATTERN.match(domain):

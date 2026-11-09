@@ -42,14 +42,14 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
     save_wizard_state,
 )
-from opi.handlers.project_file_handler import (
+from opi.services import upload_staging
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
+from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
+from opi.services.project_file_handler import (
     attachment_is_referenced,
     extract_attachment_catalog,
     find_attachment_data_list,
 )
-from opi.services import upload_staging
-from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
-from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 
 logger = logging.getLogger(__name__)

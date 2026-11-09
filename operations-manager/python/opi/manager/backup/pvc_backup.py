@@ -217,7 +217,7 @@ class PVCBackupManager(BaseBackupManager):
         Returns:
             List of BackupResult for each PVC
         """
-        from opi.handlers.project_file_handler import create_project_file_handler
+        from opi.services.project_file_handler import create_project_file_handler
         from opi.utils.naming import generate_pvc_name, generate_unique_name
 
         # Ensure backup bucket exists before starting
@@ -248,7 +248,7 @@ class PVCBackupManager(BaseBackupManager):
                     continue
 
                 # Get storage definitions from the BASE component
-                from opi.handlers.project_file_handler import extract_storage_from_component_services
+                from opi.services.project_file_handler import extract_storage_from_component_services
 
                 base_component = base_components.get(component_name, {})
                 storages = extract_storage_from_component_services(base_component)

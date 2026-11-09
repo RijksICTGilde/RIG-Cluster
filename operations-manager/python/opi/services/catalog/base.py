@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from pydantic import ValidationError
 
-from opi.core.project_schema import parse_schema_version
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
+from opi.services.project_schema import parse_schema_version
 from opi.services.services import ServiceDefinition, service_entry_name
 
 if TYPE_CHECKING:
@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
     from opi.services.catalog.config_settings import ConfigSetting
+    from opi.services.secrets import BaseSecret
     from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
-    from opi.utils.secrets import BaseSecret
 
 
 class ConfigLayer(Enum):

@@ -36,8 +36,8 @@ from opi.connectors.keycloak import fetch_jwks, fetch_oidc_metadata
 from opi.core.actor import set_actor, user_actor
 from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.config import settings
-from opi.core.step_up import StepUpAction, step_up_fresh
 from opi.services.api_step_up_service import ApiStepUpService, sso_session_credential
+from opi.services.step_up import StepUpAction, step_up_fresh
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)

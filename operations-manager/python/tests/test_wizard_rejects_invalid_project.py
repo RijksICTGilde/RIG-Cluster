@@ -24,8 +24,8 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError
 from opi.forms.visualizers.flows import get_flow
+from opi.services.project_schema import ProjectSchemaError
 from opi.web.router_wizard import (
     _locate_schema_error,
     _save_existing_project,

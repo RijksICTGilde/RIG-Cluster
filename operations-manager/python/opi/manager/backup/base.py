@@ -23,9 +23,9 @@ from opi.core.backup_constants import (
 )
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
-from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
+from opi.services.project_key_secret import SOPS_SECRET_NAME
 from opi.utils.naming import generate_backup_prefix, generate_project_service_account_name
 from opi.utils.yaml_util import dump_yaml_for_go_unfolded
 

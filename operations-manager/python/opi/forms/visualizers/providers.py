@@ -14,7 +14,6 @@ from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
-from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
@@ -36,6 +35,7 @@ from opi.services.catalog.shared.noncurrent_versions import (
 )
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.project import Project
+from opi.services.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.services.project_roles import actor_may_set
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
@@ -935,8 +935,8 @@ class BackupResourceTypesOptionsProvider:
         self._yaml_path = yaml_path or ""
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import create_project_file_handler
         from opi.services import ServiceAdapter
+        from opi.services.project_file_handler import create_project_file_handler
 
         all_labels = ServiceAdapter.get_backupable_labels()
         deployment_name = self._resolve_deployment_name()
@@ -1142,7 +1142,7 @@ class AttachmentOptionsProvider:
         self._yaml_data = yaml_data or {}
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import extract_attachment_catalog
+        from opi.services.project_file_handler import extract_attachment_catalog
 
         catalog = extract_attachment_catalog(self._yaml_data)
         if not catalog:
@@ -1203,7 +1203,7 @@ def publish_tls_mode_options(yaml_data: dict[str, Any] | None) -> list[dict[str,
     """
     # Lokaal, zoals bij AttachmentOptionsProvider hieronder: project_file_handler importeert
     # deze module langs de vormenlaag terug.
-    from opi.handlers.project_file_handler import extract_attachment_catalog
+    from opi.services.project_file_handler import extract_attachment_catalog
 
     kan_aangeleverd = not yaml_data or bool(extract_attachment_catalog(yaml_data))
     return [
@@ -1257,7 +1257,7 @@ class PublishTlsOverrideOptionsProvider:
     def _inherited_label(self) -> str:
         """What the component (or the project default) says, as an option label."""
         from opi.forms.editables.path import get_value
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         # ".../components[0]/services/publish-on-web/config/tls" -> the row's component.
         row, _, _ = self._yaml_path.partition("/services/")
@@ -2176,8 +2176,8 @@ class InviteApplicationUrlOptionsProvider:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.publish_on_web.urls import public_urls_for_project
+        from opi.services.project_file_handler import ProjectFileHandler
 
         options: list[dict[str, Any]] = [{"value": "", "label": "Geen knop tonen"}]
         try:

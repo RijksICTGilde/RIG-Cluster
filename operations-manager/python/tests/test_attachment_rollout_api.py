@@ -19,9 +19,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.core.async_task_service import TaskType
-from opi.core.task_rollout import SKIPPED_REASON
 from opi.services.catalog.attachments.task import handle_configure_attachment
+from opi.services.tasks.async_task_service import TaskType
+from opi.services.tasks.task_rollout import SKIPPED_REASON
 
 PROJECT_URL = "/api/v2/projects/demo/services/attachments/attachment"
 COMPONENT_URL = "/api/v2/projects/demo/services/attachments/component/backend/attachment"

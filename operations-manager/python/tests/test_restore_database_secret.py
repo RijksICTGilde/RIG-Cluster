@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.manager.backup.restore import _restore_database_with_versioning
 from opi.manager.database_manager import DatabaseManager
-from opi.utils.secrets import DatabaseSecret
+from opi.services.secrets import DatabaseSecret
 
 PROJECT = "e2e62-glv"
 DEPLOYMENT = "productie"

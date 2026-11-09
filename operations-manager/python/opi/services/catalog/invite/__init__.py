@@ -62,7 +62,7 @@ INVITE_KEY_MIN_LENGTH = 16
 
 def _invite_keys(project_data: dict[str, Any]) -> set[str]:
     """The keys of the active invitations, through the one reader of that field."""
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
     invites = ProjectFileHandler().get_all_active_invites(project_data)
     return {str(invite["key"]) for invite in invites if isinstance(invite, dict) and invite.get("key")}
@@ -253,8 +253,8 @@ class InviteService(Service):
         Read through the handler, the same route the invite path takes: besides the service
         location it also knows the old ``invites:`` section and yields one spelling.
         """
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.keycloak.account_link import realm_account_link_mode
+        from opi.services.project_file_handler import ProjectFileHandler
 
         mode = realm_account_link_mode(project_data)
         if mode is None:
@@ -325,7 +325,7 @@ class InviteService(Service):
         # the same rule as the project key, read from the register.
         if not ctx.can(Action.PROJECT_KEY_READ):
             return []
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         invites = handler.get_all_active_invites(ctx.project_data)

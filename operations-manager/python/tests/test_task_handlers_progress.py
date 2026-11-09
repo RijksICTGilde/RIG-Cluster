@@ -8,7 +8,7 @@ process_project_from_git where applicable.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
+from opi.services.tasks import progress_steps
 
 PM_PATH = "opi.manager.project_manager.ProjectManager"
 CREATE_PM_PATH = "opi.manager.project_manager.create_project_manager"
@@ -608,7 +608,7 @@ class TestHandleUpsertDeployment:
                 return_value="dev",
             ),
             patch(
-                "opi.utils.project_utils.normalize_container_image",
+                "opi.services.project_utils.normalize_container_image",
                 return_value=("web:v1", None),
             ),
             patch(PM_PATH, return_value=mock_pm),
@@ -651,7 +651,7 @@ class TestHandleUpsertDeployment:
                 return_value="dev",
             ),
             patch(
-                "opi.utils.project_utils.normalize_container_image",
+                "opi.services.project_utils.normalize_container_image",
                 return_value=("web:v1", None),
             ),
             patch(PM_PATH, return_value=mock_pm),

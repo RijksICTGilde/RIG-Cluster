@@ -24,7 +24,8 @@ import re
 from typing import cast
 
 import pytest
-from opi.core.project_schema import (
+from opi.runtime.periodic.git_monitor import file_change_handler
+from opi.services.project_schema import (
     LEGACY_PATCH_DIR,
     SCHEMA_PATH,
     ProjectSchemaError,
@@ -37,7 +38,6 @@ from opi.core.project_schema import (
     validate_project_schema,
     version_key,
 )
-from opi.runtime.periodic.git_monitor import file_change_handler
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,

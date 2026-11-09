@@ -30,12 +30,12 @@ from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.secrets import reachable_leaf_keys, redact_unreachable_secrets
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
-from opi.handlers.project_file_handler import (
+from opi.services import upload_staging
+from opi.services.project_file_handler import (
     extract_attachment_catalog,
     extract_component_attachment_uses,
     merge_staged_attachments,
 )
-from opi.services import upload_staging
 from opi.utils.age import decrypt_age_block_to_bytes_sync
 from opi.web.router_wizard import _split_data_across_sections
 from opi.web.router_wizard_attachments import (

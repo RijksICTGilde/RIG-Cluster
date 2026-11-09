@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
-from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.services.project_file_handler import extract_attachment_catalog
 from opi.web.authz import authorized_project
 from opi.web.task_progress import create_task_and_render_progress
 

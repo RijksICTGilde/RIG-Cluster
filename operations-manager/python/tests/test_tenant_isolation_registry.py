@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
 from opi.connectors.skopeo import SkopeoConnector
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.ownership import (
@@ -25,6 +24,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.project_schema import ProjectIntegrityError
 
 PROJECT_A = "project-a"
 PROJECT_B = "project-b"

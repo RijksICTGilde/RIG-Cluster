@@ -10,11 +10,11 @@ import logging
 import time
 from typing import Any
 
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import is_reserved_project_name
-from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
-from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
+from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     from opi.manager.project_manager import ProjectManager
     from opi.runtime.tasks.simple_background import _monitor_argocd_and_deployment
     from opi.services.project_store import ConflictError, get_project_store
+    from opi.services.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
     from opi.utils.project_names import validate_project_name
-    from opi.utils.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
 
     start_time = time.time()
     project_name: str = payload["project_name"]
@@ -333,9 +333,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     """Handle async upsert deployment task."""
     from opi.manager.project_manager import ProjectManager
+    from opi.services.project_utils import normalize_container_image
     from opi.utils.naming import sanitize_kubernetes_name
     from opi.utils.project_names import validate_project_name
-    from opi.utils.project_utils import normalize_container_image
 
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]

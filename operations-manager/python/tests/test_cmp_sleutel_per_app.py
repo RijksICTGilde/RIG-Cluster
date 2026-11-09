@@ -469,7 +469,7 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_niet_in_een_platformnamespace(self) -> None:
-        from opi.handlers.project_key_secret import ProjectKeySecretHandler
+        from opi.services.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
         handler = ProjectKeySecretHandler(kubectl)
@@ -481,7 +481,7 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_wel_in_een_projectnamespace(self) -> None:
-        from opi.handlers.project_key_secret import ProjectKeySecretHandler
+        from opi.services.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
         handler = ProjectKeySecretHandler(kubectl)

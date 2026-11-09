@@ -222,11 +222,11 @@ leggen is; ze staan los zodat ze apart bij te draaien zijn.
 
 | Bestand | Rol |
 |---|---|
-| `opi/handlers/project_file_handler.py` | `apply_user_resource_intent` (het ene schrijfpad), `get_user_resource_intent`, `_prune_resource_history` |
+| `opi/services/project_file_handler.py` | `apply_user_resource_intent` (het ene schrijfpad), `get_user_resource_intent`, `_prune_resource_history` |
 | `opi/api/validation.py` | `UPDATE_COMPONENT_VALIDATORS` toetst de twee limieten tegen de platformcap, met dezelfde veldregels als de aanmaakweg |
 | `opi/forms/wizard/save.py` | De portal-bewerking haakt hierin na de merge, met de vorige waarden voor de vergelijking |
 | `opi/manager/project_manager.py` | `update_component` schrijft via hetzelfde pad |
-| `opi/utils/project_utils.py` | `apply_resource_limits` (de lage schrijver van de geneste vorm); `build_component_config` schrijft daar rechtstreeks in en legt bij aanmaak geen wens vast |
+| `opi/services/project_utils.py` | `apply_resource_limits` (de lage schrijver van de geneste vorm); `build_component_config` schrijft daar rechtstreeks in en legt bij aanmaak geen wens vast |
 | `opi/services/resource_tuning_service.py` | `_live_intent_fields`, `_honour_user_intent`, de vervalregel |
 | `tests/test_gebruikerswens_resources.py` | De keten van bewerking tot manifest, plus de grendel op het ene schrijfpad |
 

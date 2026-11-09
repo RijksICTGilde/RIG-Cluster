@@ -11,9 +11,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
 from opi.manager.project_manager import DATABASE_CONNECT_TIMEOUT_SECONDS, ProjectManager
 from opi.services.postgres_scope import project_uses_dedicated_postgres
+from opi.services.tasks import progress_steps
 from opi.utils.connect_retry import retry_on_connect_error
 from tests import project_manager_sources
 

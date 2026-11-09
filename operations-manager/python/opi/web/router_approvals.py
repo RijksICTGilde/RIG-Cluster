@@ -20,10 +20,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.connectors.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
 from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
@@ -39,6 +37,8 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.services.approvals import collect_approval_items
+from opi.services.catalog.publish_on_web.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType

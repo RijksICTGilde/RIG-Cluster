@@ -25,15 +25,15 @@ from opi.core.cluster_config import (
     supports_vpa,
 )
 from opi.core.config import settings
-from opi.handlers.project_file_handler import (
+from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.services.catalog.resource_tuning.config import resource_tuning_config
+from opi.services.project import Project
+from opi.services.project_file_handler import (
     ProjectFileHandler,
     ResourceFloor,
     UserResourceIntent,
     is_oom_disable_reason,
 )
-from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.catalog.resource_tuning.config import resource_tuning_config
-from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,

@@ -21,7 +21,7 @@ from opi.api.otp_step_up import (
     verify_api_step_up,
     verify_step_up_code,
 )
-from opi.core.step_up import StepUpAction
+from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 PROJECT = "demo"

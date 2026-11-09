@@ -19,7 +19,7 @@ Two properties are measured:
 
 from __future__ import annotations
 
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     USAGE_CERTIFICATE,
     USAGE_COUPLING,
     AttachmentUsageSite,

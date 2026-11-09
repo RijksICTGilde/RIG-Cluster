@@ -11,7 +11,7 @@ Two representations of the same table coexist during phased ORM adoption:
   migration that first created the table.
 Queries run through the SQLAlchemy ORM (:class:`SubdomainConnector`) on the shared async
 engine in ``opi.core.db`` -- separate from the raw asyncpg pools the rest of the app
-uses. Shared subdomain validation helpers stay in ``opi/connectors/subdomain.py`` and
+uses. Shared subdomain validation helpers stay in ``opi/services/catalog/publish_on_web/subdomain.py`` and
 are imported here.
 """
 
@@ -25,7 +25,8 @@ from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint, delet
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Mapped, mapped_column
 
-from opi.connectors.subdomain import (
+from opi.core.db import Base, session_scope
+from opi.services.catalog.publish_on_web.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
     BaseDomainValidationError,
     SubdomainError,
@@ -34,7 +35,6 @@ from opi.connectors.subdomain import (
     validate_base_domain,
     validate_subdomain_for_domain,
 )
-from opi.core.db import Base, session_scope
 
 logger = logging.getLogger(__name__)
 # Audit logger kept under the same name as before the move, so log routing is unchanged.

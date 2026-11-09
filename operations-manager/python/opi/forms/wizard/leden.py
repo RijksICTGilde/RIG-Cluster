@@ -14,8 +14,8 @@ import copy
 import logging
 from typing import Any
 
-from opi.core.members import MemberKind, member_list_changed
 from opi.services.api_token_service import TokenAanvraagGeweigerd, eis_een_admin, schoon_rollen
+from opi.services.members import MemberKind, member_list_changed
 
 logger = logging.getLogger(__name__)
 

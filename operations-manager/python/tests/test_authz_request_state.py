@@ -16,7 +16,7 @@ from opi.api.endpoint_util import handhaaf
 from opi.api.principal import AccessDenied
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause, Decision, Resource, record_decision
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van, vervaldatum
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.authz import authorize

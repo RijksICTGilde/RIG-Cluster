@@ -9,8 +9,8 @@ They have NO dependency on FastAPI Request objects.
 import logging
 from typing import Any
 
-from opi.core import progress_steps as steps
-from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
 logger = logging.getLogger(__name__)
 

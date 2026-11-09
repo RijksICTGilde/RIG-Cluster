@@ -16,8 +16,6 @@ from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import create_project_file_handler
-from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.manager.backup import (
     BackupResult,
     BucketBackupResult,
@@ -29,9 +27,11 @@ from opi.manager.backup import (
 from opi.manager.backup.base import derive_backup_password
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
+from opi.services.project_file_handler import create_project_file_handler
+from opi.services.project_key_secret import SOPS_SECRET_NAME
 from opi.services.project_store import get_project_store
+from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from opi.utils.naming import generate_backup_run_id
-from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 
 logger = logging.getLogger(__name__)
 

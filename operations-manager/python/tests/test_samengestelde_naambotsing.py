@@ -26,12 +26,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.minio_manager import MinioManager
 from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.manager.project_validation import validate_project_structure
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
 
@@ -164,7 +164,7 @@ class TestSchrijfguard:
 
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

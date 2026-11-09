@@ -25,12 +25,12 @@ from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import reference_for, with_reference
-from opi.core.step_up import has_fresh_step_up, step_up_fresh
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project import Project
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
+from opi.services.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
 

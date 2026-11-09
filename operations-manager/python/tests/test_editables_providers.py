@@ -6,7 +6,6 @@ import pytest
 from opi.core.actor import ACTOR_UNKNOWN, actor, set_actor, user_actor
 from opi.core.cluster_config import get_supported_domain_names
 from opi.core.config import settings
-from opi.core.project_schema import validate_project_schema
 from opi.forms.visualizers.providers import (
     CUSTOM_DOMAIN_SENTINEL,
     BaseDomainOptionsProvider,
@@ -22,6 +21,7 @@ from opi.forms.visualizers.providers import (
     StorageTypeOptionsProvider,
     UserRoleOptionsProvider,
 )
+from opi.services.project_schema import validate_project_schema
 
 
 class TestStorageTypeOptionsProvider:

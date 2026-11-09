@@ -23,9 +23,9 @@ from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
 from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
+from opi.services.secrets import DatabaseSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
     from pydantic import BaseModel

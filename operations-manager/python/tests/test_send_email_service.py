@@ -69,6 +69,7 @@ from opi.services.catalog.send_email import (
 )
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
+from opi.services.secrets import SendEmailSecret
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     MAIL_LOCAL_PART_MAX_LENGTH,
@@ -79,7 +80,6 @@ from opi.utils.naming import (
     generate_deployment_mail_sender_address,
     generate_mail_account_name,
 )
-from opi.utils.secrets import SendEmailSecret
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -164,7 +164,7 @@ def _mail_manager(
     De echte handler, want "gebruikt deze deployment de dienst" is juist de vraag die hier
     geen tweede, simpeler antwoord mag krijgen.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
     async def get_name() -> str:
         return project_name
@@ -1067,7 +1067,7 @@ class TestTheSecretHandedToTheApplication:
         assert names == {"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"}
 
     def test_the_secret_renders_those_keys(self) -> None:
-        from opi.utils.secrets import SendEmailSecret
+        from opi.services.secrets import SendEmailSecret
 
         data = SendEmailSecret(
             host="rig-mail-relay.rig-ron.svc.cluster.local",

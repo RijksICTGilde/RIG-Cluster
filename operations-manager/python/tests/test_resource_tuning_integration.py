@@ -8,7 +8,7 @@ fields survive a full read-modify-write cycle.
 
 from io import StringIO
 
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from ruamel.yaml import YAML
 
 # ---------------------------------------------------------------------------

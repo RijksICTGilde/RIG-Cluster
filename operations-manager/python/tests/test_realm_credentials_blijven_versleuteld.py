@@ -4,7 +4,7 @@
 realm-adminwachtwoord, de platte TOTP-seed en de otpauth-URI. Geen enkele aanroeper las
 die waarden, terwijl ze al AGE-versleuteld in het projectbestand stonden. Een return-waarde
 als deze is wel precies wat later in een taakresultaat belandt, en dat resultaat wordt bij
-voltooien niet geredigeerd (``opi/core/async_task_service.py``).
+voltooien niet geredigeerd (``opi/services/tasks/async_task_service.py``).
 
 Wat hier gemeten wordt: de functie geeft niets terug, het projectbestand draagt de
 credentials alleen versleuteld, en geen taakhandler zet zo'n waarde in zijn resultaat.

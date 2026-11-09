@@ -13,7 +13,6 @@ from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
 from opi.core.config import BUILD_DATE, VERSION, settings
-from opi.core.project_environment import environment_label
 from opi.core.template_helpers import (
     CATALOG_DIR,
     cluster_tag,
@@ -31,6 +30,7 @@ from opi.middleware.security_headers import csp_nonce
 from opi.services.catalog.aliases.overview import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
+from opi.services.project_environment import environment_label
 from opi.services.registry import deployment_action_key
 from opi.web.authz import template_can as _template_can
 
@@ -144,7 +144,7 @@ templates_lotc.env.filters["korte_digest"] = shorten_image_digest
 templates_lotc.env.globals["alias_variabelen"] = alias_variabelen
 # The OTAP marking as a label: per deployment its own, at project level the highest of its
 # deployments. As a GLOBAL and not per page in the context, so the default and the derivation
-# sit in ONE place (opi/core/project_environment.py).
+# sit in ONE place (opi/services/project_environment.py).
 templates_lotc.env.globals["environment_label"] = environment_label
 
 templates_lotc.env.add_extension("jinja2.ext.i18n")

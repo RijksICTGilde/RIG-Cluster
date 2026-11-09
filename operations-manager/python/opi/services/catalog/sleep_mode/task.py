@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.core import progress_steps as steps
+from opi.services.tasks import progress_steps as steps
 
 logger = logging.getLogger(__name__)
 

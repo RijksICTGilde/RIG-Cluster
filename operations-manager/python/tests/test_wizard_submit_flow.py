@@ -22,13 +22,13 @@ flow explicit and traceable.
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
 
 def _build_wizard_merged_data() -> dict:

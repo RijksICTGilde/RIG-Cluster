@@ -9,9 +9,9 @@ from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.db import session_scope
-from opi.core.step_up import STEP_UP_WINDOW
 from opi.services.persistence.api_step_ups import ApiStepUp
 from opi.services.project_leden import hash_van
+from opi.services.step_up import STEP_UP_WINDOW
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ certificate live under the service that owns them, at the layer where the value 
               base-domain: rijksapp.nl
 
 This module is the single authority on that location -- the same role
-``connectors/subdomain.py`` plays for the project-level ``domains`` block. The v2.6 -> v2.7
+``services/catalog/publish_on_web/subdomain.py`` plays for the project-level ``domains`` block. The v2.6 -> v2.7
 migration relocates through :func:`relocate_domain_settings` and the runtime reads through
 :func:`get_domain_setting`, so the migration and the running code can never disagree about
 where a value is.
@@ -346,8 +346,8 @@ def custom_domain_certificate_note(cluster: str, base_domain: str | None) -> str
     The sentence lives with publish-on-web because publish-on-web owns both halves of it:
     the ``base-domain`` that causes it and the ``tls`` mode that resolves it.
     """
-    from opi.connectors.subdomain import get_supported_base_domains
     from opi.core.cluster_config import supports_custom_domain_certificates
+    from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
     if not base_domain:
         return None

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ValidationError
 
-from opi.core.buttons import check_button_variant
+from opi.forms.buttons import check_button_variant
 from opi.services.config_lists import find_patchable_list
 from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 

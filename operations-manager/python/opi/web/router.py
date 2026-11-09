@@ -18,7 +18,6 @@ from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
-from opi.core.step_up import StepUpAction, is_elevated_admin
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
@@ -43,6 +42,7 @@ from opi.services.project_authorization import (
 from opi.services.project_leden import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
+from opi.services.step_up import StepUpAction, is_elevated_admin
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.services.zad_map import platform_graph, project_graph
@@ -1696,7 +1696,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 )
 
         # Prepare project details for template
-        from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+        from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 
         _attachment_usage = extract_attachment_usage(project_data)
 
@@ -1782,8 +1782,8 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
 
         # Generate ingress URLs for components with publish-on-web service
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
+        from opi.services.project_file_handler import ProjectFileHandler
 
         project_file_handler = ProjectFileHandler()
 

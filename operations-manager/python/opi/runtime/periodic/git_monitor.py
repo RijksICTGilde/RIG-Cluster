@@ -14,8 +14,8 @@ from opi.core.cluster_config import (
     namespace_labels,
 )
 from opi.core.config import settings
-from opi.core.project_schema import ProjectSchemaError, validate_declared_project_schema
 from opi.manager.project_manager import enforce_namespace_pin
+from opi.services.project_schema import ProjectSchemaError, validate_declared_project_schema
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

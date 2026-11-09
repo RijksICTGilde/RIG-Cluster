@@ -18,9 +18,9 @@ from opi.api import step_up_router as step_up_router_module
 from opi.api import user_token_auth
 from opi.api.otp_step_up import verify_api_step_up
 from opi.core.auth_decorators import require_platform_admin
-from opi.core.step_up import STEP_UP_WINDOW, StepUpAction, is_elevated_admin, step_up_fresh
 from opi.services import project_authorization
 from opi.services.api_step_up_service import ApiStepUpService, personal_token_credential, sso_session_credential
+from opi.services.step_up import STEP_UP_WINDOW, StepUpAction, is_elevated_admin, step_up_fresh
 from opi.services.user_otp_service import OtpVerification
 from opi.services.user_service import UserService
 from opi.utils.url_paths import local_redirect_path

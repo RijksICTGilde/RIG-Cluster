@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.core import progress_steps as steps
+from opi.services.tasks import progress_steps as steps
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +90,8 @@ async def handle_configure_attachment(payload: dict[str, Any], progress: Any) ->
     Returns:
         The outcome of the processing, in the shared ``processing`` shape.
     """
-    from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
     from opi.manager.project_manager import ProjectManager
+    from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
     project_name: str = payload["project_name"]
     attachment_id: str | None = payload.get("item_id")

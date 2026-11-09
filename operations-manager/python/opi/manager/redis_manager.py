@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.services.catalog.redis import is_acl_key_prefix_approved
+from opi.services.secrets import RedisSecret
 from opi.services.services import service_entry_name
+from opi.services.tasks import progress_steps as steps
 from opi.utils.naming import generate_redis_key_prefix, generate_redis_username
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
 

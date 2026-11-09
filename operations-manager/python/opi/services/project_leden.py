@@ -14,7 +14,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 
 if TYPE_CHECKING:
     from opi.services.project_service import ProjectSummary, ProjectUser

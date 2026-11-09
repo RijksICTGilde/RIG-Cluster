@@ -9,7 +9,6 @@ the select, so the default domain was never stored).
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
@@ -17,6 +16,7 @@ from opi.forms.editables.reindex import materialize_wildcard_visualizer
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
 
 def _build_all_editables():

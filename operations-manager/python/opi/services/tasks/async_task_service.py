@@ -17,11 +17,11 @@ from sqlalchemy.orm import aliased
 
 from opi.core.audit_trail import record_task
 from opi.core.db import session_scope
-from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
-from opi.core.task_rollout import PROCESSING_TASK_TYPES
-from opi.core.task_supersede import Scope, covers, scope_of
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
+from opi.services.tasks.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
+from opi.services.tasks.task_rollout import PROCESSING_TASK_TYPES
+from opi.services.tasks.task_supersede import Scope, covers, scope_of
 from opi.utils.logging_redact import redact_structure, redact_text
 
 if TYPE_CHECKING:

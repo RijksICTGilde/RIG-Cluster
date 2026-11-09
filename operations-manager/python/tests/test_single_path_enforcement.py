@@ -211,6 +211,15 @@ def test_no_one_closes_the_stores_warm_connector() -> None:
     )
 
 
+_CACHE_ACCESS_ALLOWLIST: dict[str, str] = {
+    "opi/services/project_store.py": "the store itself",
+    "opi/services/project_service.py": "the cache itself",
+    # ``build_project_from_data`` parses a dict the caller already holds and registers
+    # nothing, so this is not a second door into the cache.
+    "opi/services/project_utils.py": "parses the just-written file to check the token hash",
+}
+
+
 def _scan_for_direct_cache_access() -> list[str]:
     """Find code reaching the project cache without going through ProjectStore.
 
@@ -225,7 +234,7 @@ def _scan_for_direct_cache_access() -> list[str]:
             continue
         for py_file in directory.rglob("*.py"):
             rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
-            if rel_path in ("opi/services/project_store.py", "opi/services/project_service.py"):
+            if rel_path in _CACHE_ACCESS_ALLOWLIST:
                 continue
             violations.extend(
                 f"{rel_path}:{lineno}: {line.strip()}"

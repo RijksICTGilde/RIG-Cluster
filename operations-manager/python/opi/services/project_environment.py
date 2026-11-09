@@ -8,7 +8,7 @@ of a running instance, and a project HAS environments instead of being one. A pr
 therefore shows at most the highest marking of its deployments
 (``highest_environment``), derived and not stored.
 
-Next to ``opi.core.project_schema`` and not with the pydantic models of the form layer:
+Next to ``opi.services.project_schema`` and not with the pydantic models of the form layer:
 the API, the manager and the migration read the marking too, and those may not import the
 form layer.
 """

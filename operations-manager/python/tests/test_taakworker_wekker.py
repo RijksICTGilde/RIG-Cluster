@@ -10,8 +10,8 @@ import asyncio
 import time
 
 import pytest
-from opi.core.async_task_service import notify_new_task
 from opi.runtime.tasks.task_worker import TaskWorker
+from opi.services.tasks.async_task_service import notify_new_task
 
 
 def _worker(monkeypatch: pytest.MonkeyPatch, poll: float) -> TaskWorker:

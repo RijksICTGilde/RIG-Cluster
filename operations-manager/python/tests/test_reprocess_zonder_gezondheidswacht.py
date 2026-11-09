@@ -128,7 +128,7 @@ async def test_de_standaard_wacht_nog_steeds_op_gezondheid(monkeypatch: pytest.M
 @pytest.mark.asyncio
 async def test_a_finished_rollout_no_longer_says_it_is_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     """The wait sets "wacht op N applicatie(s)" as the rollout's subject; done, it goes."""
-    from opi.core import progress_steps
+    from opi.services.tasks import progress_steps
 
     manager, _, wacht = _project_manager(monkeypatch)
     progress = _progress()

@@ -162,7 +162,7 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 
 | File | Purpose |
 |------|---------|
-| `opi/handlers/project_file_handler.py` | Fixed path parsing for numeric indices |
+| `opi/services/project_file_handler.py` | Fixed path parsing for numeric indices |
 | `opi/core/marked_for_deletion_schema.py` | SQL schema for the table |
 | `opi/services/marked_for_deletion_service.py` | CRUD service layer |
 | `opi/migrations/versions/002_add_marked_for_deletion.py` | Alembic migration |

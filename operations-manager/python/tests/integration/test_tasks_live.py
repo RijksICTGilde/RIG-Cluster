@@ -25,11 +25,11 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 import pytest_asyncio
-from opi.core.async_task_service import TaskType
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.services.catalog.base import ConfigLayer, config_endpoint_path
 from opi.services.project_store import reset_project_store
+from opi.services.tasks.async_task_service import TaskType
 from tests.e2e.helpers import sandbox_api
 from tests.integration import forgejo_live, kubernetes_live, minio_live, postgres_live, startup_live, tasks_live
 from tests.integration.tasks_live import (

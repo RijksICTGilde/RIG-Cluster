@@ -16,10 +16,10 @@ import threading
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
+from opi.services.secrets import RegistrySecret
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
-from opi.utils.secrets import RegistrySecret
 from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:

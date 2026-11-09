@@ -16,11 +16,11 @@ import asyncpg
 import pytest
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import KeycloakConnector
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.manager.minio_manager import MinioManager
 from opi.services.credential_rotation import rotatable_services_for_deployment, services_with_pending_clone
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 class _Rollen:

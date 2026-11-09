@@ -5,7 +5,7 @@ final state of a mutation, before anything is written or committed. Keeping one
 implementation means there is no "less validated" write path: ProjectManager and
 ProjectStore both call into here.
 
-Runs AFTER json-schema validation (opi.core.project_schema.validate_project_schema)
+Runs AFTER json-schema validation (opi.services.project_schema.validate_project_schema)
 and BEFORE any write or commit. Fails closed on the first violation.
 """
 
@@ -19,9 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
-from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
 from opi.services.approvals import collect_approval_items, collect_approved_values
@@ -31,6 +29,13 @@ from opi.services.catalog.config_settings import SettingError, check_setting_cha
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.project import Project
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_schema import ProjectIntegrityError, age_pattern_violations
+from opi.services.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ComponentValidationError,
+    validate_root_component,
+)
 from opi.services.registry import (
     SERVICES,
     change_validating_services,
@@ -50,11 +55,6 @@ from opi.utils.naming import (
     normalize_registry_repo,
     registry_tag_owner,
     split_image_reference,
-)
-from opi.utils.project_utils import (
-    RESERVED_PROJECT_NAME_MESSAGE,
-    ComponentValidationError,
-    validate_root_component,
 )
 
 if TYPE_CHECKING:

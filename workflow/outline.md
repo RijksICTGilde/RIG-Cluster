@@ -34,7 +34,7 @@ The Pydantic models are the canonical typed view:
 
 In addition to the schema-modeled fields, project files contain OPI-managed sections that are not user-editable through forms:
 - `config` - project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
-- `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/core/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
+- `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/services/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
 
 ### Key Sections
 

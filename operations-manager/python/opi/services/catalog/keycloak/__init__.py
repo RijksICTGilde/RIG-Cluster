@@ -22,9 +22,9 @@ from opi.services.catalog.base import (
 from opi.services.catalog.events import on
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.catalog.keycloak.variables import KeycloakVariables
+from opi.services.secrets import KeycloakSecret
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType, UIEvent
-from opi.utils.secrets import KeycloakSecret
 
 
 class KeycloakService(Service):

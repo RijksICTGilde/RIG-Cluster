@@ -45,7 +45,7 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
         "_encrypt_for_task",
     ): "een geheim uit het verzoek in async_tasks.payload, geen projectsleutel",
     (
-        "opi/utils/project_utils.py",
+        "opi/services/project_utils.py",
         "generate_self_service_project_yaml",
     ): "repositories[].password blijft bewust op de platformsleutel",
     ("opi/manager/argo_manager.py", "ArgoManager.prepare_repository_variables"): "repositories[].password",

@@ -1,4 +1,4 @@
-"""Every step text lives in ``opi/core/progress_steps.py``, and nowhere else.
+"""Every step text lives in ``opi/services/tasks/progress_steps.py``, and nowhere else.
 
 The texts used to sit in about 150 call sites across 18 files, so gelijktrekken meant
 finding them all first. This scan keeps them together: it reads the source of every
@@ -15,7 +15,7 @@ import ast
 from pathlib import Path
 
 OPI_ROOT = Path(__file__).resolve().parents[1] / "opi"
-MODULE = "core/progress_steps.py"
+MODULE = "services/tasks/progress_steps.py"
 
 # Which positional argument carries the step name, per method.
 NAME_ARGUMENT = {

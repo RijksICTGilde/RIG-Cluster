@@ -18,8 +18,8 @@ from opi.api.v2.models import (
     PendingRolloutResponse,
     error_category_for,
 )
-from opi.core import progress_steps
-from opi.core.async_task_service import TaskType
+from opi.services.tasks import progress_steps
+from opi.services.tasks.async_task_service import TaskType
 
 # ---------------------------------------------------------------------------
 # Shared sub-models

@@ -29,13 +29,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
-from opi.core import progress_steps
 from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.server import app
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS
 from opi.services.oom_watcher import _queue_refresh_task as queue_oom_refresh_task
+from opi.services.tasks import progress_steps
 from tests.test_verdwenen_applicatie_tijdens_wacht import _progress, _project_manager
 
 PROJECT = "dd-mco"

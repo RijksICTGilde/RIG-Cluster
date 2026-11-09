@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.manager.keycloak_manager import KeycloakManager
-from opi.utils.secrets import KeycloakSecret
+from opi.services.secrets import KeycloakSecret
 
 KEYCLOAK_URL = "https://keycloak.example"
 REALM = "proj-odcn-production"

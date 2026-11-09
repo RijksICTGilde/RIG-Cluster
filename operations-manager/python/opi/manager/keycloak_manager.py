@@ -18,7 +18,6 @@ from opi.connectors.keycloak import (
     legacy_restricted_flow_alias,
     role_gate_flow_alias,
 )
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_demo_users,
@@ -38,7 +37,9 @@ from opi.services.catalog.keycloak.config_model import (
 from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
+from opi.services.secrets import KeycloakSecret
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
+from opi.services.tasks import progress_steps as steps
 from opi.utils.age import (
     decrypt_password_smart,
     encrypt_age_content,
@@ -56,7 +57,6 @@ from opi.utils.naming import (
 )
 from opi.utils.passwords import generate_secure_password
 from opi.utils.redirect_uris import validate_redirect_uris
-from opi.utils.secrets import KeycloakSecret
 from opi.utils.totp import generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_path

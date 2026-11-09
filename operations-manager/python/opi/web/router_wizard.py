@@ -15,10 +15,6 @@ from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.members import member_list_changed
-from opi.core.project_environment import environment_markings, log_production_downgrades
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
-from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
@@ -46,13 +42,22 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
-from opi.handlers.project_file_handler import merge_staged_attachments
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
+from opi.services.members import member_list_changed
+from opi.services.project_environment import environment_markings, log_production_downgrades
+from opi.services.project_file_handler import merge_staged_attachments
 from opi.services.project_roles import CREATOR_ROLES
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
+from opi.services.step_up import (
+    has_fresh_step_up,
+    log_step_up_refusal,
+    production_marking_change,
+    save_requires_step_up,
+)
 from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import authorize, authorized_project

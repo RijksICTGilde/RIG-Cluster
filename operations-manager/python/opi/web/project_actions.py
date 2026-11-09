@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from opi.core.buttons import check_button_variant
-from opi.handlers.project_file_handler import (
+from opi.forms.buttons import check_button_variant
+from opi.services.project_file_handler import (
     COMPONENT_USAGE_WEB_ADDRESS,
     component_usage_sites,
     extract_attachment_catalog,
@@ -52,7 +52,7 @@ class ProjectAction:
     def __post_init__(self) -> None:
         # ``kind`` wordt in het bevestigingsfragment een ``type`` op een <c-button>, en
         # het component slaat een variant die het niet kent stil over: de knop staat er
-        # dan kaal bij. Zie opi/core/buttons.py.
+        # dan kaal bij. Zie opi/forms/buttons.py.
         check_button_variant(self.kind, f"ProjectAction '{self.key}'")
 
 

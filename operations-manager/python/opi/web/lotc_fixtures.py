@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
-from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
 from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
+from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.services.user_otp_service import OtpStatus

@@ -13,7 +13,7 @@ Three things have to hold, and each is measured rather than assumed:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_rollout import (
+from opi.services.tasks.task_rollout import (
     DEFERRABLE_TASK_TYPES,
     NON_DEFERRABLE_REASONS,
     SKIPPED_REASON,

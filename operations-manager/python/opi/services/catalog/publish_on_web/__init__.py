@@ -5,11 +5,11 @@ form, the deployment-level "Webadres" section, AND the domain/subdomain approval
 capability: the ``ApprovalSpec``s (declare + check + list + record) and the approval
 *state*, which lives under this service's config at
 ``services/[publish-on-web]/config/domains`` (resolved, with a project-root fallback, by
-connectors/subdomain.py).
+services/catalog/publish_on_web/subdomain.py).
 
 NOT owned here -- cross-project platform infrastructure the service depends on: the generic
 catalog-driven approver interface (opi/services/approvals.py + router_approvals), the global
-subdomain registry DB (connectors/subdomain.py), and ingress generation (project_manager /
+subdomain registry DB (services/catalog/publish_on_web/subdomain.py), and ingress generation (project_manager /
 naming.py).
 """
 
@@ -52,7 +52,7 @@ def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
 
     Reads the stored state via the existing pure predicate -- no rules duplicated here.
     """
-    from opi.connectors.subdomain import get_project_allowed_domain_config
+    from opi.services.catalog.publish_on_web.subdomain import get_project_allowed_domain_config
 
     cfg = get_project_allowed_domain_config(project_data, value)
     if not isinstance(cfg, dict):
@@ -62,7 +62,7 @@ def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
 
 def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
     """Approval status of a requested subdomain (``value`` is a ``(domain, subdomain)``)."""
-    from opi.connectors.subdomain import get_subdomain_status
+    from opi.services.catalog.publish_on_web.subdomain import get_subdomain_status
 
     domain, subdomain = value
     return _to_status(get_subdomain_status(project_data, domain, subdomain))
@@ -76,7 +76,7 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
 
 def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    from opi.connectors.subdomain import get_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
@@ -100,7 +100,7 @@ def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
 
 
 def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    from opi.connectors.subdomain import get_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
@@ -170,8 +170,8 @@ def _notice(label_kind: str, subject: str, status: ApprovalStatus, verdict: dict
 
 
 def _domain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-    from opi.connectors.subdomain import get_ingress_postfix, get_project_allowed_domain_config
     from opi.core.config import settings
+    from opi.services.catalog.publish_on_web.subdomain import get_ingress_postfix, get_project_allowed_domain_config
 
     base_domain, _ = _deployment_domain(deployment)
     if not base_domain or base_domain == get_ingress_postfix(settings.CLUSTER_MANAGER).lstrip("."):
@@ -184,7 +184,7 @@ def _domain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) ->
 
 
 def _subdomain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-    from opi.connectors.subdomain import get_project_allowed_subdomains
+    from opi.services.catalog.publish_on_web.subdomain import get_project_allowed_subdomains
 
     base_domain, subdomain = _deployment_domain(deployment)
     if not base_domain or not subdomain:
@@ -211,7 +211,7 @@ def _subdomain_notices(project_data: dict[str, Any], deployment: dict[str, Any])
 
 
 def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    from opi.connectors.subdomain import ensure_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import ensure_domains_config
 
     domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-domains", []):
@@ -222,7 +222,7 @@ def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_ent
 
 
 def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    from opi.connectors.subdomain import ensure_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import ensure_domains_config
 
     domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-subdomains", []):
@@ -397,7 +397,7 @@ class PublishOnWebService(Service):
         # A deployment's requested domain / subdomain needs platform-admin approval
         # before ingress is generated for it. The rule (status_of) reuses the existing
         # pure predicates; the state lives under this service's config
-        # (services/[publish-on-web]/config/domains, resolved by connectors/subdomain.py).
+        # (services/[publish-on-web]/config/domains, resolved by services/catalog/publish_on_web/subdomain.py).
         # Turning the service on is never a request: only a custom domain or a chosen
         # subdomain on a guarded platform domain is, per deployment. Without
         # requires_approval_for the card and the help would say every use needs approval.
@@ -436,8 +436,8 @@ class PublishOnWebService(Service):
         API is the same entry, in the same block, in the same approver interface, and not
         a second way of asking.
         """
-        from opi.connectors.subdomain import ensure_domain_requests
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 
         ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 

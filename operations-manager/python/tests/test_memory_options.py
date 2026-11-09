@@ -306,7 +306,7 @@ class TestResourceEditableYamlPaths:
 
     def test_seed_data_matches_parse_resources_block(self):
         """Wizard seed data should be parseable by _parse_resources_block."""
-        from opi.handlers.project_file_handler import _parse_resources_block
+        from opi.services.project_file_handler import _parse_resources_block
 
         seed_resources = {
             "requests": {"cpu": "50m", "memory": "256Mi"},

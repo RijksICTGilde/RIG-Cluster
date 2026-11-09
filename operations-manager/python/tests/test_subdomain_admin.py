@@ -2,9 +2,9 @@
 
 import copy
 
-from opi.connectors.subdomain import get_domains_config
 from opi.forms.visualizers.wizard_sections import _apply_approval_to_project
 from opi.services.approvals import collect_approval_items
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
 # ---------------------------------------------------------------------------
 # Test data

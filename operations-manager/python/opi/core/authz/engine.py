@@ -123,7 +123,7 @@ class Resource:
 
 
 #: The marking called "productie". The same value as
-#: :attr:`opi.core.project_environment.Omgeving.PRODUCTIE`, as text here because a scope
+#: :attr:`opi.services.project_environment.Omgeving.PRODUCTIE`, as text here because a scope
 #: reads only the marking of the resource.
 PRODUCTION_MARKING = "productie"
 

@@ -11,15 +11,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.connectors.subdomain import (
-    get_project_allowed_domain_config,
-    get_subdomain_status,
-    get_supported_base_domains,
-)
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
 from opi.forms.editables.resolvers import get_effective_value
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import (
+    get_project_allowed_domain_config,
+    get_subdomain_status,
+    get_supported_base_domains,
+)
 
 #: De schakelaarwaarde van het keuzeveld "eigen domein", en de sleutel van het transiente
 #: veld waar die keuze naar deferet. Ze horen bij elkaar: de een zegt "kijk daar", de ander

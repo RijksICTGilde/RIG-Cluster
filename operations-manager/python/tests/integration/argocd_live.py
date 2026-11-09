@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
-from opi.handlers.project_key_secret import ProjectKeySecretHandler
+from opi.services.project_key_secret import ProjectKeySecretHandler
 from tests.integration.live import ARGOCD
 
 if TYPE_CHECKING:

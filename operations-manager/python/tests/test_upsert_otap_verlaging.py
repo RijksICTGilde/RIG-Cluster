@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from opi.core.project_schema import ProjectSchemaError
+from opi.services.project_schema import ProjectSchemaError
 from tests.test_upsert_commit_message import (
     _accept_component_references,  # noqa: F401 - autouse fixture, imported for its effect here
     _make_manager,
@@ -52,7 +52,7 @@ async def _verlaag(actor: str | None, *, save_weigert: bool = False) -> None:
 
 
 async def test_de_melding_noemt_wie_het_doet(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level("WARNING", logger="opi.core.project_environment"):
+    with caplog.at_level("WARNING", logger="opi.services.project_environment"):
         await _verlaag("iemand@example.org")
 
     meldingen = [record.getMessage() for record in caplog.records]
@@ -60,7 +60,7 @@ async def test_de_melding_noemt_wie_het_doet(caplog: pytest.LogCaptureFixture) -
 
 
 async def test_zonder_bekende_identiteit_zegt_de_melding_de_api(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level("WARNING", logger="opi.core.project_environment"):
+    with caplog.at_level("WARNING", logger="opi.services.project_environment"):
         await _verlaag(None)
 
     assert any("de API" in record.getMessage() for record in caplog.records)
@@ -68,7 +68,7 @@ async def test_zonder_bekende_identiteit_zegt_de_melding_de_api(caplog: pytest.L
 
 async def test_een_geweigerde_opslag_meldt_niets(caplog: pytest.LogCaptureFixture) -> None:
     """Er is dan niets verlaagd, dus een melding zou over een wijziging gaan die niet bestaat."""
-    with caplog.at_level("WARNING", logger="opi.core.project_environment"):
+    with caplog.at_level("WARNING", logger="opi.services.project_environment"):
         await _verlaag("iemand@example.org", save_weigert=True)
 
     assert [record.getMessage() for record in caplog.records if "OTAP-verlaging" in record.getMessage()] == []

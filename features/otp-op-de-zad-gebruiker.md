@@ -37,7 +37,7 @@ Een project heeft zelf geen markering (zie [otap-markering.md](otap-markering.md
 "een project in productie" is afgeleid: `highest_environment` van zijn deployments.
 
 Die regels staan op een plek, in `requires_production_step_up`
-(`opi/core/step_up.py`); een route verklaart met `@requires_step_up(...)` dat ze eronder
+(`opi/services/step_up.py`); een route verklaart met `@requires_step_up(...)` dat ze eronder
 valt, met een conditie die het doelwit weegt of met `vraagt_altijd_step_up`
 (`opi/services/step_up_conditions.py`) als de handeling er altijd een vraagt. Welke routes
 dat zijn houdt `tests/test_step_up_routes.py` vast.
@@ -65,7 +65,7 @@ terug naar die pagina. Elke route achter `require_platform_admin` is
 daarmee ook gedekt door een verse code, dus ook het beoordelen van aanvragen.
 
 Op een project waar hij geen lid van is, geeft een verlopen venster een gewone 403: activeer
-opnieuw via het menu. `is_elevated_admin` (`opi/core/step_up.py`) is de ene plek die dit
+opnieuw via het menu. `is_elevated_admin` (`opi/services/step_up.py`) is de ene plek die dit
 beslist; zonder ingang die de toestand zet is het antwoord nee, dus een worker of een
 vergeten route heeft nooit beheerrechten.
 
@@ -97,7 +97,7 @@ Zolang je een verse step-up hebt, toont het accountmenu rechtsboven een groen sc
 (`shield-check-mark`) in plaats van het gewone persoonsicoon, en bovenaan het uitklapmenu staat
 "Verhoogde rechten tot 14:32" (uitgeschakeld, alleen ter informatie). Het item heeft ook een
 toegankelijk label, want kleur alleen is niet genoeg. Het eindtijdstip komt uit
-`step_up_until()` in `opi/core/step_up.py`, `render()` in `opi/web/lotc_switch.py` zet het als
+`step_up_until()` in `opi/services/step_up.py`, `render()` in `opi/web/lotc_switch.py` zet het als
 `verhoogd_tot` in elke pagina, en de kleur staat in `static/css/lotc-app.css` (`.menu-verhoogd`).
 
 Er is bewust geen timer: de pagina bepaalt dit bij het laden. Verloopt het venster terwijl je op
@@ -385,7 +385,7 @@ merkt er niets van. Wat je wel nodig hebt is de platformsleutel
 | `opi/migrations/versions/009_add_user_otp.py` | de migratie |
 | `opi/web/router_otp.py` | `/account/otp` en de drie stappen eronder |
 | `opi/web/router_user_admin.py` | `POST /admin/users/<id>/otp-reset` |
-| `opi/core/step_up.py` | wanneer een handeling een step-up vraagt, en of er een verse is |
+| `opi/services/step_up.py` | wanneer een handeling een step-up vraagt, en of er een verse is |
 | `opi/services/step_up_conditions.py` | de condities die een route bij `@requires_step_up` noemt |
 | `opi/core/auth_decorators.py` | de decorator `requires_step_up` |
 | `opi/web/router_step_up.py` | `POST /step-up` |

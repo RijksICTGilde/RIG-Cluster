@@ -7,7 +7,7 @@ so add-component and non-wizard creation produced files their own schema rejecte
 at process time (Veld 'components/N/path': '/' is not of type 'array').
 """
 
-from opi.utils.project_utils import build_component_config
+from opi.services.project_utils import build_component_config
 
 
 async def test_path_is_array_of_match_default() -> None:

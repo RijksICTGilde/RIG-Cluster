@@ -23,9 +23,9 @@ import pytest
 from fastapi import HTTPException
 from opi.core.audit_trail import begin_trail, record_task, trail
 from opi.core.authz.actions import Action
-from opi.core.members import MemberKind
 from opi.forms.wizard import session
 from opi.middleware.audit import _hoort_in_de_audit
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web import router_detail_edit
 from opi.web.authz import enforce_route_action

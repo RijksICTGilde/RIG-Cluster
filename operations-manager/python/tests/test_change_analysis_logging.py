@@ -8,11 +8,11 @@ deployment per handler instance.
 
 import logging
 
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import (
     _deployment_name_for_path,
     _deployment_names_for_paths,
 )
+from opi.services.project_file_handler import ProjectFileHandler
 
 YAML_DOC = {
     "deployments": [
@@ -57,7 +57,7 @@ class TestComponentExtractionLogDedupe:
             "deployments": [{"name": "main", "components": [{"reference": "frontend"}, {"reference": "worker"}]}]
         }
 
-        with caplog.at_level(logging.DEBUG, logger="opi.handlers.project_file_handler"):
+        with caplog.at_level(logging.DEBUG, logger="opi.services.project_file_handler"):
             for _ in range(5):
                 components = handler.extract_deployment_components(project_data, "main")
                 assert len(components) == 2
@@ -74,7 +74,7 @@ class TestComponentExtractionLogDedupe:
             ]
         }
 
-        with caplog.at_level(logging.DEBUG, logger="opi.handlers.project_file_handler"):
+        with caplog.at_level(logging.DEBUG, logger="opi.services.project_file_handler"):
             handler.extract_deployment_components(project_data, "main")
             handler.extract_deployment_components(project_data, "pr-274")
 

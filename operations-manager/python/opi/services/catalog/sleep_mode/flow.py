@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from opi.core import progress_steps
 from opi.services.catalog.sleep_mode.api_models import DISABLED
 from opi.services.project import Project
+from opi.services.tasks import progress_steps
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +108,8 @@ async def app_is_ready(project_data: dict, deployment: dict, config: Any) -> boo
     """
     from opi.connectors.kubectl import KubectlConnector
     from opi.core.cluster_config import get_prefixed_namespace
-    from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.sleep_mode import manifests
+    from opi.services.project_file_handler import ProjectFileHandler
     from opi.utils.naming import generate_unique_name
 
     component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
@@ -327,12 +327,12 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
     ``progress`` is the task progress manager when a user is watching this run; it names
     the steps as they happen. The sweeper passes nothing and nothing is reported.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.manager.project_manager import ProjectManager
     from opi.services.catalog.sleep_mode import config as sleep_config
     from opi.services.catalog.sleep_mode import manifests, service
     from opi.services.catalog.sleep_mode import state as sleep_state
     from opi.services.catalog.sleep_mode import token as token_mod
+    from opi.services.project_file_handler import ProjectFileHandler
     from opi.services.project_store import get_project_store
     from opi.services.resource_tuning_service import trigger_reprocessing
 
@@ -407,11 +407,11 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
     Reads the cached project data (this is hot, polled every few seconds) and only hits
     kubectl when there is a waker component to ask about.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.sleep_mode import config as sleep_config
     from opi.services.catalog.sleep_mode import manifests
     from opi.services.catalog.sleep_mode import state as sleep_state
     from opi.services.catalog.sleep_mode.api_models import DISABLED
+    from opi.services.project_file_handler import ProjectFileHandler
     from opi.services.project_store import get_project_store
 
     project = get_project_store().get(project_name)

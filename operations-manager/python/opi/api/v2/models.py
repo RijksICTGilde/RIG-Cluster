@@ -4,8 +4,9 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from opi.core.project_environment import Omgeving
+from opi.core.errors import ErrorCategory
 from opi.services.catalog.approval import ApprovalStatus
+from opi.services.project_environment import Omgeving
 
 
 class DeploymentStatus(StrEnum):
@@ -33,43 +34,6 @@ class DeploymentStatus(StrEnum):
     Pending = "Pending"  # cluster has no Application yet (not yet reconciled)
     Unavailable = "Unavailable"  # status fetch failed (only in list endpoint)
     Unknown = "Unknown"  # status backend itself reports Unknown
-
-
-class ErrorCategory(StrEnum):
-    """Programmatic categorization of a cluster error. Use ``message`` for the raw text.
-
-    Categories are intentionally broader than literal Kubernetes reasons (e.g.
-    ``ImagePull`` covers ``ImagePullBackOff``, ``ErrImagePull``, manifest-unknown
-    pulls, etc.) so app-level categories can be added later without breaking
-    consumers tied to specific K8s state names.
-    """
-
-    ImagePull = "ImagePull"
-    CrashLoop = "CrashLoop"
-    # The destination the caller named could not be used: it did not resolve, refused
-    # the connection, or rejected the credentials. Not a cluster state at all -- it is
-    # what makes "your input" separable from "our platform" on a failed restore, so a
-    # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
-    # the destination; a restore into the project's own service can never be this.
-    InvalidTarget = "InvalidTarget"
-    # What the caller sent cannot be acted on: a name that does not exist, a service that
-    # needs a project-level decision first, a value the schema rejects. Retrying it changes
-    # nothing, and that is the point of separating it out (gemeld door zad-cli, punt 26):
-    # without a category a client must treat every failure as unattributable, so a plain
-    # input mistake came out of the CLI as "could not be attributed" instead of "your call
-    # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
-    # destination the caller supplied.
-    InvalidInput = "InvalidInput"
-    # Het platform zelf struikelde: een database die niet antwoordt, een connector die
-    # afbreekt, een sjabloon dat niet rendert. Bewust apart van ``Unknown``, want dat zegt
-    # "niet toe te wijzen" terwijl dit juist wel is toegewezen -- aan ons. Voor de aanroeper
-    # is dat het verschil tussen "corrigeer je verzoek" en "wacht even en probeer opnieuw".
-    InternalError = "InternalError"
-    OutOfMemory = "OutOfMemory"
-    HealthCheck = "HealthCheck"
-    SyncFailed = "SyncFailed"
-    ComparisonError = "ComparisonError"
-    Unknown = "Unknown"
 
 
 #: ``error_type`` values that mean "the request itself was wrong". The field is a free

@@ -32,10 +32,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services import oom_watcher
 from opi.services.catalog.base import ComponentHealth
 from opi.services.deployment_observation import AfterSyncObservation, run_after_sync_observation
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 
 _PROJECT = "toets-hn7"

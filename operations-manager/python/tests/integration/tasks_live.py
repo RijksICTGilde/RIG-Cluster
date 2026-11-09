@@ -45,15 +45,15 @@ import yaml
 from itsdangerous import TimestampSigner
 from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
 from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
-from opi.core.async_task_service import AsyncTaskService, TaskType
 from opi.core.cluster_config import CLUSTER_CONFIG, get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.backup import BackupManager, group_snapshots_into_runs
 from opi.server import create_app
 from opi.services.catalog.sleep_mode.manifests import WAKER_ROLE_LABEL
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_utils import generate_self_service_project_yaml
 from opi.services.session_store import get_session_store
-from opi.utils.project_utils import generate_self_service_project_yaml
+from opi.services.tasks.async_task_service import AsyncTaskService, TaskType
 from opi.utils.totp import TOTP_PERIOD, totp_now
 from tests.image_pins import REPO_ROOT
 from tests.integration import (

@@ -57,8 +57,8 @@ class ResourceTuningService(Service):
             return []
 
         # Lazy import: resource_tuning_service indirection to avoid project_manager at load time.
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.oom_watcher import oom_is_fresh_evidence
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.resource_tuning_service import apply_resource_tuning, describe_growth_ceiling_block
         from opi.utils.naming import generate_unique_name
 

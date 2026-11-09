@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.step_up import STEP_UP_SESSION_KEY
 
 if TYPE_CHECKING:
     from fastapi.responses import HTMLResponse

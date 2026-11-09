@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import TokenAanvraagGeweigerd
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.web.router_tokens import (
     NIEUW_TOKEN_SLEUTEL,
     TOKENFOUT_SLEUTEL,

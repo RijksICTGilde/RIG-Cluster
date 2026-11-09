@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE
 from opi.core.auth_decorators import REQUIRES_STEP_UP
-from opi.core.step_up import StepUpAction
 from opi.server import create_app
+from opi.services.step_up import StepUpAction
 
 #: (methode, pad) -> de handeling die de route verklaart.
 ROUTES_MET_STEP_UP = {

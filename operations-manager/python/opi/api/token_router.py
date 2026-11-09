@@ -31,7 +31,6 @@ from opi.api.params import ProjectNamePath
 from opi.api.user_token_auth import validate_user_token
 from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.authz.actions import Action, action
-from opi.core.step_up import StepUpAction
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
@@ -44,6 +43,7 @@ from opi.services.api_token_service import (
     voeg_service_account_toe,
 )
 from opi.services.project_authorization import is_user_authorized_for_project
+from opi.services.step_up import StepUpAction
 from opi.services.step_up_conditions import vraagt_altijd_step_up
 
 logger = logging.getLogger(__name__)

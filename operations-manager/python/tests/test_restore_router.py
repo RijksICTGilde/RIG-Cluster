@@ -23,8 +23,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.restore_router import restore_router
-from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import RestoreResult, SnapshotInfo
+from opi.services.project_file_handler import create_project_file_handler
 
 API_KEY = "test-restore-api-key"
 PROJECT = "restore-test"

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import (
     PreserveAttachmentContentHook,
@@ -32,12 +31,13 @@ from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.selection import selectable_names, splice_selection
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     ComponentInUseError,
     ProjectFileHandler,
     _parse_resources_block_partial,
     remove_component,
 )
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS

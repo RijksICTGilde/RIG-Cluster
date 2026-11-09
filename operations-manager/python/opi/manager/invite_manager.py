@@ -12,7 +12,7 @@ from opi.connectors.keycloak import (
     KeycloakConnector,
     create_keycloak_connector,
 )
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 

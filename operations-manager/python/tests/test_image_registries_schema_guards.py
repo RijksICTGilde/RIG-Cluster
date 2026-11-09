@@ -31,7 +31,6 @@ import pydantic
 import pytest
 import yaml
 from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.generation.manifests import ManifestGenerator, render_template
@@ -42,6 +41,7 @@ from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTE
 from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service

@@ -11,8 +11,6 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from opi.core.members import MemberKind
-from opi.core.project_environment import Omgeving
 from opi.forms.layout import (
     ButtonGroup,
     Column,
@@ -22,6 +20,8 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.schema import FormMeta
+from opi.services.members import MemberKind
+from opi.services.project_environment import Omgeving
 from opi.utils.patterns import PROJECT_NAME_PYDANTIC
 
 

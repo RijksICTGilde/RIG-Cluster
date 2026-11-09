@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.step_up import STEP_UP_SESSION_KEY
 
 OWNER_EMAIL = "eigenaar@example.org"
 
@@ -90,7 +90,7 @@ async def test_wizard_edit_meldt_een_verlaging_met_de_echte_gebruiker(
         patch("opi.web.router_wizard.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
-        caplog.at_level("WARNING", logger="opi.core.project_environment"),
+        caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
         verlaagd = copy.deepcopy(stored["deployments"])
         verlaagd[0]["environment"] = "test"
@@ -110,7 +110,7 @@ async def test_wizard_edit_meldt_niets_als_productie_blijft(caplog: pytest.LogCa
         patch("opi.web.router_wizard.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
-        caplog.at_level("WARNING", logger="opi.core.project_environment"),
+        caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
         await _save_existing_project(_request_for(OWNER_EMAIL), stored["name"], {"display-name": "Andere naam"})
 
@@ -149,7 +149,7 @@ async def test_modal_edit_meldt_een_verlaging_met_de_echte_gebruiker(
         recht_gebruikers,
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=na_wijziging)),
         patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
-        caplog.at_level("WARNING", logger="opi.core.project_environment"),
+        caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
         await _process_and_save_modal_edit(
             request=request,
@@ -177,7 +177,7 @@ async def test_modal_edit_meldt_niets_zonder_verlaging(caplog: pytest.LogCapture
     with (
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(stored))),
         patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
-        caplog.at_level("WARNING", logger="opi.core.project_environment"),
+        caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
         await _process_and_save_modal_edit(
             request=_request_for(OWNER_EMAIL),

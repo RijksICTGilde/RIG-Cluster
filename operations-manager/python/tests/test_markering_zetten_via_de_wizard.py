@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router_wizard import _save_existing_project
 

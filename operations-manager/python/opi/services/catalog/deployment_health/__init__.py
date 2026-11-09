@@ -140,7 +140,7 @@ class DeploymentHealthService(Service):
         (``set_component_disabled`` has no callers), so a value there was written by hand and
         would otherwise keep the component off forever, new image and all.
         """
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         notices: list[str] = []

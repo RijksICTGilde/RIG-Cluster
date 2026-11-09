@@ -12,13 +12,13 @@ from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
-from opi.core.step_up import StepUpAction
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.services.session_revocation_service import revoke_sessions
+from opi.services.step_up import StepUpAction
 from opi.services.step_up_conditions import vraagt_altijd_step_up
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_otp_service import UserOtpService

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.connectors.subdomain import (
+from opi.core import config as opi_config
+from opi.core.authz.engine import Role
+from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    custom_domain_certificate_note,
+    domain_setting_path,
+    get_domain_setting,
+)
+from opi.services.catalog.publish_on_web.subdomain import (
     BARE_DOMAIN_PLATFORM_MESSAGE,
     BARE_DOMAIN_SUBDOMAIN,
     bare_domain_not_owned_message,
@@ -12,15 +21,6 @@ from opi.connectors.subdomain import (
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
     validate_subdomain_for_domain,
-)
-from opi.core import config as opi_config
-from opi.core.authz.engine import Role
-from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
-from opi.services.catalog.publish_on_web.domain_config import (
-    DomainSetting,
-    custom_domain_certificate_note,
-    domain_setting_path,
-    get_domain_setting,
 )
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
@@ -561,7 +561,7 @@ class UniqueInviteKeyEnforcer:
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         from opi.forms.editables.service_path import smart_get_value
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.project_store import get_project_store
 
         active = smart_get_value(value, "services/invite/config/active") or []

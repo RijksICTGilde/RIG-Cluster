@@ -76,5 +76,5 @@ blijft:
 | onderdeel | bestand |
 |---|---|
 | `get_platform_namespaces`, `is_platform_namespace`, `is_reserved_project_name` | `opi/core/cluster_config.py` |
-| de melding | `RESERVED_PROJECT_NAME_MESSAGE`, `opi/utils/project_utils.py` |
+| de melding | `RESERVED_PROJECT_NAME_MESSAGE`, `opi/services/project_utils.py` |
 | de vormtoets op de naam | `validate_project_name`, `opi/utils/project_names.py` |

@@ -4,12 +4,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from opi.core import progress_steps as steps
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
 from opi.services import ServiceType
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_name
+from opi.services.tasks import progress_steps as steps
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager

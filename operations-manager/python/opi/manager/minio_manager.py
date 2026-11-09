@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
@@ -22,10 +21,11 @@ from opi.manager.clone_validation import (
 from opi.services import CloneFromType, ServiceType
 from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
 from opi.services.project import Project
+from opi.services.secrets import MinIOSecret
+from opi.services.tasks import progress_steps as steps
 from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import MinIOSecret
 
 logger = logging.getLogger(__name__)
 

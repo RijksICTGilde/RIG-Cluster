@@ -15,8 +15,8 @@ from unittest.mock import patch
 import pyrage
 import pytest
 from opi.forms.editables.converters import KeyValueConverter
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.age import (
     AgeDecryptionError,
     carries_encrypted_value,
@@ -217,7 +217,7 @@ class TestFailOpenConverters:
 
     @pytest.mark.asyncio
     async def test_aliases_stay_a_plain_mapping_without_a_public_key(self) -> None:
-        from opi.utils.project_utils import build_component_config
+        from opi.services.project_utils import build_component_config
 
         config = await build_component_config(
             name="component-1",
@@ -232,7 +232,7 @@ class TestFailOpenConverters:
 
     @pytest.mark.asyncio
     async def test_env_vars_are_dropped_without_a_public_key(self) -> None:
-        from opi.utils.project_utils import build_component_config
+        from opi.services.project_utils import build_component_config
 
         config = await build_component_config(
             name="component-1",

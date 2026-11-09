@@ -17,7 +17,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.auth_decorators import requires_step_up
-from opi.core.step_up import STEP_UP_SESSION_KEY, StepUpAction
+from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 
 OWNER_EMAIL = "eigenaar@example.org"
 TOKEN = "wt-123"
@@ -118,7 +118,7 @@ async def test_modal_edit_zonder_step_up_slaat_niets_op_en_meldt_de_weigering(
     manager = _project_manager(stored)
     dialoog = AsyncMock(return_value="<dialoog/>")
 
-    with caplog.at_level("WARNING", logger="opi.core.step_up"):
+    with caplog.at_level("WARNING", logger="opi.services.step_up"):
         response = await _modal_edit(na_wijziging=verlaagd, verse_step_up=False, manager=manager, dialoog=dialoog)
 
     assert response == "<dialoog/>"
@@ -206,7 +206,7 @@ async def test_modal_edit_zonder_step_up_weigert_ook_een_component_uit_productie
     manager = _project_manager(stored)
     dialoog = AsyncMock(return_value="<dialoog/>")
 
-    with caplog.at_level("WARNING", logger="opi.core.step_up"):
+    with caplog.at_level("WARNING", logger="opi.services.step_up"):
         await _modal_edit(na_wijziging=zonder_component, verse_step_up=False, manager=manager, dialoog=dialoog)
 
     manager.save_and_commit_project.assert_not_awaited()
@@ -251,7 +251,7 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
         patch("opi.web.router_wizard.authorize"),
         _patch_wizard_manager(stored, opslag),
         patch("opi.web.router_wizard.clear_wizard_state"),
-        caplog.at_level("WARNING", logger="opi.core.step_up"),
+        caplog.at_level("WARNING", logger="opi.services.step_up"),
         pytest.raises(HTTPException) as excinfo,
     ):
         await _save_existing_project(_request(verse_step_up=False), "demo", {"deployments": verlaagd})
@@ -274,7 +274,7 @@ async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptur
         return "uitgevoerd"
 
     with (
-        caplog.at_level("WARNING", logger="opi.core.step_up"),
+        caplog.at_level("WARNING", logger="opi.services.step_up"),
         pytest.raises(HTTPException),
     ):
         await route(_request(verse_step_up=False), project_name="demo", deployment_name="prod")

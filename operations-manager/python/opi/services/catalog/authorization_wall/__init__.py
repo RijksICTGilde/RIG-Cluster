@@ -19,9 +19,9 @@ from opi.services.catalog.base import (
     Service,
     config_path,
 )
+from opi.services.secrets import KeycloakSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import KeycloakSecret
 
 
 class AuthorizationWallService(Service):

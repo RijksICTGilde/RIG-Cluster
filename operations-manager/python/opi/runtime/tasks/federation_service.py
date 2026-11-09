@@ -169,7 +169,7 @@ class FederationService:
             return settings.CLUSTER_MANAGER
 
         try:
-            from opi.handlers.project_file_handler import ProjectFileHandler
+            from opi.services.project_file_handler import ProjectFileHandler
 
             handler = ProjectFileHandler()
 

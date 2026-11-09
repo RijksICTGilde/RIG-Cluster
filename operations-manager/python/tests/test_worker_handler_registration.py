@@ -18,7 +18,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from opi.core.async_task_service import TaskType
+from opi.services.tasks.async_task_service import TaskType
 
 _SERVER = Path(__file__).resolve().parent.parent / "opi" / "server.py"
 

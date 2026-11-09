@@ -12,7 +12,7 @@ from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 

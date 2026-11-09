@@ -18,9 +18,9 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
 from opi.manager.project_manager import ProjectManager
 from opi.services.metrics_queries import pod_restarts
+from opi.services.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
 from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
     trigger_reprocessing,

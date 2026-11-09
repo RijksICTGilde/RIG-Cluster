@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from opi.core.project_schema import ProjectIntegrityError
-from opi.handlers.project_file_handler import component_usage_sites
+from opi.services.project_file_handler import component_usage_sites
+from opi.services.project_schema import ProjectIntegrityError
 
 WEB = "web"
 
@@ -29,7 +29,7 @@ WEB = "web"
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

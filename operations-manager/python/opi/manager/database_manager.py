@@ -18,7 +18,6 @@ from opi.connectors.postgres import (
     PostgresValidationError,
     create_postgres_connector,
 )
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
@@ -37,10 +36,11 @@ from opi.services.postgres_scope import (
     project_uses_dedicated_postgres,
 )
 from opi.services.project import Project
+from opi.services.secrets import DatabaseSecret
+from opi.services.tasks import progress_steps as steps
 from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 

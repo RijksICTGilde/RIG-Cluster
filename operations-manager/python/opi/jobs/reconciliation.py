@@ -33,7 +33,7 @@ from opi.utils.naming import (
 )
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
     Returns:
         Dict mapping resource_type to a set of (resource_name, cluster) tuples.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
     from opi.services.services import ServiceType
 
     handler = ProjectFileHandler()

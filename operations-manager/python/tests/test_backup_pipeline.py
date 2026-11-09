@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
-from opi.core.async_task_service import TaskType
 from opi.runtime.backup.backup_scheduler import BackupScheduler, parse_rrule
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.tasks.async_task_service import TaskType
 
 # 2026-05-20 is a Wednesday during CEST (UTC+2). 00:30 UTC = 02:30 Amsterdam,
 # which is just past today's 02:00 daily target — within the catch-up window

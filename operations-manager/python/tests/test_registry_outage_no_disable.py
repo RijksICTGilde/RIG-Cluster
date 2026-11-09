@@ -16,7 +16,7 @@ DENIED. Both directions have been wrong once, which is why the verdict no longer
 anything that removes a pod.
 """
 
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     IMAGE_PULL_ABSENT,
     IMAGE_PULL_CAPACITY,
     IMAGE_PULL_UNDIAGNOSED,

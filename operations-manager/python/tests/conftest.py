@@ -386,7 +386,7 @@ def elevated_by_default() -> Any:
     ``tests/test_elevated_platform_admin.py`` covers the admin without a step-up. The state
     is only set here for calls that skip the middleware, which sets it on every request.
     """
-    from opi.core.step_up import step_up_fresh
+    from opi.services.step_up import step_up_fresh
 
     token = step_up_fresh.set(True)
     yield

@@ -10,10 +10,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import validate_project_schema
 from opi.manager.backup.base import SnapshotInfo
 from opi.manager.backup.runs import backup_run_items, clone_backup_items
 from opi.services import CloneFromType
+from opi.services.project_schema import validate_project_schema
 
 PROJECT = "tas-hl5"
 SOURCE = "productie"

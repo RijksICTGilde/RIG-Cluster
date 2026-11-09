@@ -34,7 +34,7 @@ die zijn eigen oorzaak overleeft.
 
 ## De classificatie is gebleven, gedegradeerd
 
-`classify_image_pull_failure()` in `opi/handlers/project_file_handler.py` leest de
+`classify_image_pull_failure()` in `opi/services/project_file_handler.py` leest de
 kubelet-melding en geeft een van drie klassen terug. Hij bepaalt hoe iets geformuleerd en
 geteld wordt, en nooit meer of er iets naar nul gaat. Een heuristiek in een zin is prima;
 een heuristiek die een pod weghaalt niet.
@@ -236,7 +236,7 @@ replicas zonder waker, en geen daarvan was een slachtoffer van die storing.
 
 | bestand | waarvoor |
 |---|---|
-| `opi/handlers/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
+| `opi/services/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
 | `opi/services/image_pull_report.py` | de telling, de momentopname en wat de kaart ervan leest |
 | `opi/core/metrics.py` | de drie gauges |
 | `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | de twee alarmen |

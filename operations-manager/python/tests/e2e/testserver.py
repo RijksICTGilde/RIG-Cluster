@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
-from opi.core.step_up import has_fresh_step_up
 from opi.services.otp_herlogin_service import Herlogin
+from opi.services.step_up import has_fresh_step_up
 from opi.utils.age import encrypt_age_content_sync, generate_age_key_pair
 from tests.inmemory_session_store import InMemorySessionStore
 from tests.kubectl_probe import preinitialize_kubectl_without_probing

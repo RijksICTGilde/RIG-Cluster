@@ -285,7 +285,7 @@ def affected_deployments(
     project-wide and nothing may be narrowed.
 
     Whoever narrows a round with this has to record the same list as the task scope
-    (``opi.core.task_supersede.scope_of``): a scope wider than what the round really
+    (``opi.services.tasks.task_supersede.scope_of``): a scope wider than what the round really
     processes would supersede a waiting task whose deployments nobody does afterwards.
     """
     if deployment_name:

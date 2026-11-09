@@ -6,11 +6,11 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError
 from opi.services.catalog.base import ConfigLayer
 from opi.services.postgres_scope import schema_is_marked
 from opi.services.project import Project
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 
 if TYPE_CHECKING:
     from opi.manager.project.access import ProjectFileAccess

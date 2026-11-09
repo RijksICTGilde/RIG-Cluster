@@ -19,9 +19,9 @@ from opi.core.cluster_config import (
     is_platform_namespace,
     is_reserved_project_name,
 )
-from opi.core.project_schema import ProjectIntegrityError
-from opi.handlers.project_key_secret import ProjectKeySecretHandler
 from opi.manager.project_validation import validate_project_structure
+from opi.services.project_key_secret import ProjectKeySecretHandler
+from opi.services.project_schema import ProjectIntegrityError
 from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 PLATFORM_NAMESPACE = "rig-prd-operations"
@@ -156,7 +156,7 @@ class TestWeigeringBijEenGitCommit:
     def _manager_met(previous_yaml: dict | None, name: str):
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

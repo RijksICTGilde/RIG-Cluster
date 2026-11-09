@@ -28,8 +28,8 @@ from opi.api.logs_router import get_component_pods, resolve_component_pods
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
-from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.services import project_authorization
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.services.user_service import UserService
 from starlette.websockets import WebSocketDisconnect
 

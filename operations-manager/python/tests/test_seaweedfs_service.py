@@ -10,12 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_project_structure, validate_service_availability
 from opi.services.catalog.base import ManifestContext
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import get_service
+from opi.services.secrets import MinIOSecret, SeaweedFSSecret
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import MinIOSecret, SeaweedFSSecret
 
 DIENST = get_service(ServiceType.SEAWEEDFS_STORAGE)
 MINIO = get_service(ServiceType.MINIO_STORAGE)

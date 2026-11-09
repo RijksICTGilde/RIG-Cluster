@@ -60,16 +60,16 @@ from deepdiff.path import extract
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
 from opi.core.audit_trail import record_commit
 from opi.core.config import settings
-from opi.core.project_schema import (
+from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
+from opi.services.approval_notifier import notify_new_approval_requests
+from opi.services.project import lid_uit
+from opi.services.project_leden import human_emails
+from opi.services.project_schema import (
     ProjectIntegrityError,
     ProjectSchemaError,
     find_plaintext_secret_violations,
     validate_project_schema,
 )
-from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
-from opi.services.approval_notifier import notify_new_approval_requests
-from opi.services.project import lid_uit
-from opi.services.project_leden import human_emails
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service

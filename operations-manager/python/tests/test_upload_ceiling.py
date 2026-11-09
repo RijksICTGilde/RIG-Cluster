@@ -43,7 +43,6 @@ from opi.api.image_router import image_router
 from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
 from opi.core.authz.engine import Cause
 from opi.core.config import settings
-from opi.core.members import MemberKind
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
 from opi.middleware.body_limit import (
@@ -54,6 +53,7 @@ from opi.middleware.body_limit import (
 )
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.utils import uploads
 from opi.utils.uploads import CHUNK_SIZE, read_capped, spill_capped, upload_slot

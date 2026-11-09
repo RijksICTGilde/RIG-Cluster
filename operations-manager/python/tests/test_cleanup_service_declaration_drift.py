@@ -10,7 +10,7 @@ brede vraag die het opruimen stelt moet `True` zijn.
 """
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 # Vereenvoudigde weergave van mpfoa-e01 vlak voor de verwijdering: de deployment verwijst
 # alleen nog naar 'mgzpg' (die postgres niet noemt), terwijl de catalogus- en

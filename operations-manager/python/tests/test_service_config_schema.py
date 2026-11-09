@@ -10,7 +10,6 @@ Covers:
 """
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, parse_schema_version
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.config_schema import (
@@ -20,6 +19,7 @@ from opi.services.config_schema import (
     render_model_schema,
     render_service_config_schema,
 )
+from opi.services.project_schema import ProjectSchemaError, parse_schema_version
 from opi.services.registry import SERVICES, get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
@@ -332,7 +332,7 @@ class TestConfigVersionsCompareAsVersions:
 
     As text or as a float 1.10 lands BEFORE 1.9, which would run a migration step
     backwards and pick 1.9 as the newest version. Every comparison therefore goes through
-    ``SchemaVersion`` from ``opi/core/project_schema.py``, the same type the project
+    ``SchemaVersion`` from ``opi/services/project_schema.py``, the same type the project
     schema version uses.
     """
 

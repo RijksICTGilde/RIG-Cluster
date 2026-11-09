@@ -26,7 +26,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.git_repo import WriteResult
-from opi.core import progress_steps
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
@@ -35,6 +34,7 @@ from opi.manager.argo_manager import (
     ArgoManager,
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.services.tasks import progress_steps
 from opi.utils.naming import generate_argocd_project_application_name
 
 PROJECT_APP = "demo-project"

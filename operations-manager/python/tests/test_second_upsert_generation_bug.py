@@ -103,7 +103,7 @@ async def test_first_clone_records_generation_zero_for_base_name(
     mock_postgres_connector.clone_schema.assert_called_once()
 
     # Read back the generation that was recorded
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
     handler = ProjectFileHandler()
     recorded_gen = handler.get_deployment_service_generation(project_data, "staging", "postgresql-database")
@@ -156,7 +156,7 @@ async def test_second_upsert_reuses_same_database_name(
         )
 
     # Simulate what process_project does after clone: mark status completed
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
     handler = ProjectFileHandler()
     handler.set_clone_status(project_data, "staging", completed=True, timestamp="2026-01-01T00:00:00Z")

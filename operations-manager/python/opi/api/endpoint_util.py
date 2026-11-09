@@ -28,10 +28,10 @@ from opi.core.audit_trail import capture_fields
 from opi.core.authz.actions import Action, action_of, deployment_of, marking_if_absent_of, weighed_action_of
 from opi.core.authz.engine import RuleError, rule_for
 from opi.core.config import settings
-from opi.core.project_environment import DEFAULT_ENVIRONMENT, Omgeving, effective_environment
 from opi.manager.run_support import find_deployment
 from opi.services.api_step_up_service import ApiStepUpService, personal_token_credential
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.project_environment import DEFAULT_ENVIRONMENT, Omgeving, effective_environment
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_store import get_project_store
 from opi.services.services_enums import CloneFromType

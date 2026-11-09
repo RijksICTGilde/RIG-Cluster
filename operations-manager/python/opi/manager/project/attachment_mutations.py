@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.handlers.project_file_handler import (
+from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import ConfigLayer
+from opi.services.project_file_handler import (
     USAGE_CERTIFICATE,
     attachment_usage_sites,
     ensure_attachment_data_list,
@@ -17,8 +18,7 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
     remove_attachment_references,
 )
-from opi.services import ServiceAdapter, ServiceType
-from opi.services.catalog.base import ConfigLayer
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.utils.age import encrypt_file_to_age_block_sync, get_project_public_key
 
 if TYPE_CHECKING:

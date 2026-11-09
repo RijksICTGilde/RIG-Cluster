@@ -42,7 +42,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.resource_tuning_service import _analyze_component_resources
 
 _CLUSTER = "odcn-production"

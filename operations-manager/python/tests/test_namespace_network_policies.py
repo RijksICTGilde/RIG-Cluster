@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import yaml
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.project_manager import ProjectManager
-from opi.utils.project_utils import namespace_level_deployment
+from opi.services.project_utils import namespace_level_deployment
 
 CLUSTER = "odcn-production"
 NAMESPACE = "rig-prd-demo"
@@ -115,7 +115,7 @@ class TestWatErGeschrevenWordt:
 def _manager() -> ProjectManager:
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
         patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),

@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.task_models import SupersededByResponse, task_response_from_dict
-from opi.core.task_supersede import (
+from opi.runtime.tasks.task_worker import TaskWorker
+from opi.services.tasks.task_supersede import (
     RunningTask,
     TaskSuperseded,
     covers,
@@ -27,7 +28,6 @@ from opi.core.task_supersede import (
     scope_of,
     set_current_task,
 )
-from opi.runtime.tasks.task_worker import TaskWorker
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

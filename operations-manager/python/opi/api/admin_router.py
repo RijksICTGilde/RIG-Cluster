@@ -22,9 +22,9 @@ from opi.api.user_token_auth import validate_platform_admin_token
 from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.core.step_up import StepUpAction
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
+from opi.services.step_up import StepUpAction
 from opi.services.step_up_conditions import vraagt_altijd_step_up
 
 logger = logging.getLogger(__name__)

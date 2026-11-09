@@ -17,7 +17,7 @@ from opi.api.validation import (
     validate_api_payload,
 )
 from opi.forms.editables.fields.components import COMPONENT_DESCRIPTION_EDITABLE
-from opi.utils.project_utils import build_component_config
+from opi.services.project_utils import build_component_config
 from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------

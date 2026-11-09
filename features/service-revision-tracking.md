@@ -22,7 +22,7 @@ opi/manager/database_manager.py        <- Calls record_clone() + report_clone_pe
 opi/manager/minio_manager.py           <- Calls record_clone() + report_clone_performed()
 opi/manager/pvc_manager.py             <- Calls report_clone_performed() (component-level generation)
 opi/manager/project_manager.py         <- Coordinates clone status: set_clone_status after all services
-opi/handlers/project_file_handler.py   <- Reads/writes clone-from status and service generation
+opi/services/project_file_handler.py   <- Reads/writes clone-from status and service generation
 ```
 
 ## How it works
@@ -285,7 +285,7 @@ revisions:
 | `opi/manager/minio_manager.py` | Calls `record_clone()` and `report_clone_performed()` on MinIO clone |
 | `opi/manager/pvc_manager.py` | Calls `report_clone_performed()` on PVC clone (component-level generation) |
 | `opi/manager/project_manager.py` | Coordinates clone status tracking via `set_clone_status` |
-| `opi/handlers/project_file_handler.py` | Reads/writes clone-from status and service generation |
+| `opi/services/project_file_handler.py` | Reads/writes clone-from status and service generation |
 | `tests/test_clone_tracking.py` | Tests for the full clone tracking contract |
 | `tests/test_revision_manager.py` | Unit tests for RevisionManager |
 

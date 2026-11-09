@@ -7,7 +7,7 @@ verhuist naar het schema van de versie die hem droeg en verdwijnt uit het nieuws
 
 - Nieuwste schema: `operations-manager/python/opi/schemas/project_v2.json`
 - Oudere versies: `operations-manager/python/opi/schemas/project_legacy/v<versie>.json`
-- Code: `opi/core/project_schema.py`, migratieketen in `opi/services/schema_migration.py`
+- Code: `opi/services/project_schema.py`, migratieketen in `opi/services/schema_migration.py`
 - Tests: `operations-manager/python/tests/test_project_schema_versions.py`
 
 ## Waarom
@@ -43,7 +43,7 @@ echte breuk, niet voor de tiende kleine toevoeging.
 Als getal zou dat niet werken: `2.10` is als float gelijk aan `2.1`, en dus kleiner dan `2.9`.
 Daarom:
 
-- `SchemaVersion` in `opi/core/project_schema.py` is het ene versietype. Het leest `2`, `2.9`,
+- `SchemaVersion` in `opi/services/project_schema.py` is het ene versietype. Het leest `2`, `2.9`,
   `"2.9"` en `"2.10"` als `(major, minor)` en vergelijkt daarop. `parse_schema_version` leest een
   waarde, `version_key` geeft de canonieke tekstvorm (`"2"`, `"2.9"`, `"2.10"`), en dat is ook de
   naam van het patchbestand.

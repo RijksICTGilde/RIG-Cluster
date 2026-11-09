@@ -28,11 +28,11 @@ from opi.manager.backup.runs import clone_backup_items
 from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import ServiceType
 from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
+from opi.services.secrets import SeaweedFSSecret
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import CloneFromType
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import SeaweedFSSecret
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from opi.connectors import create_argo_connector
 from opi.connectors.argo import ArgoTransportError
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
 from opi.core.metrics import (
@@ -28,6 +27,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
 )
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
+from opi.services.tasks import progress_steps as steps
 from opi.utils.naming import generate_argocd_application_name
 
 if TYPE_CHECKING:

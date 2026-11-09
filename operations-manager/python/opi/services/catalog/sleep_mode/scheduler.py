@@ -142,9 +142,9 @@ class SleepModeScheduler:
                 await asyncio.sleep(settings.SLEEP_MODE_PACE_SECONDS)
 
     async def _apply(self, project_name: str, filename: str, plan: list[tuple[str, str]], now: datetime) -> bool:
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.manager.project_manager import ProjectManager
         from opi.services.catalog.sleep_mode import manifests, token
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.resource_tuning_service import trigger_reprocessing
 
         project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")

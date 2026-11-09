@@ -35,8 +35,8 @@ from opi.manager.run_support import (
 from opi.services.catalog.image_registries.ownership import foreign_proxy_organization_owner
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import generate_job_name, generate_project_service_account_name
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 

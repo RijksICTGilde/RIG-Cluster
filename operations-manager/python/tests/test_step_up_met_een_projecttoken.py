@@ -32,11 +32,11 @@ from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
 from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_step_up, end_token_step_up
-from opi.core.members import MemberKind
-from opi.core.step_up import StepUpAction
 from opi.services.api_step_up_service import personal_token_credential
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
+from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 from opi.services.user_service import get_user_service
 from starlette.requests import Request

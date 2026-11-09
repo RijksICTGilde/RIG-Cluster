@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from opi.utils.logging_redact import redact_text
 
 if TYPE_CHECKING:
-    from opi.core.async_task_service import AsyncTaskService
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 

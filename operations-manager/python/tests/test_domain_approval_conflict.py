@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_store import ConflictError
 from opi.web.router_approvals import _do_submit
 

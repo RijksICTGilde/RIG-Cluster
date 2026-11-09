@@ -46,8 +46,8 @@ def derived_destinations(project_data: dict[str, Any]) -> list[dict[str, str]]:
     Imported inside the function: ``project_file_handler`` imports the invite config
     model, so importing either at module level closes a cycle.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.publish_on_web.urls import public_urls_for_project
+    from opi.services.project_file_handler import ProjectFileHandler
 
     try:
         return public_urls_for_project(project_data, ProjectFileHandler())

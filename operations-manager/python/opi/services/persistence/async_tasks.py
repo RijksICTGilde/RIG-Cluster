@@ -1,7 +1,7 @@
 """ORM model for the ``async_tasks`` table (the async task queue, RC-5).
 
 Schema-as-code mirror of ``ASYNC_TASKS_TABLE_SQL``. The repository lives in
-``opi/core/async_task_service.py``. Queries still add ``FOR UPDATE SKIP LOCKED`` for
+``opi/services/tasks/async_task_service.py``. Queries still add ``FOR UPDATE SKIP LOCKED`` for
 safe concurrent claiming.
 """
 

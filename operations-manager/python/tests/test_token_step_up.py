@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
-from opi.core.step_up import StepUpAction
 from opi.services.api_step_up_service import sso_session_credential
+from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 if TYPE_CHECKING:

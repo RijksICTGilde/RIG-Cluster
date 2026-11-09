@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from opi.services.catalog.sleep_mode.token import WAKE_TOKEN_ENV
+from opi.services.secrets import BaseSecret
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import BaseSecret
 
 
 @dataclass

@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from opi.handlers.project_file_handler import image_is_confirmed_absent
 from opi.services.catalog.image_registries.resolution import display_image
+from opi.services.project_file_handler import image_is_confirmed_absent
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.naming import generate_unique_name
 

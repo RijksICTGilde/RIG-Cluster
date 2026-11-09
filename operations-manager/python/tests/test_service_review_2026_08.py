@@ -81,7 +81,7 @@ class TestDeploymentGenerationIdentity:
     not a raw item.get('reference') that only matches the {reference} entry form."""
 
     def test_generation_read_via_name_form_entry(self) -> None:
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         # A {name, config} record (not {reference}) must still be found.
@@ -97,7 +97,7 @@ class TestDeploymentGenerationIdentity:
         assert generation == 3
 
     def test_generation_read_bare_string_entry_is_none(self) -> None:
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         project_data = {"deployments": [{"name": "deployment-1", "services": ["minio-storage"]}]}

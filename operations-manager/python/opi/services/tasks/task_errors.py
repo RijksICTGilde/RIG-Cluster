@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from opi.api.v2.models import ErrorCategory
 from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.connectors.mail import MailRelayUnavailableError
+from opi.core.errors import ErrorCategory
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager

@@ -5,13 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
-from opi.handlers.project_file_handler import (
-    create_project_file_handler,
-    extract_storage_from_component_services,
-)
 from opi.manager.backup import create_backup_manager
 from opi.manager.backup.restore import (
     _restore_bucket_with_versioning,
@@ -20,8 +15,13 @@ from opi.manager.backup.restore import (
 )
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.services.project_file_handler import (
+    create_project_file_handler,
+    extract_storage_from_component_services,
+)
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import normalize_service_entries
+from opi.services.tasks import progress_steps as steps
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:

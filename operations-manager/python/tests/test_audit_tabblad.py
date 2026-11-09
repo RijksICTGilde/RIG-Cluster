@@ -22,9 +22,9 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.db import session_scope
-from opi.core.members import MemberKind
 from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
 from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
+from opi.services.members import MemberKind
 from opi.services.persistence.notification_events import NotificationEvent
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import enforce_route_action, may

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action, action_of
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import enforce_route_action
 from opi.web.lotc_switch import PROJECT_TABS, project_tab_url, tab_from_path

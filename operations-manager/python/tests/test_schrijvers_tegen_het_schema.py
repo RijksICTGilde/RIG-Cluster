@@ -37,14 +37,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import validate_project_schema
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.catalog.sleep_mode import service as sleep_service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode import token as sleep_token
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_schema import validate_project_schema
 from opi.services.resource_tuning_service import apply_resource_tuning
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.services_enums import ServiceType
@@ -256,7 +256,7 @@ def test_de_wortelcomponent_bijstellen_blijft_geldig() -> None:
 
 def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
     """Verwijderen is ook schrijven: wat achterblijft moet geldig zijn, niet alleen wat weggaat."""
-    from opi.handlers.project_file_handler import remove_attachment_references, remove_component_references
+    from opi.services.project_file_handler import remove_attachment_references, remove_component_references
 
     project = _basis_project()
     project["deployments"][0]["components"].append({"reference": "api", "image": "nginx:1.25"})
@@ -273,7 +273,7 @@ def test_een_component_verwijderen_laat_een_geldig_bestand_achter() -> None:
     Blijft er een verwijzing staan naar een component dat niet meer bestaat, dan is het
     bestand ongeldig, en dat is precies wat deze poort meet.
     """
-    from opi.handlers.project_file_handler import remove_component
+    from opi.services.project_file_handler import remove_component
 
     project = _basis_project()
     project["components"].append(
@@ -447,7 +447,7 @@ def _manager() -> Any:
     """Een ProjectManager zonder connectors, zoals tests/test_database_schemas_api.py doet."""
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -609,7 +609,7 @@ async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> Non
     """
     from types import SimpleNamespace
 
-    from opi.core.step_up import STEP_UP_SESSION_KEY
+    from opi.services.step_up import STEP_UP_SESSION_KEY
     from opi.web.router_env_vars import save_env_vars
 
     project = _basis_project()
@@ -664,7 +664,7 @@ async def test_de_mailmanager_schrijft_niets_in_het_projectbestand() -> None:
     weer iets worden weggeschreven, dan valt deze test om en gaat het blok langs de poorten.
     """
     from opi.manager.mail_manager import MailManager
-    from opi.utils.secrets import SendEmailSecret
+    from opi.services.secrets import SendEmailSecret
 
     project = _basis_project()
     project["services"].append(

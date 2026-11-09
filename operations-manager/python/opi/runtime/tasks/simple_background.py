@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from opi.core import progress_steps as steps
+from opi.services.tasks import progress_steps as steps
 
 if TYPE_CHECKING:
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager

@@ -29,8 +29,8 @@ import time
 from dataclasses import dataclass
 
 from opi.connectors.kubectl import KubectlConnector
-from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.catalog.base import all_application_pods_selector, is_application_pod
+from opi.services.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 
 logger = logging.getLogger(__name__)
 

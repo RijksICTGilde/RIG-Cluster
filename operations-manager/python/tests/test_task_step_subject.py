@@ -12,7 +12,7 @@ de lijst alleen langer.
 
 De tweede helft van hetzelfde: de helft van de regels was Engels ("Creating MinIO
 storage resources" tussen de Nederlandse regels), en dat viel op als iets dat vergeten
-was. De scan onderaan dit bestand meet dat op ``opi/core/progress_steps.py``, waar sinds
+was. De scan onderaan dit bestand meet dat op ``opi/services/tasks/progress_steps.py``, waar sinds
 RC-428 elke stapnaam staat, zodat een nieuwe Engelse regel er niet ongemerkt bij komt.
 """
 
@@ -23,8 +23,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
 from opi.runtime.tasks.persistent_task_progress import TaskStatus, format_step_line
+from opi.services.tasks import progress_steps
 
 OPI_ROOT = pathlib.Path(__file__).resolve().parents[1] / "opi"
 
@@ -246,7 +246,7 @@ def test_a_subject_is_shown_not_executed(layout: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-STEP_TEXT_MODULE = OPI_ROOT / "core" / "progress_steps.py"
+STEP_TEXT_MODULE = OPI_ROOT / "services" / "tasks" / "progress_steps.py"
 
 
 def _step_literals() -> list[tuple[str, str]]:

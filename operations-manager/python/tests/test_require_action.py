@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import TE_SMALLE_ROL, require_action
 

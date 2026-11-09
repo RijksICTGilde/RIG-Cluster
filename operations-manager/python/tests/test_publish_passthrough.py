@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.generation.manifests import render_template
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 def _tls(project: dict, component: str, deployment: str | None = None) -> str:
@@ -202,7 +202,7 @@ def test_provided_render_uses_attachment_secret_no_cert_manager() -> None:
 
 
 def test_split_tls_pem() -> None:
-    from opi.handlers.project_file_handler import _split_tls_pem
+    from opi.services.project_file_handler import _split_tls_pem
 
     pem = (
         "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"

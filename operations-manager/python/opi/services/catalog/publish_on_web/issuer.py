@@ -15,20 +15,20 @@ gets a certificate on the same terms. A stored value still wins, which is how a 
 points at an issuer of its own.
 
 This lives next to -- not inside -- ``domain_config`` because the derivation needs
-``connectors/subdomain``, and that module imports ``domain_config``.
+``services/catalog/publish_on_web/subdomain``, and that module imports ``domain_config``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from opi.connectors.subdomain import (
+from opi.core.cluster_config import get_domain_issuer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import (
     get_project_allowed_domain_config,
     get_supported_base_domains,
     is_deployment_domain_approved,
 )
-from opi.core.cluster_config import get_domain_issuer
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 
 def derive_issuer(project_data: dict[str, Any], deployment: dict[str, Any], cluster: str) -> str | None:

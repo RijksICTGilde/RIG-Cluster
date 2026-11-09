@@ -16,8 +16,8 @@ from opi.manager.db_console_manager import (
     DbConsoleTool,
 )
 from opi.runtime.periodic.db_console_reaper import DbConsoleReaper
+from opi.services.secrets import DatabaseSecret
 from opi.utils import naming
-from opi.utils.secrets import DatabaseSecret
 
 # --------------------------------------------------------------------- naming
 

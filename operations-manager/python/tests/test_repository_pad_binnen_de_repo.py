@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import (
+from opi.forms.models.project_file import REPOSITORY_PATH_PATTERN, RepositoryModel
+from opi.manager.argo_manager import ArgoManager
+from opi.manager.project_manager import ProjectManager
+from opi.manager.pvc_manager import PVCManager
+from opi.services.project_schema import (
     SCHEMA_PATH,
     ProjectSchemaError,
     validate_declared_project_schema,
     validate_project_schema,
 )
-from opi.forms.models.project_file import REPOSITORY_PATH_PATTERN, RepositoryModel
-from opi.manager.argo_manager import ArgoManager
-from opi.manager.project_manager import ProjectManager
-from opi.manager.pvc_manager import PVCManager
 from opi.utils.naming import (
     RepositoryPathError,
     generate_deployment_manifest_path,

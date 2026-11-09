@@ -24,11 +24,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.connectors.git import GitPushConflictError
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.config import settings
 from opi.manager.argo_manager import ApplicationGone
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import ProjectManager
+from opi.services.tasks.async_task_service import AsyncTaskService
 from opi.utils.naming import (
     generate_argocd_appproject_prefix,
     generate_gitops_argocd_application_path,

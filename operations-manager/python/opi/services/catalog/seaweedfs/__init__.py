@@ -35,9 +35,9 @@ from opi.services.catalog.shared.noncurrent_versions import (
     NONCURRENT_VERSION_SETTINGS,
     noncurrent_deployment_section,
 )
+from opi.services.secrets import SeaweedFSSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import SeaweedFSSecret
 
 if TYPE_CHECKING:
     from opi.services.catalog.config_settings import ConfigSetting
@@ -91,7 +91,7 @@ class SeaweedfsStorageService(BackupsPageMixin, Service):
         Runs for EVERY project, including one that does not name this service; the rule then
         returns nothing.
         """
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         # Through the handler and not through the component list itself: the handler also knows
         # a deployment's helm charts and the v1 keyword ``uses-services``.

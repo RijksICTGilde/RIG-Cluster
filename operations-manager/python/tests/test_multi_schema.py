@@ -14,8 +14,8 @@ import pytest
 from opi.connectors.postgres import PostgresConnector
 from opi.manager.database_manager import DatabaseManager
 from opi.services.catalog.postgresql_database.variables import reserved_database_variable_names
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import generate_extra_database_schema, generate_schema_variable_name
-from opi.utils.secrets import DatabaseSecret
 
 # --- naming ---------------------------------------------------------------------
 

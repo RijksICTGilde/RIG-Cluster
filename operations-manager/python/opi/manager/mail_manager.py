@@ -38,6 +38,7 @@ from opi.services.catalog.send_email import (
     deployment_messages_per_day,
     is_approved,
 )
+from opi.services.secrets import SendEmailSecret
 from opi.utils.naming import (
     MAIL_PROJECT_ACCOUNT_PREFIX,
     generate_deployment_mail_account_name,
@@ -46,7 +47,6 @@ from opi.utils.naming import (
     generate_mail_sender_address,
 )
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import SendEmailSecret
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager

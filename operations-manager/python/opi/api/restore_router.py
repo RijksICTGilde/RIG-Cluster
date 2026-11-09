@@ -10,19 +10,18 @@ from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
-from opi.api.v2.models import ErrorCategory
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
-from opi.core.errors import reference_for, with_reference
-from opi.handlers.project_file_handler import (
+from opi.core.errors import ErrorCategory, reference_for, with_reference
+from opi.services.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
 )
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 from pydantic import BaseModel, Field, model_validator
 
 from opi.manager.backup import (
@@ -45,6 +44,7 @@ from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
+from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from opi.utils.naming import (
     generate_pvc_name,
     generate_storage_name,
@@ -59,7 +59,6 @@ from opi.utils.patterns import (
     POSTGRES_IDENTIFIER,
     S3_BUCKET_NAME,
 )
-from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 
 logger = logging.getLogger(__name__)
 SNAPSHOTS_NIET_OPGEHAALD = "De lijst met snapshots kon niet worden opgehaald. Probeer het over een minuut opnieuw."

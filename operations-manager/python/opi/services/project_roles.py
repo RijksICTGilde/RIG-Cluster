@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.actor import ActorKind, get_actor
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide, effective_roles
-from opi.core.project_environment import Omgeving, effective_environment, highest_environment
-from opi.core.step_up import is_elevated_admin
 from opi.services.project import Project
+from opi.services.project_environment import Omgeving, effective_environment, highest_environment
+from opi.services.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:

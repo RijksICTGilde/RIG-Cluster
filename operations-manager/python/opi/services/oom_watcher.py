@@ -43,8 +43,6 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.catalog.base import (
     APPLICATION_CONTAINER_NAME,
     SERVICE_ROLE_LABEL_KEY,
@@ -56,13 +54,15 @@ from opi.services.catalog.base import (
 from opi.services.catalog.deployment_health import deployment_health_service
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
+from opi.services.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
+from opi.services.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
-    from opi.core.async_task_service import AsyncTaskService
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 

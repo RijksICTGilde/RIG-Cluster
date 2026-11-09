@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import opi
 import pytest
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from opi.services import image_pull_report
 from opi.services.image_pull_report import (
     ImagePullObserver,
@@ -26,6 +25,7 @@ from opi.services.image_pull_report import (
     observe_image_pull_failures,
     read_image_pull_failure,
 )
+from opi.services.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 
 ABSENT = 'Back-off pulling image "ghcr.io/org/app:bad-tag": ErrImagePull: manifest unknown'
 QUOTA = "ErrImagePull: reading manifest pr-692 in rcr.rijksapps.nl/ghcr-rig/org/app: denied: Quota has been exceeded on namespace"

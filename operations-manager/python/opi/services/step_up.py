@@ -22,8 +22,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from opi.core.config import settings
-from opi.core.members import member_list_changed
-from opi.core.project_environment import (
+from opi.services.members import member_list_changed
+from opi.services.project_environment import (
     Omgeving,
     effective_environment,
     environment_markings,

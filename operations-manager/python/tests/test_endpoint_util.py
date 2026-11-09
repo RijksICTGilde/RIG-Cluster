@@ -23,7 +23,7 @@ from opi.api.image_router import push_image
 from opi.core.actor import get_actor, project_api_key_actor
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from starlette.requests import Request
 

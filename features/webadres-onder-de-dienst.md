@@ -99,7 +99,7 @@ vastlag.
 ## Lezen en schrijven
 
 `opi/services/catalog/publish_on_web/domain_config.py` is de enige autoriteit over de
-locatie — dezelfde rol die `connectors/subdomain.py` speelt voor het `domains:`-blok.
+locatie — dezelfde rol die `services/catalog/publish_on_web/subdomain.py` speelt voor het `domains:`-blok.
 
 ```python
 from opi.services.catalog.publish_on_web.domain_config import (
@@ -231,7 +231,7 @@ Op die tweede helft loopt de scheidslijn tussen **opslaan** en **toepassen**:
 - *Een ingetrokken goedkeuring* (`denied`) weigert in het formulier en gaat door de
   opslagpoort (`denied_blocks=False`), zodat een beheerder zijn eigen oordeel kan opslaan.
 
-`validate_bare_domain_allowed()` in `connectors/subdomain.py` draagt beide helften en staat
+`validate_bare_domain_allowed()` in `services/catalog/publish_on_web/subdomain.py` draagt beide helften en staat
 op het publicatiepad, achter diezelfde goedkeuringspoort.
 
 **Een kaal domein afmelden raakt alleen de eigen registratie.** `delete_bare_domain()` deed

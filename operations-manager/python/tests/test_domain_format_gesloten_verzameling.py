@@ -157,7 +157,7 @@ class TestApiWeg:
         """``:upsert-deployment`` draait dezelfde enforcer als de wizard."""
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -179,7 +179,7 @@ class TestApiWeg:
     async def test_upsert_deployment_laat_een_geldig_formaat_door(self):
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

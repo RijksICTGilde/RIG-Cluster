@@ -118,9 +118,9 @@ het component op productie, dan vraagt de opslag bovendien een verse OTP
 | | |
 |---|---|
 | route | `opi/api/v2/router.py`: `delete_component_v2` |
-| de verwijderregel | `remove_component` in `opi/handlers/project_file_handler.py` |
+| de verwijderregel | `remove_component` in `opi/services/project_file_handler.py` |
 | guard + opslaan | `ProjectManager.delete_component` |
-| de wandeling | `component_usage_sites` / `remove_component_references` in `opi/handlers/project_file_handler.py` |
+| de wandeling | `component_usage_sites` / `remove_component_references` in `opi/services/project_file_handler.py` |
 | dezelfde regel in de modal | `_apply_component_removals` in `opi/forms/wizard/save.py` |
 | welke rij de modal weghaalt | `reeksrij-sleutel-in-de-inzending.md` |
 | taak | `handle_delete_component` in `opi/runtime/tasks/task_handlers_components.py` |

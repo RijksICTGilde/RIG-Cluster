@@ -569,8 +569,8 @@ class CustomDomainSelectConverter:
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         if not value:
             return value
-        from opi.connectors.subdomain import get_supported_base_domains
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         if str(value) not in get_supported_base_domains(cluster=settings.CLUSTER_MANAGER):
             return "__custom__"

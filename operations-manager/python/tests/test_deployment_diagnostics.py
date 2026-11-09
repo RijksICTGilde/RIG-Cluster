@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.v2.models import ErrorCategory
+from opi.core.errors import ErrorCategory
 from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.deployment_diagnostics import (
     categorize_error,

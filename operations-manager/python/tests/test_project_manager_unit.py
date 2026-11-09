@@ -330,7 +330,7 @@ class TestSaveAndCommitProjectValidation:
         """A schema violation must abort before the file write and the commit run."""
         from unittest.mock import patch
 
-        from opi.core.project_schema import ProjectSchemaError
+        from opi.services.project_schema import ProjectSchemaError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
@@ -353,7 +353,7 @@ class TestSaveAndCommitProjectValidation:
     @pytest.mark.asyncio
     async def test_structural_dangling_reference_raises(self):
         """A deployment referencing an undefined component is a structural rejection."""
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         project = _valid_project_for_save()
@@ -365,7 +365,7 @@ class TestSaveAndCommitProjectValidation:
     @pytest.mark.asyncio
     async def test_structural_duplicate_component_raises(self):
         """Two components with the same name is a structural rejection."""
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         project = _valid_project_for_save()
@@ -455,7 +455,7 @@ class TestSaveAndCommitProjectValidation:
         project has pre-existing structural drift; validation runs but only warns."""
         from unittest.mock import AsyncMock, patch
 
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
@@ -481,7 +481,7 @@ class TestSaveAndCommitProjectValidation:
         """A user-driven edit that introduces drift is rejected before any write."""
         from unittest.mock import AsyncMock, patch
 
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"

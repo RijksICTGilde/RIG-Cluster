@@ -1,5 +1,5 @@
 """
-Tests for opi.handlers.project_file_handler module.
+Tests for opi.services.project_file_handler module.
 
 Tests for _parse_deepdiff_path, set_deployment_service_generation, and related methods.
 """
@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     ProjectFileHandler,
     is_image_pull_disable_reason,
 )
@@ -459,7 +459,7 @@ async def test_user_env_vars_stored_as_a_yaml_mapping_are_extracted(
     deployment path reads it through extract_component_user_env_vars."""
     private_key, public_key = age_keypair
     monkeypatch.setattr(
-        "opi.handlers.project_file_handler.get_decoded_project_private_key",
+        "opi.services.project_file_handler.get_decoded_project_private_key",
         AsyncMock(return_value=private_key),
     )
     project_data = {
@@ -516,7 +516,7 @@ class TestHelmValuesTextVariantKeepsItsSourceForm:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
-            "opi.handlers.project_file_handler.get_decoded_project_private_key",
+            "opi.services.project_file_handler.get_decoded_project_private_key",
             AsyncMock(return_value=""),
         )
         handler = ProjectFileHandler()

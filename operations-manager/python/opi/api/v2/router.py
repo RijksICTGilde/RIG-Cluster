@@ -100,11 +100,6 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import (
-    get_supported_base_domains,
-    validate_base_domain,
-    validate_subdomain_for_domain,
-)
 from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.authz.actions import Action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.authz.actions import action as action_marker
@@ -116,15 +111,7 @@ from opi.core.cluster_config import (
     supports_custom_domain_certificates,
 )
 from opi.core.config import settings
-from opi.core.project_environment import deployment_environment, effective_environment
-from opi.core.step_up import StepUpAction
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
-from opi.core.task_rollout import NON_DEFERRABLE_REASONS
-from opi.handlers.project_file_handler import (
-    COMPONENT_USAGE_WEB_ADDRESS,
-    ProjectFileHandler,
-    component_usage_sites,
-)
 from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.argocd_operation import read_sync_operation
@@ -142,6 +129,11 @@ from opi.services.catalog.deployment_health.disabled import deployment_disabled_
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import (
+    get_supported_base_domains,
+    validate_base_domain,
+    validate_subdomain_for_domain,
+)
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import decode as decode_values
@@ -161,8 +153,19 @@ from opi.services.project_authorization import (
     get_user_roles_for_project,
     is_user_authorized_for_project,
 )
+from opi.services.project_environment import deployment_environment, effective_environment
+from opi.services.project_file_handler import (
+    COMPONENT_USAGE_WEB_ADDRESS,
+    ProjectFileHandler,
+    component_usage_sites,
+)
 from opi.services.project_roles import has_role
 from opi.services.project_store import get_project_store
+from opi.services.project_utils import (
+    ProjectApiKeyError,
+    affected_deployments,
+    generate_base_project_file,
+)
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import (
     ServiceAdapter,
@@ -171,7 +174,9 @@ from opi.services.services import (
     service_entry_name,
 )
 from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
+from opi.services.step_up import StepUpAction
 from opi.services.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
+from opi.services.tasks.task_rollout import NON_DEFERRABLE_REASONS
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.client_ip import client_ip
 from opi.utils.egress_guard import clone_source_refusal
@@ -183,11 +188,6 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_names import ensure_unique_project_name, validate_project_name
-from opi.utils.project_utils import (
-    ProjectApiKeyError,
-    affected_deployments,
-    generate_base_project_file,
-)
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 from opi.utils.yaml_util import dump_yaml_to_string
 
@@ -846,7 +846,7 @@ async def get_deployment_v2(
 # --- rollout flag (RC-46) ----------------------------------------------------
 # Every endpoint below that normally processes the project accepts ``rollout``.
 # The flag only travels: it is stored in the task payload and read once, in the
-# handler, at the point where it would process. See opi/core/task_rollout.py.
+# handler, at the point where it would process. See opi/services/tasks/task_rollout.py.
 
 RolloutQuery = Annotated[
     bool,

@@ -13,8 +13,8 @@ vastleggen.
 """
 
 import pytest
-from opi.core.task_supersede import covers, scope_of
-from opi.utils.project_utils import affected_deployments, deployments_using_component
+from opi.services.project_utils import affected_deployments, deployments_using_component
+from opi.services.tasks.task_supersede import covers, scope_of
 
 
 @pytest.fixture

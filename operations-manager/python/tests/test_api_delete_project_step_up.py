@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
-from opi.core.step_up import StepUpAction
+from opi.services.step_up import StepUpAction
 
 API_KEY = "sleutel-123"
 LID = "lid@example.org"

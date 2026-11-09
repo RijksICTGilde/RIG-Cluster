@@ -11,32 +11,32 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException
 
 from opi.core.actor import actor_from_stored, set_actor
-from opi.core.async_task_service import register_waker
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
 from opi.core.metrics import set_rollout_task_type
-from opi.core.task_errors import (
+from opi.services.otp_herlogin_service import OtpHerloginService
+from opi.services.session_store import get_session_store
+from opi.services.tasks.async_task_service import register_waker
+from opi.services.tasks.task_errors import (
     INTERNAL_ERROR_TYPE,
     INVALID_REQUEST_ERROR_TYPE,
     NOT_FOUND_ERROR_TYPE,
     TaskInputError,
     platform_failure_category,
 )
-from opi.core.task_rollout import first_phase
-from opi.core.task_supersede import (
+from opi.services.tasks.task_rollout import first_phase
+from opi.services.tasks.task_supersede import (
     RunningTask,
     TaskSuperseded,
     reset_current_task,
     set_current_task,
 )
-from opi.services.otp_herlogin_service import OtpHerloginService
-from opi.services.session_store import get_session_store
 from opi.services.user_otp_service import UserOtpService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from opi.core.async_task_service import AsyncTaskService
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 

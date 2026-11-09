@@ -310,7 +310,7 @@ def selected_services(project_data: dict) -> list[Service]:
     ``extract_service_names_from_component``, so the v1 ``uses-services`` key counts too;
     reading ``services`` alone silently loses every service on an unmigrated component.
     """
-    from opi.handlers.project_file_handler import extract_service_names_from_component
+    from opi.services.project_file_handler import extract_service_names_from_component
     from opi.services.services import service_entry_name
 
     selected: set[str | None] = {service_entry_name(entry) for entry in project_data.get("services", []) or []}

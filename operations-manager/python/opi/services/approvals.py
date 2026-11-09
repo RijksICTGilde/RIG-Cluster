@@ -15,7 +15,7 @@ Two operations, mirroring the spec's ``list_items`` / ``record`` callbacks:
 
 Approval state is owned by the declaring service and stored under its config (for
 publish-on-web: ``services/[publish-on-web]/config/domains``, resolved read-both /
-migrated write-new by connectors/subdomain.py). This module stays state-agnostic -- it
+migrated write-new by services/catalog/publish_on_web/subdomain.py). This module stays state-agnostic -- it
 only routes to the specs.
 """
 

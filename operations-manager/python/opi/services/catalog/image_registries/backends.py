@@ -16,13 +16,13 @@ from opi.services.catalog.image_registries.naming import (
 )
 from opi.services.catalog.image_registries.quota import effective_quota_gib
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
+from opi.services.secrets import RegistrySecret
 from opi.services.services_enums import ServiceType
 from opi.utils.age import (
     carries_encrypted_value,
     decrypt_password_smart_sync,
     get_decoded_project_private_key_sync,
 )
-from opi.utils.secrets import RegistrySecret
 
 #: Every project-level file of this service starts with this, for the prune's sake.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"

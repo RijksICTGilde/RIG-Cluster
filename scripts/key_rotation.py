@@ -65,7 +65,7 @@ from opi.core.cluster_config import (  # noqa: E402  (after the sys.path bootstr
     CLUSTER_CONFIG,
     get_cluster_config,
 )
-from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
+from opi.services.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
     find_plaintext_secret_violations,
     validate_project_schema,
 )

@@ -4,7 +4,7 @@ The three layers this service carries config on each answer a different question
 gets its own model, selected by ``PublishOnWebService.config_model_for(layer)``:
 
 - **project** (:class:`PublishOnWebProjectConfig`) -- *which domains is this project allowed
-  to publish on*: the ``domains`` approval block. ``connectors/subdomain.py`` is the single
+  to publish on*: the ``domains`` approval block. ``services/catalog/publish_on_web/subdomain.py`` is the single
   authority on where it lives; this model only says what may be in it. It also carries the
   project-wide ``tls`` default, which is level 3 of the certificate cascade.
 - **deployment** (:class:`PublishOnWebDeploymentConfig`) -- *how this deployment's hostname
@@ -186,7 +186,7 @@ class PublishOnWebDeploymentConfig(BaseModel):
     def _subdomain_form(cls, value: str | None) -> str | None:
         # Dots belong here: whether a domain allows them is decided by the per-domain rule
         # (``supports-dots``). Not validate_subdomain: that lowercases and demands one label.
-        from opi.connectors.subdomain import DOTTED_SUBDOMAIN_FORMAT_MESSAGE, SUBDOMAIN_MAX_LENGTH
+        from opi.services.catalog.publish_on_web.subdomain import DOTTED_SUBDOMAIN_FORMAT_MESSAGE, SUBDOMAIN_MAX_LENGTH
 
         if value is None:
             return value
@@ -202,7 +202,7 @@ class PublishOnWebDeploymentConfig(BaseModel):
     def _base_domain_form(cls, value: str | None) -> str | None:
         # Don't normalize: adjusting a value after validation would differ from approval.
         # Local import: subdomain imports this package back.
-        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+        from opi.services.catalog.publish_on_web.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
 
         if value is not None and not DOMAIN_PATTERN.match(value):
             raise ValueError(DOMAIN_FORMAT_MESSAGE)

@@ -37,14 +37,7 @@ from opi.connectors.git_repo import (
     workspace_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
-from opi.connectors.subdomain import (
-    get_supported_base_domains,
-    is_deployment_domain_approved,
-    validate_bare_domain_allowed,
-)
-from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -75,8 +68,6 @@ from opi.core.metrics import (
     PHASE_PROVISION,
     rollout_phase,
 )
-from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
-from opi.core.task_errors import TaskInputError
 from opi.generation.manifests import (
     CMP_ENV_NAME,
     CMP_ENV_PLAINTEXT_FILENAME,
@@ -86,12 +77,6 @@ from opi.generation.manifests import (
     ManifestGenerator,
     cmp_env_rejection,
 )
-from opi.handlers.project_file_handler import (
-    ProjectFileHandler,
-    extract_service_names_from_component,
-    image_is_confirmed_absent,
-)
-from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
     ApplicationGone,
@@ -137,13 +122,31 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
+from opi.services.catalog.publish_on_web.subdomain import (
+    get_supported_base_domains,
+    is_deployment_domain_approved,
+    validate_bare_domain_allowed,
+)
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
+from opi.services.project_file_handler import (
+    ProjectFileHandler,
+    extract_service_names_from_component,
+    image_is_confirmed_absent,
+)
+from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.services.project_reconciliation_service import record_reconciliation
+from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.services.project_store import get_project_store
+from opi.services.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    namespace_level_deployment,
+    normalize_container_image,
+    project_level_deployment,
+)
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
@@ -151,6 +154,18 @@ from opi.services.registry import (
     project_manifest_services,
     provisioning_services,
 )
+from opi.services.secrets import (
+    BaseSecret,
+    DatabaseSecret,
+    KeycloakSecret,
+    MinIOSecret,
+    PlatformSecret,
+    RedisSecret,
+    UserSecret,
+)
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.async_task_service import AsyncTaskService
+from opi.services.tasks.task_errors import TaskInputError
 from opi.utils.age import (
     carries_encrypted_value,
     decrypt_password_smart,
@@ -198,22 +213,7 @@ from opi.utils.naming import (
     generate_unique_name,
     get_component_ingress_map,
 )
-from opi.utils.project_utils import (
-    RESERVED_PROJECT_NAME_MESSAGE,
-    namespace_level_deployment,
-    normalize_container_image,
-    project_level_deployment,
-)
 from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
-from opi.utils.secrets import (
-    BaseSecret,
-    DatabaseSecret,
-    KeycloakSecret,
-    MinIOSecret,
-    PlatformSecret,
-    RedisSecret,
-    UserSecret,
-)
 from opi.utils.sops import (
     SOPS_SUFFIX,
     TO_SOPS_SUFFIX,
@@ -2406,7 +2406,7 @@ class ProjectManager:
                     )
 
                     # Decrypt registry credentials (reuse existing logic)
-                    from opi.utils.secrets import RegistrySecret
+                    from opi.services.secrets import RegistrySecret
 
                     registry_url = registry_config.get("upstream", "")
                     username = registry_config.get("username", "")

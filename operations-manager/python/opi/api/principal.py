@@ -35,7 +35,7 @@ from opi.core.authz.engine import (
     decide,
     record_decision,
 )
-from opi.core.members import MemberKind
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van, is_verlopen, lid_met_naam
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles
 from opi.services.user_service import get_user_service

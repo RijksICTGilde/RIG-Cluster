@@ -6,13 +6,13 @@ the allowed-domains entry on PRE_SAVE.
 """
 
 import pytest
-from opi.connectors.subdomain import ensure_domain_requests, get_domains_config
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.editable import FormState
 from opi.forms.editables.hooks import DomainRequestHook
 from opi.forms.editables.lifecycle import collect_hooks
 from opi.forms.editables.reindex import materialize_wildcard_visualizer
 from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
+from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests, get_domains_config
 
 
 class TestDomainNeedsRequestCondition:
@@ -57,7 +57,7 @@ class TestDomainNeedsRequestCondition:
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         # Ensure resolver returns exactly the cluster default domain
         monkeypatch.setattr(
-            "opi.connectors.subdomain.get_supported_base_domains",
+            "opi.services.catalog.publish_on_web.subdomain.get_supported_base_domains",
             lambda cluster=None: {"sandbox.rijksapp.dev"},
         )
         condition = DomainNeedsRequestCondition()

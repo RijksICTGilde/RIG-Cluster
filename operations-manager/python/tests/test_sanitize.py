@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.prometheus import PrometheusConnector
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS
+from opi.services.project_file_handler import IMAGE_PULL_REASONS
 
 
 def sandbox_backend(restarts: list[dict[str, Any]]) -> PrometheusConnector:

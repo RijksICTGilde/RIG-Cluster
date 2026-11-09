@@ -17,10 +17,10 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from opi.core.members import MemberKind
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.forms.models.project_file import ProjectUserModel
+from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van, is_verlopen, service_accounts
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION_VALUE,

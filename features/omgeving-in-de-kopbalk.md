@@ -21,4 +21,4 @@ Staging is de omgeving die je niet voor productie wilt aanzien, dus die valt op.
 
 ## Niet te verwarren met
 
-`environment_label` is de OTAP-markering van een deployment (Ontwikkeling, Test, ...), zie `opi/core/project_environment.py`. Dat gaat over het werk van een team, niet over het cluster waar het portaal draait.
+`environment_label` is de OTAP-markering van een deployment (Ontwikkeling, Test, ...), zie `opi/services/project_environment.py`. Dat gaat over het werk van een team, niet over het cluster waar het portaal draait.

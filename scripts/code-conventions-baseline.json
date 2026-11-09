@@ -73,7 +73,7 @@
       "dutch-comments": 2
     },
     "opi/api/v2/models.py": {
-      "dutch-comments": 27
+      "dutch-comments": 23
     },
     "opi/api/v2/router.py": {
       "dutch-identifiers": 1,
@@ -132,12 +132,6 @@
     "opi/connectors/skopeo.py": {
       "dutch-comments": 6
     },
-    "opi/connectors/subdomain.py": {
-      "dutch-comments": 8
-    },
-    "opi/core/async_task_service.py": {
-      "dutch-comments": 2
-    },
     "opi/core/authz/actions.py": {
       "dutch-comments": 1
     },
@@ -150,8 +144,8 @@
     "opi/core/config.py": {
       "dutch-comments": 5
     },
-    "opi/core/project_environment.py": {
-      "dutch-comments": 1
+    "opi/core/errors.py": {
+      "dutch-comments": 4
     },
     "opi/core/rrule_utils.py": {
       "dutch-comments": 1
@@ -276,9 +270,6 @@
     "opi/handlers/keycloak_yaml_handler.py": {
       "dutch-identifiers": 8,
       "dutch-comments": 17
-    },
-    "opi/handlers/project_file_handler.py": {
-      "dutch-comments": 5
     },
     "opi/jobs/reconciliation.py": {
       "dutch-identifiers": 4,
@@ -407,6 +398,9 @@
     "opi/services/catalog/publish_on_web/domain_config.py": {
       "dutch-comments": 1
     },
+    "opi/services/catalog/publish_on_web/subdomain.py": {
+      "dutch-comments": 8
+    },
     "opi/services/config_lists.py": {
       "dutch-comments": 1
     },
@@ -480,6 +474,12 @@
       "dutch-identifiers": 1,
       "dutch-comments": 5
     },
+    "opi/services/project_environment.py": {
+      "dutch-comments": 1
+    },
+    "opi/services/project_file_handler.py": {
+      "dutch-comments": 5
+    },
     "opi/services/project_leden.py": {
       "dutch-identifiers": 9,
       "dutch-comments": 16
@@ -525,6 +525,9 @@
     "opi/services/step_up_conditions.py": {
       "dutch-identifiers": 2,
       "dutch-comments": 4
+    },
+    "opi/services/tasks/async_task_service.py": {
+      "dutch-comments": 2
     },
     "opi/services/user_admin_service.py": {
       "dutch-identifiers": 4,

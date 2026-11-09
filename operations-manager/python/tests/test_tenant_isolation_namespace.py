@@ -210,7 +210,7 @@ class TestExtractDeploymentNamespacePinned:
     """The helper must pin the namespace, not return the raw declared value."""
 
     def _handler(self):
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         return ProjectFileHandler.__new__(ProjectFileHandler)
 

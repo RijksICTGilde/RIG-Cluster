@@ -12,8 +12,8 @@ import asyncio
 from typing import Any
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_project_structure
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import get_service, project_validating_services
 from opi.services.services_enums import ServiceType
 

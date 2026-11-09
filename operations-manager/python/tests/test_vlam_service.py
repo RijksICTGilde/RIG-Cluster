@@ -34,7 +34,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.core.cluster_config import get_vlam_config
-from opi.core.project_schema import ProjectIntegrityError
 from opi.generation.manifests import ManifestGenerator, render_template
 from opi.manager.project_manager import (
     ProjectManager,
@@ -44,6 +43,7 @@ from opi.manager.project_manager import (
 from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import collect_service_routers, get_service
 from opi.services.services_enums import ServiceType, UIEvent
 from opi.utils.naming import generate_unique_name

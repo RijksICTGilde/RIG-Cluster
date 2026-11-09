@@ -19,9 +19,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW
 from opi.services.project_service import ProjectUser
 from opi.services.project_store import ConflictError
+from opi.services.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW
 from opi.web.authz import enforce_route_action
 from opi.web.router_env_vars import save_env_vars, show_env_vars_window
 from opi.web.step_up_dialog import MODAL_TARGET

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from opi.core.config import settings
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.manager.argo_manager import ArgoManager
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 
 GELDIG: dict[str, list[str]] = {
     "name": ["main-repo", "github-repo", "main-repo-autocreated", "r1"],

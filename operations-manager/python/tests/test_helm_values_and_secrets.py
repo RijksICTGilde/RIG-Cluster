@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.project_manager import ProjectManager
-from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
+from opi.services.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
 from opi.utils.sops import sops_filenames
 from ruamel.yaml import YAML
 

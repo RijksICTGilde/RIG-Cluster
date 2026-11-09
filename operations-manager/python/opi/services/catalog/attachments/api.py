@@ -25,7 +25,6 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from opi.core.async_task_service import TaskType
 from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
@@ -46,6 +45,7 @@ from opi.services.catalog.attachments.editables import (
     ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
 )
 from opi.services.catalog.base import ConfigLayer, ConfigRole
+from opi.services.tasks.async_task_service import TaskType
 
 logger = logging.getLogger(__name__)
 

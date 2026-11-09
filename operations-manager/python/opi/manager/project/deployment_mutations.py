@@ -6,19 +6,19 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from opi.connectors.subdomain import ensure_domain_requests
 from opi.core.config import settings
-from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
 from opi.manager.project.notices import approval_notices, certificate_warnings
 from opi.manager.project_validation import validate_component_references
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 from opi.services.project import Project
+from opi.services.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.services.project_store import ConcurrencyError, ConflictError
+from opi.services.project_utils import normalize_container_image
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.services import deployment_index
-from opi.utils.project_utils import normalize_container_image
 
 if TYPE_CHECKING:
     from opi.manager.project.access import ProjectFileAccess

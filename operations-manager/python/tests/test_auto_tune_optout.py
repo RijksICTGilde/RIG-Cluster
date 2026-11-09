@@ -1,6 +1,6 @@
 """Tests for the auto-tune opt-out flag extraction."""
 
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 def _project(component_flag=None, deployment_flag=None):

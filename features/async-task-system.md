@@ -102,7 +102,7 @@ Phase 3 (future):  Federation routing        -- multiple clusters, HTTP between 
 
 **File**: `opi/core/async_task_schema.py` (new)
 
-Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL` in `connectors/subdomain.py`). Uses the local rig-db PostgreSQL.
+Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL` in `services/catalog/publish_on_web/subdomain.py`). Uses the local rig-db PostgreSQL.
 
 ```sql
 CREATE TABLE IF NOT EXISTS async_tasks (
@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
 
 ## 2. AsyncTaskService
 
-**File**: `opi/core/async_task_service.py` (new)
+**File**: `opi/services/tasks/async_task_service.py` (new)
 
 Service layer using the existing `DatabasePool` (from `opi/core/database_pool.py`). All database operations go through this service.
 
@@ -721,7 +721,7 @@ The implementation is structured so that multiple agents can work in parallel. D
 | Unit | File(s) | Description | Agent can start immediately |
 |------|---------|-------------|-|
 | **1A** | `opi/core/async_task_schema.py` | SQL schema string constant + table creation function | Yes |
-| **1B** | `opi/core/async_task_service.py` | AsyncTaskService class with all DB methods, TaskType and AsyncTaskStatus enums | Yes |
+| **1B** | `opi/services/tasks/async_task_service.py` | AsyncTaskService class with all DB methods, TaskType and AsyncTaskStatus enums | Yes |
 | **1C** | `opi/core/config.py` | Add TASK_WORKER_* settings to existing Settings class | Yes |
 | **1D** | `opi/api/task_router.py` + result models | Task status API endpoints + Pydantic response models | Yes |
 
@@ -791,7 +791,7 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 | File | Purpose | Wave |
 |------|---------|------|
 | `opi/core/async_task_schema.py` | SQL schema constant + table creation | 1A |
-| `opi/core/async_task_service.py` | Task queue service layer + enums | 1B |
+| `opi/services/tasks/async_task_service.py` | Task queue service layer + enums | 1B |
 | `opi/runtime/tasks/persistent_task_progress.py` | PostgreSQL-backed progress manager | 2A |
 | `opi/runtime/tasks/task_worker.py` | Worker loop + routing (no FastAPI dependency) | 2B |
 | `opi/runtime/tasks/task_handlers_project.py` | Handlers for create_project, upsert_deployment | 3A |

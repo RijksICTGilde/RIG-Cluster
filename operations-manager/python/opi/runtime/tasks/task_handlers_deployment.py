@@ -7,9 +7,9 @@ the same information whether they use the sync path or poll an async task.
 import logging
 from typing import Any
 
-from opi.core import progress_steps as steps
-from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
 logger = logging.getLogger(__name__)
 

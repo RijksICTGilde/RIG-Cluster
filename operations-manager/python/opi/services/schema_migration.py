@@ -12,12 +12,12 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from opi.core.project_schema import SchemaVersion, parse_schema_version, version_key
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
+from opi.services.project_schema import SchemaVersion, parse_schema_version, version_key
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, project_private_key_or_none
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Every schema version a project file can be stamped with, oldest first. This is
-#: the chain, and it is also the contract with ``opi.core.project_schema``: each of
+#: the chain, and it is also the contract with ``opi.services.project_schema``: each of
 #: these versions must be validatable, so each one except the newest needs a legacy
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
@@ -1008,7 +1008,7 @@ def normalize_domains_location(project_data: dict[str, Any]) -> bool:
     The block is project-global and publish-on-web is a root-level service definition,
     so the service-definition config is its home. Placement is delegated to
     ``ensure_domains_config`` -- the single authority on where the block lives -- so
-    this migration and the runtime read/write path (connectors/subdomain.py) never
+    this migration and the runtime read/write path (services/catalog/publish_on_web/subdomain.py) never
     disagree. Idempotent: a no-op once the block already lives under the service (or
     there is no block at all).
 
@@ -1017,7 +1017,7 @@ def normalize_domains_location(project_data: dict[str, Any]) -> bool:
     """
     if not isinstance(project_data.get("domains"), dict):
         return False
-    from opi.connectors.subdomain import ensure_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import ensure_domains_config
 
     ensure_domains_config(project_data)
     return True

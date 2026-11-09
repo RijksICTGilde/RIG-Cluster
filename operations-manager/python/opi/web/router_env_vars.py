@@ -20,14 +20,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from opi.core.auth_decorators import requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action, targets_in_query
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.step_up import StepUpAction
 from opi.forms.editables.converters import KeyValueConverter, keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.validators import KeyValueValidator
 from opi.manager.project_manager import ProjectManager
 from opi.services.project import Project
 from opi.services.project_env_vars import read_user_env_vars
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError
+from opi.services.step_up import StepUpAction
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import authorized_project

@@ -32,7 +32,7 @@ twee teksten. `tests/test_project_schema_validation.py` toetst dat ze gelijk zij
 | `components[*]/image`, de `image` van een eigen PostgreSQL-cluster | image-verwijzing | `CONTAINER_IMAGE_PATTERN`, `opi/utils/naming.py` |
 | component-`path` (`match`, `rewrite`), `logout-path`, het pad van de metrics-scraper | URL-pad van een tenant | `SAFE_PATH_PATTERN`, `opi/utils/url_paths.py` |
 | `subdomain` van publish-on-web | DNS-1123-subdomein, kleine letters, per punt-gescheiden deel maximaal 63 tekens | `DNS1123_SUBDOMAIN`, `opi/utils/patterns.py` |
-| `base-domain` van publish-on-web | domeinnaam | `DOMAIN_PATTERN`, `opi/connectors/subdomain.py` |
+| `base-domain` van publish-on-web | domeinnaam | `DOMAIN_PATTERN`, `opi/services/catalog/publish_on_web/subdomain.py` |
 
 Een patroon eindigt op `\Z` en niet op `$`: in Python matcht `$` ook vóór een afsluitende
 newline, dus `/metrics\n` en `mijn-app\n` kwamen er anders door.
@@ -75,7 +75,7 @@ editable: plan `invoer-eerst-schoon-dan-getoetst.md`.
 
 - `opi/services/project_store.py` -- `_validate`, het chokepoint
 - `opi/schemas/project_v2.json` -- de `$defs` met de patronen
-- `opi/core/project_schema.py` -- de validator, met `format_checker` aan (`format` doet pas
+- `opi/services/project_schema.py` -- de validator, met `format_checker` aan (`format` doet pas
   iets mét een checker; het werk doet het `pattern` ernaast)
 - `opi/utils/forbidden_characters.py` -- de backstop
 - `tests/test_project_schema_validation.py` -- de gelijkheid van schema en constante

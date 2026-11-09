@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
 from opi.runtime.tasks.persistent_task_progress import TaskStatus
+from opi.services.tasks import progress_steps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -122,7 +122,7 @@ async def test_a_failed_run_keeps_its_reason_and_claims_no_sync(monkeypatch: pyt
 @pytest.mark.asyncio
 async def test_a_file_that_fails_the_schema_fails_the_validation_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fetching and validating are two steps, so the page says which of the two broke."""
-    from opi.core.project_schema import ProjectSchemaError
+    from opi.services.project_schema import ProjectSchemaError
 
     manager = _project_manager(monkeypatch, process_ok=True)
     monkeypatch.setattr(
@@ -631,8 +631,8 @@ def _refresh_manager(monkeypatch: pytest.MonkeyPatch) -> Any:
 async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     monkeypatch: pytest.MonkeyPatch, stub_platform_repo_sync: None
 ) -> None:
-    from opi.core.task_rollout import first_phase
     from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
+    from opi.services.tasks.task_rollout import first_phase
 
     manager = _refresh_manager(monkeypatch)
     project = MagicMock()

@@ -12,7 +12,7 @@ configuratie publiceren, uitrollen. De stappen verschijnen terwijl ze lopen, met
 vinkje als ze klaar zijn en een kruis als ze mislukken.
 
 Elke regel is werk dat echt gebeurt: er zijn geen stappen die alleen andere stappen
-omsluiten. En elke staptekst staat in `opi/core/progress_steps.py`, dus wie een stap
+omsluiten. En elke staptekst staat in `opi/services/tasks/progress_steps.py`, dus wie een stap
 toevoegt zet zijn tekst daar. Zie [Eén voortgangsweergave](./task-progress-view.md),
 "Wat de huidige regel betekent".
 
@@ -52,7 +52,7 @@ Dit is de kern van de functie, niet een detail.
   deployment die al slaapt levert de regel "Geen wijziging nodig, de deployment is al
   sleeping" op, geen reeks afgevinkte stappen.
 - De namen staan in gewone taal en in het Nederlands, zoals de rest van de interface.
-  `tests/test_task_step_subject.py` scant daarvoor `opi/core/progress_steps.py`, zodat
+  `tests/test_task_step_subject.py` scant daarvoor `opi/services/tasks/progress_steps.py`, zodat
   een Engelse regel er niet ongemerkt bij komt.
 
 ## Een stap zegt waarvoor hij loopt
@@ -79,7 +79,7 @@ subtaken; de weergave leest het met `.get` en toont dan gewoon geen tweede regel
 
 ## Hoe je een stap toevoegt
 
-**Eerst de tekst.** Elke staptekst staat in `opi/core/progress_steps.py`, als constante
+**Eerst de tekst.** Elke staptekst staat in `opi/services/tasks/progress_steps.py`, als constante
 met een Engelse naam en een Nederlandse waarde. Zet die er dus bij, en geef de constante
 mee aan de aanroep. `tests/test_progress_step_texts.py` faalt op een letterlijke
 staptekst buiten die module.

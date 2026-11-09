@@ -14,9 +14,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.errors import ErrorCategory
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,

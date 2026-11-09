@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from opi.core.step_up import StepUpAction
+from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpVerification, UserOtpService
 
 if TYPE_CHECKING:

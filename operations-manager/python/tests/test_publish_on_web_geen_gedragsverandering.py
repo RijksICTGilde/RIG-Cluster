@@ -131,7 +131,7 @@ class TestDezelfdeHostnamenUitElkeOpslagvorm:
     def test_de_publieke_urls_zijn_gelijk(self, shape: str) -> None:
         # De tweede plek waar dezelfde velden een adres opbouwen: de dienst-eigen
         # URL-opbouw achter de detailpagina en de API.
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         project = _project(shape)

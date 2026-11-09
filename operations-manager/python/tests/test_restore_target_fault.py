@@ -38,12 +38,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from opi.api.restore_router import restore_router
-from opi.api.v2.models import ErrorCategory
 from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.core.errors import ErrorCategory
 from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.services.secrets import DatabaseSecret, MinIOSecret
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 

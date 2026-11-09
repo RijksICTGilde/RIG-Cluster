@@ -1,4 +1,4 @@
-"""Dekking voor :func:`opi.core.members.member_list_changed`.
+"""Dekking voor :func:`opi.services.members.member_list_changed`.
 
 Deze functie staat sinds RC-392 op een keer, maar wordt aangeroepen door drie wegen die
 leden kunnen schrijven (de step-up-detectie, de team-wizard-guard en de rolpoort in de
@@ -8,7 +8,7 @@ eigen test op zijn randen.
 
 from __future__ import annotations
 
-from opi.core.members import member_list_changed
+from opi.services.members import member_list_changed
 
 OWNER = {"email": "owner@example.com", "roles": ["admin", "ops"]}
 MEMBER = {"email": "member@example.com", "roles": ["viewer"]}

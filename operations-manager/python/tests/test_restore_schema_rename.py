@@ -391,7 +391,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
             patch("opi.connectors.postgres.create_postgres_connector", return_value=postgres),
             patch("opi.core.cluster_config.get_database_server", return_value="postgres.example"),
             patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
-            patch("opi.utils.secrets.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
+            patch("opi.services.secrets.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         ):
             result = await _restore_database_with_versioning(
                 project_name="amt",

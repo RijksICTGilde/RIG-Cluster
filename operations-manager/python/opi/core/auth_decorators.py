@@ -9,7 +9,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
-from opi.core.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
+from opi.services.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,7 +92,7 @@ def elevate_url(back: str) -> str:
 
 
 #: Marking on a route that signed up for a step-up, with the
-#: :class:`~opi.core.step_up.StepUpAction` as its value. ``tests/test_step_up_routes.py``
+#: :class:`~opi.services.step_up.StepUpAction` as its value. ``tests/test_step_up_routes.py``
 #: reads it, and ``custom_openapi`` documents the 403 out of it: without a marking a route
 #: that loses the decorator would quietly stand open again.
 REQUIRES_STEP_UP = "zad_requires_step_up"

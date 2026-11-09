@@ -45,12 +45,12 @@ import copy
 from typing import Any
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.generation.manifests import render_template
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ManifestContext
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from ruamel.yaml import YAML
