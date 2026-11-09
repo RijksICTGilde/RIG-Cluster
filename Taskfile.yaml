@@ -5162,19 +5162,23 @@ tasks:
         echo "Initializing Forgejo..."
 
         # A Ready pod can still be migrating its database; then user create fails with
-        # "no such table: user". migrate is idempotent and returns once the schema is there.
-        kubectl exec -n rig-system forgejo-0 -- forgejo migrate
-
+        # "no such table". Wait for that migration instead of running a second one: two
+        # migrations on the same sqlite file collide ("index ... already exists").
         # Create admin user via kubectl exec (username "admin" is reserved in Forgejo)
         echo "Creating rig-admin user..."
-        if ! OUT=$(kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
-          --admin --username rig-admin --password admin1234 \
-          --email admin@example.com --must-change-password=false 2>&1); then
+        for ATTEMPT in $(seq 1 60); do
+          if OUT=$(kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
+            --admin --username rig-admin --password admin1234 \
+            --email admin@example.com --must-change-password=false 2>&1); then
+            break
+          fi
           case "$OUT" in
-            *"already exists"*) echo "rig-admin user already exists" ;;
+            *"already exists"*) echo "rig-admin user already exists"; break ;;
+            *"no such table"*) sleep 2 ;;
             *) echo "$OUT"; exit 1 ;;
           esac
-        fi
+          if [ "$ATTEMPT" = 60 ]; then echo "Forgejo did not finish its migration in time: $OUT"; exit 1; fi
+        done
 
         # Wait a moment for the user to be fully created
         sleep 2
