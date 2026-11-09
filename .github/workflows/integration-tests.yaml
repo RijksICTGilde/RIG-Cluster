@@ -686,6 +686,18 @@ jobs:
           sudo mv task /usr/local/bin/task
           kind version && kubectl version --client && task --version
 
+      # Creating a project generates its AGE key pair and encrypts with SOPS, so OPI needs
+      # both binaries; the same steps as jobs.test-shard in ci.yml.
+      - name: Install age
+        run: sudo apt-get install -y age
+      - name: Install sops
+        run: |
+          curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  /tmp/sops" | sha256sum -c -
+          chmod +x /tmp/sops
+          sudo mv /tmp/sops /usr/local/bin/sops
+          sops --version --disable-version-check
+
       - name: Set up the throwaway cluster
         run: task test-cluster-up
 
