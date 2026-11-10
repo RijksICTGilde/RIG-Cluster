@@ -19,7 +19,7 @@ from datetime import datetime
 import pytest
 from opi.forms.models.project_file import ProjectUserModel
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van, is_verlopen, service_accounts
+from opi.services.project_members import hash_of, is_expired, service_accounts
 from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.schema_migration import (
@@ -179,7 +179,7 @@ def test_de_projectsleutel_wordt_een_token_van_project_api() -> None:
     assert account["type"] == MemberKind.SERVICE_ACCOUNT.value
     # 2.12 schrijft role: admin; de stap naar 2.13 maakt er [admin, ops] van.
     assert account["roles"] == ["admin", "ops"]
-    assert account["tokens"][0]["hash"] == hash_van("de-oude-sleutel")
+    assert account["tokens"][0]["hash"] == hash_of("de-oude-sleutel")
     validate_project_schema(gemigreerd)
 
 
@@ -238,7 +238,7 @@ def test_een_versleutelde_projectsleutel_wordt_eerst_ontsleuteld(monkeypatch: py
     assert veranderd
     assert "api-key" not in gemigreerd["config"]
     account = next(lid for lid in gemigreerd["users"] if lid.get("name") == PROJECT_API_ACCOUNT)
-    assert account["tokens"][0]["hash"] == hash_van("de-echte-platte-sleutel")
+    assert account["tokens"][0]["hash"] == hash_of("de-echte-platte-sleutel")
 
 
 def test_een_niet_te_ontsleutelen_projectsleutel_blijft_staan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -257,7 +257,7 @@ def test_een_niet_te_ontsleutelen_projectsleutel_blijft_staan(monkeypatch: pytes
     validate_project_schema(gemigreerd)
 
 
-# --- is_verlopen en service_accounts ---------------------------------------
+# --- is_expired en service_accounts ---------------------------------------
 
 
 def test_is_verlopen_behandelt_een_naieve_datum_als_utc() -> None:
@@ -267,8 +267,8 @@ def test_is_verlopen_behandelt_een_naieve_datum_als_utc() -> None:
     verleden_naief = datetime(2020, 1, 1)  # noqa: DTZ001 -- juist de naive vorm is hier het doel
     toekomst_naief = datetime(2999, 1, 1)  # noqa: DTZ001 -- idem
 
-    assert is_verlopen(verleden_naief) is True
-    assert is_verlopen(toekomst_naief) is False
+    assert is_expired(verleden_naief) is True
+    assert is_expired(toekomst_naief) is False
 
 
 def test_service_accounts_laat_alleen_de_service_accounts_zien() -> None:

@@ -90,8 +90,8 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, pad: str, sessie: dict[str, A
         data=_projectbestand(project_publiek),
     )
     monkeypatch.setattr(router, "get_project_store", lambda: _Store(project))
-    monkeypatch.setattr(router, "is_projectbeheerder", lambda *_: True)
-    monkeypatch.setattr(router_tokens, "leden_overzicht", lambda _: [])
+    monkeypatch.setattr(router, "is_project_admin", lambda *_: True)
+    monkeypatch.setattr(router_tokens, "members_overview", lambda _: [])
 
     return await router.project_details(_verzoek(pad, sessie), PROJECT)
 
@@ -102,6 +102,17 @@ async def test_het_tabblad_met_een_vers_token_mag_niet_gecachet_worden(monkeypat
 
     assert antwoord.status_code == 200
     assert antwoord.headers["Cache-Control"] == "no-store"
+
+
+async def test_the_tab_renders_the_new_token_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that only touches the session context key stays truthy either way, so
+    the header-only tests above cannot see it: the body needs its own check."""
+    reference = router_tokens._leg_klaar({"token": "zad_waardevandetoets", "eigenaar": "cli"})
+    response = await _pagina(monkeypatch, f"/projects/{PROJECT}/team", {router_tokens.NIEUW_TOKEN_SLEUTEL: reference})
+
+    html = response.body.decode()
+    assert "zad_waardevandetoets" in html
+    assert "Je nieuwe token voor cli" in html
 
 
 async def test_het_tabblad_zonder_vers_token_houdt_de_gewone_headers(monkeypatch: pytest.MonkeyPatch) -> None:

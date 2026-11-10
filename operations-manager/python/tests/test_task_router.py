@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 if TYPE_CHECKING:
@@ -513,7 +513,7 @@ class TestGetTaskWithApiToken:
                         ProjectToken(
                             name="pijplijn",
                             expires=datetime.now(UTC) + timedelta(days=30),
-                            hash=hash_van(self.TOKEN),
+                            hash=hash_of(self.TOKEN),
                         )
                     ],
                 )

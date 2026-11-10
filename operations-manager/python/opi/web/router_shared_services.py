@@ -23,13 +23,13 @@ from opi.core.authz.actions import Action, action
 from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
 from opi.http.render.lotc_switch import build_lotc_admin, render
 from opi.http.render.menu import get_menu_items
-from opi.services.gedeelde_diensten import (
-    DREMPELS,
-    ONGEMETEN_DIENSTEN,
-    haal_databases,
-    haal_keycloak,
-    haal_opslag,
-    haal_resources,
+from opi.services.shared_services import (
+    THRESHOLDS,
+    UNMEASURED_SERVICES,
+    fetch_databases,
+    fetch_keycloak,
+    fetch_resources,
+    fetch_storage,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,8 @@ async def gedeelde_diensten_overzicht(request: Request) -> Response:
         context={
             "request": request,
             "menu_items": get_menu_items(user),
-            "drempels": list(DREMPELS.values()),
-            "ongemeten": ONGEMETEN_DIENSTEN,
+            "drempels": list(THRESHOLDS.values()),
+            "ongemeten": UNMEASURED_SERVICES,
             **build_lotc_admin(user=user, current_path="/admin/diensten"),
         },
     )
@@ -64,7 +64,7 @@ async def gedeelde_diensten_resources(request: Request) -> Response:
     """Het resourceblok, apart opgehaald."""
     require_platform_admin(request)
 
-    blok = await haal_resources()
+    blok = await fetch_resources()
     return render(
         request,
         template="bg/_gedeelde-diensten-resources.html.j2",
@@ -79,7 +79,7 @@ async def gedeelde_diensten_opslag(request: Request) -> Response:
     """Het opslagblok, apart opgehaald."""
     require_platform_admin(request)
 
-    blok = await haal_opslag()
+    blok = await fetch_storage()
     return render(
         request,
         template="bg/_gedeelde-diensten-opslag.html.j2",
@@ -94,7 +94,7 @@ async def gedeelde_diensten_databases(request: Request) -> Response:
     """Het databaseblok, apart opgehaald."""
     require_platform_admin(request)
 
-    blok = await haal_databases()
+    blok = await fetch_databases()
     return render(
         request,
         template="bg/_gedeelde-diensten-databases.html.j2",
@@ -109,7 +109,7 @@ async def gedeelde_diensten_keycloak(request: Request) -> Response:
     """Het Keycloak-blok, apart opgehaald."""
     require_platform_admin(request)
 
-    blok = await haal_keycloak()
+    blok = await fetch_keycloak()
     return render(
         request,
         template="bg/_gedeelde-diensten-keycloak.html.j2",

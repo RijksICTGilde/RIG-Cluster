@@ -54,7 +54,7 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
-from opi.services.project_leden import human_emails
+from opi.services.project_members import human_emails
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 from opi.services.secrets import DatabaseSecret

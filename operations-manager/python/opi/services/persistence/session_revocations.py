@@ -1,7 +1,7 @@
-"""ORM-model voor ``session_revocations`` (RC-287, migratie 008).
+"""ORM model for ``session_revocations`` (migration 008).
 
-Geschreven bij uitloggen en door de platformbeheerdersactie, eenmaal bij opstarten
-gelezen in het geheugen van ``UserService``.
+Written on logout and by the platform-admin action, read once at startup into the memory of
+``UserService``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from opi.core.db import Base
 
 
 class SessionRevocation(Base):
-    """Portaalsessies van dit e-mailadres die voor ``revoked_after`` begonnen zijn, gelden niet."""
+    """Portal sessions of this email address that started before ``revoked_after`` do not count."""
 
     __tablename__ = "session_revocations"
 

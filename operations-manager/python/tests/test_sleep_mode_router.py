@@ -26,7 +26,7 @@ from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeResult
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.router import sleep_deployment_web, wake_deployment_web
 
@@ -194,7 +194,7 @@ def _store_met_token(rol: str) -> MagicMock:
                 role=rol,
                 tokens=[
                     ProjectToken(
-                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van(TOKEN_WAARDE)
+                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_of(TOKEN_WAARDE)
                     )
                 ],
             )

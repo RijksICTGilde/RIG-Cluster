@@ -148,8 +148,8 @@ De Team-kaart en de API-route `PUT /api/projects/{project}/leden/{naam}/rol` (di
 keer, dus hij gaat niet per lid door die functie; `bewaak_ledenlijst`
 (`opi/forms/wizard/leden.py`) roept wel dezelfde guards aan als zij:
 
-- `schoon_rollen`: weigert een lege lijst en een onbekende rol;
-- `eis_een_admin`: weigert een lijst waarin niemand `admin` heeft.
+- `clean_roles`: weigert een lege lijst en een onbekende rol;
+- `require_an_admin`: weigert een lijst waarin niemand `admin` heeft.
 
 Eén lezer per invariant, dus de drie wegen kunnen niet uit elkaar lopen op wat een
 geldige rol is of op de eis dat er een admin overblijft. Het JSON-schema houdt daarnaast

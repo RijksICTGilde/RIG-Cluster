@@ -1,8 +1,7 @@
-"""Welke diensten van een deployment hun credential laten vervangen.
+"""Which services of a deployment can have their credential replaced.
 
-Eén plek: de API leest hier welke diensten een deployment kan vervangen, en de
-provisioning leest er de dienstnamen uit die het hergebruik van een bestaand geheim
-opzij zetten.
+One place: the API reads here which services a deployment can replace, and provisioning
+reads the service names that set aside the reuse of an existing secret.
 """
 
 from typing import Any
@@ -11,8 +10,8 @@ from opi.services.project import Project
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.services_enums import CloneFromType, ServiceType
 
-# Dienstnaam in de aanvraag -> de servicetypes die tellen als "deze deployment gebruikt hem".
-# PostgreSQL draait gedeeld of per namespace; beide leveren hetzelfde databasegeheim.
+# Service name in the request -> the service types that count as "this deployment uses it".
+# PostgreSQL runs shared or per namespace, and both deliver the same database secret.
 ROTATABLE_SERVICES: dict[str, list[str]] = {
     ServiceType.POSTGRESQL_DATABASE.value: [
         ServiceType.POSTGRESQL_DATABASE.value,
@@ -24,7 +23,7 @@ ROTATABLE_SERVICES: dict[str, list[str]] = {
 
 
 def rotatable_services_for_deployment(project_data: dict[str, Any], deployment_name: str) -> list[str]:
-    """De diensten waarvan deze deployment het credential kan laten vervangen."""
+    """The services whose credential this deployment can have replaced."""
     handler = ProjectFileHandler()
     return [
         service_name
@@ -33,11 +32,11 @@ def rotatable_services_for_deployment(project_data: dict[str, Any], deployment_n
     ]
 
 
-# Een lopende clone-from legt het geheim van deze diensten zelf vast: de klooproute
-# hergebruikt een werkende waarde en komt niet langs de rotatievlag, dus een rotatie zou
-# stil niets doen (MinIO) of de rol omzetten en daarna op het oude Secret stranden
-# (PostgreSQL bij een externe bron). De klooptak voor type 'deployment' draagt het
-# databasewachtwoord wel mee, en type 'backup' valt door naar de gewone tak.
+# A running clone-from fixes the secret of these services itself: the clone path reuses a
+# working value and never passes the rotation flag, so a rotation would do nothing quietly
+# (MinIO) or change the role and then strand on the old Secret (PostgreSQL from a remote
+# source). The clone branch for type 'deployment' does carry the database password along,
+# and type 'backup' falls through to the ordinary branch.
 CLONE_REUSED_SERVICES: dict[str, list[str]] = {
     CloneFromType.REMOTE_SOURCE.value: [
         ServiceType.POSTGRESQL_DATABASE.value,
@@ -48,7 +47,7 @@ CLONE_REUSED_SERVICES: dict[str, list[str]] = {
 
 
 def services_with_pending_clone(project_data: dict[str, Any], deployment_name: str) -> list[str]:
-    """De diensten waarvan het geheim niet te vervangen is zolang de clone-from loopt."""
+    """The services whose secret cannot be replaced while the clone-from is running."""
     deployment = Project(project_data).find("deployments", name=deployment_name) or {}
     clone_from = deployment.get("clone-from")
     if not isinstance(clone_from, dict):

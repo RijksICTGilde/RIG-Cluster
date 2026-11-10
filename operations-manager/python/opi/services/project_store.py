@@ -62,8 +62,8 @@ from opi.core.audit_trail import record_commit
 from opi.core.config import settings
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
 from opi.services.approval_notifier import notify_new_approval_requests
-from opi.services.project import lid_uit
-from opi.services.project_leden import human_emails
+from opi.services.project import member_from
+from opi.services.project_members import human_emails
 from opi.services.project_schema import (
     ProjectIntegrityError,
     ProjectSchemaError,
@@ -168,8 +168,6 @@ class ProjectStore(ABC):
     inside one ``mutate`` call.
     """
 
-    # ---- reads: served from the in-memory cache, no I/O ----
-
     @abstractmethod
     def get(self, name: str) -> ProjectSummary | None: ...
 
@@ -185,8 +183,7 @@ class ProjectStore(ABC):
     @abstractmethod
     async def get_decrypted(self, name: str) -> dict[str, Any] | None: ...
 
-    # ---- mutations: serialized read-modify-write, validated before persist ----
-
+    # Mutations are a serialized read-modify-write, validated before persist.
     @abstractmethod
     async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary: ...
 
@@ -198,8 +195,6 @@ class ProjectStore(ABC):
     @abstractmethod
     async def delete(self, name: str, *, message: str, actor: Actor) -> None: ...
 
-    # ---- audit / history ----
-
     @abstractmethod
     async def history(self, name: str) -> list[Revision]: ...
 
@@ -208,8 +203,6 @@ class ProjectStore(ABC):
 
     @abstractmethod
     async def previous(self, name: str) -> dict[str, Any] | None: ...
-
-    # ---- freshness / lifecycle ----
 
     @abstractmethod
     async def reconcile(self) -> None: ...
@@ -233,23 +226,15 @@ class GitProjectStore(ProjectStore):
         self._lock = asyncio.Lock()
         self._connector: GitConnector | None = None
         self._working_dir = working_dir or os.path.join(settings.TEMP_DIR, "zad-projects-warm")
-        # The commit the cache is known to fully reflect. Set only where the whole
-        # cache is loaded consistently: bootstrap and reconcile. It is the backstop
-        # against cache/disk drift -- reconcile reloads everything changed between
-        # this and the current tree, so a path that advances the disk without the
-        # cache is caught within one reconcile tick instead of surviving to a restart.
-        # Kept as a lower bound on purpose: if it lags, reconcile re-reads a few files
-        # redundantly (safe); it is never allowed to run ahead of what the cache holds.
+        #: The commit the cache is known to fully reflect, set only where the whole cache is
+        #: loaded consistently (bootstrap and reconcile). A LOWER BOUND on purpose: lagging
+        #: makes reconcile re-read a few files, while running ahead of the cache would hide
+        #: cache/disk drift until a restart.
         self._cache_head: str | None = None
-        # "Last changed" per project, and when that mapping was built. Separate from
-        # the project cache because it is derived from history rather than from the
-        # tree, and only the overview page needs it.
+        #: "Last changed" per project, and when that mapping was built. Derived from history
+        #: rather than from the tree, and only the overview page needs it.
         self._last_modified_cache: dict[str, str] | None = None
         self._last_modified_at: float = 0.0
-
-    # ------------------------------------------------------------------
-    # warm working copy
-    # ------------------------------------------------------------------
 
     async def get_connector(self) -> GitConnector:
         """Return the warm, long-lived connector, cloning once if needed.
@@ -327,10 +312,6 @@ class GitProjectStore(ProjectStore):
         working_dir = await connector.get_working_dir()
         return os.path.join(working_dir, self._relative_path(name))
 
-    # ------------------------------------------------------------------
-    # reads
-    # ------------------------------------------------------------------
-
     def get(self, name: str) -> ProjectSummary | None:
         return get_project_service().get_project(name)
 
@@ -364,10 +345,6 @@ class GitProjectStore(ProjectStore):
 
         await decrypt_tree(view, private_key)
         return view
-
-    # ------------------------------------------------------------------
-    # mutations
-    # ------------------------------------------------------------------
 
     async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary:
         """Create a new project file. Fails if the project already exists."""
@@ -809,7 +786,7 @@ class GitProjectStore(ProjectStore):
         Args:
             changes: repo-relative path -> new content, or None to delete the path
             message: commit message
-            actor: de handelende partij, die als trailer in de commit komt
+            actor: the acting party, which goes into the commit as a trailer
 
         Returns:
             ``(ref, committed)``: the published commit ref and True, or the unchanged HEAD
@@ -862,10 +839,10 @@ class GitProjectStore(ProjectStore):
 
         # The checkout is stale now that the ref moved; keep the warm copy mirroring HEAD.
         await connector.sync_worktree_to_head()
-        # Hier en niet per muterende methode: dit is de enige plek waar een commit van een
-        # projectbestand ontstaat, dus save, mutate, create en delete leggen hem alle vier
-        # vast. Een idempotente opslag komt hier langs met commit is None en levert dus
-        # geen SHA, wat juist is: er is niets gewijzigd om naar te verwijzen.
+        # Here and not per mutating method: this is the only place a commit of a project file
+        # comes into being, so save, mutate, create and delete all four record it. An
+        # idempotent save passes here with commit None and yields no SHA, which is right:
+        # there is nothing changed to point at.
         record_commit(commit)
         return commit, True
 
@@ -899,10 +876,6 @@ class GitProjectStore(ProjectStore):
             return None
         migrated, _ = migrate_to_latest(data)
         return migrated
-
-    # ------------------------------------------------------------------
-    # history / audit
-    # ------------------------------------------------------------------
 
     async def history(self, name: str) -> list[Revision]:
         connector = await self.get_connector()
@@ -1031,10 +1004,6 @@ class GitProjectStore(ProjectStore):
         migrated, _ = migrate_to_latest(data)
         return migrated
 
-    # ------------------------------------------------------------------
-    # freshness / lifecycle
-    # ------------------------------------------------------------------
-
     def cache_head(self) -> str | None:
         """Commit the cache was last loaded at, or None before the first load."""
         return self._cache_head
@@ -1107,14 +1076,9 @@ class GitProjectStore(ProjectStore):
         the cache. Answers "can we commit and end up not up to date?": no, provided
         the changes that arrived alongside are picked up, which is what this does.
         """
-        # Callers are the push-conflict retry paths in create/save/mutate/delete,
-        # which all hold the lock. Checked rather than assumed: this hard-resets the
-        # shared working copy and rewrites cache entries, so running it concurrently
-        # with a writer would reintroduce exactly the class of race the store exists
-        # to remove.
-        #
-        # A real check, not an assert: `python -O` strips asserts, and a guard that
-        # disappears under an optimisation flag is not a guard.
+        # This hard-resets the shared working copy and rewrites cache entries, so running it
+        # concurrently with a writer would reintroduce the race the store exists to remove.
+        # A real check and not an assert: `python -O` strips asserts.
         if not self._lock.locked():
             raise ProjectStoreError("_resync_after_conflict must be called while holding the store lock")
 
@@ -1204,7 +1168,7 @@ class GitProjectStore(ProjectStore):
                     logger.warning("Could not load project file %s into the cache", filename)
                     continue
                 loaded[project.name] = project
-                # Alleen de MENSEN: een service account hoort niet op de inloglijst.
+                # The HUMANS only: a service account does not belong on the login list.
                 member_emails.extend(human_emails(project))
 
             # Build the full set first, then swap, so concurrent readers never
@@ -1224,12 +1188,12 @@ class GitProjectStore(ProjectStore):
 
 
 def _as_plain(value: Any) -> Any:
-    """Dezelfde inhoud in kale Python-containers, voor een diff die over inhoud gaat.
+    """The same content in plain Python containers, for a diff that is about content.
 
-    ruamel geeft bij het laden ``CommentedMap``/``CommentedSeq`` en scalarsubklassen als
-    ``LiteralScalarString`` terug. Voor ``==`` zijn die gelijk aan hun kale evenknie, maar
-    DeepDiff rapporteert ze als typewissel en maakt de diff daarmee grover dan de
-    wijziging is. Deze functie neemt alleen de VORM weg; elke waarde blijft wat hij was.
+    Loading through ruamel yields ``CommentedMap``/``CommentedSeq`` and scalar subclasses like
+    ``LiteralScalarString``. Those compare equal to their plain counterpart under ``==``, but
+    DeepDiff reports them as a type change and makes the diff coarser than the change is. This
+    takes away only the SHAPE; every value stays what it was.
     """
     if isinstance(value, dict):
         return {key: _as_plain(item) for key, item in value.items()}
@@ -1274,22 +1238,18 @@ def _apply_our_change_to(
     would refine it.
     """
     try:
-        # De diff moet over INHOUD gaan, niet over containervormen. ``theirs`` komt uit
-        # een YAML-lees en is een ruamel ``CommentedMap``; ``base`` kan dat ook zijn;
-        # ``ours`` is doorgaans een platte ``dict`` uit een formulier of API-pad. Voor
-        # ``==`` maakt dat niets uit (CommentedMap is een dict-subklasse), maar DeepDiff
-        # ziet het als ``type_changes`` op het EERSTE knooppunt waar de vormen uiteenlopen
-        # -- in het gemeten geval de root -- en stopt daar met afdalen. De hele wijziging
-        # wordt dan een vervanging-in-zijn-geheel, en zo'n delta verifieert zijn oude
-        # waarde tegen ``theirs``: elk verschil, hoe onschuldig ook, laat hem weigeren.
-        # Gevolg (RC-118): de domeinwizard gaf een PERMANENT "gewijzigd sinds je begon
-        # met bewerken" terwijl niemand anders schreef en het bestand niet bewoog.
+        # The diff has to be about CONTENT and not about container shapes. ``theirs`` comes
+        # from a YAML read and is a ruamel ``CommentedMap``, ``base`` may be one too, and
+        # ``ours`` is usually a plain ``dict`` from a form or an API path. ``==`` does not care
+        # (CommentedMap is a dict subclass), but DeepDiff calls it ``type_changes`` at the
+        # FIRST node where the shapes differ and stops descending there. The whole change then
+        # becomes a replacement-in-full, and such a delta verifies its old value against
+        # ``theirs``: any difference at all makes it refuse.
         #
-        # Normaliseren verzint geen gelijkheid: alleen de vorm wordt gelijkgetrokken,
-        # de waarden niet, dus een echte botsing op hetzelfde veld blijft een conflict
-        # (de tests op de grenzen staan in test_store_merge_containervormen.py). De
-        # delta wordt op de ECHTE ``theirs`` toegepast; de verificatie daarbinnen
-        # vergelijkt met ``==`` en is dus container-blind.
+        # Normalising invents no equality: only the shape is levelled and never the values, so
+        # a real collision on the same field stays a conflict (the limits are measured in
+        # test_store_merge_containervormen.py). The delta is applied to the REAL ``theirs``,
+        # and the verification inside it compares with ``==`` and is container-blind.
         base = _as_plain(base)
         ours = _as_plain(ours)
 
@@ -1351,9 +1311,9 @@ def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
     users_data = data.get("users", [])
     if not isinstance(users_data, list):
         return None
-    # Dezelfde lezing als het gewone pad: een eigen variant hier liet de service accounts
-    # en daarmee hun tokens vallen, zodat een pijplijn na deze schrijfactie 401 kreeg.
-    users = [lid for lid in (lid_uit(entry) for entry in users_data) if lid is not None]
+    # The same reading as the ordinary path: a variant of its own here dropped the service
+    # accounts and with them their tokens, so a pipeline got a 401 after this write.
+    users = [member for member in (member_from(entry) for entry in users_data) if member is not None]
     return users or None
 
 

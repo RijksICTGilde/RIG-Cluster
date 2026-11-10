@@ -37,7 +37,7 @@ from opi.core.authz.engine import (
 )
 from opi.http.auth.auth_decorators import get_current_user
 from opi.manager.clone_validation import new_or_changed_clone_sources
-from opi.services.project_leden import lid_met_naam
+from opi.services.project_members import member_named
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles, resource_path
 from opi.services.project_store import get_project_store
 from opi.services.step_up import has_fresh_step_up, is_elevated_admin
@@ -66,7 +66,7 @@ def portal_principal(request: Request, project: ProjectSummary) -> Principal:
     if is_elevated_admin(get_user_service(), email):
         rollen = PLATFORM_ADMIN_ROLES
     else:
-        lid = lid_met_naam(project, email)
+        lid = member_named(project, email)
         rollen = member_roles(lid) if lid is not None else frozenset()
     return Principal(
         kind=PrincipalKind.HUMAN,

@@ -1,4 +1,4 @@
-"""ORM model for ``project_reconciliation`` (RC-188, migration 006).
+"""ORM model for ``project_reconciliation`` (migration 006).
 
 Written by ``ProjectManager.process_project``, read by ``AsyncTaskService.get_deferred_rollouts``.
 """
@@ -29,8 +29,8 @@ class ProjectReconciliation(Base):
     deployment_name: Mapped[str | None] = mapped_column(String(63))
     reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    # Geen PK in de tabel (zie migratie 006); de mapper heeft alleen een identiteit nodig.
-    __mapper_args__ = {"primary_key": [project_name, deployment_name]}  # noqa: RUF012
+    # The table has no primary key (see migration 006); the mapper only needs an identity.
+    __mapper_args__ = {"primary_key": [project_name, deployment_name]}  # noqa: RUF012  # SQLAlchemy reads this dict, so it cannot be a ClassVar
 
     __table_args__ = (
         Index("idx_project_reconciliation_scope", text("project_name"), text(SCOPE_KEY_SQL), unique=True),

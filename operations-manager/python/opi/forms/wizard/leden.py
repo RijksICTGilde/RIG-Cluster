@@ -14,7 +14,7 @@ import copy
 import logging
 from typing import Any
 
-from opi.services.api_token_service import TokenAanvraagGeweigerd, eis_een_admin, schoon_rollen
+from opi.services.api_token_service import TokenRequestRefusedError, clean_roles, require_an_admin
 from opi.services.members import MemberKind, member_list_changed
 
 logger = logging.getLogger(__name__)
@@ -122,11 +122,11 @@ def bewaak_ledenlijst(merged_data: dict[str, Any], stored_data: dict[str, Any], 
         if not isinstance(lid, dict):
             continue
         try:
-            schoon_rollen(lid.get("roles") or [])
-        except TokenAanvraagGeweigerd as exc:
+            clean_roles(lid.get("roles") or [])
+        except TokenRequestRefusedError as exc:
             raise LedenlijstGeweigerd(f"{exc} ({lid.get('email') or lid.get('name')})") from exc
 
     try:
-        eis_een_admin(merged_data)
-    except TokenAanvraagGeweigerd as exc:
+        require_an_admin(merged_data)
+    except TokenRequestRefusedError as exc:
         raise LedenlijstGeweigerd(str(exc)) from exc

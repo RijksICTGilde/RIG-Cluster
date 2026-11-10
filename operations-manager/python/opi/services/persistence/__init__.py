@@ -1,14 +1,14 @@
-"""Service-owned ORM models (RC-5). Importing this package registers every model on
+"""Service-owned ORM models. Importing this package registers every model on
 ``opi.core.db.Base.metadata`` so Alembic autogenerate can see them.
 """
 
-from opi.services.persistence.api_step_ups import ApiStepUp  # noqa: F401
-from opi.services.persistence.async_tasks import AsyncTask  # noqa: F401
-from opi.services.persistence.marked_for_deletion import MarkedForDeletion  # noqa: F401
-from opi.services.persistence.notification_events import NotificationEvent  # noqa: F401
-from opi.services.persistence.project_reconciliation import ProjectReconciliation  # noqa: F401
-from opi.services.persistence.runs import Run  # noqa: F401
-from opi.services.persistence.session_revocations import SessionRevocation  # noqa: F401
-from opi.services.persistence.sessions import PortalSession  # noqa: F401
-from opi.services.persistence.subdomain_registry import SubdomainRegistry  # noqa: F401
-from opi.services.persistence.users import User  # noqa: F401
+from opi.services.persistence.api_step_ups import ApiStepUp  # noqa: F401  # registers the model
+from opi.services.persistence.async_tasks import AsyncTask  # noqa: F401  # registers the model
+from opi.services.persistence.marked_for_deletion import MarkedForDeletion  # noqa: F401  # registers the model
+from opi.services.persistence.notification_events import NotificationEvent  # noqa: F401  # registers the model
+from opi.services.persistence.project_reconciliation import ProjectReconciliation  # noqa: F401  # registers the model
+from opi.services.persistence.runs import Run  # noqa: F401  # registers the model
+from opi.services.persistence.session_revocations import SessionRevocation  # noqa: F401  # registers the model
+from opi.services.persistence.sessions import PortalSession  # noqa: F401  # registers the model
+from opi.services.persistence.subdomain_registry import SubdomainRegistry  # noqa: F401  # registers the model
+from opi.services.persistence.users import User  # noqa: F401  # registers the model

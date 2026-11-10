@@ -213,11 +213,6 @@ def _record_oom_tune_attempt(project_name: str, deployment_name: str) -> int:
     return _oom_tune_attempts[key]
 
 
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class PodHealthResult:
     """Result of a unified pod health check for one component."""
@@ -254,8 +249,8 @@ class ComponentFailure:
 def component_health_from_oom_failures(failures: list[ComponentFailure]) -> dict[str, ComponentHealth]:
     """Turn OOM failures into the observation hook's input, keyed by component reference.
 
-    Carries the pod generation along: without it the hook cannot tell this evidence from
-    the next pod's and tunes twice on one OOM (toets-hn7/pr-103).
+    Carries the pod generation along: without it the hook cannot tell this evidence from the
+    next pod's and tunes twice on one OOM.
     """
     return {
         (f.component_reference or f.component_name): ComponentHealth(
@@ -500,19 +495,17 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     return result
 
 
-# De kubelet-message hoort op EEN regel te passen: wat deze functie teruggeeft komt in de
-# voortgangslijst terecht als de titel van een lijstitem, niet als lopende tekst. Gemeten
-# op productie is een image-pull-message van CRI-O 762 tekens, omdat dezelfde fout er twee
-# keer in staat (eerst als ``pull image err``, daarna als ``artifact err``). Die kwam
-# integraal in die titel terecht, maal twee componenten maal vijftien deployments.
+# A kubelet message has to fit on ONE line: what this function returns ends up in the
+# progress list as the title of a list item and not as running text. A CRI-O image-pull
+# message runs to hundreds of characters, because the same error is in it twice.
 #
-# Vandaar deze grens. Het volledige bericht verdwijnt niet: dat blijft staan in
-# ``component_failures`` (met een vertaalde titel en een suggestie) en in de logs.
+# The full message does not disappear: it stays in ``component_failures`` (with a translated
+# title and a suggestion) and in the logs.
 _MAX_WAITING_DETAIL = 120
 
 
 def _short_detail(message: str) -> str:
-    """Vouw een kubelet-message op tot iets dat als regeltitel leesbaar blijft."""
+    """Fold a kubelet message down to something that stays readable as a line title."""
     collapsed = " ".join(message.split())
     if len(collapsed) <= _MAX_WAITING_DETAIL:
         return collapsed
@@ -544,10 +537,10 @@ def _describe_pod_waiting(pod: dict) -> str | None:
             message = waiting.get("message", "")
             suffix = f": {_short_detail(message)}" if message else ""
             if reason in _IMAGE_PULL_REASONS:
-                # Bewust helemaal zonder message, ook niet ingekort: hier is dat altijd
-                # de registry-dump uit de toelichting bij _MAX_WAITING_DETAIL, en de eerste
-                # 120 tekens daarvan zeggen niets wat de reden hierboven niet al zegt. Welk
-                # image het is en wat eraan te doen valt staat in component_failures.
+                # Deliberately without the message, not even shortened: here it is always
+                # the registry dump described at _MAX_WAITING_DETAIL, whose first characters
+                # say nothing the reason above does not. Which image it is and what to do
+                # about it is in component_failures.
                 return f"image ophalen mislukt ({reason})"
             if reason in _CRASH_LOOP_REASONS:
                 return f"blijft herstarten na een crash{suffix}"
@@ -1161,9 +1154,7 @@ def reset_oom_tune_attempts(project_name: str, deployment_name: str) -> None:
         del _last_tuned_pod_template_hash[key]
 
 
-# ---------------------------------------------------------------------------
-# Cluster-wide pod watch: OOM kills outside the deploy window
-# ---------------------------------------------------------------------------
+# Cluster-wide pod watch: OOM kills outside the deploy window.
 #
 # Kubernetes has no Event for an OOM kill; the information sits in the pod status, in
 # ``containerStatuses[].lastState.terminated``. That is why this watch reads pods and not

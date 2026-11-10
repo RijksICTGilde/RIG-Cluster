@@ -216,25 +216,23 @@ def _unanswered_oom_window_minutes(
     component_reference: str,
     window_hours: int,
 ) -> int:
-    """Hoe ver de OOM-query terug mag kijken: tot aan de vorige OOM die al beantwoord is.
+    """How far the OOM query may look back: to the previous OOM that was already answered.
 
-    Het bereik zelf is nodig omdat kube-state-metrics
-    ``kube_pod_container_status_last_terminated_reason`` alleen exporteert zolang de
-    gestopte pod BESTAAT. Een container die door de OOM-killer wordt geveld herstart
-    binnen dezelfde pod, dus daar ziet een momentopname hem nog; zodra er een uitrol
-    overheen gaat -- en dat is precies wat de tuner zelf veroorzaakt -- is hij weg.
+    A RANGE is needed because kube-state-metrics only exports
+    ``kube_pod_container_status_last_terminated_reason`` while the stopped pod EXISTS. A
+    container the OOM killer fells restarts inside the same pod, so a snapshot still sees it
+    there; the moment a rollout goes over it, which is exactly what the tuner itself causes,
+    it is gone.
 
-    Maar terugkijken zonder grens maakt de tuner geheugenloos op de verkeerde manier:
-    ``has_oom_kills`` slaat de deadband over EN dwingt een verhoging van minstens
-    ``current_limit x factor``, ongeacht het gemeten gebruik. Een OOM die de tuner
-    gisteravond al beantwoord heeft zou dus elke volgende ronde opnieuw een verhoging
-    afdwingen. Nagerekend op de vorm van dd-mco (verklaard 64Mi, override 192Mi, feitelijk
-    gebruik 40Mi): 192 -> 384 -> 576 -> 864Mi, tot het groeiplafond van 8x. Dat is de
-    escalatie van asses-k2n/pr-494 in een nieuw jasje.
+    But looking back without a limit makes the tuner forgetful the wrong way round:
+    ``has_oom_kills`` skips the deadband AND forces an increase of at least
+    ``current_limit x factor``, whatever the measured usage. An OOM the tuner answered last
+    night would therefore force another increase every following round, up to the growth
+    ceiling.
 
-    De grens is daarom het moment waarop de watcher voor het laatst iets aan DIT component
-    in DEZE deployment gedaan heeft. Alles daarvoor is beantwoord; alles daarna is nieuw.
-    Zonder zo'n moment geldt het volledige venster, want dan is er niets beantwoord.
+    The limit is therefore the moment the watcher last did something to THIS component in
+    THIS deployment. Everything before that is answered; everything after it is new. Without
+    such a moment the full window applies, because then nothing has been answered.
     """
     full_window = window_hours * 60
 
@@ -257,8 +255,8 @@ def _unanswered_oom_window_minutes(
     if newest is None:
         return full_window
 
-    # Minstens een minuut: een bereik van nul is geen geldige PromQL-duur, en vlak na een
-    # tune is "sindsdien" terecht bijna niets.
+    # At least a minute: a range of zero is not a valid PromQL duration, and just after a
+    # tune "since then" is rightly almost nothing.
     since = int((datetime.now(UTC) - newest).total_seconds() // 60)
     return max(1, min(full_window, since))
 
@@ -538,11 +536,10 @@ async def _analyze_component_resources(
     # 21 August: 45Mi, no scrape interval reached, tune skipped entirely).
     # Initialising here rather than after the query keeps it true when the query throws.
     #
-    # De query eronder kijkt over een BEREIK en niet naar een moment, want de metric
-    # bestaat alleen zolang de gestopte pod bestaat. Hoe ver dat bereik terugkijkt is
-    # niet vrij: het loopt tot de vorige OOM die de watcher al beantwoord heeft, anders
-    # dwingt een oude OOM elke ronde opnieuw een verhoging af. Die afweging staat
-    # uitgeschreven bij _unanswered_oom_window_minutes.
+    # The query below looks over a RANGE and not at a moment, because the metric exists only
+    # while the stopped pod exists. How far that range looks back is not free: it runs to the
+    # previous OOM the watcher already answered, or an old OOM forces another increase every
+    # round. Written out at _unanswered_oom_window_minutes.
     has_oom_kills = oom_triggered
     try:
         oom_window_minutes = _unanswered_oom_window_minutes(project_data, dep_name, component_ref, window_hours)
@@ -587,11 +584,9 @@ async def _analyze_component_resources(
     if max_observed_mb < cfg.min_observed_mi:
         min_memory_mi = float(get_min_memory_limit_mi(cluster))
         if max_observed_mb > 0:
-            # Er IS gemeten, en wat er gemeten is valt onder wat dit cluster kan zetten.
-            # Dan is het antwoord dat minimum en niet "ik weet niets": een lagere waarde
-            # bestaat hier niet, dus elke meting eronder geeft hetzelfde antwoord.
-            # toets-hn7/frontend meet 2Mi tegen een clusterminimum van 25Mi en viel
-            # hiervoor in de tak eronder, die voor een OOM gaat vermenigvuldigen.
+            # There IS a measurement, and it falls under what this cluster can set. The
+            # answer is then that minimum and not "I know nothing": no lower value exists
+            # here, so every measurement below it gives the same answer.
             logger.info(
                 f"Measured max for {unique_name} is {max_observed_mb:.2f}Mi, below the "
                 f"{min_memory_mi:.0f}Mi this cluster can set; sizing on that minimum"
@@ -802,36 +797,33 @@ async def _analyze_component_resources(
         if _k8s_memory_to_mb(new_request) > max_request_mb:
             new_request = _mb_to_k8s_memory(max_request_mb)
 
-    # Her-toets de deadband op wat er nu daadwerkelijk geschreven zou worden. De poort
-    # hierboven keurt de RECOMMENDATION, maar de headroom-regel en het groeiplafond draaien
-    # daarna en kunnen daar bijna alles van terugdraaien. Wat overblijft is dan een restje
-    # onder de deadband, en dat rolde elke nacht opnieuw de pods uit: asses-k2n/redirect
-    # schoof 104Mi en 105Mi heen en weer op een goedgekeurde DALING van 55Mi, die de
-    # headroom-regel vervolgens wegpoetste. Bleef onzichtbaar tot een van die uitrollen op
-    # 6 oktober 2026 een image-tag nodig had die upstream was opgeruimd.
+    # Re-check the deadband against what would ACTUALLY be written. The gate above judges the
+    # RECOMMENDATION, but the headroom rule and the growth ceiling run after it and can take
+    # nearly all of that back. What is left is then a remainder under the deadband, which
+    # rolled the pods out again every night.
     #
-    # Blijven de huidige waarden daarmee net binnen de headroom-marge, dan is dat het
-    # kleinere kwaad: die marge is er voor een piek, en die haalt een verschil van 1Mi niet.
-    # Voor een OOM geldt de deadband niet, hier net zo min als bij de poort.
+    # Do the current values thereby stay just inside the headroom margin, then that is the
+    # lesser evil: that margin is there for a peak, and a peak does not turn on 1Mi. The
+    # deadband does not apply to an OOM, here no more than at the gate.
     #
-    # Staat voor het honoreren van de gebruikerswens, want die mag wel een klein verschil
-    # zetten: het is een expliciete keuze en geen drift.
+    # Placed BEFORE honouring the user's wish, because that may set a small difference: it is
+    # an explicit choice and not drift.
     if not has_oom_kills:
-        request_binnen_deadband = not passes_deviation_gate(
+        request_within_deadband = not passes_deviation_gate(
             current_request_mb,
             _k8s_memory_to_mb(new_request),
             increase_threshold,
             decrease_threshold,
             cfg.min_delta_mi,
         )
-        limit_binnen_deadband = not passes_deviation_gate(
+        limit_within_deadband = not passes_deviation_gate(
             current_limit_mb,
             _k8s_memory_to_mb(new_limit),
             increase_threshold,
             decrease_threshold,
             cfg.min_delta_mi,
         )
-        if request_binnen_deadband and limit_binnen_deadband:
+        if request_within_deadband and limit_within_deadband:
             new_limit = current_resources["limits_memory"]
             new_request = current_resources["requests_memory"]
             floor_blocked = False
@@ -889,15 +881,15 @@ async def _analyze_component_resources(
     )
 
 
-#: Hoe ver de leescontrole terugkijkt. Een etmaal dekt "het is vannacht omgevallen en de
-#: tuner heeft het al rechtgezet", en dat is precies het venster waarin de gebruiker het
-#: langs geen enkele andere weg te weten komt.
+#: How far the read-only check looks back. A day covers "it fell over last night and the
+#: tuner already put it right", which is exactly the window in which the user can learn it
+#: through no other route.
 OOM_OBSERVATION_WINDOW_HOURS = 24
 
 
 @dataclass(frozen=True)
 class OomObservation:
-    """Een component dat binnen het venster wegens geheugengebrek is gestopt."""
+    """A component that stopped within the window for lack of memory."""
 
     component: str
     pod: str
@@ -908,24 +900,20 @@ async def observe_recent_oom_kills(
     deployment_name: str,
     window_hours: int = OOM_OBSERVATION_WINDOW_HOURS,
 ) -> list[OomObservation]:
-    """Welke componenten van deze deployment zijn recent door geheugengebrek gestopt?
+    """Which components of this deployment stopped recently for lack of memory.
 
-    Leest alleen, tunet nooit. Deze functie bestaat omdat geen enkel ander scherm het
-    feit vasthoudt. De ArgoCD-badge toont een OOM alleen zolang de deployment ongezond
-    is, en de auto-tuner heeft als hele taak om hem zo snel mogelijk weer gezond te
-    maken -- de badge wist dus het signaal uit dat de gebruiker nodig heeft. Kubernetes
-    Events verlopen na ongeveer een uur, en de lastState van de pod verdwijnt met de pod.
-    Dit was er tot 30 juni 2026 wel (commit 2df6b507 haalde het weg).
+    READS ONLY, never tunes. No other screen holds this fact: the ArgoCD badge shows an OOM
+    only while the deployment is unhealthy, and the auto-tuner's whole job is to make it
+    healthy again as fast as it can, so the badge wipes out the signal the user needs.
+    Kubernetes Events expire after about an hour, and the pod's lastState goes with the pod.
 
-    OVER EEN BEREIK, NIET OP EEN MOMENT, en daar hangt het op. De kale selector
-    ``kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`` wordt alleen
-    geexporteerd zolang de gestopte pod nog bestaat, dus hij leest leeg juist NADAT de
-    tuner de pod heeft vervangen. Gemeten op rig-prd-dd-mco, 1 september 2026: de
-    momentopname gaf niets terug, terwijl max_over_time over 24 uur de twee pods gaf die
-    die avond waren gestopt.
+    OVER A RANGE, NOT AT A MOMENT, and that is what it hangs on. The bare selector
+    ``kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`` is exported only
+    while the stopped pod still exists, so it reads empty exactly AFTER the tuner replaced
+    the pod.
 
-    Namen van deployments en componenten zijn DNS-1123-labels (a-z, 0-9, koppelteken),
-    dus ze kunnen de selector hieronder niet oprekken.
+    Deployment and component names are DNS-1123 labels (a-z, 0-9, hyphen), so they cannot
+    stretch the selector below.
     """
     deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
@@ -959,9 +947,9 @@ async def observe_recent_oom_kills(
         logger.warning(f"OOM check failed for {deployment_name}: {e}, reporting nothing")
         return []
 
-    # Pod terug naar component. Een podnaam is "{deployment}-{component}-{rs}-{pod}", dus
-    # het langste passende voorvoegsel wint: een project met zowel "web" als "web-api"
-    # zou op het kortste anders beide op "web" laten uitkomen.
+    # Pod back to component. A pod name is "{deployment}-{component}-{rs}-{pod}", so the
+    # LONGEST matching prefix wins: on the shortest, a project with both "web" and "web-api"
+    # would have both come out as "web".
     observed: dict[str, str] = {}
     for result in results:
         pod = (result.get("metric") or {}).get("pod", "")

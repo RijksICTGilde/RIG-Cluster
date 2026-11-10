@@ -22,13 +22,11 @@ class UserService:
         """Initialize the in-memory user store and email allowlist."""
         self._users: dict[str, dict[str, Any]] = {}
         self._allowed_emails: set[str] = set()
-        # Platform administrators: authorized for every project regardless of its
-        # members list. Moved here from ProjectService, which held it alongside the
-        # project cache -- an allowlist of emails belongs with the other user state.
+        #: Platform administrators, authorized for every project whatever its member list says.
         self._platform_admin_emails: set[str] = set()
-        # Sessies van voor dit tijdstip (epochseconden) gelden niet meer. Gevuld uit de
-        # tabel session_revocations bij het opstarten en bij elk intrekken, zodat de
-        # controle per verzoek geen database raakt. Dit leunt op een pod per cluster.
+        #: Sessions from before this moment (epoch seconds) no longer count. Filled from the
+        #: session_revocations table at startup and on every revocation, so the per-request
+        #: check touches no database. That leans on one pod per cluster.
         self._sessions_revoked_after: dict[str, float] = {}
         logger.info("UserService initialized with in-memory storage and email access control")
 
@@ -249,12 +247,12 @@ class UserService:
         return bool(email) and email.lower().strip() in self._platform_admin_emails
 
     def set_sessions_revoked_after(self, email: str, revoked_after: float) -> None:
-        """Elke sessie van dit e-mailadres die voor ``revoked_after`` begon, vervalt."""
+        """Every session of this email address that started before ``revoked_after`` expires."""
         self._sessions_revoked_after[email.lower().strip()] = revoked_after
         logger.info(f"Sessies van {email} ingetrokken vanaf {revoked_after}")
 
     def are_sessions_revoked(self, email: str, login_at: float) -> bool:
-        """Of een sessie die op ``login_at`` is begonnen, is ingetrokken."""
+        """Whether a session that started at ``login_at`` has been revoked."""
         revoked_after = self._sessions_revoked_after.get(email.lower().strip())
         return revoked_after is not None and login_at < revoked_after
 

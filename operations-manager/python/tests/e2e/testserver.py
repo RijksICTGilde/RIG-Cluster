@@ -506,9 +506,9 @@ def _fake_metrics_connector():
     """
     from unittest.mock import AsyncMock
 
-    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _OPSLAG_QUERIES
+    from opi.services.shared_services import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _STORAGE_QUERIES
 
-    op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
+    op_query = {query: naam for naam, query in {**_STORAGE_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
 
     async def answer(query: str) -> list[dict]:
         return _DIENSTEN_METRIEKEN.get(op_query.get(query, ""), [])
@@ -698,7 +698,7 @@ def create_test_app():
             ),
             # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
             patch(
-                "opi.services.gedeelde_diensten.get_metrics_connector",
+                "opi.services.shared_services.get_metrics_connector",
                 new_callable=AsyncMock,
                 return_value=_fake_metrics_connector(),
             ),

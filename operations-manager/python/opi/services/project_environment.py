@@ -86,7 +86,7 @@ def highest_environment(project_data: dict[str, Any]) -> Omgeving:
 def is_production_downgrade(before: Omgeving, after: Omgeving) -> bool:
     """Whether this transition leaves a ``productie`` marking.
 
-    The hook for the step-up from ``verwijderen-in-productie-vraagt-een-verse-otp.md``.
+    The hook the step-up for deleting in production hangs off.
     """
     return before is Omgeving.PRODUCTIE and after is not Omgeving.PRODUCTIE
 

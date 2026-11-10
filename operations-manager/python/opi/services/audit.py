@@ -1,13 +1,12 @@
-"""Het audittrail: wie deed wat, waarop, en of het mocht.
+"""The audit trail: who did what, to what, and whether it was allowed.
 
-Eén rij per toegestane schrijfactie en per weigering, in de gebeurtenissentabel
-``notification_events`` (datamodel: ``features/futures/gebeurtenissen-vastleggen-en-melden.md``
-punt 7). Deze module is de enige schrijver van die tabel en de enige die hem bijwerkt, en
-dat laatste alleen via de bewaarlus hieronder.
+One row per allowed write action and per refusal, in the ``notification_events`` table. This
+module is the only writer of that table and the only thing that updates it, and that only
+through the retention loop below.
 
-De aanroeper van ``record_action`` is de hook rond de rechtenbeslissing; ``list_actions``
-leest het trail van één project terug. De bewaartermijn staat in punt 6 van dat document:
-na 90 dagen gaan ``actor`` en ``origin`` op NULL, na een jaar gaat de rij weg.
+The caller of ``record_action`` is the hook around the authorization decision;
+``list_actions`` reads one project's trail back. Retention: after 90 days ``actor`` and
+``origin`` go to NULL, after a year the row goes.
 """
 
 from __future__ import annotations
@@ -36,28 +35,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De twee soorten die deze module schrijft. Gesloten verzameling, zoals ``TaskType``.
+#: The two types this module writes. A closed set, like ``TaskType``.
 TYPE_PERFORMED = "nl.rig.zad.action.performed.v1"
 TYPE_DENIED = "nl.rig.zad.action.denied.v1"
 ACTION_TYPES = (TYPE_PERFORMED, TYPE_DENIED)
 
-#: Categorie 12 uit ``features/futures/gebeurtenissen-inventarisatie.md``.
+#: The event category these rows carry.
 CATEGORY = "beheer-en-beveiliging"
 
 SEVERITY_ALLOWED = "informational"
 SEVERITY_DENIED = "actionable"
 
-#: Zolang er geen OIN is toegekend draagt ``source`` deze placeholder en is de rij
-#: CloudEvents-vormig maar geen geldig CloudEvent. Een exporteur hoort hem te weigeren.
+#: While no OIN has been assigned, ``source`` carries this placeholder and the row is
+#: CloudEvents-shaped but not a valid CloudEvent. An exporter should refuse it.
 OIN_PLACEHOLDER = "oin-nog-niet-toegekend"
 
-#: Hoeveel rijen een lezer per keer krijgt, en het plafond daarop. ``list_actions``
-#: neemt elke ``limit``; de route is de guard en knipt hem hierop af. Bladeren gaat met
-#: ``before``, want een offset laat de database alle overgeslagen rijen alsnog sorteren.
+#: How many rows a reader gets at a time, and the ceiling on that. ``list_actions`` accepts
+#: any ``limit``; the route is the guard that clips it here. Paging goes through ``before``,
+#: because an offset still makes the database sort every skipped row.
 LIST_DEFAULT_LIMIT = 50
 LIST_MAX_LIMIT = 200
 
-#: De twee klokken op dezelfde rij, uit punt 6.
+#: The two clocks on the same row.
 PSEUDONYMIZE_AFTER = timedelta(days=90)
 DELETE_AFTER = timedelta(days=365)
 
@@ -65,42 +64,42 @@ _write_failures = 0
 
 
 def write_failures() -> int:
-    """Het aantal mislukte auditschrijfacties sinds de start; ``opi/core/metrics.py`` leest dit."""
+    """The number of failed audit writes since startup; ``opi/core/metrics.py`` reads this."""
     return _write_failures
 
 
 def event_source() -> str:
-    """De ``source`` van een gebeurtenis van deze instantie."""
+    """The ``source`` of an event from this instance."""
     return f"urn:nld:oin:{settings.EVENT_SOURCE_OIN}:systeem:zad-{settings.CLUSTER_MANAGER}"
 
 
 def _subject(project: str | None, deployment: str | None) -> str | None:
-    """``<project>`` of ``<project>/<deployment>``, nooit een e-mailadres (punt 7, regel 2)."""
+    """``<project>`` or ``<project>/<deployment>``, never an email address."""
     if project is None:
         return None
     return f"{project}/{deployment}" if deployment else project
 
 
 def _summary(subject: str | None, action: str, allowed: bool, cause: str | None, grant: str | None) -> str:
-    """Eén Nederlandse regel, zonder actor: ook dit veld mag geen persoonsgegeven dragen."""
-    waarop = subject or "platform"
+    """One Dutch line, without the actor: this field may carry no personal data either."""
+    target = subject or "platform"
     if allowed:
-        # De rol uit de grant, niet de grant zelf: die draagt een ``@`` en dat is precies
-        # het teken waarop de invariant van punt 7 toetst.
-        rol = grant.split("@", 1)[0] if grant else None
-        return f"{waarop}: {action} door {rol}" if rol else f"{waarop}: {action}"
-    return f"{waarop}: {action} geweigerd ({cause})" if cause else f"{waarop}: {action} geweigerd"
+        # The role out of the grant and not the grant itself: that carries an ``@``, which is
+        # exactly the character the no-personal-data invariant checks on.
+        role = grant.split("@", 1)[0] if grant else None
+        return f"{target}: {action} door {role}" if role else f"{target}: {action}"
+    return f"{target}: {action} geweigerd ({cause})" if cause else f"{target}: {action} geweigerd"
 
 
 def _dedup_key(action: str, subject: str | None, allowed: bool, cause: str | None) -> str:
-    """De sleutel waarop de meldkant later groepeert: de soort, niet het geval.
+    """The key the notification side groups on: the kind, not the case.
 
-    Comply-or-explain: niet via ``log_watcher.signature()``, dat een vrije logregel
-    normaliseert door onder meer gekoppelde identifiers weg te strippen. Deze velden zijn
-    al genormaliseerd, en die functie zou er ``X`` van maken.
+    Comply-or-explain: NOT through ``log_watcher.signature()``, which normalises a free log
+    line by stripping linked identifiers out. These fields are already normalised, and that
+    function would turn them into ``X``.
     """
-    uitkomst = "allowed" if allowed else (cause or "denied")
-    return f"audit:{action}:{subject or '-'}:{uitkomst}"[:160]
+    outcome = "allowed" if allowed else (cause or "denied")
+    return f"audit:{action}:{subject or '-'}:{outcome}"[:160]
 
 
 async def record_step_up_attempt(email: str, *, allowed: bool, cause: str | None, origin: str) -> None:
@@ -141,7 +140,7 @@ async def record_action(
     origin: str | None,
     fields: dict[str, object] | None = None,
 ) -> None:
-    """Leg één beslissing vast. Gooit nooit: een kapotte audit houdt geen uitrol tegen."""
+    """Record one decision. Never raises: a broken audit holds up no rollout."""
     subject = _subject(project, deployment)
     data: dict[str, Any] = {
         "action": action,
@@ -168,8 +167,8 @@ async def record_action(
         deployment=deployment,
         actor=actor.identity[:255] if actor.identity else None,
         actor_kind=actor.kind.value,
-        # Afgekapt op de kolombreedte, net als summary en dedup_key: een waarde die niet
-        # past laat de INSERT falen, en dan verdwijnt de hele auditregel stil.
+        # Truncated to the column width, like summary and dedup_key: a value that does not
+        # fit makes the INSERT fail, and then the whole audit line disappears quietly.
         origin=origin[:64] if origin else None,
         summary=_summary(subject, action, allowed, cause, grant)[:255],
         flow_id=get_flow_id(),
@@ -181,11 +180,11 @@ async def record_action(
         async with session_scope() as session:
             session.add(event)
     except Exception:
-        # Comply-or-explain: breed, want welke fout de database of het netwerk ook geeft,
-        # het verzoek zelf moet doorgaan. De teller maakt dat het niet stil gebeurt.
+        # Comply-or-explain: broad, because whatever error the database or the network gives,
+        # the request itself has to go on. The counter keeps it from happening quietly.
         global _write_failures
         _write_failures += 1
-        # Gefilterd: action en subject komen van de aanroeper, dus saniteren voorkomt dubbele logregels.
+        # action and subject come from the caller, so sanitizing keeps them out of the log raw.
         logger.exception(
             "Audit write failed (action=%s, subject=%s)",
             sanitize_for_log(action),
@@ -247,7 +246,7 @@ async def list_actions(
         raise ValueError("before and after are mutually exclusive")
 
     def _at(cursor: AuditCursor) -> Any:
-        """De cursor als rijwaarde, met de kolomtypen erbij zodat de bind klopt."""
+        """The cursor as a row value, with the column types so the bind is right."""
         return tuple_(literal(cursor.time, NotificationEvent.time.type), literal(cursor.id, NotificationEvent.id.type))
 
     row = tuple_(NotificationEvent.time, NotificationEvent.id)
@@ -276,25 +275,25 @@ async def list_actions(
 
 
 async def run_retention(now: datetime | None = None) -> dict[str, int]:
-    """Eén ronde van de bewaarlus: twee passes, op de twee indexen uit punt 7.
+    """One round of the retention loop: two passes, on the table's two sweep indexes.
 
-    Alleen op :data:`ACTION_TYPES`. De audit is vandaag de enige soort in deze tabel, maar
-    het gebeurtenissenontwerp geeft een latere soort zijn eigen termijn, en zonder deze
-    grens zou die soort stil met de termijn van de audit worden gewist.
+    Scoped to :data:`ACTION_TYPES`. The audit is the only kind in this table today, but a
+    later kind gets its own term, and without this limit that kind would be wiped quietly on
+    the audit's term.
 
-    Geeft terug hoeveel rijen zijn gepseudonimiseerd en hoeveel er zijn verwijderd.
+    Returns how many rows were pseudonymised and how many were deleted.
     """
     moment = now or datetime.now(UTC)
     async with session_scope() as session:
-        # Opruimen eerst, zodat een rij die toch weggaat niet eerst nog wordt leeggemaakt.
+        # Deleting first, so a row that goes anyway is not emptied out beforehand.
         deleted = await session.execute(
             delete(NotificationEvent).where(
                 NotificationEvent.time < moment - DELETE_AFTER,
                 NotificationEvent.type.in_(ACTION_TYPES),
             )
         )
-        # Allebei de kolommen op NULL, nooit op een tekst: anders blijft het predicaat van
-        # idx_notification_events_actor_sweep waar en krimpt die index nooit (punt 6).
+        # Both columns to NULL and never to a string: otherwise the predicate of
+        # idx_notification_events_actor_sweep stays true and that index never shrinks.
         pseudonymized = await session.execute(
             update(NotificationEvent)
             .where(

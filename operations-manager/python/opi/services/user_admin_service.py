@@ -17,8 +17,8 @@ from opi.services.persistence.users import User
 logger = logging.getLogger(__name__)
 
 
-def _als_uuid(user_id: str) -> uuid.UUID | None:
-    """De id als UUID, of None als het geen UUID is (geen ValueError)."""
+def _as_uuid(user_id: str) -> uuid.UUID | None:
+    """The id as a UUID, or None when it is not one; never a ValueError."""
     try:
         return uuid.UUID(user_id)
     except ValueError:
@@ -36,11 +36,11 @@ class UserAdminService:
 
     async def get_user(self, user_id: str) -> dict | None:
         """Get a user by UUID, or None when the id is unknown or not a UUID."""
-        sleutel = _als_uuid(user_id)
-        if sleutel is None:
+        key = _as_uuid(user_id)
+        if key is None:
             return None
         async with session_scope() as session:
-            row = await session.get(User, sleutel)
+            row = await session.get(User, key)
             return row.to_dict() if row else None
 
     async def get_user_by_email(self, email: str) -> dict | None:
@@ -61,26 +61,26 @@ class UserAdminService:
 
     async def update_user(self, user_id: str, email: str, full_name: str) -> dict | None:
         """Update a user. Returns the updated user dict, or None if not found."""
-        sleutel = _als_uuid(user_id)
-        if sleutel is None:
+        key = _as_uuid(user_id)
+        if key is None:
             return None
         async with session_scope() as session:
             result = await session.execute(
-                update(User).where(User.id == sleutel).values(email=email, full_name=full_name, updated_at=func.now())
+                update(User).where(User.id == key).values(email=email, full_name=full_name, updated_at=func.now())
             )
             if result.rowcount == 0:
                 return None
-            row = await session.get(User, sleutel)
+            row = await session.get(User, key)
             logger.info("Updated user %s ('%s', %s)", user_id, full_name, email)
             return row.to_dict() if row else None
 
     async def delete_user(self, user_id: str) -> bool:
         """Delete a user. Returns True if deleted, False if not found."""
-        sleutel = _als_uuid(user_id)
-        if sleutel is None:
+        key = _as_uuid(user_id)
+        if key is None:
             return False
         async with session_scope() as session:
-            result = await session.execute(delete(User).where(User.id == sleutel))
+            result = await session.execute(delete(User).where(User.id == key))
             deleted = result.rowcount > 0
             if deleted:
                 logger.info("Deleted user %s", user_id)

@@ -20,7 +20,7 @@ from opi.core.authz.actions import Action, action
 from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, handhaaf
 from opi.http.auth.principal import PRINCIPAL_KIND_NOT_ALLOWED, PrincipalKind, gebruik_per_project, reset_gebruik
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
 from starlette.requests import Request
@@ -33,7 +33,7 @@ TOKEN_BOUWSTRAAT = "zad_bouwstraat"
 
 
 def _token(naam: str, waarde: str) -> ProjectToken:
-    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van(waarde))
+    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=30), hash=hash_of(waarde))
 
 
 def _project(*, met_oude_sleutel: bool = False, beheerder: str = BEHEERDER) -> ProjectSummary:

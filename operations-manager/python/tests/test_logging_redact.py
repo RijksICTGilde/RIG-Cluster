@@ -13,7 +13,7 @@ from opi.core.logging_redact import (
     redact_text,
     sanitize_for_log,
 )
-from opi.services.project_leden import TOKEN_PREFIX, nieuw_token
+from opi.services.project_members import TOKEN_PREFIX, new_token
 
 
 def test_masks_bearer_token_value() -> None:
@@ -117,7 +117,7 @@ def test_een_api_token_valt_ook_buiten_een_header() -> None:
     Het voorvoegsel maakt de vorm zelfstandig herkenbaar, dus dit werkt ook waar het token
     niet in een bekende credential-header staat.
     """
-    token, _ = nieuw_token()
+    token, _ = new_token()
 
     assert token not in redact_text(f"Token {token} geweigerd voor project demo")
     assert token not in redact_text(f'{{"token": "{token}"}}')
@@ -127,8 +127,8 @@ def test_een_api_token_valt_ook_buiten_een_header() -> None:
 
 def test_het_voorvoegsel_van_het_patroon_is_dat_van_een_echt_token() -> None:
     """Verandert ``TOKEN_PREFIX``, dan maskeert het patroon niets meer."""
-    assert nieuw_token()[0].startswith(TOKEN_PREFIX)
-    assert redact_text(nieuw_token()[0]).startswith(TOKEN_PREFIX)
+    assert new_token()[0].startswith(TOKEN_PREFIX)
+    assert redact_text(new_token()[0]).startswith(TOKEN_PREFIX)
 
 
 def test_sanitize_for_log_returns_empty_for_none_and_empty_string() -> None:

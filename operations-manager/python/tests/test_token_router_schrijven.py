@@ -18,7 +18,7 @@ from authlib.jose import JsonWebKey, jwt
 from fastapi import HTTPException
 from opi.api.token_router import _email
 from opi.http.auth.user_token_auth import get_metadata_cache
-from opi.services.api_token_service import TokenAanvraagGeweigerd
+from opi.services.api_token_service import TokenRequestRefusedError
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
 AUDIENCE = "zad-api"
@@ -99,7 +99,7 @@ def test_email_zonder_claim_geeft_401() -> None:
 
 
 def test_een_service_account_toevoegen(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.voeg_service_account_toe", AsyncMock()) as mock:
+    with patch("opi.api.token_router.add_service_account", AsyncMock()) as mock:
         response = test_client.post(
             "/api/v2/projects/bouwput/leden",
             json={"naam": "bouwstraat", "roles": ["developer"]},
@@ -107,7 +107,7 @@ def test_een_service_account_toevoegen(test_client: TestClient, realm: Any, vers
         )
 
     assert response.status_code == 201
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rollen=["developer"], door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", roles=["developer"], by=EMAIL)
 
 
 def test_een_ontwikkelaar_krijgt_403_op_een_service_account(
@@ -115,8 +115,8 @@ def test_een_ontwikkelaar_krijgt_403_op_een_service_account(
 ) -> None:
     """De weigering komt uit de service; de router mag er geen 500 van maken."""
     with patch(
-        "opi.api.token_router.voeg_service_account_toe",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.api.token_router.add_service_account",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         response = test_client.post(
             "/api/v2/projects/bouwput/leden", json={"naam": "bouwstraat"}, headers=_headers(realm, verse_otp)
@@ -127,21 +127,21 @@ def test_een_ontwikkelaar_krijgt_403_op_een_service_account(
 
 
 def test_een_service_account_verwijderen(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.verwijder_service_account", AsyncMock()) as mock:
+    with patch("opi.api.token_router.remove_service_account", AsyncMock()) as mock:
         response = test_client.request(
             "DELETE", "/api/v2/projects/bouwput/leden/bouwstraat", headers=_headers(realm, verse_otp)
         )
 
     assert response.status_code == 200
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", by=EMAIL)
 
 
 def test_een_service_account_verwijderen_geweigerd_is_een_403(
     test_client: TestClient, realm: Any, verse_otp: Any
 ) -> None:
     with patch(
-        "opi.api.token_router.verwijder_service_account",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.api.token_router.remove_service_account",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         response = test_client.request(
             "DELETE", "/api/v2/projects/bouwput/leden/bouwstraat", headers=_headers(realm, verse_otp)
@@ -159,12 +159,13 @@ def test_een_rol_wijzigen(test_client: TestClient, realm: Any, verse_otp: Any) -
         )
 
     assert response.status_code == 200
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rollen=["admin", "ops"], door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", roles=["admin", "ops"], by=EMAIL)
 
 
 def test_een_rol_wijzigen_geweigerd_is_een_403(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
     with patch(
-        "opi.api.token_router.set_member_roles", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
+        "opi.api.token_router.set_member_roles",
+        AsyncMock(side_effect=TokenRequestRefusedError("Onbekende rol 'root'.")),
     ):
         response = test_client.put(
             "/api/v2/projects/bouwput/leden/bouwstraat/rol",
@@ -179,7 +180,7 @@ def test_een_rol_wijzigen_geweigerd_is_een_403(test_client: TestClient, realm: A
 
 
 def test_een_token_uitgeven_geeft_de_waarde_een_keer_terug(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.geef_token_uit", AsyncMock(return_value="zad_geheim")) as mock:
+    with patch("opi.api.token_router.issue_token", AsyncMock(return_value="zad_geheim")) as mock:
         response = test_client.post(
             "/api/v2/projects/bouwput/leden/bouwstraat/tokens",
             json={"naam": "pijplijn", "dagen": 30},
@@ -188,7 +189,7 @@ def test_een_token_uitgeven_geeft_de_waarde_een_keer_terug(test_client: TestClie
 
     assert response.status_code == 201
     assert response.json() == {"token": "zad_geheim", "lid": "bouwstraat", "naam": "pijplijn"}
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", token_name="pijplijn", days=30, by=EMAIL)
 
 
 def test_een_token_zonder_dagen_komt_er_niet_door(test_client: TestClient, realm: Any) -> None:
@@ -201,8 +202,8 @@ def test_een_token_zonder_dagen_komt_er_niet_door(test_client: TestClient, realm
 
 def test_een_geweigerde_aanvraag_is_een_403(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
     with patch(
-        "opi.api.token_router.geef_token_uit",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Je kunt alleen een token voor jezelf maken.")),
+        "opi.api.token_router.issue_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("Je kunt alleen een token voor jezelf maken.")),
     ):
         response = test_client.post(
             "/api/v2/projects/bouwput/leden/iemand@anders.nl/tokens",
@@ -214,7 +215,7 @@ def test_een_geweigerde_aanvraag_is_een_403(test_client: TestClient, realm: Any,
 
 
 def test_een_token_roteren(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.roteer_token", AsyncMock(return_value="zad_nieuw")) as mock:
+    with patch("opi.api.token_router.rotate_token", AsyncMock(return_value="zad_nieuw")) as mock:
         response = test_client.post(
             "/api/v2/projects/bouwput/leden/bouwstraat/tokens/pijplijn/:roteer",
             json={"naam": "pijplijn", "dagen": 30},
@@ -223,14 +224,14 @@ def test_een_token_roteren(test_client: TestClient, realm: Any, verse_otp: Any) 
 
     assert response.status_code == 200
     assert response.json()["token"] == "zad_nieuw"
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", token_name="pijplijn", days=30, by=EMAIL)
 
 
 def test_een_token_roteren_geweigerd_is_een_403(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
     """De geweigerde rotatie mag het bestaande token niet kwijtraken, en geeft hier een 403."""
     with patch(
-        "opi.api.token_router.roteer_token",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Je kunt alleen een token voor jezelf maken.")),
+        "opi.api.token_router.rotate_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("Je kunt alleen een token voor jezelf maken.")),
     ):
         response = test_client.post(
             "/api/v2/projects/bouwput/leden/iemand@anders.nl/tokens/cli/:roteer",
@@ -242,19 +243,19 @@ def test_een_token_roteren_geweigerd_is_een_403(test_client: TestClient, realm: 
 
 
 def test_een_token_intrekken(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.trek_token_in", AsyncMock()) as mock:
+    with patch("opi.api.token_router.revoke_token", AsyncMock()) as mock:
         response = test_client.request(
             "DELETE", "/api/v2/projects/bouwput/leden/bouwstraat/tokens/pijplijn", headers=_headers(realm, verse_otp)
         )
 
     assert response.status_code == 200
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", tokennaam="pijplijn", door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", name="bouwstraat", token_name="pijplijn", by=EMAIL)
 
 
 def test_een_token_intrekken_geweigerd_is_een_403(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
     with patch(
-        "opi.api.token_router.trek_token_in",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.api.token_router.revoke_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         response = test_client.request(
             "DELETE", "/api/v2/projects/bouwput/leden/bouwstraat/tokens/pijplijn", headers=_headers(realm, verse_otp)

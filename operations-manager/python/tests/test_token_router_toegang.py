@@ -18,7 +18,7 @@ import pytest
 from authlib.jose import JsonWebKey, jwt
 from opi.http.auth.user_token_auth import get_metadata_cache
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -80,9 +80,7 @@ def _project(naam: str, email: str) -> ProjectSummary:
                 name="bouwstraat",
                 role="developer",
                 tokens=[
-                    ProjectToken(
-                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van("zad_x")
-                    )
+                    ProjectToken(name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_of("zad_x"))
                 ],
             ),
         ],
@@ -122,7 +120,7 @@ def test_de_lijst_draagt_geen_hashes(test_client: TestClient, realm: Any, store:
         f"/api/v2/projects/{PROJECT.name}/leden",
         headers={"Authorization": f"Bearer {realm['token_for'](LID)}"},
     )
-    assert hash_van("zad_x") not in response.text
+    assert hash_of("zad_x") not in response.text
     assert "hash" not in response.text
 
 

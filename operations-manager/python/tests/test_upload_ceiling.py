@@ -54,7 +54,7 @@ from opi.middleware.body_limit import (
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.utils import uploads
 from opi.utils.uploads import CHUNK_SIZE, read_capped, spill_capped, upload_slot
 from opi.web.router_wizard_attachments import stage_attachment
@@ -757,14 +757,14 @@ def _project_met_rol(*rollen: str) -> SimpleNamespace:
             SimpleNamespace(
                 type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
-                principaal="bouwstraat",
+                principal="bouwstraat",
                 email=None,
                 roles=list(rollen),
                 tokens=[
                     SimpleNamespace(
                         name="pijplijn",
                         expires=datetime.now(UTC) + timedelta(days=30),
-                        hash=hash_van(TOKEN_VAN_DE_PIJPLIJN),
+                        hash=hash_of(TOKEN_VAN_DE_PIJPLIJN),
                     )
                 ],
             )

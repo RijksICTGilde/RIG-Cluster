@@ -5,15 +5,11 @@ same project (``clone-from: {type: deployment, reference: <name>}``). That only 
 the source has been provisioned first, so the order in which deployments are processed is
 not free.
 
-Nothing enforced it. ``process_project`` walked ``project_data["deployments"]`` in file
-order, and that happened to work only because the files grew that way: in ``regel-k4c``
-the source ``regelrecht`` sits first and four PR deployments clone from it; in ``wies``
-``main`` sits third and fourteen clone from it. Adding a deployment at the top of the file
-would have broken it silently.
+File order is not that order: a deployment added at the top of the file would have its
+source provisioned after it.
 
 Production rarely notices, because a ``mode: once`` clone is long done and its result is
-recorded in ``revisions``. A fresh environment notices immediately, which is exactly where
-the upgrade-safety test runs and where this surfaced.
+recorded in ``revisions``. A fresh environment notices at once.
 """
 
 from __future__ import annotations

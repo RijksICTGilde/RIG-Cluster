@@ -299,12 +299,11 @@ def gather_sync_deviations(
     health_status = (status.get("health") or {}).get("status")
     operation_state = status.get("operationState", {}) or {}
     resources = status.get("resources", []) or []
-    # Sleutel-aanwezigheid, niet truthiness: ArgoCD's ``automated: {}`` betekent aan.
+    # Key presence, not truthiness: ArgoCD's ``automated: {}`` means on.
     auto_sync = "automated" in (((status_data.get("spec") or {}).get("syncPolicy")) or {})
 
-    # Loopt er een sync die al te lang staat, dan is "bij de volgende sync" een belofte die
-    # niemand inlost: zolang hij staat wordt elke volgende overgeslagen, en hij eindigt niet uit
-    # zichzelf (RC-250).
+    # While a sync has been stuck for too long, "at the next sync" is a promise nobody keeps:
+    # every following sync is skipped as long as it stands, and it does not end by itself.
     operation = read_sync_operation(status_data)
     blocked_for = (
         format_duration(operation_age_seconds(operation))

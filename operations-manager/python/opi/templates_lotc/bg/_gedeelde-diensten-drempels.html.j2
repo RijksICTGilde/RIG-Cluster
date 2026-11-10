@@ -1,15 +1,15 @@
 {#
   Vanaf welke waarden een rij hierboven kleurt.
 
-  Staat hier zodat een rode rij navraagbaar is. De waarden zelf komen uit DREMPELS in
-  opi/services/gedeelde_diensten.py, zodat alerting straks dezelfde grenzen gebruikt.
+  Staat hier zodat een rode rij navraagbaar is. De waarden zelf komen uit THRESHOLDS in
+  opi/services/shared_services.py, zodat alerting straks dezelfde grenzen gebruikt.
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 {% call panel("Drempels", "score-meter") %}
     <c-stack gap="md">
         <c-paragraph>
             Vanaf deze waarden kleurt een rij hierboven. Ze staan op een plek in de code
-            (DREMPELS in opi/services/gedeelde_diensten.py) zodat alerting straks dezelfde
+            (THRESHOLDS in opi/services/shared_services.py) zodat alerting straks dezelfde
             grenzen gebruikt en er geen tweede waarheid ontstaat.
         </c-paragraph>
         {# De eenheid in een EIGEN kolom en niet achter het getal: dat gaf "1

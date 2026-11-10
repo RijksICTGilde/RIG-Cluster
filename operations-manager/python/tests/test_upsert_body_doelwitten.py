@@ -27,7 +27,7 @@ from opi.api.v2.router import upsert_deployment_v2
 from opi.core.authz.actions import Action, action, deployment_from, deployment_of, marking_if_absent
 from opi.http.auth.endpoint_util import default_marking, deployment_in_body, handhaaf
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
@@ -82,18 +82,18 @@ def _project(
                 type=MemberKind.SERVICE_ACCOUNT,
                 name="pijplijn",
                 roles=["developer-ci"],
-                tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_van(TOKEN_CI))],
+                tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_of(TOKEN_CI))],
             ),
             ProjectUser(
                 type=MemberKind.SERVICE_ACCOUNT,
                 name="uitrol",
                 roles=["ops-ci"],
-                tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_van(TOKEN_OPS_CI))],
+                tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_of(TOKEN_OPS_CI))],
             ),
             ProjectUser(
                 email="beheer@rijksoverheid.nl",
                 roles=["ops"],
-                tokens=[ProjectToken(name="cli", expires=verloopt, hash=hash_van(TOKEN_OPS))],
+                tokens=[ProjectToken(name="cli", expires=verloopt, hash=hash_of(TOKEN_OPS))],
             ),
         ],
         data=data,

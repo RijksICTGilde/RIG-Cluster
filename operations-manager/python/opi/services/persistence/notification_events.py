@@ -1,9 +1,8 @@
-"""ORM-model voor ``notification_events`` (migratie 013): de gebeurtenissen van het platform.
+"""ORM model for ``notification_events`` (migration 013): the platform's events.
 
-Onveranderlijk: alleen invoegen. De enige toegestane wijziging na het schrijven is de
-pseudonimisering van ``actor`` en ``origin`` door de bewaarlus in
-``opi/services/audit.py``. De audit is vandaag de enige schrijver; het datamodel komt uit
-``features/futures/gebeurtenissen-vastleggen-en-melden.md`` punt 7.
+Immutable: insert only. The one change allowed after writing is the pseudonymisation of
+``actor`` and ``origin`` by the retention loop in ``opi/services/audit.py``, today the only
+writer of this table.
 """
 
 from __future__ import annotations
@@ -20,37 +19,37 @@ from opi.core.db import Base
 
 
 class NotificationEvent(Base):
-    """Een gebeurtenis op het platform. Onveranderlijk: alleen invoegen."""
+    """One platform event. Immutable: insert only."""
 
     __tablename__ = "notification_events"
 
-    # CloudEvents-vormig: id, source, specversion, type, subject, time. Zolang ``source``
-    # een placeholder draagt is dit GEEN geldig CloudEvent en mag het ook niet zo heten.
+    # CloudEvents-shaped: id, source, specversion, type, subject, time. While ``source``
+    # carries a placeholder this is NOT a valid CloudEvent and must not be called one.
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text("gen_random_uuid()"))
     source: Mapped[str] = mapped_column(String(255), nullable=False)
     specversion: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'1.0'"))
     type: Mapped[str] = mapped_column(String(128), nullable=False)
-    #: ``<project>`` of ``<project>/<deployment>``, nooit een e-mailadres.
+    #: ``<project>`` or ``<project>/<deployment>``, never an email address.
     subject: Mapped[str | None] = mapped_column(String(255))
     time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
 
-    # Van ons, want het profiel zegt er niets over.
+    # Ours, because the profile says nothing about these.
     category: Mapped[str] = mapped_column(String(32), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     cluster: Mapped[str] = mapped_column(String(63), nullable=False)
     project: Mapped[str | None] = mapped_column(String(63))
     deployment: Mapped[str | None] = mapped_column(String(63))
     component: Mapped[str | None] = mapped_column(String(63))
-    #: Persoonsgegeven; de bewaarlus zet hem na 90 dagen op NULL, nooit op een tekst.
+    #: Personal data; after 90 days the retention loop sets this to NULL, never to a string.
     actor: Mapped[str | None] = mapped_column(String(255))
     actor_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    #: BIO2 8.15.01 "Oorsprong": client-IP. Persoonsgegeven, net als ``actor``.
+    #: BIO2 8.15.01 "Oorsprong": client IP. Personal data, like ``actor``.
     origin: Mapped[str | None] = mapped_column(String(64))
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
     flow_id: Mapped[str | None] = mapped_column(String(64))
-    #: ``async_tasks.id``, met opzet GEEN vreemde sleutel: die rij verdwijnt na een uur.
+    #: ``async_tasks.id``, deliberately NOT a foreign key: that row is gone after an hour.
     task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     thread_key: Mapped[str | None] = mapped_column(String(255))
     dedup_key: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -60,14 +59,14 @@ class NotificationEvent(Base):
         Index("idx_notification_events_dedup", "dedup_key", "time"),
         Index("idx_notification_events_project", text("project"), text("time DESC")),
         Index("idx_notification_events_thread", text("thread_key"), text("time DESC")),
-        # De index van de pseudonimiseringspas: een verwerkte rij valt er vanzelf uit,
-        # want de lus zet beide kolommen op NULL.
+        # The pseudonymisation pass's index: a processed row drops out of it by itself,
+        # because the loop sets both columns to NULL.
         Index(
             "idx_notification_events_actor_sweep",
             "time",
             postgresql_where=text("actor IS NOT NULL OR origin IS NOT NULL"),
         ),
-        # De index van de opruimpas, die de sweep-index niet kan gebruiken: zijn rijen
-        # dragen dan geen actor en geen origin meer.
+        # The retention pass's index; it cannot use the sweep index, because by then its
+        # rows carry neither actor nor origin.
         Index("idx_notification_events_retention", "time"),
     )

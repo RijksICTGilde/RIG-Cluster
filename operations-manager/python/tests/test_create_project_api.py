@@ -22,7 +22,7 @@ from opi.core.config import settings
 from opi.http.auth.user_token_auth import get_metadata_cache
 from opi.manager.project_validation import validate_project_structure
 from opi.services import project_utils
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_schema import validate_project_schema
 from opi.utils import age, api_keys
 from opi.utils.age import generate_age_key_pair
@@ -224,7 +224,7 @@ class TestCreateProject:
         account = next(lid for lid in created["project"]["users"] if lid.get("name") == "project-api")
         assert account["type"] == "service-account"
         assert account["roles"] == ["admin", "ops"]
-        assert account["tokens"][0]["hash"] == hash_van(created["response"]["api_key"])
+        assert account["tokens"][0]["hash"] == hash_of(created["response"]["api_key"])
 
     def test_het_eerste_token_verloopt_langs_het_platformplafond(self, created: Any) -> None:
         """Een token dat bij de aanmaak wordt uitgegeven is geen uitzondering op het plafond.

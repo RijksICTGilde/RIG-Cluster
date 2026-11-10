@@ -37,7 +37,7 @@ from opi.http.auth.endpoint_util import handhaaf
 from opi.middleware.audit import AuditMiddleware, _schrijvers
 from opi.server import app
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van, vervaldatum
+from opi.services.project_members import expiry_date, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.step_up import StepUpAction
 from opi.utils.client_ip import PEER_SCOPE_KEY
@@ -473,7 +473,7 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
                 email="kijker@rijksoverheid.nl",
                 roles=["viewer"],
                 type=MemberKind.PERSON,
-                tokens=[ProjectToken(name="t", hash=hash_van(token), expires=vervaldatum(30))],
+                tokens=[ProjectToken(name="t", hash=hash_of(token), expires=expiry_date(30))],
             )
         ],
     )

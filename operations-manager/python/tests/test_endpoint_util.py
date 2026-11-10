@@ -24,7 +24,7 @@ from opi.http.auth.endpoint_util import (
     validate_metrics_scrape_token,
 )
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from starlette.requests import Request
 
 _VER_IN_DE_TOEKOMST = datetime.now(UTC) + timedelta(days=30)
@@ -238,10 +238,10 @@ class TestImagePushRefusal:
                 SimpleNamespace(
                     type=MemberKind.SERVICE_ACCOUNT,
                     name="bouwstraat",
-                    principaal="bouwstraat",
+                    principal="bouwstraat",
                     email=None,
                     roles=rollen,
-                    tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_van(token_waarde))],
+                    tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_of(token_waarde))],
                 )
             ],
         )

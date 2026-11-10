@@ -236,7 +236,7 @@ formulier om te beginnen verschijnt pas na een geslaagde herlogin.
 - `GET /account/otp/herlogin/terug` controleert de id_token: dezelfde `sub` en hetzelfde
   e-mailadres als de ingelogde gebruiker, `email_verified`, en een `auth_time` van hooguit een
   minuut oud. Pas dan opent het venster.
-- Het venster is **vijf minuten** en schuift niet mee (`HERLOGIN_VENSTER`). De poort staat op
+- Het venster is **vijf minuten** en schuift niet mee (`HERLOGIN_WINDOW`). De poort staat op
   `POST /account/otp/start`. `/bevestigen` heeft hem niet: die wordt beschermd door de rij die
   `/start` zet, en een tweede poort zou een registratie vernietigen die je al gescand hebt als het
   venster tijdens het scannen verloopt.

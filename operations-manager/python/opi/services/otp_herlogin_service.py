@@ -1,8 +1,10 @@
-"""De herlogin bij Keycloak die het inrichten van een 2-factor vooraf gaat.
+"""The Keycloak herlogin that precedes setting up a second factor.
 
-Zonder deze poort richt iedereen met een open sessie op een ontgrendelde computer een eigen
-2-factor in onder de naam van een ander. Hoe de portaalroutes erom vragen staat in
+Without this gate, anyone with an open session on an unlocked computer sets up their own
+second factor under someone else's name. How the portal routes ask for it is in
 ``opi/web/router_otp.py``.
+
+"herlogin" is the domain term here, because it names the ``otp_herlogins`` table.
 """
 
 from __future__ import annotations
@@ -21,27 +23,27 @@ from opi.services.persistence.otp_herlogin import OtpHerlogin
 
 logger = logging.getLogger(__name__)
 
-#: Hoe lang een gestarte herlogin mag duren: de tijd om bij Keycloak in te loggen.
+#: How long a started herlogin may take: the time to log in at Keycloak.
 HERLOGIN_TTL = timedelta(minutes=10)
 
-#: Hoe lang een geslaagde herlogin het inrichten van een 2-factor dekt. Schuift niet mee.
-HERLOGIN_VENSTER = timedelta(minutes=5)
+#: How long a succeeded herlogin covers setting up a second factor. Does not slide.
+HERLOGIN_WINDOW = timedelta(minutes=5)
 
-#: Hoe oud de ``auth_time`` van Keycloak mag zijn. Met ``max_age=0`` is hij van zojuist.
+#: How old Keycloak's ``auth_time`` may be. With ``max_age=0`` it is from just now.
 AUTH_TIME_MAX_SECONDS = 60
 
 
 @dataclass(frozen=True)
 class Herlogin:
-    """De OIDC-waarden van een lopende herlogin."""
+    """The OIDC values of a running herlogin."""
 
     state: str
     nonce: str
     code_verifier: str
 
 
-def herlogin_klopt(claims: Any, user: dict[str, Any], *, now: float | None = None) -> bool:
-    """Of deze id_token-claims een verse login van DEZE ingelogde gebruiker zijn."""
+def herlogin_is_valid(claims: Any, user: dict[str, Any], *, now: float | None = None) -> bool:
+    """Whether these id_token claims are a fresh login of THIS signed-in user."""
     moment = time.time() if now is None else now
     email = str(user.get("email", "")).lower()
     if claims.get("email_verified") is not True:
@@ -61,7 +63,7 @@ def herlogin_klopt(claims: Any, user: dict[str, Any], *, now: float | None = Non
 
 
 class OtpHerloginService:
-    """Begin, keur goed en toets een herlogin. Alles in de tabel ``otp_herlogins``."""
+    """Start, approve and check a herlogin. All of it in the ``otp_herlogins`` table."""
 
     async def begin(self, email: str, login_at: float) -> Herlogin:
         herlogin = Herlogin(
@@ -85,7 +87,7 @@ class OtpHerloginService:
         return herlogin
 
     async def take(self, state: str, email: str, login_at: float) -> Herlogin | None:
-        """De lopende herlogin bij deze state, of None als hij onbekend, verlopen of van een ander is."""
+        """The running herlogin at this state, or None when it is unknown, expired or someone else's."""
         async with session_scope() as session:
             row = await session.get(OtpHerlogin, state)
             if (
@@ -104,14 +106,14 @@ class OtpHerloginService:
             row = await session.get(OtpHerlogin, state)
             if row is not None:
                 row.verified_at = now
-                row.expires_at = now + HERLOGIN_VENSTER
+                row.expires_at = now + HERLOGIN_WINDOW
 
     async def is_fresh(self, email: str, login_at: float | None) -> bool:
-        """Of deze sessie minder dan :data:`HERLOGIN_VENSTER` geleden opnieuw inlogde."""
+        """Whether this session logged in again less than :data:`HERLOGIN_WINDOW` ago."""
         if login_at is None:
             return False
         async with session_scope() as session:
-            gevonden = (
+            found = (
                 await session.execute(
                     select(OtpHerlogin.state)
                     .where(
@@ -123,7 +125,7 @@ class OtpHerloginService:
                     .limit(1)
                 )
             ).first()
-            return gevonden is not None
+            return found is not None
 
     async def purge_expired(self) -> int:
         async with session_scope() as session:

@@ -51,11 +51,11 @@ if str(_OPI_ROOT) not in sys.path:
 from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
 from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
 from opi.services.members import MemberKind  # noqa: E402
-from opi.services.project_leden import nieuw_token  # noqa: E402
+from opi.services.project_members import new_token  # noqa: E402
 from opi.services.schema_migration import (  # noqa: E402
     PROJECT_API_ACCOUNT,
-    PROJECT_API_ROLLEN,
-    PROJECT_API_VERVALT,
+    PROJECT_API_EXPIRES,
+    PROJECT_API_ROLES,
 )
 from opi.services.services import service_entry_data, service_entry_name  # noqa: E402
 from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
@@ -97,7 +97,7 @@ DEFAULT_PROBE_PORT = 8080
 #: content of an attachment, and whatever ``replace_remaining_secrets`` finds. Recognisable
 #: on sight in a manifest or a pod, so nobody mistakes a sandbox copy for real configuration.
 SANDBOX_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
-SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLLEN)}
+SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLES)}
 #: The sandbox Forgejo password. Encrypted into the converted file with the sandbox platform
 #: key, not written down: a project file may not carry a ``plain:`` value (schema 2.18).
 SANDBOX_REPOSITORY_PASSWORD = "admin1234"  # noqa: S105  # the sandbox admin, no production secret
@@ -345,8 +345,8 @@ def migrate_project(
             {
                 "type": MemberKind.SERVICE_ACCOUNT.value,
                 "name": PROJECT_API_ACCOUNT,
-                "roles": list(PROJECT_API_ROLLEN),
-                "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": ""}],
+                "roles": list(PROJECT_API_ROLES),
+                "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_EXPIRES, "hash": ""}],
             }
         )
 
@@ -359,7 +359,7 @@ def migrate_project(
         for token in lid.get("tokens") or []:
             if not isinstance(token, dict):
                 continue
-            waarde, token["hash"] = nieuw_token()
+            waarde, token["hash"] = new_token()
             eigenaar = lid.get("name") or lid.get("email") or "?"
             logger.info(f"  [{name}] Nieuw token '{token.get('name')}' voor {eigenaar}: {waarde}")
 

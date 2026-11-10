@@ -98,9 +98,7 @@ class LogWatchConfig:
     ignore_file: Path = DEFAULT_IGNORE_FILE
 
 
-# --- Loki query plumbing (httpx; mirrors scripts/grafana_loki_logs.py) -------
-
-
+# The Loki query plumbing below mirrors scripts/grafana_loki_logs.py.
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -196,9 +194,6 @@ def parse_frames(result: dict) -> list[tuple[int, dict, str]]:
                         row_labels.update(raw)
                 rows.append((int(times[j]), row_labels, lines[j]))
     return rows
-
-
-# --- message parsing / classification / formatting ---------------------------
 
 
 def load_ignore_patterns(ignore_file: Path) -> list[re.Pattern]:

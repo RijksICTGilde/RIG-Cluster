@@ -28,7 +28,7 @@ from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_ter
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
 from opi.http.auth.principal import NotRecognised, recognise_principal
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
 from opi.web.project_edit_security import apply_form_data_to_project
@@ -44,7 +44,7 @@ SA_TOKEN = "zad_satoken_example_value_00003"
 def _token(naam: str, waarde: str) -> dict[str, Any]:
     return {
         "name": naam,
-        "hash": hash_van(waarde),
+        "hash": hash_of(waarde),
         "expires": "2030-01-01T00:00:00+00:00",
         "created": "2026-01-01T00:00:00+00:00",
     }

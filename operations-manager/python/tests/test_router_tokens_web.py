@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from fastapi import HTTPException
 from opi.http.auth.step_up_dialog import MODAL_TARGET
 from opi.http.render.templates_lotc import templates_lotc
-from opi.services.api_token_service import TokenAanvraagGeweigerd
+from opi.services.api_token_service import TokenRequestRefusedError
 from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.web.router_tokens import (
     NIEUW_TOKEN_SLEUTEL,
@@ -66,7 +66,7 @@ def _verzoek(email: str | None, velden: dict[str, str], *, step_up: bool = True,
 
 async def test_een_uitgegeven_token_is_precies_een_keer_op_te_halen() -> None:
     """De sessiecookie is ondertekend en niet versleuteld, dus de waarde hoort er niet in."""
-    with patch("opi.web.router_tokens.geef_token_uit", AsyncMock(return_value="zad_geheim")) as mock:
+    with patch("opi.web.router_tokens.issue_token", AsyncMock(return_value="zad_geheim")) as mock:
         verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"})
         antwoord = await maak_token_web(verzoek, PROJECT, EMAIL)
 
@@ -76,17 +76,17 @@ async def test_een_uitgegeven_token_is_precies_een_keer_op_te_halen() -> None:
     assert _haal_op(verwijzing) == {"token": "zad_geheim", "eigenaar": EMAIL}
     assert _haal_op(verwijzing) is None, "een tweede ophaling hoort niets meer te geven"
     assert TOKENFOUT_SLEUTEL not in verzoek.session
-    mock.assert_awaited_once_with(project_name=PROJECT, naam=EMAIL, tokennaam="cli", dagen=30, door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name=EMAIL, token_name="cli", days=30, by=EMAIL)
 
 
 async def test_roteren_geeft_de_nieuwe_waarde_terug() -> None:
-    with patch("opi.web.router_tokens.roteer_token", AsyncMock(return_value="zad_nieuw")) as mock:
+    with patch("opi.web.router_tokens.rotate_token", AsyncMock(return_value="zad_nieuw")) as mock:
         verzoek = _verzoek(EMAIL, {"dagen": "30"})
         antwoord = await roteer_token_web(verzoek, PROJECT, "bouwstraat", "pijplijn")
 
     assert antwoord.status_code == 303
     assert _haal_op(verzoek.session[NIEUW_TOKEN_SLEUTEL]) == {"token": "zad_nieuw", "eigenaar": "bouwstraat"}
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name="bouwstraat", token_name="pijplijn", days=30, by=EMAIL)
 
 
 async def test_een_niet_numeriek_aantal_dagen_komt_in_de_sessie_en_geeft_geen_500() -> None:
@@ -102,8 +102,8 @@ async def test_een_niet_numeriek_aantal_dagen_komt_in_de_sessie_en_geeft_geen_50
 async def test_een_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     """De rolregel weigert in de service; de webroute maakt er een boodschap van."""
     with patch(
-        "opi.web.router_tokens.geef_token_uit",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Je kunt alleen een token voor jezelf maken.")),
+        "opi.web.router_tokens.issue_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("Je kunt alleen een token voor jezelf maken.")),
     ):
         verzoek = _verzoek("dev@rijksoverheid.nl", {"tokennaam": "cli", "dagen": "30"})
         antwoord = await maak_token_web(verzoek, PROJECT, EMAIL)
@@ -115,8 +115,8 @@ async def test_een_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
 
 async def test_roteren_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.roteer_token",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("alleen een token voor jezelf maken")),
+        "opi.web.router_tokens.rotate_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("alleen een token voor jezelf maken")),
     ):
         verzoek = _verzoek(EMAIL, {"dagen": "30"})
         antwoord = await roteer_token_web(verzoek, PROJECT, "bouwstraat", "pijplijn")
@@ -154,19 +154,19 @@ def test_email_zonder_aangemelde_gebruiker_geeft_403() -> None:
 
 
 async def test_intrekken_gaat_langs_de_service() -> None:
-    with patch("opi.web.router_tokens.trek_token_in", AsyncMock()) as mock:
+    with patch("opi.web.router_tokens.revoke_token", AsyncMock()) as mock:
         verzoek = _verzoek(EMAIL, {})
         antwoord = await trek_token_in_web(verzoek, PROJECT, "bouwstraat", "pijplijn")
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", tokennaam="pijplijn", door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name="bouwstraat", token_name="pijplijn", by=EMAIL)
     assert TOKENFOUT_SLEUTEL not in verzoek.session
 
 
 async def test_intrekken_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.trek_token_in",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.web.router_tokens.revoke_token",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         verzoek = _verzoek("dev@rijksoverheid.nl", {})
         antwoord = await trek_token_in_web(verzoek, PROJECT, "bouwstraat", "pijplijn")
@@ -176,18 +176,18 @@ async def test_intrekken_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None
 
 
 async def test_een_service_account_toevoegen() -> None:
-    with patch("opi.web.router_tokens.voeg_service_account_toe", AsyncMock()) as mock:
+    with patch("opi.web.router_tokens.add_service_account", AsyncMock()) as mock:
         verzoek = _verzoek(EMAIL, {"naam": "bouwstraat", "roles": "developer"})
         antwoord = await voeg_service_account_toe_web(verzoek, PROJECT)
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rollen=["developer"], door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name="bouwstraat", roles=["developer"], by=EMAIL)
 
 
 async def test_een_service_account_toevoegen_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.voeg_service_account_toe",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.web.router_tokens.add_service_account",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         verzoek = _verzoek("dev@rijksoverheid.nl", {"naam": "bouwstraat", "roles": "developer"})
         antwoord = await voeg_service_account_toe_web(verzoek, PROJECT)
@@ -197,19 +197,19 @@ async def test_een_service_account_toevoegen_weigering_komt_in_de_sessie_en_geef
 
 
 async def test_een_service_account_verwijderen() -> None:
-    with patch("opi.web.router_tokens.verwijder_service_account", AsyncMock()) as mock:
+    with patch("opi.web.router_tokens.remove_service_account", AsyncMock()) as mock:
         verzoek = _verzoek(EMAIL, {})
         antwoord = await verwijder_service_account_web(verzoek, PROJECT, "bouwstraat")
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name="bouwstraat", by=EMAIL)
     assert TOKENFOUT_SLEUTEL not in verzoek.session
 
 
 async def test_een_geweigerde_verwijdering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.verwijder_service_account",
-        AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
+        "opi.web.router_tokens.remove_service_account",
+        AsyncMock(side_effect=TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")),
     ):
         verzoek = _verzoek("dev@rijksoverheid.nl", {})
         antwoord = await verwijder_service_account_web(verzoek, PROJECT, "bouwstraat")
@@ -224,12 +224,13 @@ async def test_een_rol_wijzigen() -> None:
         antwoord = await wijzig_rol_web(verzoek, PROJECT, "bouwstraat")
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rollen=["admin", "ops"], door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, name="bouwstraat", roles=["admin", "ops"], by=EMAIL)
 
 
 async def test_een_rol_wijzigen_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.set_member_roles", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
+        "opi.web.router_tokens.set_member_roles",
+        AsyncMock(side_effect=TokenRequestRefusedError("Onbekende rol 'root'.")),
     ):
         verzoek = _verzoek("dev@rijksoverheid.nl", {"roles": "root"})
         antwoord = await wijzig_rol_web(verzoek, PROJECT, "bouwstraat")
@@ -267,7 +268,7 @@ def _overzicht_met_tokens() -> list[dict[str, Any]]:
 
 async def test_een_beheerder_beheert_elk_lid() -> None:
     verzoek = _verzoek(EMAIL, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht()):
         context = tokencontext(verzoek, PROJECT, EMAIL, is_beheerder=True)
 
     per_naam = {lid["naam"]: lid for lid in context["leden"]}
@@ -281,7 +282,7 @@ async def test_een_mens_beheert_alleen_zichzelf() -> None:
     iemand draagt zonder te weten dat het bestaat."""
     dev = "dev@rijksoverheid.nl"
     verzoek = _verzoek(dev, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht()):
         context = tokencontext(verzoek, PROJECT, dev, is_beheerder=False)
 
     per_naam = {lid["naam"]: lid for lid in context["leden"]}
@@ -294,7 +295,7 @@ async def test_een_mens_beheert_alleen_zichzelf() -> None:
 async def test_het_tabblad_toont_de_platformmaxima() -> None:
     """Het maximum is platformbeleid en geen keuze van wie het token maakt."""
     verzoek = _verzoek(EMAIL, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=[]):
+    with patch("opi.web.router_tokens.members_overview", return_value=[]):
         context = tokencontext(verzoek, PROJECT, EMAIL, is_beheerder=True)
 
     assert context["token_max_dagen_persoonlijk"] > 0
@@ -316,7 +317,7 @@ def _render_tokens_tab(context: dict[str, Any]) -> BeautifulSoup:
 async def test_the_current_users_card_comes_first_and_keeps_the_project_file_order_for_the_rest() -> None:
     dev = "dev@rijksoverheid.nl"
     verzoek = _verzoek(dev, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht()):
         context = tokencontext(verzoek, PROJECT, dev, is_beheerder=False)
 
     assert [lid["naam"] for lid in context["leden"]] == [dev, EMAIL, "bouwstraat"]
@@ -327,7 +328,7 @@ async def test_a_caller_who_is_no_member_has_no_own_card_and_moves_nothing() -> 
     """A platform admin viewing the project without being a member has no own card to find."""
     buitenstaander = "buitenstaander@rijksoverheid.nl"
     verzoek = _verzoek(buitenstaander, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht()):
         context = tokencontext(verzoek, PROJECT, buitenstaander, is_beheerder=False)
 
     assert [lid["naam"] for lid in context["leden"]] == [EMAIL, "dev@rijksoverheid.nl", "bouwstraat"]
@@ -337,7 +338,7 @@ async def test_a_caller_who_is_no_member_has_no_own_card_and_moves_nothing() -> 
 async def test_the_own_card_is_first_on_the_page_and_carries_a_marker() -> None:
     dev = "dev@rijksoverheid.nl"
     verzoek = _verzoek(dev, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht()):
         soup = _render_tokens_tab(tokencontext(verzoek, PROJECT, dev, is_beheerder=False))
 
     koppen = soup.select("nldd-title h3")
@@ -353,7 +354,7 @@ async def test_the_own_card_is_first_on_the_page_and_carries_a_marker() -> None:
 
 async def test_the_own_card_shows_its_forms_directly_and_other_cards_keep_the_accordion() -> None:
     verzoek = _verzoek(EMAIL, {})
-    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht_met_tokens()):
+    with patch("opi.web.router_tokens.members_overview", return_value=_overzicht_met_tokens()):
         soup = _render_tokens_tab(tokencontext(verzoek, PROJECT, EMAIL, is_beheerder=True))
 
     eigen_uitgeven = soup.find("form", action=f"/projects/{PROJECT}/leden/{EMAIL}/tokens")
@@ -375,7 +376,7 @@ async def test_the_own_card_shows_its_forms_directly_and_other_cards_keep_the_ac
 async def test_zonder_verse_step_up_gebeurt_er_niets() -> None:
     """Elke handeling hier vraagt een verse factor (RC-387), ook buiten productie."""
     verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"}, step_up=False)
-    with patch("opi.web.router_tokens.geef_token_uit", AsyncMock()) as mock, pytest.raises(HTTPException) as info:
+    with patch("opi.web.router_tokens.issue_token", AsyncMock()) as mock, pytest.raises(HTTPException) as info:
         await maak_token_web(verzoek, PROJECT, EMAIL)
 
     assert info.value.status_code == 403
@@ -386,7 +387,7 @@ async def test_de_dialoog_draagt_de_velden_van_het_formulier_mee() -> None:
     """De dialoog neemt de plaats van het formulier in, dus de herhaling kent zijn velden."""
     dialoog = AsyncMock(return_value="<dialoog>")
     with (
-        patch("opi.web.router_tokens.geef_token_uit", AsyncMock()) as mock,
+        patch("opi.web.router_tokens.issue_token", AsyncMock()) as mock,
         patch("opi.http.auth.step_up_dialog.render_step_up_dialog", dialoog),
     ):
         verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"}, step_up=False, htmx=True)

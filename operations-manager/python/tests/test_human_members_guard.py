@@ -12,7 +12,7 @@ Dat valt niet op in een test van die lezer zelf, want zonder service account in 
 werkt hij gewoon. Daarom deze lijst: elk bestand dat ``users`` leest staat erin, met wat
 het ermee doet. Komt er een lezer bij, dan faalt deze test en moet de schrijver kiezen:
 alle leden (een bewijsmiddel, een rol, een telling) of alleen de mensen
-(:func:`opi.services.project_leden.human_members`).
+(:func:`opi.services.project_members.human_members`).
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ BEKENDE_LEZERS: dict[str, str] = {
     "services/api_token_service.py": "rollen en tokens, voor beide soorten",
     "services/persistence/__init__.py": "de ORM-tabel users, niet de ledenlijst",
     "services/project.py": "bouwt de leden uit het bestand; filtert ze niet",
-    "services/project_leden.py": "de filter zelf",
+    "services/project_members.py": "de filter zelf",
     "services/project_roles.py": "looks up the roles of the signed-in human by email; a service account never matches",
     "services/project_service.py": "bouwt de leden, en filtert voor de inloglijst",
     "services/project_store.py": "leest het bestand, en filtert voor de inloglijst",
@@ -73,7 +73,7 @@ MENSENLEZERS = (
 )
 
 #: Waaraan te zien is dat een lezer de filter gebruikt.
-FILTERNAMEN = ("human_members", "human_emails", "menselijke_leden_uit_data", "MemberKind.SERVICE_ACCOUNT")
+FILTERNAMEN = ("human_members", "human_emails", "human_members_from_data", "MemberKind.SERVICE_ACCOUNT")
 
 
 def _lezers() -> dict[str, str]:
@@ -92,7 +92,7 @@ def test_elke_lezer_van_de_ledenlijst_staat_in_de_lijst() -> None:
     assert not nieuw, (
         f"deze bestanden lezen 'users' kaal maar staan niet in BEKENDE_LEZERS: {nieuw}. "
         "Kies per bestand of het ALLE leden bedoelt of alleen de mensen "
-        "(opi/services/project_leden.py), en zet het erbij."
+        "(opi/services/project_members.py), en zet het erbij."
     )
 
 
@@ -112,5 +112,5 @@ def test_een_mensenlezer_gebruikt_de_filter() -> None:
         tekst = (OPI / bestand).read_text()
         assert any(naam in tekst for naam in FILTERNAMEN), (
             f"{bestand} doet iets met een persoon maar gebruikt de mensenfilter niet; "
-            f"gebruik een van {FILTERNAMEN} uit opi/services/project_leden.py"
+            f"gebruik een van {FILTERNAMEN} uit opi/services/project_members.py"
         )

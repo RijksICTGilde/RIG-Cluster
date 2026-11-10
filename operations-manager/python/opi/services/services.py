@@ -41,9 +41,9 @@ class DeploymentAction:
 
     label: str
     icon: str
-    #: LOTC-knopvariant: "primary" | "secondary" | "warning" | "subtle" | ...
-    #: Het sjabloon zet hem rechtstreeks in ``type``, en het component slaat een woord
-    #: dat het niet kent stil over -- zie ``check_button_variant`` in __post_init__.
+    #: LOTC button variant: "primary" | "secondary" | "warning" | "subtle" | ...
+    #: The template puts it straight into ``type``, and the component skips a word it does
+    #: not know quietly; see ``check_button_variant`` in __post_init__.
     kind: str
     #: Web-route path the POST targets (CSRF handled by the template).
     endpoint: str | None = None
@@ -87,8 +87,8 @@ def deployment_modal_action(
     label: str,
     icon: str,
 ) -> DeploymentAction | None:
-    """De knop die ``modal-wizard/<modal_prefix><index>`` in de gedeelde modal laadt, of
-    None als het project ``service`` niet gebruikt of de deployment niet kent."""
+    """The button that loads ``modal-wizard/<modal_prefix><index>`` into the shared modal, or
+    None when the project does not use ``service`` or does not know the deployment."""
     names = [service_entry_name(entry) for entry in project_data.get("services") or []]
     if service.value not in names:
         return None
@@ -905,7 +905,6 @@ class ServiceAdapter:
             "warnings": warnings,
         }
 
-    # --- unified service-config CRUD core (RC-12 follow-up) ---------------------
     # The pure data-manipulation behind the unified ``/api/v2/.../services/{svc}``
     # endpoint: it upserts (or removes) one service's config block at a target
     # layer, leaving validation to the save chokepoint. It writes the same
@@ -1130,23 +1129,24 @@ class ServiceAdapter:
         if refused:
             raise ServiceValidationError(cls._refusal_message(project_data, refused))
 
-        # Zichzelf mogen inschrijven zegt niets over of de dienst kán werken. De auth wall
-        # heeft op projectniveau niets te beslissen (alleen een optionele banner) en schrijft
-        # zich dus bij, maar zonder keycloak en publish-on-web staat er straks een muur voor
-        # een deur die er niet is. Dat is geen keuze die wij voor iemand maken maar een feit,
-        # en dat hoort de aanroeper NU te horen in plaats van het bij de uitrol te ontdekken.
-        # Alleen over wat we NU inschrijven. Een dienst die er al stond is een bestaande
-        # toestand, en die alsnog afkeuren zou betekenen dat een aanroep die er niets aan
-        # toevoegt ineens faalt op iets wat de aanroeper niet vroeg.
-        toegevoegd = {service_entry_name(entry) for entry in new_entries}
-        onvervuld = [
+        # Being allowed to enrol itself says nothing about whether the service CAN work. The
+        # auth wall has nothing to decide at project level (only an optional banner) and so
+        # enrols itself, but without keycloak and publish-on-web it is a wall in front of a
+        # door that is not there. The caller should hear that NOW instead of discovering it at
+        # rollout.
+        #
+        # Only about what is being enrolled NOW. A service that was already there is an
+        # existing state, and refusing that too would make a call that adds nothing to it fail
+        # on something the caller did not ask for.
+        added_names = {service_entry_name(entry) for entry in new_entries}
+        unfulfilled = [
             name
             for name in service_names
-            if name in toegevoegd
+            if name in added_names
             and unmet_service_requirements(project_data, get_service(ServiceType(name)).definition.requires or [])
         ]
-        if onvervuld:
-            raise ServiceValidationError(cls._refusal_message(project_data, onvervuld))
+        if unfulfilled:
+            raise ServiceValidationError(cls._refusal_message(project_data, unfulfilled))
 
         services.extend(new_entries)
 
@@ -1176,7 +1176,7 @@ class ServiceAdapter:
         which is where the actions they DO declare are listed.
         """
 
-        # Lazy: de registry importeert deze module, dus niet op laadtijd.
+        # Lazy: the registry imports this module, so not at load time.
         from opi.services.registry import get_service
 
         project_name = project_data.get("name") or "{project_name}"
@@ -1186,12 +1186,11 @@ class ServiceAdapter:
             definition = cls.SERVICE_DEFINITIONS.get(service_type)
             unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
 
-            # Twee verschillende redenen, en ze door elkaar halen stuurt de lezer de
-            # verkeerde kant op. Mag de dienst zichzelf niet inschrijven, dan moet er een
-            # BESLISSING genomen worden en volgt het endpoint dat die opneemt. Mag hij dat
-            # wel maar ontbreken er diensten waar hij op leunt, dan is er niets te beslissen
-            # en moet er iets anders eerst bestaan -- dan is het endpoint van deze dienst
-            # noemen alleen maar misleidend.
+            # Two different reasons, and mixing them up points the reader the wrong way. May
+            # the service not enrol itself, then a DECISION has to be taken and the endpoint
+            # that records it follows. May it enrol itself but are services it leans on
+            # missing, then there is nothing to decide and something else has to exist first,
+            # and naming this service's endpoint would only mislead.
             if get_service(service_type).implicit_project_entry() is None:
                 sentence = (
                     f"Service '{service_name}' needs a project-level decision that cannot be assumed, so it is "
@@ -1492,15 +1491,12 @@ class ServiceAdapter:
                 merged.append(item)
                 added += 1
 
-        # Een lijst die de API als ÉÉN entry toont kan er ook maar één houden. Zonder deze
-        # grens waren twee geldige aanroepen genoeg om een project in een stand te zetten
-        # waarin de gewone read weigert (409, "holds 2 entries ... presented as a single
-        # entry") -- en de uitweg vroeg precies wat die read je zou vertellen: welke sleutel
-        # je moet weghalen (zad-cli, punt 13). De fout hoort bij de handeling die de tweede
-        # entry maakt, niet bij de volgende lezer.
+        # A list the API presents as ONE entry can hold only one. The error belongs with the
+        # action that creates the second entry and not with the next reader, who would
+        # otherwise meet a 409 on an ordinary read.
         #
-        # Alleen op TOEVOEGEN. Verwijderen blijft altijd mogelijk, want dat is de weg terug
-        # voor een bestand dat er al meer heeft, en vervangen laat het aantal ongemoeid.
+        # Only on ADDING. Removing stays possible, because that is the way back for a file
+        # that already holds more, and replacing leaves the count alone.
         if added and len(merged) > 1 and spec.name in service.api_singular_lists:
             raise ServiceValidationError(
                 f"'{spec.name}' of service '{service_name}' is presented as a single entry by this API, "

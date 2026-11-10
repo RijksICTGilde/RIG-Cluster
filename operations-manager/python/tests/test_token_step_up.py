@@ -37,14 +37,14 @@ ROUTES: dict[str, tuple[str, str, dict[str, Any] | None, str, StepUpAction]] = {
         "POST",
         f"/api/v2/projects/{PROJECT}/leden",
         {"naam": LID, "roles": ["developer"]},
-        "voeg_service_account_toe",
+        "add_service_account",
         StepUpAction.SERVICE_ACCOUNT_ADD,
     ),
     "service-account-remove": (
         "DELETE",
         f"/api/v2/projects/{PROJECT}/leden/{LID}",
         None,
-        "verwijder_service_account",
+        "remove_service_account",
         StepUpAction.SERVICE_ACCOUNT_REMOVE,
     ),
     "role-change": (
@@ -58,21 +58,21 @@ ROUTES: dict[str, tuple[str, str, dict[str, Any] | None, str, StepUpAction]] = {
         "POST",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens",
         {"naam": "pijplijn", "dagen": 30},
-        "geef_token_uit",
+        "issue_token",
         StepUpAction.TOKEN_ISSUE,
     ),
     "token-rotate": (
         "POST",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens/pijplijn/:roteer",
         {"naam": "pijplijn", "dagen": 30},
-        "roteer_token",
+        "rotate_token",
         StepUpAction.TOKEN_ROTATE,
     ),
     "token-revoke": (
         "DELETE",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens/pijplijn",
         None,
-        "trek_token_in",
+        "revoke_token",
         StepUpAction.TOKEN_REVOKE,
     ),
 }
@@ -209,7 +209,7 @@ def test_ending_a_step_up_clears_it_for_this_sso_session(test_client: TestClient
 
 def test_de_leesroute_vraagt_geen_step_up(test_client: TestClient, platformbeheerder_token: Any) -> None:
     """Alleen lezen verandert niets: een code erop zou een handeling verzinnen."""
-    with patch("opi.api.token_router.leden_overzicht", return_value=[]):
+    with patch("opi.api.token_router.members_overview", return_value=[]):
         response = test_client.get(
             f"/api/v2/projects/{PROJECT}/leden", headers=platformbeheerder_token["headers_gewone_gebruiker"]
         )

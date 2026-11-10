@@ -1,4 +1,4 @@
-"""ORM model for the ``marked_for_deletion`` table (deferred resource deletion, RC-5).
+"""ORM model for the ``marked_for_deletion`` table (deferred resource deletion).
 
 Schema-as-code mirror of ``MARKED_FOR_DELETION_TABLE_SQL``. The repository lives in
 ``opi/services/marked_for_deletion_service.py``.
@@ -6,8 +6,8 @@ Schema-as-code mirror of ``MARKED_FOR_DELETION_TABLE_SQL``. The repository lives
 
 from __future__ import annotations
 
-import uuid  # noqa: TC003 (runtime-resolved by SQLAlchemy Mapped)
-from datetime import datetime  # noqa: TC003
+import uuid  # noqa: TC003  # runtime-resolved by SQLAlchemy Mapped
+from datetime import datetime  # noqa: TC003  # runtime-resolved by SQLAlchemy Mapped
 from typing import Any
 
 from sqlalchemy import DateTime, Index, String, Uuid, text

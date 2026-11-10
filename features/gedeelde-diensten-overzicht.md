@@ -38,7 +38,7 @@ Dat heeft een prijs die je moet kennen. De meting die tot deze pagina leidde was
 project-PVC: `production-typesense-data-pvc` in `rig-prd-ubbw-0i1` stond op 18 augustus
 2026 op 92,7% en niemand zag dat. Dat geval valt nu buiten beeld. Wie ook op
 gebruikersvolumes wil letten heeft daar een eigen weg voor nodig, bijvoorbeeld alerting op
-dezelfde `DREMPELS`.
+dezelfde `THRESHOLDS`.
 
 De uitsluiting is een AFTREKKING en geen lijst van onze eigen namespaces: de projecten uit
 de store vallen af, de rest blijft. Zo'n lijst zou drijven, want een nieuw
@@ -65,7 +65,7 @@ zijn gewone URL's.
 
 Menu > Beheer > Services status, of rechtstreeks `/admin/diensten`.
 
-Een rij kleurt volgens `DREMPELS` in `opi/services/gedeelde_diensten.py`:
+Een rij kleurt volgens `THRESHOLDS` in `opi/services/shared_services.py`:
 
 | Meting | Let op vanaf | Kritiek vanaf |
 |---|---|---|
@@ -82,8 +82,8 @@ geen goed nieuws.
 
 ```
 /admin/diensten            de pagina: kaders, drempels, wat er niet gemeten wordt
-  |-- /admin/diensten/opslag      htmx hx-trigger="load" -> haal_opslag()
-  +-- /admin/diensten/databases   htmx hx-trigger="load" -> haal_databases()
+  |-- /admin/diensten/opslag      htmx hx-trigger="load" -> fetch_storage()
+  +-- /admin/diensten/databases   htmx hx-trigger="load" -> fetch_databases()
                                         |
                                   get_metrics_connector()
                                         |
@@ -94,7 +94,7 @@ Bestanden:
 
 | Bestand | Wat |
 |---|---|
-| `opi/services/gedeelde_diensten.py` | Drempels, queries, het omzetten van reeksen naar rijen |
+| `opi/services/shared_services.py` | Drempels, queries, het omzetten van reeksen naar rijen |
 | `opi/web/router_shared_services.py` | De pagina en de twee fragmenten |
 | `opi/templates_lotc/bg/admin-gedeelde-diensten.html.j2` | De pagina |
 | `opi/templates_lotc/bg/_gedeelde-diensten-opslag.html.j2` | Het opslagblok |

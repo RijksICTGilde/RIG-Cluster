@@ -1,20 +1,14 @@
 """A service's long-form explanation, written once and read by both a human and a client.
 
-Every service carries a prose explanation of what it is and when you would use it. It was
-written for one reader: a popup in the portal, in component markup
-(``<c-heading>``, ``<c-paragraph>``, ``<c-list>``). That made it unusable for the other
-reader RC-59 is about -- a client or an agent asking the API what a service does gets
-markup full of classes and sentences that point at buttons.
+Every service carries a prose explanation of what it is and when you would use it, as
+markdown, and that is the single source. The portal renders it (this module turns it into
+the components the popup is built from) and ``GET /api/v2/services/{name}`` returns it
+as-is. Two renderings, one file.
 
-The prose is now markdown, and that is the single source. The portal renders it (this
-module turns it into the components the popup is built from) and
-``GET /api/v2/services/{name}`` returns it as-is. Two renderings, one file: the
-alternative -- a ``help.md`` next to a ``help.html.j2`` -- is drift with extra steps.
-
-**The supported markdown is deliberately small**, exactly the shapes the 21 explanations
-use: a title, sections, paragraphs, bullets and bold. Anything richer would need a
-component that does not exist in the design system, and a syntax that renders as literal
-text in one of the two readers is worse than a syntax that does not exist.
+**The supported markdown is deliberately small**, exactly the shapes the explanations use: a
+title, sections, paragraphs, bullets and bold. Anything richer would need a component that
+does not exist in the design system, and a syntax that renders as literal text in one of the
+two readers is worse than a syntax that does not exist.
 
     # Title             -> <c-heading type="h2"> with the service's own icon
     ## Section          -> <c-heading type="h3">
@@ -40,8 +34,8 @@ from opi.services.services import ServiceAdapter
 if TYPE_CHECKING:
     from opi.services.services_enums import ServiceType
 
-#: Where a ``help_template`` may resolve: a service package (RC-36) or the shared
-#: templates tree. The same three roots the Jinja loader searches.
+#: Where a ``help_template`` may resolve: a service package or the shared templates tree.
+#: The same three roots the Jinja loader searches.
 _ROOTS = (
     pathlib.Path(opi.__file__).parent / "services" / "catalog",
     pathlib.Path(opi.__file__).parent / "templates_lotc",
@@ -49,9 +43,9 @@ _ROOTS = (
 )
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
-#: Een inline link. ALLEEN een intern pad of een https-adres: dezelfde markdown gaat
-#: ongewijzigd naar API-clients, en een ``javascript:``- of ``data:``-href in een
-#: dienstuitleg heeft geen eerlijk gebruik. Wat niet matcht blijft gewoon tekst.
+#: An inline link. ONLY an internal path or an https address: the same markdown goes to API
+#: clients unchanged, and a ``javascript:`` or ``data:`` href in a service explanation has no
+#: honest use. What does not match stays plain text.
 _LINK = re.compile(r"\[([^\]\n]+)\]\((/[^)\s]*|https://[^)\s]+)\)")
 #: A backslash escape, so a literal ``*`` can sit next to the emphasis markers.
 _ESCAPE = re.compile(r"\\(.)")
@@ -136,8 +130,8 @@ def _inline(raw: str) -> str:
         return token
 
     def hide_link(match: re.Match[str]) -> str:
-        # Het label als PLATTE tekst: het gaat een attribuut in, en opmaak in een
-        # attribuutwaarde overleeft de componentlaag niet.
+        # The label as PLAIN text: it goes into an attribute, and markup in an attribute
+        # value does not survive the component layer.
         token = f"\x01{len(links)}\x01"
         links[token] = f'<c-link href="{_text(match.group(2))}" label="{_text(match.group(1))}" />'
         return token
@@ -167,12 +161,10 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
     def flush() -> None:
         nonlocal bullets, paragraph
         if bullets:
-            # Een <ul> in een <c-rich-text> en NIET <c-list>: dat laatste is NLDD's
-            # interactieve rijenlijst, die scheidingslijnen tekent en geen opsommingstekens.
-            # Voor een opsomming in lopende tekst is rich-text het component - dat rendert
-            # gewone <ul>/<ol>/<li> met de bullets die erbij horen. En het moet rich-text
-            # zijn en niet <c-paragraph>: die wikkelt zijn inhoud in een <p>, en een lijst
-            # in een alinea is geen geldige HTML.
+            # A <ul> inside a <c-rich-text> and NOT <c-list>: that last one is NLDD's
+            # interactive row list, which draws separators and no bullets. And rich-text and
+            # not <c-paragraph>: that wraps its contents in a <p>, and a list inside a
+            # paragraph is not valid HTML.
             items = "".join(f"<li>{item}</li>" for item in bullets)
             out.append(f"<c-rich-text><ul>{items}</ul></c-rich-text>")
             bullets = []
@@ -194,15 +186,15 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
             # Only the first title carries the icon: a second one would be a second
             # service block on one page.
             if icon and not title_done:
-                # Door de vertaling heen: de dienstdefinities dragen onze eigen iconnamen
-                # en het design system kent zijn eigen woordenschat. In een sjabloon doet
-                # het nldd_icon-filter dit; hier wordt de markup zelf opgebouwd, en zonder
-                # deze regel kreeg elke uitleg een LEEG icoon boven zijn titel - stil, want
-                # een onbekende naam levert geen fout op.
+                # Through the translation: the service definitions carry our own icon names
+                # and the design system has its own vocabulary. A template has the nldd_icon
+                # filter for this; here the markup is built directly, and without this line
+                # every explanation gets an EMPTY icon above its title, quietly, because an
+                # unknown name raises nothing.
                 #
-                # Het icoon staat NAAST de kop en niet erin: een xl-icoon binnen een
-                # <c-heading> valt over de tekst heen, want een kop legt zijn kinderen niet
-                # naast elkaar. Een cluster doet dat wel.
+                # The icon sits NEXT TO the heading and not inside it: an xl icon inside a
+                # <c-heading> falls over the text, because a heading does not lay its
+                # children out side by side. A cluster does.
                 out.append(
                     f'<c-cluster gap="sm" align="center">'
                     f'<c-icon icon="{to_nldd_icon(icon)}" size="xl" color="{color or ""}"/>'
@@ -229,13 +221,11 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
                 flush()
             paragraph.append(_inline(stripped))
     flush()
-    # IN EEN STACK, want zonder stack raken de blokken elkaar. Dat is geen smaak maar de
-    # regel van dit systeem: een gap bestaat alleen waar een stack de OUDER is (zie de kop
-    # van bg/_patterns.html.j2). De popup zet deze markup in een kale <div>, dus stonden de
-    # koppen strak tegen de alinea erboven en eronder, en dat las als "te grote koppen"
-    # terwijl het de ontbrekende witruimte was.
-    inhoud = "\n".join(out)
-    return f'<c-stack gap="md">\n{inhoud}\n</c-stack>'
+    # IN A STACK, because a gap exists only where a stack is the PARENT (see the head of
+    # bg/_patterns.html.j2). The popup puts this markup in a bare <div>, so without the stack
+    # the headings sit tight against the paragraphs above and below them.
+    content = "\n".join(out)
+    return f'<c-stack gap="md">\n{content}\n</c-stack>'
 
 
 def render_service_help(help_template: str) -> str:
@@ -254,8 +244,8 @@ def render_service_help(help_template: str) -> str:
         None,
     )
     definition = owner[1] if owner else None
-    # De imports staan binnenin om een kringloop te vermijden: de templateomgeving leunt
-    # op de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
+    # The imports sit inside to avoid a cycle: the template environment leans on the service
+    # registry, which brings in the service packages that read this module.
     from opi.http.render.templates_lotc import templates_lotc
     from opi.services.registry import get_service
 
@@ -264,19 +254,17 @@ def render_service_help(help_template: str) -> str:
         icon=definition.icon if definition else None,
         color=definition.color if definition else None,
     )
-    # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst, niet uit de
-    # uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op een die het
-    # later gaat vereisen, en kan de tekst niet beweren wat de dienst niet waarmaakt. De
-    # banner gaat over het AANZETTEN, dus hij vraagt dat ook: een besluit over een
-    # configwaarde (redis zonder sleutelprefix) geldt pas bij die waarde. Bovenaan, want
-    # dit is wat je wilt weten voor je aanvraagt. Alleen op de POPUP-uitleg: een guide
-    # beschrijft per scenario zelf wat een aanvraag is en wat niet, en de generieke banner
-    # zou daar breder claimen dan waar is.
+    # The approval warning comes from the service's DECLARATION and not from its explanation,
+    # so it stands on every service that requires approval and the text cannot claim what the
+    # service does not deliver. It is about ENABLING, so it asks exactly that: a decision over
+    # a config value (redis without a key prefix) only applies at that value. Only on the
+    # POPUP explanation: a guide describes per scenario what is a request and what is not, and
+    # the generic banner would claim more broadly there than is true.
     if owner and owner[1].help_template == help_template and get_service(owner[0]).enabling_needs_approval():
-        waarschuwing = (
+        warning = (
             '<c-alert type="warning" heading="Vereist goedkeuring">'
             "Het aanzetten van deze dienst is een aanvraag: een beheerder moet hem "
             "goedkeuren voordat er iets gebeurt.</c-alert>"
         )
-        markup = markup.replace('<c-stack gap="md">\n', f'<c-stack gap="md">\n{waarschuwing}\n', 1)
+        markup = markup.replace('<c-stack gap="md">\n', f'<c-stack gap="md">\n{warning}\n', 1)
     return templates_lotc.env.from_string(markup).render()

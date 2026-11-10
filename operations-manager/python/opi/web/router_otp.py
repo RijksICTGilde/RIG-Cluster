@@ -38,7 +38,7 @@ from opi.core.authz.actions import Action, action
 from opi.http.auth.auth_decorators import get_current_user, requires_sso
 from opi.http.render.lotc_switch import build_lotc_admin, render
 from opi.http.render.menu import get_menu_items
-from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_klopt
+from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_is_valid
 from opi.services.user_otp_service import OtpRegistration, OtpVerification, UserOtpService
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.qr import qr_svg
@@ -217,7 +217,7 @@ async def otp_herlogin_terug(request: Request) -> Response:
         except (AuthlibBaseError, JoseError, httpx.HTTPError) as e:
             logger.warning("Herlogin voor %s mislukt bij Keycloak: %s", email, e)
         else:
-            if herlogin_klopt(claims, get_current_user(request) or {}):
+            if herlogin_is_valid(claims, get_current_user(request) or {}):
                 await service.mark_verified(herlogin.state)
                 return RedirectResponse(url=_PATH, status_code=303)
 

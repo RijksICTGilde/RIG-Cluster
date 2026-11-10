@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.db import session_scope
 from opi.services.persistence.api_step_ups import ApiStepUp
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.step_up import STEP_UP_WINDOW
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ def sso_session_credential(sid: str) -> str:
 
 def personal_token_credential(token: str) -> str:
     """The step-up key of a personal token, which has no login session: its stored hash."""
-    return f"token:{hash_van(token)}"
+    return f"token:{hash_of(token)}"
 
 
 class ApiStepUpService:

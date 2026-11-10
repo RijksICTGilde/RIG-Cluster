@@ -129,7 +129,7 @@ class ProjectUserModel(BaseModel):
 
         Een e-mailadres op een service account zou hem als mens laten doorgaan bij elke
         lezer die alleen naar ``email`` kijkt, en dat is precies de verwarring die
-        :func:`opi.services.project_leden.human_members` moet voorkomen.
+        :func:`opi.services.project_members.human_members` moet voorkomen.
         """
         if self.type is MemberKind.SERVICE_ACCOUNT:
             if not self.name:

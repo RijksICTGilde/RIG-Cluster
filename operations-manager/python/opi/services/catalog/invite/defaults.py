@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.project_leden import menselijke_leden_uit_data
+from opi.services.project_members import human_members_from_data
 
 
 def _project_label(yaml_data: dict[str, Any]) -> str:
@@ -42,7 +42,7 @@ def default_contact_email(yaml_data: dict[str, Any]) -> str | None:
     The PEOPLE only: a service account has no mailbox, so mailing a service account name
     would yield an address that arrives nowhere.
     """
-    for user in menselijke_leden_uit_data(yaml_data):
+    for user in human_members_from_data(yaml_data):
         email = user.get("email")
         if email:
             return str(email)

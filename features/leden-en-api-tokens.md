@@ -190,7 +190,7 @@ De actor wordt SERVER-SIDE gezet, op de ingang, nooit uit een body:
 
 Elke lezer van `users:` die iets met een MENS doet (een Keycloak-gebruiker, een
 uitnodiging, een mail, OTP, de inloglijst, de databaseconsole) gebruikt
-`human_members(project)` uit `opi/services/project_leden.py`. Een service account heeft
+`human_members(project)` uit `opi/services/project_members.py`. Een service account heeft
 geen postvak en geen 2-factor, dus zou daar een toegang opleveren die niemand kan
 gebruiken.
 
@@ -254,7 +254,7 @@ beheerder wel voor iedereen, want offboarding moet kunnen zonder op die persoon 
 eigen token intrekken: wat iemand hier mag staat in `users:` van het projectbestand, en wie
 daar niet staat heeft er geen bewijsmiddel. Zijn weg is zich als lid toevoegen, en dat is
 een commit die iemand kan reviewen. Het tabblad Team toont hem daarom ook geen knoppen
-(`is_projectbeheerder`), zodat de knop en de weigering erachter dezelfde bron lezen.
+(`is_project_admin`), zodat de knop en de weigering erachter dezelfde bron lezen.
 
 ```bash
 # een token uitgeven; de waarde staat EEN keer in dit antwoord

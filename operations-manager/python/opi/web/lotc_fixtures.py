@@ -29,10 +29,10 @@ from typing import Any
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
 from opi.http.render.lotc_switch import PROJECT_TABS
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
-from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
+from opi.services.shared_services import Threshold, UnmeasuredService
 from opi.services.user_otp_service import OtpStatus
 from opi.utils.qr import qr_svg
 from opi.utils.yaml_util import load_yaml_safe
@@ -467,7 +467,7 @@ def page_data(slug: str) -> dict[str, Any]:
 
     if slug == "admin-gedeelde-diensten":
         # ZICHTBAAR VERZONNEN drempels en ongemeten diensten, net als elke andere
-        # beheerderstak hier. De ECHTE DREMPELS en ONGEMETEN_DIENSTEN horen hier NIET:
+        # beheerderstak hier. De ECHTE THRESHOLDS en UNMEASURED_SERVICES horen hier NIET:
         # /lotc/bg/<naam> vraagt geen sessie en geen rol, terwijl /admin/diensten achter
         # require_platform_admin zit. Wie zijn eigen grenswaarden en de lijst van welke
         # platformdiensten helemaal niet gemeten worden publiek zet, vertelt een
@@ -483,21 +483,21 @@ def page_data(slug: str) -> dict[str, Any]:
         # heeft deze pagina allebei niet.
         return {
             "drempels": [
-                Drempel(
+                Threshold(
                     naam="voorbeeld_vulling",
                     waarschuwing=60.0,
                     kritiek=80.0,
                     eenheid="%",
                     uitleg="Voorbeeldwaarde. De echte drempels staan op /admin/diensten zelf.",
                 ),
-                Drempel(
+                Threshold(
                     naam="voorbeeld_wachtenden",
                     waarschuwing=2.0,
                     kritiek=4.0,
                     eenheid="verbindingen",
                     uitleg="Voorbeeldwaarde, met een eenheid die in een eigen kolom hoort.",
                 ),
-                Drempel(
+                Threshold(
                     naam="voorbeeld_leeftijd",
                     waarschuwing=100_000_000.0,
                     kritiek=200_000_000.0,
@@ -506,12 +506,12 @@ def page_data(slug: str) -> dict[str, Any]:
                 ),
             ],
             "ongemeten": [
-                OngemetenDienst(
+                UnmeasuredService(
                     naam="Voorbeelddienst",
                     reden="Voorbeeldtekst. Welke diensten hier echt staan is te zien op /admin/diensten.",
                     nodig="Voorbeeldtekst over wat er nodig zou zijn om hem wel te meten.",
                 ),
-                OngemetenDienst(
+                UnmeasuredService(
                     naam="Tweede voorbeelddienst",
                     reden="Er staan er twee, zodat de opbouw met meerdere meldingen te beoordelen is.",
                     nodig="Voorbeeldtekst.",

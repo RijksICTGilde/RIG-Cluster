@@ -34,7 +34,7 @@ from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_s
 from opi.http.auth.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.services.api_step_up_service import personal_token_credential
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
@@ -51,7 +51,7 @@ PRODUCTIE: dict[str, Any] = {"name": "demo", "deployments": [{"name": "prod", "e
 
 
 def _token(naam: str, waarde: str) -> ProjectToken:
-    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van(waarde))
+    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=30), hash=hash_of(waarde))
 
 
 def _project(*, met_oude_sleutel: bool = False) -> ProjectSummary:

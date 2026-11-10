@@ -1,7 +1,7 @@
 """Which lists inside a service config a PATCH addresses entry by entry.
 
 A service whose config IS a list (storage mounts, attachment couplings) has had a PATCH
-next to its PUT since RC: vraag 18: ``ITEM_KEY`` on the ``RootModel`` names the field
+had a PATCH next to its PUT first: ``ITEM_KEY`` on the ``RootModel`` names the field
 that identifies one entry, and the generated route lets a caller add or remove one
 without resending the rest.
 

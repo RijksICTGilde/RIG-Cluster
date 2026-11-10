@@ -36,7 +36,7 @@ from opi.core.authz.engine import (
     record_decision,
 )
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van, is_verlopen, lid_met_naam
+from opi.services.project_members import hash_of, is_expired, member_named
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles
 from opi.services.user_service import get_user_service
 
@@ -93,13 +93,13 @@ def _token_eigenaar(project: ProjectSummary, presented: str) -> ProjectUser | No
     Op bytes vergelijken en over ALLE tokens doorlopen, zodat de duur van de lus niets over
     de treffer zegt.
     """
-    gepresenteerd = hash_van(presented).encode()
+    gepresenteerd = hash_of(presented).encode()
     gevonden: ProjectUser | None = None
     for lid in project.users or []:
         for token in lid.tokens:
             if secrets.compare_digest(token.hash.encode(), gepresenteerd):
-                if is_verlopen(token.expires):
-                    logger.warning("Token '%s' van '%s' is verlopen", token.name, lid.principaal)
+                if is_expired(token.expires):
+                    logger.warning("Token '%s' van '%s' is verlopen", token.name, lid.principal)
                     continue
                 gevonden = lid
     return gevonden
@@ -187,7 +187,7 @@ def beslis(
     if principal.kind is PrincipalKind.PROJECT_KEY:
         actueel = principal
     else:
-        lid = lid_met_naam(project, principal.name)
+        lid = member_named(project, principal.name)
         if lid is None:
             raise AccessDenied(f"'{principal.name}' is geen lid van project '{project.name}'")
         actueel = replace(principal, roles=member_roles(lid))

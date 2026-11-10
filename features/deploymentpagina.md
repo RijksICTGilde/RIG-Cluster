@@ -55,7 +55,7 @@ Daarbovenop een korte cache in het geheugen van het proces:
 - Per project. Kent de bewaarde stand niet elke gevraagde deployment (er is er een
   bijgekomen), dan wordt er gewoon opnieuw opgehaald.
 
-Duurt de bevraging langer dan `BEVRAGING_TIMEOUT_SECONDS = 5`, dan gaat de pagina zonder
+Duurt de bevraging langer dan `QUERY_TIMEOUT_SECONDS = 5`, dan gaat de pagina zonder
 statuskolom verder: deze bevraging staat op het renderpad, en de connector zelf wacht tot
 dertig seconden.
 

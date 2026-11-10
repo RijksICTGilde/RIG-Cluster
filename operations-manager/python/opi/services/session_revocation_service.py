@@ -1,4 +1,4 @@
-"""Portaalsessies van een gebruiker intrekken via tabel en gebruikersgeheugen."""
+"""Revoke a user's portal sessions, through the table and the in-memory user state."""
 
 from __future__ import annotations
 
@@ -17,14 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 async def revoke_sessions(email: str) -> datetime:
-    """Maak elke lopende portaalsessie van dit e-mailadres ongeldig.
+    """Invalidate every running portal session of this email address, and return the moment
+    before which they expire.
 
-    Twee bewakers: de revocatierij weigert cookies van voor dit tijdstip, en sinds de
-    server-side sessies (RC-390) verdwijnen ook de rijen zelf - een verwijderde rij is
-    een harde weigering op de volgende request.
-
-    Returns:
-        Het tijdstip waarvoor sessies vervallen.
+    Two guards: the revocation row refuses cookies from before that moment, and the
+    server-side session rows are deleted as well, which is a hard refusal on the next
+    request.
     """
     revoked_after = datetime.now(UTC)
     statement = insert(SessionRevocation).values(email=email.lower().strip(), revoked_after=revoked_after)
@@ -44,7 +42,7 @@ async def revoke_sessions(email: str) -> datetime:
 
 
 async def load_revocations() -> int:
-    """Lees de tabel in het geheugen van de ``UserService``. Returns: het aantal rijen."""
+    """Read the table into the ``UserService``'s memory; returns the number of rows."""
     async with session_scope() as session:
         rows = (await session.execute(select(SessionRevocation))).scalars().all()
 

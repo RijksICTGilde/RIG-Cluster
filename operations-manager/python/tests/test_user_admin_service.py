@@ -1,15 +1,15 @@
 """Real-Postgres tests for the ORM-backed UserAdminService (RC-5 persistence)."""
 
 import pytest
-from opi.services.user_admin_service import UserAdminService, _als_uuid
+from opi.services.user_admin_service import UserAdminService, _as_uuid
 from sqlalchemy.exc import IntegrityError
 
 
 def test_als_uuid_geeft_none_in_plaats_van_een_valueerror_bij_een_vreemde_tekst():
     """Faalconditie: ``uuid.UUID("niet-een-uuid")`` gooit een ValueError op elke pad-parameter
     die geen UUID is, en die bubbelt zonder deze guard door tot een 500 op de route."""
-    assert _als_uuid("niet-een-uuid") is None
-    assert str(_als_uuid("550e8400-e29b-41d4-a716-446655440000")) == "550e8400-e29b-41d4-a716-446655440000"
+    assert _as_uuid("niet-een-uuid") is None
+    assert str(_as_uuid("550e8400-e29b-41d4-a716-446655440000")) == "550e8400-e29b-41d4-a716-446655440000"
 
 
 async def test_create_get_and_get_by_email(orm_db):

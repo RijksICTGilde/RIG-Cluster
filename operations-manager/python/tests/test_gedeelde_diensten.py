@@ -11,7 +11,7 @@ Waar deze tests op letten, in volgorde van belang:
    per weergave; dat schaalt lineair mee met het platform. Deze tests pinnen dat het
    aantal aanroepen niet met het aantal PVC's of databases meegroeit.
 3. **De drempels zijn de drempels.** Alerting is de volgende stap en moet dezelfde
-   grenzen gebruiken, dus de beoordeling loopt via ``DREMPELS`` en niet via losse
+   grenzen gebruiken, dus de beoordeling loopt via ``THRESHOLDS`` en niet via losse
    getallen in de weergave.
 """
 
@@ -22,23 +22,23 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.services.gedeelde_diensten import (
+from opi.services.shared_services import (
     _DATABASE_QUERIES,
-    _OPSLAG_QUERIES,
     _RESOURCE_QUERIES,
-    DREMPELS,
-    ONGEMETEN_DIENSTEN,
+    _STORAGE_QUERIES,
     STATUS_KRITIEK,
     STATUS_OK,
     STATUS_ONBEKEND,
     STATUS_WAARSCHUWING,
-    Blok,
-    ResourceRij,
-    beoordeel,
-    haal_databases,
-    haal_opslag,
-    haal_resources,
-    zwaarste,
+    THRESHOLDS,
+    UNMEASURED_SERVICES,
+    Block,
+    ResourceRow,
+    assess,
+    fetch_databases,
+    fetch_resources,
+    fetch_storage,
+    worst_status,
 )
 
 
@@ -58,7 +58,7 @@ def _db(namespace: str, pod: str, datname: str, waarde: str) -> dict[str, Any]:
 class _Connector:
     """Een metriekconnector die per query een vast antwoord geeft.
 
-    De sleutel is de QUERYTEKST zelf, opgezocht in ``_OPSLAG_QUERIES`` /
+    De sleutel is de QUERYTEKST zelf, opgezocht in ``_STORAGE_QUERIES`` /
     ``_DATABASE_QUERIES``. Zo faalt een test zodra een query verandert zonder dat het
     antwoord meeverandert, in plaats van stilletjes een leeg blok te leveren.
     """
@@ -69,12 +69,12 @@ class _Connector:
 
     async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
-        naam = {v: k for k, v in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items()}[query]
+        naam = {v: k for k, v in {**_STORAGE_QUERIES, **_DATABASE_QUERIES}.items()}[query]
         return self.antwoorden.get(naam, [])
 
 
 def _met_connector(connector: Any) -> Any:
-    return patch("opi.services.gedeelde_diensten.get_metrics_connector", AsyncMock(return_value=connector))
+    return patch("opi.services.shared_services.get_metrics_connector", AsyncMock(return_value=connector))
 
 
 # ---------------------------------------------------------------------------
@@ -84,31 +84,31 @@ def _met_connector(connector: Any) -> Any:
 
 class TestDrempels:
     def test_onder_de_waarschuwing_is_ok(self) -> None:
-        assert beoordeel("pvc_vulling", 10.0) == STATUS_OK
+        assert assess("pvc_vulling", 10.0) == STATUS_OK
 
     def test_op_de_waarschuwing_valt_op(self) -> None:
         """Precies OP de grens telt al mee: een drempel is inclusief, anders glipt hij."""
-        assert beoordeel("pvc_vulling", DREMPELS["pvc_vulling"].waarschuwing) == STATUS_WAARSCHUWING
+        assert assess("pvc_vulling", THRESHOLDS["pvc_vulling"].waarschuwing) == STATUS_WAARSCHUWING
 
     def test_op_de_kritieke_grens_is_kritiek(self) -> None:
-        assert beoordeel("pvc_vulling", DREMPELS["pvc_vulling"].kritiek) == STATUS_KRITIEK
+        assert assess("pvc_vulling", THRESHOLDS["pvc_vulling"].kritiek) == STATUS_KRITIEK
 
     def test_de_pvc_van_927_procent_is_kritiek(self) -> None:
         """Het getal uit de meting van 18 augustus 2026, dat niemand zag."""
-        assert beoordeel("pvc_vulling", 92.7) == STATUS_KRITIEK
+        assert assess("pvc_vulling", 92.7) == STATUS_KRITIEK
 
     def test_geen_waarde_is_onbekend_en_niet_ok(self) -> None:
         """Niet kunnen meten is geen goed nieuws en mag nooit als groen doorgaan."""
-        assert beoordeel("pvc_vulling", None) == STATUS_ONBEKEND
+        assert assess("pvc_vulling", None) == STATUS_ONBEKEND
 
     def test_zwaarste_kiest_de_ernstigste(self) -> None:
-        assert zwaarste([STATUS_OK, STATUS_KRITIEK, STATUS_WAARSCHUWING]) == STATUS_KRITIEK
-        assert zwaarste([STATUS_OK, STATUS_ONBEKEND]) == STATUS_OK
-        assert zwaarste([]) == STATUS_OK
+        assert worst_status([STATUS_OK, STATUS_KRITIEK, STATUS_WAARSCHUWING]) == STATUS_KRITIEK
+        assert worst_status([STATUS_OK, STATUS_ONBEKEND]) == STATUS_OK
+        assert worst_status([]) == STATUS_OK
 
     def test_elke_drempel_heeft_een_eenheid_en_uitleg(self) -> None:
         """De pagina toont de drempels; zonder eenheid en uitleg is dat een rij getallen."""
-        for drempel in DREMPELS.values():
+        for drempel in THRESHOLDS.values():
             assert drempel.eenheid, drempel.naam
             assert drempel.uitleg, drempel.naam
             assert drempel.kritiek >= drempel.waarschuwing, drempel.naam
@@ -117,11 +117,11 @@ class TestDrempels:
 class TestOngemetenDiensten:
     def test_redis_en_minio_worden_benoemd(self) -> None:
         """Weglaten zou als 'in orde' lezen; ze horen op de pagina te STAAN."""
-        namen = {dienst.naam for dienst in ONGEMETEN_DIENSTEN}
+        namen = {dienst.naam for dienst in UNMEASURED_SERVICES}
         assert namen == {"Redis", "MinIO"}
 
     def test_elke_ongemeten_dienst_zegt_wat_ervoor_nodig_is(self) -> None:
-        for dienst in ONGEMETEN_DIENSTEN:
+        for dienst in UNMEASURED_SERVICES:
             assert dienst.reden
             assert dienst.nodig
 
@@ -149,7 +149,7 @@ class TestHaalOpslag:
             }
         )
         with _met_connector(connector):
-            blok = await haal_opslag()
+            blok = await fetch_storage()
 
         assert blok.gemeten is True
         assert blok.fout is None
@@ -170,7 +170,7 @@ class TestHaalOpslag:
             }
         )
         with _met_connector(connector):
-            blok = await haal_opslag()
+            blok = await fetch_storage()
 
         assert blok.rijen[0].vulling_procent == pytest.approx(12.0)
         assert blok.rijen[0].status == STATUS_KRITIEK
@@ -187,7 +187,7 @@ class TestHaalOpslag:
             }
         )
         with _met_connector(connector):
-            blok = await haal_opslag()
+            blok = await fetch_storage()
 
         assert [rij.claim for rij in blok.rijen] == ["gemeten", "ongemeten"]
         assert blok.rijen[1].vulling_procent is None
@@ -197,7 +197,7 @@ class TestHaalOpslag:
     async def test_niets_gevonden_is_gemeten_en_leeg(self) -> None:
         """De sandbox heeft deze metrieken misschien niet; dat is heel, niet stuk."""
         with _met_connector(_Connector({})):
-            blok = await haal_opslag()
+            blok = await fetch_storage()
 
         assert blok.gemeten is True
         assert blok.fout is None
@@ -213,8 +213,8 @@ class TestHaalOpslag:
         connector = AsyncMock()
         connector.query.side_effect = RuntimeError("prometheus onbereikbaar")
 
-        with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"):
-            blok = await haal_opslag()
+        with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.shared_services"):
+            blok = await fetch_storage()
 
         assert blok.gemeten is False
         assert blok.rijen == []
@@ -227,10 +227,10 @@ class TestHaalOpslag:
         veel = [_pvc("rig-prd-x", f"claim-{nummer}", "10.0") for nummer in range(50)]
         connector = _Connector({"vulling": veel})
         with _met_connector(connector):
-            blok = await haal_opslag()
+            blok = await fetch_storage()
 
         assert len(blok.rijen) == 50
-        assert len(connector.queries) == len(_OPSLAG_QUERIES)
+        assert len(connector.queries) == len(_STORAGE_QUERIES)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ class TestHaalDatabases:
             }
         )
         with _met_connector(connector):
-            blok = await haal_databases()
+            blok = await fetch_databases()
 
         assert blok.gemeten is True
         # Grootste eerst.
@@ -281,7 +281,7 @@ class TestHaalDatabases:
             }
         )
         with _met_connector(connector):
-            blok = await haal_databases()
+            blok = await fetch_databases()
 
         assert blok.extra_rijen[0].status == STATUS_KRITIEK
 
@@ -295,7 +295,7 @@ class TestHaalDatabases:
             }
         )
         with _met_connector(connector):
-            blok = await haal_databases()
+            blok = await fetch_databases()
 
         assert blok.rijen[0].status == STATUS_KRITIEK
 
@@ -304,8 +304,8 @@ class TestHaalDatabases:
         connector = AsyncMock()
         connector.query.side_effect = RuntimeError("mimir weigert")
 
-        with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"):
-            blok = await haal_databases()
+        with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.shared_services"):
+            blok = await fetch_databases()
 
         assert blok.gemeten is False
         assert "mimir weigert" in (blok.fout or "")
@@ -316,7 +316,7 @@ class TestHaalDatabases:
         veel = [_db("rig-system", "rig-db-1", f"db-{nummer}", "1000") for nummer in range(40)]
         connector = _Connector({"grootte": veel})
         with _met_connector(connector):
-            blok = await haal_databases()
+            blok = await fetch_databases()
 
         assert len(blok.rijen) == 40
         assert len(connector.queries) == len(_DATABASE_QUERIES)
@@ -331,7 +331,7 @@ class TestHaalDatabases:
             }
         )
         with _met_connector(connector):
-            blok = await haal_databases()
+            blok = await fetch_databases()
 
         assert blok.rijen[0].langste_transactie_seconden is None
 
@@ -385,7 +385,7 @@ class TestHaalResources:
             namespaces,
         )
         with _met_namespaces(namespaces), _met_connector(connector):
-            blok = await haal_resources()
+            blok = await fetch_resources()
 
         rij = blok.rijen[0]
         assert rij.geheugen_gebruikt == pytest.approx(1073741824)
@@ -403,7 +403,7 @@ class TestHaalResources:
         namespaces = ["rig-prd-operations", "rig-prd-ron"]
         connector = _ResourceConnector({"cpu_gebruikt": [_ns("rig-prd-operations", "0.5")]}, namespaces)
         with _met_namespaces(namespaces), _met_connector(connector):
-            blok = await haal_resources()
+            blok = await fetch_resources()
 
         assert [rij.namespace for rij in blok.rijen] == namespaces
         assert blok.rijen[1].cpu_gebruikt is None
@@ -421,7 +421,7 @@ class TestHaalResources:
             namespaces,
         )
         with _met_namespaces(namespaces), _met_connector(connector):
-            blok = await haal_resources()
+            blok = await fetch_resources()
 
         (totaal,) = blok.extra_rijen
         assert totaal.geheugen_gevraagd == pytest.approx(1500)
@@ -434,7 +434,7 @@ class TestHaalResources:
         namespaces = ["rig-prd-operations", "rig-prd-backup"]
         connector = _ResourceConnector({}, namespaces)
         with _met_namespaces(namespaces), _met_connector(connector):
-            await haal_resources()
+            await fetch_resources()
 
         assert len(connector.queries) == len(_RESOURCE_QUERIES)
         for query in connector.queries:
@@ -445,7 +445,7 @@ class TestHaalResources:
         """Geen configuratie is geen "alles": dan zou de pagina projecten gaan tonen."""
         connector = _ResourceConnector({}, [])
         with _met_namespaces([]), _met_connector(connector):
-            blok = await haal_resources()
+            blok = await fetch_resources()
 
         assert blok.gemeten is False
         assert "service_namespaces" in (blok.fout or "")
@@ -459,9 +459,9 @@ class TestHaalResources:
         with (
             _met_namespaces(["rig-prd-operations"]),
             _met_connector(connector),
-            caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"),
+            caplog.at_level(logging.WARNING, logger="opi.services.shared_services"),
         ):
-            blok = await haal_resources()
+            blok = await fetch_resources()
 
         assert blok.gemeten is False
         assert "mimir onbereikbaar" in (blok.fout or "")
@@ -487,7 +487,7 @@ class TestResourceSjabloon:
         return html
 
     def test_de_drie_getallen_staan_op_het_scherm(self) -> None:
-        rij = ResourceRij(
+        rij = ResourceRow(
             namespace="rig-prd-operations",
             cpu_gebruikt=0.464,
             cpu_gevraagd=2.0,
@@ -498,7 +498,7 @@ class TestResourceSjabloon:
             opslag_gebruikt=1_073_741_824.0,
             opslag_capaciteit=10_737_418_240.0,
         )
-        html = self._render(Blok(gemeten=True, rijen=[rij], extra_rijen=[]))
+        html = self._render(Block(gemeten=True, rijen=[rij], extra_rijen=[]))
 
         assert "rig-prd-operations" in html
         # Gevraagd is de reden voor dit blok; als die kolom wegvalt is het blok zinloos.
@@ -507,13 +507,13 @@ class TestResourceSjabloon:
         assert "71.6 GiB" in html
 
     def test_een_namespace_zonder_meting_krijgt_streepjes(self) -> None:
-        leeg = ResourceRij("rig-prd-ron", None, None, None, None, None, None, None, None)
-        html = self._render(Blok(gemeten=True, rijen=[leeg], extra_rijen=[]))
+        leeg = ResourceRow("rig-prd-ron", None, None, None, None, None, None, None, None)
+        html = self._render(Block(gemeten=True, rijen=[leeg], extra_rijen=[]))
 
         assert "rig-prd-ron" in html
 
     def test_kon_niet_meten_staat_op_het_scherm(self) -> None:
-        html = self._render(Blok(gemeten=False, fout="mimir onbereikbaar"))
+        html = self._render(Block(gemeten=False, fout="mimir onbereikbaar"))
 
         assert "Kon niet meten" in html
         assert "mimir onbereikbaar" in html

@@ -39,7 +39,7 @@ from opi.http.render.lotc_switch import (
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import get_navigation
 from opi.http.render.templates_lotc import templates_lotc
-from opi.services.api_token_service import is_projectbeheerder
+from opi.services.api_token_service import is_project_admin
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,
@@ -59,7 +59,7 @@ from opi.services.project_authorization import (
     get_user_roles_for_project,
     is_user_authorized_for_project,
 )
-from opi.services.project_leden import human_members
+from opi.services.project_members import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.services.step_up import StepUpAction, is_elevated_admin
@@ -1891,7 +1891,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 request,
                 project_name,
                 user_email,
-                is_beheerder=is_projectbeheerder(project_name, user_email),
+                is_beheerder=is_project_admin(project_name, user_email),
             )
 
         # Het backupsblok, voor de deployment die op het tabblad Backups openstaat (RC-100).

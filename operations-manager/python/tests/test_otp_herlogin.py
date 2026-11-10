@@ -16,7 +16,7 @@ import httpx
 import pytest
 from joserfc.errors import InvalidClaimError
 from opi.services import otp_herlogin_service
-from opi.services.otp_herlogin_service import Herlogin, OtpHerloginService, herlogin_klopt
+from opi.services.otp_herlogin_service import Herlogin, OtpHerloginService, herlogin_is_valid
 from opi.web.router_otp import otp_herlogin, otp_herlogin_terug, otp_start
 
 EMAIL = "iemand@rijksoverheid.nl"
@@ -190,7 +190,7 @@ async def test_terug_met_een_fout_van_keycloak_opent_niets() -> None:
 
 
 def test_verse_claims_van_de_ingelogde_gebruiker_kloppen() -> None:
-    assert herlogin_klopt(_claims(), USER, now=NU) is True
+    assert herlogin_is_valid(_claims(), USER, now=NU) is True
 
 
 @pytest.mark.parametrize(
@@ -213,7 +213,7 @@ def test_verse_claims_van_de_ingelogde_gebruiker_kloppen() -> None:
     ],
 )
 def test_claims_van_een_ander_of_oude_login_kloppen_niet(overrides: dict[str, Any]) -> None:
-    assert herlogin_klopt(_claims(**overrides), USER, now=NU) is False
+    assert herlogin_is_valid(_claims(**overrides), USER, now=NU) is False
 
 
 # --- de tabel ------------------------------------------------------------------------------
@@ -240,7 +240,7 @@ async def test_een_geslaagde_herlogin_geldt_alleen_voor_die_sessie(orm_db) -> No
 async def test_het_venster_verloopt_en_schuift_niet_mee(orm_db, monkeypatch: pytest.MonkeyPatch) -> None:
     dienst = OtpHerloginService()
     with monkeypatch.context() as kort:
-        kort.setattr(otp_herlogin_service, "HERLOGIN_VENSTER", timedelta(seconds=-1))
+        kort.setattr(otp_herlogin_service, "HERLOGIN_WINDOW", timedelta(seconds=-1))
         herlogin = await dienst.begin(EMAIL, LOGIN_AT)
         await dienst.mark_verified(herlogin.state)
 

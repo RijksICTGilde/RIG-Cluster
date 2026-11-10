@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_schema import find_plaintext_secret_violations, validate_project_schema
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.age import (
@@ -203,7 +203,7 @@ class TestEverythingOnTheNewKey:
         account = next(lid for lid in migrated["users"] if lid.get("name") == "project-api")
         hash_hex = account["tokens"][0]["hash"]
         assert len(hash_hex) == 64
-        assert hash_hex != hash_van("0123456789abcdef0123456789abcdef")
+        assert hash_hex != hash_of("0123456789abcdef0123456789abcdef")
 
     def test_een_bestaand_token_wordt_opnieuw_gemunt(self, production_project: dict, keys: Keys) -> None:
         production_project["users"] = [

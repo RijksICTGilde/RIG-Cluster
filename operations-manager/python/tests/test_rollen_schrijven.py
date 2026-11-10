@@ -21,10 +21,10 @@ from opi.core.authz.engine import ROLE_LABELS, Role
 from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
 from opi.http.auth.authz import authorize, may
 from opi.services.api_token_service import (
-    STANDAARD_ROLLEN,
-    TokenAanvraagGeweigerd,
-    schoon_rollen,
-    zet_rollen_in_data,
+    DEFAULT_ROLES,
+    TokenRequestRefusedError,
+    clean_roles,
+    set_roles_in_data,
 )
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
@@ -111,17 +111,17 @@ def test_een_developer_zet_de_markering_van_een_productiedeployment_niet() -> No
 
 
 def test_een_lege_lijst_rollen_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een rol"):
-        schoon_rollen([])
+    with pytest.raises(TokenRequestRefusedError, match="minstens een rol"):
+        clean_roles([])
 
 
 def test_een_onbekende_rol_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        schoon_rollen(["operator"])
+    with pytest.raises(TokenRequestRefusedError, match="Onbekende rol"):
+        clean_roles(["operator"])
 
 
 def test_de_rollen_worden_ontdubbeld_en_gesorteerd() -> None:
-    assert schoon_rollen(["ops", "admin", "ops"]) == ["admin", "ops"]
+    assert clean_roles(["ops", "admin", "ops"]) == ["admin", "ops"]
 
 
 def test_de_laatste_admin_weghalen_wordt_geweigerd() -> None:
@@ -131,8 +131,8 @@ def test_de_laatste_admin_weghalen_wordt_geweigerd() -> None:
             {"email": DEV, "roles": ["developer"]},
         ]
     }
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een lid met de rol admin"):
-        zet_rollen_in_data(data, BEHEERDER, ["developer"])
+    with pytest.raises(TokenRequestRefusedError, match="minstens een lid met de rol admin"):
+        set_roles_in_data(data, BEHEERDER, ["developer"])
     assert data["users"][0]["roles"] == ["admin", "ops"], "de lijst blijft staan zoals hij was"
 
 
@@ -143,13 +143,13 @@ def test_een_tweede_admin_maakt_degraderen_wel_mogelijk() -> None:
             {"email": DEV, "roles": ["admin"]},
         ]
     }
-    assert zet_rollen_in_data(data, BEHEERDER, ["developer"]) is data
+    assert set_roles_in_data(data, BEHEERDER, ["developer"]) is data
     assert data["users"][0]["roles"] == ["developer"]
 
 
 def test_een_onbestaand_lid_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        zet_rollen_in_data({"users": []}, "niemand", ["admin"])
+    with pytest.raises(TokenRequestRefusedError, match="geen lid"):
+        set_roles_in_data({"users": []}, "niemand", ["admin"])
 
 
 # --- de wizardweg -----------------------------------------------------------
@@ -210,7 +210,7 @@ def test_een_ander_label_verandert_het_scherm_en_niet_het_bestand() -> None:
 
 def test_een_nieuw_lid_heeft_developer_vooraf_gekozen() -> None:
     """B12: een voorinvulling, geen vaste toekenning."""
-    assert list(STANDAARD_ROLLEN) == [Role.DEVELOPER.value]
+    assert list(DEFAULT_ROLES) == [Role.DEVELOPER.value]
 
 
 # --- elke weg leest dezelfde regels ----------------------------------------
@@ -234,7 +234,7 @@ def test_de_twee_rolroutes_lopen_langs_set_member_roles() -> None:
 
     # De servicefunctie zelf is de enige die het wel doet.
     bron = pathlib.Path(api_token_service.__file__ or "").read_text()
-    assert 'lid["roles"] = rollen' in bron
+    assert 'member["roles"] = roles' in bron
 
 
 def test_de_wizard_leest_dezelfde_twee_guards() -> None:
@@ -247,6 +247,6 @@ def test_de_wizard_leest_dezelfde_twee_guards() -> None:
     from opi.forms.wizard import leden
 
     bron = pathlib.Path(leden.__file__ or "").read_text()
-    assert "schoon_rollen(" in bron, "de wizard toetst de rollen buiten de servicefunctie om"
-    assert "eis_een_admin(" in bron, "de wizard bouwt de admin-eis zelf na"
+    assert "clean_roles(" in bron, "de wizard toetst de rollen buiten de servicefunctie om"
+    assert "require_an_admin(" in bron, "de wizard bouwt de admin-eis zelf na"
     assert f'"{Role.ADMIN.value}"' not in bron, "de wizard toetst de rol admin weer zelf"

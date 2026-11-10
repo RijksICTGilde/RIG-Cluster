@@ -23,9 +23,9 @@ from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, project_pr
 
 
 class ProjectToken(BaseModel):
-    """Een uitgegeven token van een lid, zoals het in het projectbestand staat.
+    """An issued token of a member, as it stands in the project file.
 
-    Alleen de hash: de waarde zelf is na uitgifte door niemand meer te lezen.
+    The hash only: nobody can read the value itself after it was issued.
     """
 
     name: str
@@ -34,7 +34,7 @@ class ProjectToken(BaseModel):
 
 
 class ProjectUser(BaseModel):
-    """Een lid van een project: een mens met een e-mailadres, of een service account."""
+    """A member of a project: a human with an email address, or a service account."""
 
     email: str | None = None
     roles: list[str]
@@ -44,28 +44,28 @@ class ProjectUser(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def accepteer_de_oude_ene_rol(cls, data: Any) -> Any:
-        """``role: admin`` leest als ``roles: [...]``.
+    def accept_the_old_single_role(cls, data: Any) -> Any:
+        """``role: admin`` reads as ``roles: [...]``.
 
-        De projectstore migreert een bestand bij het inlezen (schemaversie 2.13), maar dit
-        model leest ook gegevens die die weg niet zijn gegaan: een testfixture, een
-        formulierinzending, een bestand dat de migratie nog moet krijgen. Eén vertaaltabel
-        voor alle drie, dezelfde als de migratie gebruikt.
+        The project store migrates a file as it reads it (schema version 2.13), but this model
+        also reads data that did not come that way: a test fixture, a form submission, a file
+        that has yet to be migrated. One translation table for all three, the same one the
+        migration uses.
         """
         if isinstance(data, dict) and "role" in data and "roles" not in data:
-            # Een onbekende rol wordt GEEN rol: hier wordt gelezen, niet gemigreerd, en
-            # een lid met een onleesbare rol hoort niets te openen. De migratie geeft zo
-            # iemand wel ``viewer``, want daar moet het bestand na afloop geldig zijn.
+            # An unknown role becomes NO role: this is reading and not migrating, and a
+            # member with an unreadable role should open nothing. The migration does give
+            # such a member ``viewer``, because the file has to be valid afterwards.
             data = {**data, "roles": list(ROLE_MIGRATION.get(str(data["role"]), ()))}
             data.pop("role", None)
         return data
 
     @model_validator(mode="after")
-    def validate_principaal_bestaat(self) -> ProjectUser:
-        """Een lid heeft een principaal: een mens een e-mailadres, een service account een naam.
+    def validate_principal_exists(self) -> ProjectUser:
+        """A member has a principal: a human an email address, a service account a name.
 
-        Zonder deze eis wordt een regel met alleen een ``role`` een lid met een leeg
-        principaal, en dan matcht elke vergelijking met een leeg e-mailadres hem.
+        Without this rule a line with only a ``role`` becomes a member with an empty
+        principal, and then every comparison against an empty email address matches it.
         """
         if self.type is MemberKind.SERVICE_ACCOUNT:
             if not self.name:
@@ -76,12 +76,12 @@ class ProjectUser(BaseModel):
 
     @property
     def rol_labels(self) -> list[str]:
-        """De rollen zoals een mens ze ziet (B13). Een onbekende sleutel toont zichzelf."""
-        return [role_label(rol) for rol in self.roles]
+        """The roles as a human sees them. An unknown key shows itself."""
+        return [role_label(role) for role in self.roles]
 
     @property
-    def principaal(self) -> str:
-        """Waaronder dit lid in het logboek en in de git-trailer staat."""
+    def principal(self) -> str:
+        """The name this member stands under in the log and in the git trailer."""
         return (self.name or "") if self.type is MemberKind.SERVICE_ACCOUNT else (self.email or "")
 
 
@@ -92,8 +92,8 @@ class ProjectSummary(BaseModel):
     """Pydantic model for project mapping."""
 
     name: str
-    #: De oude projectsleutel, zolang het bestand nog op schemaversie 2.11 staat. Vanaf
-    #: 2.12 is hij een token van het service account ``project-api`` en is dit veld None.
+    #: The old project key, while the file is still on schema version 2.11. From 2.12 on it
+    #: is a token of the ``project-api`` service account and this field is None.
     api_key: str | None = None
     filename: str
     users: list[ProjectUser] | None = None
@@ -147,27 +147,30 @@ class ProjectService:
         Returns:
             True if registration was successful
         """
-        # Aanroepers geven de leden als ProjectUser of als ruwe dicts uit het bestand.
-        # Hier een keer omzetten, zodat alles achter dit punt met echte leden werkt en niet
-        # met twee vormen.
-        leden = [lid if isinstance(lid, ProjectUser) else ProjectUser.model_validate(lid) for lid in users or []]
+        # Callers pass the members as ProjectUser or as raw dicts out of the file. Converted
+        # once here, so everything past this point works with real members and not two shapes.
+        members = [
+            member if isinstance(member, ProjectUser) else ProjectUser.model_validate(member) for member in users or []
+        ]
 
         is_update = project_name in self._projects
-        project = ProjectSummary(name=project_name, api_key=api_key, filename=filename, users=leden or None, data=data)
+        project = ProjectSummary(
+            name=project_name, api_key=api_key, filename=filename, users=members or None, data=data
+        )
         self._projects[project_name] = project
         action = "Updated" if is_update else "Registered"
-        logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(leden)} users")
+        logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(members)} users")
 
         # Keep the global access allowlist in sync with project membership so a
         # newly added member can reach the portal immediately, without waiting
         # for the next periodic Git refresh or an app restart. Without this, a
         # member added via the team-edit modal (which only calls register) is
         # redirected to /permission-denied until the allowlist is rebuilt.
-        # Alleen de MENSEN: een service account heeft geen postvak en hoort niet op de
-        # inloglijst te staan. Zie opi/services/project_leden.py.
-        menselijk = [lid for lid in leden if lid.type is not MemberKind.SERVICE_ACCOUNT]
-        if menselijk:
-            get_user_service().add_allowed_emails([lid.email for lid in menselijk if lid.email])
+        # The HUMANS only: a service account has no mailbox and does not belong on the login
+        # list. See opi/services/project_members.py.
+        humans = [member for member in members if member.type is not MemberKind.SERVICE_ACCOUNT]
+        if humans:
+            get_user_service().add_allowed_emails([member.email for member in humans if member.email])
 
         return True
 
@@ -274,8 +277,8 @@ class ProjectService:
             f"Could not decrypt api-key for project '{project_name}' and no usable previous key; "
             "API key authentication for this project will fail until it is re-registered"
         )
-        # Niet de ciphertext: die wordt dan zijn eigen wachtwoord, en wie het projectbestand
-        # kan lezen legitimeert zich ermee als projectsleutel.
+        # NOT the ciphertext: it would become its own password, so whoever can read the
+        # project file could use it to pass as the project key.
         return None
 
     def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> ProjectSummary | None:

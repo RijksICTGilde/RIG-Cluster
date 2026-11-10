@@ -910,8 +910,7 @@ class ProjectFileHandler:
         elif isinstance(path_config, list) and path_config:
             # Return first path for backward compatibility
             first_item = path_config[0]
-            if isinstance(first_item, dict):  # noqa: SIM108
-                # Use 'match' key (new format)
+            if isinstance(first_item, dict):  # noqa: SIM108  # the two branches read different keys
                 component_path = first_item.get("match", default_path)
             else:
                 component_path = str(first_item)
@@ -942,7 +941,7 @@ class ProjectFileHandler:
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
 
-        # Normaliseer naar list-format; sanitizer valideert per item.
+        # Normalise to the list format; the sanitizer validates per item.
         if isinstance(path_config, str):
             logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
             return [_normalize_path_config(path_config)]
@@ -1369,10 +1368,6 @@ class ProjectFileHandler:
                 result[key] = value
 
         return result or None
-
-    # ========================================================================
-    # Resource Configuration Methods
-    # ========================================================================
 
     def extract_component_resources(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
         """
@@ -2082,10 +2077,6 @@ class ProjectFileHandler:
                 logger.info(f"Re-enabling component '{reference}' in deployment '{dep_name}': {cause}")
         return reenabled
 
-    # ========================================================================
-    # Service Config Generation Methods (reference/config pattern)
-    # ========================================================================
-
     def _get_service_config_generation(
         self,
         project_data: dict[str, Any],
@@ -2377,17 +2368,9 @@ class ProjectFileHandler:
             project_data, deployment_name, ServiceType.MINIO_STORAGE.value, generation
         )
 
-    # ========================================================================
-    # Deployment-Level Service Generation Methods
-    # ========================================================================
-    # These methods store/retrieve generation at the deployment level for
-    # services like database and minio that are deployment-wide resources.
-    # Structure: deployments[name].services.{service_type}.generation
-    #
-    # Callers should use ServiceType enum values for service_type parameter:
-    # - ServiceType.POSTGRESQL_DATABASE.value ("postgresql-database")
-    # - ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value ("namespace-postgresql-database")
-    # - ServiceType.MINIO_STORAGE.value ("minio-storage")
+    # Generation at the DEPLOYMENT level, for services like database and minio that are
+    # deployment-wide resources: deployments[name].services.{service_type}.generation.
+    # Callers pass a ServiceType enum value as service_type.
 
     def get_deployment_service_generation(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str
@@ -2679,18 +2662,18 @@ class ProjectFileHandler:
         return project_data
 
     def is_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
-        """True als een eerdere run aan deze kloon begon en hem niet als afgerond vastlegde."""
+        """True when an earlier run started this clone and did not record it as completed."""
         status = self.get_clone_status(project_data, deployment_name)
         return bool(status and status.get("in-progress"))
 
     def mark_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
-        """Zet de pogingsvlag op een once-kloon die nog niet af is.
+        """Set the attempt flag on a ``once`` clone that is not finished yet.
 
-        set_clone_status vervangt het hele statusblok, dus de vlag verdwijnt vanzelf
-        zodra de kloon als afgerond wordt vastgelegd.
+        set_clone_status replaces the whole status block, so the flag disappears by itself
+        once the clone is recorded as completed.
 
         Returns:
-            True als de vlag nu pas aan ging.
+            True when the flag went on only now.
         """
         deployment = self._find_deployment(project_data, deployment_name)
         if deployment is None:
@@ -2739,11 +2722,11 @@ class ProjectFileHandler:
         return False
 
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
-        """De private registries van dit project, uit de config van de dienst image-registries.
+        """This project's private registries, from the config of the image-registries service.
 
         Returns:
-            Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
-            ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
+            Entries with ``name`` and ``upstream``, plus either (``username``, ``password``)
+            or ``secretName``. ``upstream`` may hold a path (``code.overheid.nl/name``).
         """
         registries = project_registries(project_data)
         if registries:
@@ -2994,10 +2977,6 @@ class ProjectFileHandler:
 
         logger.debug(f"No services found for helm chart '{chart_name}'")
         return []
-
-    # ========================================================================
-    # Helmfile Methods
-    # ========================================================================
 
     def extract_helmfiles(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
@@ -3339,10 +3318,6 @@ class ProjectFileHandler:
 
         return results
 
-    # ========================================================================
-    # Invite System Methods
-    # ========================================================================
-
     def extract_invites_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
         Extract the invite config from project data, normalized through the invite model.
@@ -3448,9 +3423,9 @@ class ProjectFileHandler:
 
         Combines project-level settings with invite-specific overrides.
 
-        Koppelt het realm een SSO-identiteit op e-mailadres, dan is de lokale weg hier dicht,
-        wat de uitnodiging ook zegt: een account met een zelf ingetypt adres is daar het
-        koppeldoel van wie dat adres via SSO aanlevert (``features/keycloak-auto-link.md``).
+        When the realm links an SSO identity on email address, the local path is closed here
+        whatever the invite says: an account with a self-typed address is then the link target
+        of whoever presents that address through SSO (``features/keycloak-auto-link.md``).
 
         Args:
             project_data: The parsed project data

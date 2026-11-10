@@ -1,11 +1,11 @@
-"""De projectkaart: componenten, services, deployments en koppelingen als graaf.
+"""The project map: components, services, deployments and links as a graph.
 
-Alles komt uit ``ProjectSummary.data``, de ruwe YAML. NOOIT uit ``get_decrypted``: op deze
-kaart staat geen enkel geheim, en een env-var of wachtwoord hoort er ook niet per ongeluk
-in te kunnen belanden.
+Everything comes from ``ProjectSummary.data``, the raw YAML, and NEVER from
+``get_decrypted``: no secret belongs on this map, so an env var or a password must not be
+able to land on it by accident.
 
-Van een ANDER project wordt alleen gelezen wat in een cross-domain-regel staat die naar dit
-project wijst: projectnaam, component en poort.
+Of ANOTHER project, only what a cross-domain rule pointing at this project names is read:
+project name, component and port.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Kleur per dienst op de kaart: presentatiekeuze, geen eigenschap van de dienst.
-#: Diensten die hier niet staan krijgen ``ops``.
+#: Color per service on the map: a presentation choice, not a property of the service.
+#: A service that is not here gets ``ops``.
 SERVICE_COLOR: dict[ServiceType, Color] = {
     ServiceType.PUBLISH_ON_WEB: "web",
     ServiceType.ALIASES: "web",
@@ -84,7 +84,7 @@ SERVICE_COLOR: dict[ServiceType, Color] = {
     ServiceType.SEND_EMAIL: "link",
 }
 
-#: Het aantal componenten dat onder elkaar past; daarboven komen er kolommen bij.
+#: How many components fit in one column; beyond that, columns are added.
 COMPONENTS_PER_COLUMN = 6
 
 #: The services a backup covers: they get a line to the deployment's Backups node.
@@ -106,7 +106,7 @@ _CPU = re.compile(r"^([\d.]+)(m)?$")
 
 
 def _memory_mi(value: Any) -> float | None:
-    """Geheugen in Mi; None als er niets of iets onleesbaars staat."""
+    """Memory in Mi; None when there is nothing, or something unreadable."""
     match = _MEMORY.match(str(value or ""))
     return float(match.group(1)) * _MEMORY_UNITS.get(match.group(2) or "", 1 / (1024 * 1024)) if match else None
 
@@ -131,7 +131,7 @@ def _service_title(name: str) -> str:
 
 
 def _component_service_config(component: dict[str, Any], service: ServiceType) -> Any:
-    """De config van EEN dienst op een component, in welk schrijfwijze dan ook."""
+    """The config of ONE service on a component, in whichever notation it is written."""
     for entry in component.get("services") or []:
         if service_entry_name(entry) == service.value:
             return service_entry_config(entry)
@@ -143,7 +143,7 @@ def _component_services(component: dict[str, Any]) -> list[str]:
 
 
 def _image_tag(image: str | None) -> str:
-    """De tag zoals een lezer hem herkent: zonder registry, zonder digest."""
+    """The tag as a reader recognises it: no registry, no digest."""
     if not image:
         return "-"
     tail = image.split("@")[0].split("/")[-1]
@@ -157,11 +157,10 @@ _BARS: tuple[tuple[Literal["mem", "cpu"], str, Callable[[Any], float | None]], .
 
 
 def _component_rows(component: dict[str, Any], scale: dict[str, float]) -> list[Row]:
-    """Wat een component DOET, los van waar het draait.
+    """What a component DOES, apart from where it runs.
 
-    Geen poorten, geen env-vars en geen "achter keycloak": die keuze is met de eigenaar
-    gemaakt. Een staafje toont alleen wat het component zelf noemt; de platformstandaard
-    die de handler per ontbrekend veld invult is geen feit over dit component.
+    A bar shows only what the component names itself: the platform default the handler fills
+    in for a missing field is not a fact about this component.
     """
     rows: list[Row] = []
     declared = _parse_resources_block_partial(component.get("resources"))
@@ -196,10 +195,7 @@ def _component_rows(component: dict[str, Any], scale: dict[str, float]) -> list[
 
 
 def _resource_scale(components: list[dict[str, Any]]) -> dict[str, float]:
-    """De schaal van de staafjes: de hoogste genoemde waarde in het project.
-
-    Een gedeelde schaal maakt de kaarten onderling vergelijkbaar.
-    """
+    """The scale of the bars: the highest value named in the project, shared by every card."""
     scale = {"mem": 1.0, "cpu": 1.0}
     for component in components:
         declared = _parse_resources_block_partial(component.get("resources"))
@@ -210,13 +206,13 @@ def _resource_scale(components: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def _rules_of(project_data: dict[str, Any], direction: str) -> list[MergedRule]:
-    """De cross-domain-regels van een project in EEN richting, project- plus deploymentlaag.
+    """A project's cross-domain rules in ONE direction, project plus deployment layer.
 
-    Dezelfde merge als de generator (``merge_rules`` + ``to_merged_rule``); een onvolledige
-    regel wordt overgeslagen, want een kaart hoort niet om te vallen op een halve regel.
+    The same merge as the generator (``merge_rules`` + ``to_merged_rule``); an incomplete rule
+    is skipped, because a map must not fail on half a rule.
 
-    Ontdubbeld: een regel op de projectlaag komt in de merge van ELKE deployment terug, en
-    dat zou anders evenveel lijnen naar hetzelfde doel opleveren.
+    Deduplicated: a rule on the project layer comes back in the merge of EVERY deployment, and
+    would otherwise yield that many edges to the same target.
     """
     config = None
     for entry in project_data.get("services") or []:
@@ -250,13 +246,14 @@ def _rules_of(project_data: dict[str, Any], direction: str) -> list[MergedRule]:
 
 
 def incoming_links(project_name: str) -> list[tuple[str, str, str, int]]:
-    """Welke projecten wijzen naar DIT project: (van project, van component, naar component, poort).
+    """Which projects point at THIS project: (from project, from component, to component, port).
 
-    De omgekeerde zoekfunctie, die nergens anders bestaat: de regels staan bij de zender en
-    bij de ontvanger, en niets geeft "wie wijst naar mij". Een peer ``*`` (een open regel)
-    komt terug als projectnaam ``*``.
+    The reverse lookup, which exists nowhere else: the rules sit with the sender and with the
+    receiver, and nothing answers "who points at me". A peer ``*`` (an open rule) comes back
+    as project name ``*``.
 
-    Ontdubbeld, want dezelfde regel kan op de projectlaag EN op elke deploymentlaag staan.
+    Deduplicated, because the same rule can sit on the project layer AND on every deployment
+    layer.
     """
     found: dict[tuple[str, str, str, int], None] = {}
     for summary in get_project_store().get_all():
@@ -267,8 +264,8 @@ def incoming_links(project_name: str) -> list[tuple[str, str, str, int]]:
             if rule.peer_project != project_name or rule.peer_component is None:
                 continue
             found[(summary.name, rule.local_component, rule.peer_component, rule.port)] = None
-    # Een eigen open regel (``from: {project: "*"}``) is geen ander project dat wijst, maar
-    # hij hoort wel op de kaart: iedereen mag erheen.
+    # An own open rule (``from: {project: "*"}``) is not another project pointing here, but it
+    # does belong on the map: anyone may reach it.
     own = get_project_store().get(project_name)
     for rule in _rules_of((own.data or {}) if own else {}, "inbound"):
         if rule.is_open:
@@ -279,10 +276,10 @@ def incoming_links(project_name: str) -> list[tuple[str, str, str, int]]:
 
 
 def _peer_component(graph: Graph, prefix: str, project: str, component: str, column: str) -> str:
-    """De knoop van een component van een ANDER project; maakt het kader zo nodig aan.
+    """The node of a component of ANOTHER project, creating the frame when it is not there yet.
 
-    ``prefix`` scheidt de inkomende van de uitgaande kant: hetzelfde project kan aan beide
-    kanten van de plaat staan, en dan zijn het twee kaders.
+    ``prefix`` separates the incoming from the outgoing side: the same project can stand on
+    both sides of the drawing, and is then two frames.
     """
     group_id = f"{prefix}:{project}"
     if not any(group.id == group_id for group in graph.groups):
@@ -296,7 +293,7 @@ def _peer_component(graph: Graph, prefix: str, project: str, component: str, col
 
 
 def _project_nodes(data: dict[str, Any], project_name: str) -> list[Node]:
-    """Kolom 0: het project zelf en het team, inklapbaar naar de leden met hun rol."""
+    """Column 0: the project itself and the team, expandable to the members with their role."""
     display_name = data.get("display-name") or project_name
     members = [user for user in (data.get("users") or []) if isinstance(user, dict)]
     return [
@@ -344,7 +341,7 @@ def _project_nodes(data: dict[str, Any], project_name: str) -> list[Node]:
 
 
 def _component_nodes(data: dict[str, Any], per_column: int) -> list[Node]:
-    """De componenten, bij meer dan zes verdeeld over kolommen."""
+    """The components, spread over columns once there are more than fit in one."""
     components = list(data.get("components") or [])
     deployments = list(data.get("deployments") or [])
     scale = _resource_scale(components)
@@ -388,7 +385,7 @@ def _component_nodes(data: dict[str, Any], per_column: int) -> list[Node]:
 
 
 def _used_service_names(data: dict[str, Any]) -> list[str]:
-    """De diensten die het project of een van zijn componenten aanzet, zonder dubbele."""
+    """The services the project or one of its components switches on, without duplicates."""
     names: list[str] = []
     for entry in data.get("services") or []:
         name = service_entry_name(entry)
@@ -402,7 +399,7 @@ def _used_service_names(data: dict[str, Any]) -> list[str]:
 
 
 def _service_nodes(data: dict[str, Any], column: str) -> list[Node]:
-    """De services, als pil in de kleur van hun categorie, met hun uitleg in het paneel."""
+    """The services, as a pill in their category's color, with their help text in the panel."""
     components = list(data.get("components") or [])
     nodes = []
     for name in _used_service_names(data):
@@ -597,10 +594,10 @@ def _apply_deployment(
 
 
 def _add_link_edges(graph: Graph, data: dict[str, Any], project_name: str, outgoing_column: str) -> None:
-    """De cross-domain koppelingen, in beide richtingen, met de poort als label.
+    """The cross-domain links, in both directions, with the port as the label.
 
-    De knopen van het andere project ontstaan hier: een kader per project, met alleen de
-    componenten die in een regel genoemd staan.
+    The nodes of the other project come into being here: one frame per project, holding only
+    the components a rule names.
     """
     local = {node.id for node in graph.nodes}
     for rule in _rules_of(data, "outbound"):
@@ -633,15 +630,16 @@ def _add_link_edges(graph: Graph, data: dict[str, Any], project_name: str, outgo
 
 
 def project_graph(project_name: str, deployment_name: str | None = None, usage: MeasuredUsage | None = None) -> Graph:
-    """De kaart van een project, of van een van zijn deployments.
+    """The map of a project, or of one of its deployments.
 
-    Zonder deployment de definitie: componenten met wat ze vragen, de services die ze
-    gebruiken en de koppelingen. Met een deployment alleen de componenten die erin draaien,
-    met hun image en webadres, en op de services hoeveel deze deployment erin bewaart.
+    Without a deployment this is the definition: components with what they ask for, the
+    services they use and the links. With a deployment it is only the components that run in
+    it, with their image and web address, and on the services how much this deployment keeps
+    in each.
 
-    Kolommen van links naar rechts: het project zelf met zijn team en wie naar hem toe
-    wijst, dan de componenten, dan de services, dan de backups van de deployment, en
-    helemaal rechts de projecten waar dit project naartoe wijst.
+    Columns run left to right: the project with its team and whoever points at it, then the
+    components, then the services, then the deployment's backups, and on the far right the
+    projects this project points at.
 
     Raises KeyError for an unknown project or deployment.
     """

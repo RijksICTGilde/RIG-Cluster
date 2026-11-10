@@ -64,7 +64,7 @@ def _deferred(task=AsyncTask):
 
 
 def _not_yet_reconciled(task=AsyncTask):
-    """Rows whose change no processing run has read since they completed (RC-188).
+    """Rows whose change no processing run has read since they completed.
 
     The read rule is in ``features/opslaan-zonder-verwerken.md``.
     """
@@ -742,7 +742,7 @@ class AsyncTaskService:
             return row.to_dict() if row else None
 
     async def get_deferred_rollouts(self, project_name: str) -> dict[str, Any]:
-        """Changes saved with ``rollout=false`` that have not been rolled out since (RC-46).
+        """Changes saved with ``rollout=false`` that have not been rolled out since.
 
         A completed task whose payload said ``rollout: false`` wrote to the project file and
         deliberately did not process. It stays waiting until a processing run has read the

@@ -33,15 +33,15 @@ from opi.http.auth.auth_decorators import get_current_user, requires_step_up
 from opi.http.auth.step_up_conditions import vraagt_altijd_step_up
 from opi.http.auth.user_token_auth import validate_user_token
 from opi.services.api_token_service import (
-    STANDAARD_ROLLEN,
-    TokenAanvraagGeweigerd,
-    geef_token_uit,
-    leden_overzicht,
-    roteer_token,
+    DEFAULT_ROLES,
+    TokenRequestRefusedError,
+    add_service_account,
+    issue_token,
+    members_overview,
+    remove_service_account,
+    revoke_token,
+    rotate_token,
     set_member_roles,
-    trek_token_in,
-    verwijder_service_account,
-    voeg_service_account_toe,
 )
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.step_up import StepUpAction
@@ -56,7 +56,7 @@ class ServiceAccountAanvraag(BaseModel):
 
     naam: str = Field(description="DNS-label; hieronder staat het account in het logboek en in de git-trailer")
     roles: list[str] = Field(
-        default_factory=lambda: list(STANDAARD_ROLLEN),
+        default_factory=lambda: list(DEFAULT_ROLES),
         description="Dezelfde rollen als een mens. Wat elke rol opent staat op /rollen",
         examples=[["developer-ci"]],
     )
@@ -104,7 +104,7 @@ def _require_membership(project_name: str, email: str) -> str:
     return email
 
 
-def _refused(exc: TokenAanvraagGeweigerd) -> HTTPException:
+def _refused(exc: TokenRequestRefusedError) -> HTTPException:
     return HTTPException(status_code=403, detail=str(exc))
 
 
@@ -117,7 +117,7 @@ async def project_leden(request: Request, project_name: ProjectNamePath) -> JSON
     Without the hashes: whoever holds a hash can measure a guessed token offline.
     """
     _require_membership(project_name, _email(request))
-    return JSONResponse(content={"leden": _as_json(leden_overzicht(project_name))})
+    return JSONResponse(content={"leden": _as_json(members_overview(project_name))})
 
 
 def _as_json(members: list[dict]) -> list[dict]:
@@ -142,8 +142,8 @@ async def voeg_lid_toe(
     """
     email = _require_membership(project_name, _email(request))
     try:
-        await voeg_service_account_toe(project_name=project_name, naam=aanvraag.naam, rollen=aanvraag.roles, door=email)
-    except TokenAanvraagGeweigerd as exc:
+        await add_service_account(project_name=project_name, name=aanvraag.naam, roles=aanvraag.roles, by=email)
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(content={"status": "toegevoegd", "naam": aanvraag.naam}, status_code=201)
 
@@ -156,8 +156,8 @@ async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: s
     """Take a service account out of the members. Its tokens go in the same commit."""
     email = _require_membership(project_name, _email(request))
     try:
-        await verwijder_service_account(project_name=project_name, naam=naam, door=email)
-    except TokenAanvraagGeweigerd as exc:
+        await remove_service_account(project_name=project_name, name=naam, by=email)
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(content={"status": "verwijderd", "naam": naam})
 
@@ -172,8 +172,8 @@ async def zet_rol(
     """Give a member other roles. Its existing tokens follow those roles at once."""
     email = _require_membership(project_name, _email(request))
     try:
-        await set_member_roles(project_name=project_name, naam=naam, rollen=aanvraag.roles, door=email)
-    except TokenAanvraagGeweigerd as exc:
+        await set_member_roles(project_name=project_name, name=naam, roles=aanvraag.roles, by=email)
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(content={"status": "gewijzigd", "naam": naam, "roles": aanvraag.roles})
 
@@ -191,10 +191,10 @@ async def maak_token(
     """
     email = _require_membership(project_name, _email(request))
     try:
-        value = await geef_token_uit(
-            project_name=project_name, naam=naam, tokennaam=aanvraag.naam, dagen=aanvraag.dagen, door=email
+        value = await issue_token(
+            project_name=project_name, name=naam, token_name=aanvraag.naam, days=aanvraag.dagen, by=email
         )
-    except TokenAanvraagGeweigerd as exc:
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(
         content=UitgegevenToken(token=value, lid=naam, naam=aanvraag.naam).model_dump(), status_code=201
@@ -211,10 +211,10 @@ async def roteer(
     """Revoke this token and issue a new one under the same name."""
     email = _require_membership(project_name, _email(request))
     try:
-        value = await roteer_token(
-            project_name=project_name, naam=naam, tokennaam=tokennaam, dagen=aanvraag.dagen, door=email
+        value = await rotate_token(
+            project_name=project_name, name=naam, token_name=tokennaam, days=aanvraag.dagen, by=email
         )
-    except TokenAanvraagGeweigerd as exc:
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(content=UitgegevenToken(token=value, lid=naam, naam=tokennaam).model_dump())
 
@@ -227,7 +227,7 @@ async def trek_in(request: Request, project_name: ProjectNamePath, naam: str, to
     """Revoke a token. That is a commit, so it stands in the history of the project."""
     email = _require_membership(project_name, _email(request))
     try:
-        await trek_token_in(project_name=project_name, naam=naam, tokennaam=tokennaam, door=email)
-    except TokenAanvraagGeweigerd as exc:
+        await revoke_token(project_name=project_name, name=naam, token_name=tokennaam, by=email)
+    except TokenRequestRefusedError as exc:
         raise _refused(exc) from exc
     return JSONResponse(content={"status": "ingetrokken", "lid": naam, "naam": tokennaam})

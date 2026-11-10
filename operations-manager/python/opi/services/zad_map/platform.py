@@ -1,10 +1,10 @@
-"""De platformkaart: de Operations Manager en de systemen eromheen, voor DIT cluster.
+"""The platform map: the Operations Manager and the systems around it, for THIS cluster.
 
-De data komt uit ``platform.json``, dat in de repo gegenereerd wordt
-(:mod:`opi.tools.zad_map_platform`): ``infrastructure/`` en ``features/`` zitten niet in het
-image, dus tijdens het draaien is er niets anders te lezen.
+The data comes from ``platform.json``, generated in the repo
+(:mod:`opi.tools.zad_map_platform`). ``infrastructure/`` and ``features/`` are not in the
+image, so at run time there is nothing else to read.
 
-Er is geen schakelaar: de pagina toont het cluster dat deze OPI beheert.
+There is no switch: the page shows the cluster this OPI manages.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from opi.web.security_policy import REPO_BLOB_URL
 
 PLATFORM_JSON = Path(__file__).resolve().parent / "platform.json"
 
-#: Van het cluster dat OPI beheert naar de mapnaam in ``infrastructure/bootstrap/clusters``.
+#: From the cluster OPI manages to its folder name in ``infrastructure/bootstrap/clusters``.
 CLUSTER_FOLDER = {
     "odcn-production": "odcn",
     "odcn-staging": "odcn-staging",
@@ -28,14 +28,14 @@ CLUSTER_FOLDER = {
     "local": "sandboxed-local",
 }
 
-#: De kaders rechts van de hub, en de band eronder.
+#: The frames to the right of the hub, and the band underneath.
 LAYERS: dict[str, tuple[str, str]] = {
     "gitops": ("GitOps", "hoe projecten uitgerold worden"),
     "services": ("Services voor projecten", "wat ZAD per project inricht"),
     "network": ("Netwerk en DNS", "hoe projecten bereikbaar worden"),
 }
 
-#: De groep van een systeem bepaalt zijn kleur op de kaart.
+#: A system's group decides its color on the map.
 GROUP_COLOR: dict[str, Color] = {
     "gitops": "gitops",
     "identity": "identity",
@@ -53,13 +53,13 @@ def _platform_data() -> dict[str, Any]:
 
 
 def current_cluster_folder() -> str:
-    """De mapnaam van het cluster dat deze OPI beheert; de sandbox is de terugval."""
+    """The folder name of the cluster this OPI manages; the sandbox is the fallback."""
     return CLUSTER_FOLDER.get(settings.CLUSTER_MANAGER, "sandboxed-local")
 
 
 def _visible(system: dict[str, Any], cluster: str) -> bool:
-    """Wat er op deze kaart hoort: wat draait, wat elders of extern draait, wat een
-    connector heeft, en op productie ook wat het cluster zelf levert."""
+    """What belongs on this map: what runs, what runs elsewhere or externally, what has a
+    connector, and on production also what the cluster itself provides."""
     state = system["clusters"].get(cluster, "afwezig")
     return (
         state in ("aan", "elders", "extern") or bool(system["connectors"]) or (state == "cluster" and cluster == "odcn")
@@ -112,11 +112,11 @@ def _system_node(system: dict[str, Any], cluster: str, group: str) -> Node:
 
 
 def platform_graph() -> Graph:
-    """De plaat van het platform: ZAD links, de kaders rechts, het fundament eronder."""
+    """The platform drawing: ZAD on the left, the frames on the right, the base underneath."""
     data = _platform_data()
     cluster = current_cluster_folder()
     shown = [system for system in data["systems"] if _visible(system, cluster)]
-    in_layer = lambda layer: [system for system in shown if system["layer"] == layer]  # noqa: E731
+    in_layer = lambda layer: [system for system in shown if system["layer"] == layer]  # noqa: E731  # a one-line filter over a local, used four times just below
 
     graph = Graph(columns=[Column(id="c0"), Column(id="c1")])
     graph.groups.append(Group(id="L:zad", title="ZAD", column="c0", pack="elk"))
@@ -153,7 +153,7 @@ def platform_graph() -> Graph:
 
     for layer, (title, note) in LAYERS.items():
         group_id = f"L:{layer}"
-        # GitOps laat ELK zijn inhoud neerleggen: daar loopt een lijn tussen twee kaarten.
+        # GitOps leaves its contents to ELK, because an edge runs between two of its cards.
         graph.groups.append(
             Group(id=group_id, title=title, subtitle=note, column="c1", pack="elk" if layer == "gitops" else "grid")
         )
@@ -163,7 +163,7 @@ def platform_graph() -> Graph:
 
     ids = {node.id for node in graph.nodes}
     if {"sys:git", "sys:argocd"} <= ids:
-        # ArgoCD leest wat ZAD in Git zet; in de sandbox staat Git op Forgejo.
+        # ArgoCD reads what ZAD puts in Git; on the sandbox Git is Forgejo.
         graph.edges.append(Edge(from_="sys:git", to="sys:argocd", color="gitops"))
 
     base = in_layer("odcn")
@@ -180,7 +180,7 @@ def platform_graph() -> Graph:
         )
         for system in base:
             node = _system_node(system, cluster, "L:odcn")
-            # In de band is van buiten komen de norm, geen afwijking.
+            # In the band, coming from outside is the norm and not a deviation.
             node.state = None
             graph.nodes.append(node)
     return graph

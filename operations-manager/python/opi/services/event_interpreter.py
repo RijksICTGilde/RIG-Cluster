@@ -41,16 +41,14 @@ class InterpretedEvent:
     count: int = 1
 
 
-# --- Translation table for K8s event reasons ---
-
-# De melding voor een container die uit zichzelf stopt en opnieuw wordt gestart. Een
-# constante, omdat de probe-oorzaak hieronder hem gericht moet kunnen vervangen: de
-# kubelet meldt namelijk hetzelfde als hij een container kilt op een falende probe.
+#: The message for a container that stops by itself and is started again. A constant, so the
+#: probe cause below can replace it precisely: the kubelet reports the same thing when it
+#: kills a container on a failing probe.
 _CRASH_TITLE = "Applicatie crasht herhaaldelijk"
-#: De crashmelding voor het geval waarin er NOG iets draait: een mislukte uitrol naast een
-#: applicatie die het gewoon doet. Bewust een eigen titel en geen extra zin achter de oude:
-#: de titel is wat er in de opsomming staat, en "crasht herhaaldelijk" is precies de zin
-#: die de lezer op het verkeerde been zet.
+#: The crash message for the case where something is STILL running: a failed rollout next to
+#: an application that works. A title of its own and not an extra sentence behind the old
+#: one: the title is what stands in the list, and "crasht herhaaldelijk" is exactly the
+#: sentence that misleads the reader there.
 _CRASH_WITH_SERVING_TITLE = "Nieuwe versie start niet op"
 
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
@@ -102,9 +100,9 @@ _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
         "Controleer of de storage-configuratie correct is.",
         EventSeverity.ACTIONABLE,
     ),
-    # Health probes. Alleen de READINESS-probe komt hier terecht: een falende liveness-
-    # of startup-probe is een eigen oorzaak en wordt eerder afgevangen (zie
-    # _LIVENESS_PROBE_RE en _probe_kill_translation).
+    # Health probes. Only the READINESS probe lands here: a failing liveness or startup probe
+    # is a cause of its own and is caught earlier (see _LIVENESS_PROBE_RE and
+    # _probe_kill_translation).
     "Unhealthy": (
         "Health-check gefaald",
         "De applicatie reageert niet op health-checks. Controleer of de applicatie correct opstart en luistert op de juiste poort.",
@@ -150,8 +148,7 @@ _UNBOUND_PVC_TRANSLATION = (
     EventSeverity.INFORMATIONAL,
 )
 
-# --- Pattern-based translations for ArgoCD health messages ---
-
+# Pattern-based translations for ArgoCD health messages.
 _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     # (pattern, title, suggestion, severity)
     # (image-pull failures are handled dynamically before _MESSAGE_PATTERNS, see
@@ -285,42 +282,30 @@ def _image_pull_translation(message: str, project_data: dict[str, Any] | None = 
     return IMAGE_PULL_TITLE_ABSENT, _image_pull_suggestion(message, project_data), EventSeverity.ACTIONABLE
 
 
-# --- Een container die de kubelet kilt omdat de probe faalt -------------------------
+# A container the kubelet kills because its probe fails. This is NOT a crash, and for the
+# user the distinction is the whole difference: on "crashes" you debug your application, on
+# "the probe does not get through" you adjust your health setting.
 #
-# Dit is GEEN crash, en het onderscheid is voor de gebruiker het hele verschil: bij
-# "crasht" ga je je applicatie debuggen, bij "de probe komt er niet doorheen" pas je je
-# health-instelling aan.
+# lastState.terminated.reason is "Error" in BOTH cases and does not carry the distinction.
+# Once the probe keeps failing long enough, the kubelet backs off on the probe kill too and
+# reports the same "Back-off restarting failed container" there, which is exactly the text
+# translated below as "Applicatie crasht herhaaldelijk".
 #
-# Gemeten op de sandbox met twee pods naast elkaar - een die draait maar een liveness-
-# probe op een dichte poort heeft, en een die echt met exit 1 stopt:
-#
-#   probefail   Running, ready=true   lastState.terminated: reason=Error exitCode=137
-#               events: [Unhealthy] Liveness probe failed: dial tcp 10.244.0.85:9999: ...
-#                       [Killing]   Container app failed liveness probe, will be restarted
-#   echtcrash   CrashLoopBackOff      lastState.terminated: reason=Error exitCode=1
-#               events: [BackOff]    Back-off restarting failed container app in pod ...
-#
-# lastState.terminated.reason is dus in BEIDE gevallen "Error" en draagt het onderscheid
-# niet. Blijft de probe lang genoeg falen, dan gaat de kubelet ook op de probe-kill
-# backoffen en meldt hij daar hetzelfde "Back-off restarting failed container" - en dat
-# is precies de tekst die hieronder als "Applicatie crasht herhaaldelijk" vertaald wordt.
-# Vandaar de verkeerde melding.
-#
-# Wat het onderscheid WEL draagt is het Unhealthy-event: de kubelet schrijft "Liveness
-# probe failed" alleen als hij een DRAAIENDE container aan het killen is. Een container
-# die uit zichzelf stopt haalt dat event niet.
+# What DOES carry the distinction is the Unhealthy event: the kubelet writes "Liveness probe
+# failed" only while it is killing a RUNNING container. A container that stops by itself
+# never gets that event.
 _LIVENESS_PROBE_RE = re.compile(r"\b(liveness|startup) probe failed", re.IGNORECASE)
 _PROBE_KILL_TITLE = "Health-check faalt, de container wordt herstart"
 
-# De poort uit de probe-foutmelding, zodat de melding zegt WAAR het misgaat. Twee vormen,
-# beide gemeten: een tcp-probe meldt "dial tcp <ip>:<poort>", een http(s)-probe meldt
-# 'Get "http://<ip>:<poort>/<pad>"'.
+# The port out of the probe error, so the message says WHERE it goes wrong. Two shapes, both
+# measured: a tcp probe reports "dial tcp <ip>:<port>", an http(s) probe reports
+# 'Get "http://<ip>:<port>/<path>"'.
 _PROBE_TCP_PORT_RE = re.compile(r"dial tcp \S*?:(\d{1,5})\b")
 _PROBE_HTTP_PORT_RE = re.compile(r"https?://[^/\s\"]*:(\d{1,5})")
 
 
 def _probe_port(message: str) -> str | None:
-    """De poort waarop de probe strandde, of ``None`` als de melding hem niet noemt."""
+    """The port the probe stranded on, or ``None`` when the message does not name it."""
     for pattern in (_PROBE_TCP_PORT_RE, _PROBE_HTTP_PORT_RE):
         match = pattern.search(message)
         if match:
@@ -329,12 +314,12 @@ def _probe_port(message: str) -> str | None:
 
 
 def _probe_kill_translation(message: str) -> tuple[str, str, EventSeverity]:
-    """Vertaling voor een container die op een falende liveness-/startup-probe wordt gekild."""
+    """Translation for a container killed on a failing liveness or startup probe."""
     port = _probe_port(message)
-    waar = f"De health-check op poort {port} krijgt geen antwoord" if port else "De health-check krijgt geen antwoord"
+    where = f"De health-check op poort {port} krijgt geen antwoord" if port else "De health-check krijgt geen antwoord"
     return (
         _PROBE_KILL_TITLE,
-        f"{waar}, daarom herstart Kubernetes de container. De applicatie zelf draait wel. "
+        f"{where}, daarom herstart Kubernetes de container. De applicatie zelf draait wel. "
         "Controleer of de health-check op de poort en het pad staat waar je component echt "
         "luistert - niet of je applicatie crasht.",
         EventSeverity.ACTIONABLE,
@@ -388,11 +373,11 @@ def _interpret_by_reason(
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
         return _image_pull_translation(message, project_data)
 
-    # Voor de reason-tabel: het Unhealthy-event zou anders als het algemene
-    # "Health-check gefaald" landen, en dat is een SYMPTOOM dat verderop wordt
-    # weggefilterd zodra er een crashmelding naast staat - precies de melding die deze
-    # oorzaak moet vervangen. Alleen liveness en startup: die killen de container, een
-    # falende readiness-probe doet dat niet en blijft dus wel een symptoom.
+    # Before the reason table: the Unhealthy event would otherwise land as the generic
+    # "Health-check gefaald", which is a SYMPTOM that gets filtered out further on as soon as
+    # a crash message stands next to it, exactly the message this cause has to replace. Only
+    # liveness and startup: those kill the container, a failing readiness probe does not and
+    # so stays a symptom.
     if _LIVENESS_PROBE_RE.search(message):
         return _probe_kill_translation(message)
 
@@ -453,20 +438,18 @@ def _suppress_symptoms(
 ) -> list[dict[str, str]]:
     """Remove symptom errors when a root cause exists for the same component.
 
-    Bovenop de symptoomregel geldt er een tussen twee OORZAKEN: staat er voor hetzelfde
-    component een probe-kill, dan is de crashmelding onwaar en verdwijnt hij. Beide
-    komen namelijk van dezelfde kubelet-backoff, maar alleen de probe-kill weet WAAROM
-    de container omging. Andersom - een component dat echt crasht - is er geen
-    probe-kill, en dan blijft de crashmelding gewoon staan.
+    On top of the symptom rule there is one between two CAUSES: with a probe kill for the same
+    component, the crash message is untrue and goes. Both come from the same kubelet backoff,
+    but only the probe kill knows WHY the container went down. The other way round, for a
+    component that really crashes, there is no probe kill and the crash message stays.
 
-    En er is een derde geval, dat geen melding wegneemt maar hem BIJSTELT. Draait er voor
-    hetzelfde component nog een pod die verkeer afhandelt (``serving_components``, de
-    unieke namen), dan is "de applicatie crasht herhaaldelijk" niet onwaar maar wel
-    misleidend: de vorige versie bedient de gebruikers gewoon door en alleen de NIEUWE pod
-    komt niet omhoog. Dat is een mislukte uitrol en geen storing, en dat verschil bepaalt
-    of iemand 's nachts opstaat. Zelfde soort correctie als de probe-kill hierboven: een
-    preciezere waarneming verdringt een minder precieze, op dezelfde plek en niet in een
-    tweede mechanisme ernaast.
+    And there is a third case, which removes no message but ADJUSTS one. Is another pod of the
+    same component still handling traffic (``serving_components``, the unique names), then
+    "the application crashes repeatedly" is not untrue but misleading: the previous version
+    serves users fine and only the NEW pod does not come up. That is a failed rollout and not
+    an outage, and that difference decides whether anyone gets up at night. The same kind of
+    correction as the probe kill above: a more precise observation displaces a less precise
+    one, in the same place and not in a second mechanism beside it.
     """
     root_cause_components: set[str] = set()
     probe_kill_components: set[str] = set()
@@ -725,17 +708,14 @@ def interpret_argocd_errors(
     return deduped
 
 
-# Een ComparisonError betekent alleen "ArgoCD kon de gewenste toestand niet bepalen". Dat
-# gebeurt in twee heel verschillende fases: bij het OPHALEN van de repository, of bij het
-# RENDEREN van de manifesten. De uitleg wees altijd naar het tweede, dus wie een fetch-
-# timeout kreeg ging zijn manifesten zitten uitpluizen terwijl daar niets mis mee was
-# (amtbz-2m9/productie, 2026-08-18). Deze tabel splitst de repository-fases af; wat er niet
-# op matcht is een echte renderfout en houdt de oude uitleg.
+# A ComparisonError means only "ArgoCD could not determine the desired state", and that
+# happens in two very different phases: FETCHING the repository, or RENDERING the manifests.
+# This table splits the repository phases off; what does not match it is a real render error
+# and keeps the generic explanation.
 _COMPARISON_ERROR_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     (
-        # Bewust op git-context matchen en niet op een kaal "failed to fetch": dat staat ook
-        # in een Helm-chart die zijn dependency niet kan ophalen, en dat is wel degelijk
-        # een renderfout.
+        # Deliberately matching on git context and not on a bare "failed to fetch": that also
+        # appears in a Helm chart that cannot fetch its dependency, which IS a render error.
         re.compile(
             r"git fetch|unable to checkout git repo|failed to initialize repository resources",
             re.IGNORECASE,
@@ -748,8 +728,8 @@ _COMPARISON_ERROR_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]
         EventSeverity.INFORMATIONAL,
     ),
     (
-        # Geen ".*" tussen "path" en "does not exist": in een lange renderfout kan dat over
-        # een halve melding heen matchen.
+        # No ".*" between "path" and "does not exist": in a long render error that can match
+        # across half a message.
         re.compile(r"app path does not exist|path \S* ?does not exist", re.IGNORECASE),
         "Pad bestaat niet in de repository",
         "De ArgoCD-applicatie wijst naar een map die niet (meer) in de repository staat. "
@@ -772,11 +752,10 @@ _COMPARISON_ERROR_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]
     ),
 ]
 
-# --- Een commit die ArgoCD niet wil syncen omdat de handtekening ontbreekt -----------
-#
-# Alleen op het "GIT/GPG"-voorvoegsel matchen, de vorm die op de sandbox gemeten is
-# (19-10-2026). Een kaal "signature verification failed" staat ook in een Helm-chart die
-# zijn provenance niet kan verifiëren, en dat is een andere fout met een andere route.
+# A commit ArgoCD refuses to sync because its signature is missing. Matching only on the
+# "GIT/GPG" prefix, the shape measured on the sandbox: a bare "signature verification failed"
+# also appears in a Helm chart that cannot verify its provenance, which is a different error
+# with a different route.
 _UNSIGNED_COMMIT_RE = re.compile(r"GIT/GPG", re.IGNORECASE)
 
 _UNSIGNED_COMMIT_LABEL = "Commit niet ondertekend"
@@ -789,14 +768,14 @@ _UNSIGNED_COMMIT_SUGGESTION = (
 
 
 def _unsigned_commit_translation() -> tuple[str, str, EventSeverity]:
-    """Label, uitleg en ernst voor een sync die op de commit-handtekening faalt.
+    """Label, explanation and severity for a sync that fails on the commit signature.
 
-    Noemt de sleutel die ArgoCD verwacht: dezelfde key ID die in signatureKeys op het
-    AppProject staat, dus zichtbaar is of de commit met de verkeerde sleutel ondertekend is.
+    Names the key ArgoCD expects: the same key ID that stands in signatureKeys on the
+    AppProject, so it is visible whether the commit was signed with the wrong key.
     """
     signing = get_git_signing_identity()
-    verwacht = f" ArgoCD accepteert hier alleen een handtekening van sleutel {signing.key_id}." if signing else ""
-    return _UNSIGNED_COMMIT_LABEL, _UNSIGNED_COMMIT_SUGGESTION + verwacht, EventSeverity.ACTIONABLE
+    expected = f" ArgoCD accepteert hier alleen een handtekening van sleutel {signing.key_id}." if signing else ""
+    return _UNSIGNED_COMMIT_LABEL, _UNSIGNED_COMMIT_SUGGESTION + expected, EventSeverity.ACTIONABLE
 
 
 _COMPARISON_ERROR_DEFAULT = (
@@ -808,11 +787,7 @@ _COMPARISON_ERROR_DEFAULT = (
 
 
 def _comparison_error_translation(message: str) -> tuple[str, str, EventSeverity]:
-    """Kies label, uitleg en ernst voor een ComparisonError op basis van de ruwe tekst.
-
-    Returns:
-        (resource-label, suggestie, ernst)
-    """
+    """Pick label, explanation and severity for a ComparisonError from the raw text."""
     if _UNSIGNED_COMMIT_RE.search(message):
         return _unsigned_commit_translation()
 
@@ -861,31 +836,25 @@ def _enrich_argocd_error(error: dict[str, str], project_data: dict[str, Any] | N
     return error
 
 
-# --- Componentfouten groeperen voor de voortgangspagina --------------------------------
-#
-# Zestien kapotte componenten leverden zestien losse meldingen op, elk met dezelfde
-# suggestie van ruim vierhonderd tekens eronder. Dat leest niet als zes problemen maar als
-# een muur, en juist het verband -- welke componenten hebben HETZELFDE probleem -- was
-# nergens te zien.
-#
-# Groeperen gebeurt op de vertaalde titel, niet op de rauwe message: twee componenten die
-# allebei hun image niet kunnen ophalen zijn voor de lezer één ding, ook al verschilt de
-# registry-tekst per image. De suggestie is per titel praktisch identiek (dezelfde raad,
-# een ander voorbeeld-image), dus daarvan blijft er één staan.
+# Grouping component failures for the progress page. Grouping goes by the TRANSLATED title
+# and not by the raw message: two components that both cannot fetch their image are one thing
+# to the reader, even though the registry text differs per image. The suggestion is
+# practically identical per title (the same advice, another example image), so one of those
+# is kept.
 
 
 def group_component_failures(failures: list[dict] | None) -> list[dict]:
-    """Vat een platte lijst componentfouten samen tot één groep per soort probleem.
+    """Summarise a flat list of component failures into one group per kind of problem.
 
-    Elke groep draagt de vertaalde titel, de ernst, de betrokken componenten (per
-    deployment) en één suggestie. De volgorde van binnenkomst blijft behouden, zodat de
-    lijst niet van run tot run wisselt.
+    Every group carries the translated title, the severity, the components involved (per
+    deployment) and ONE suggestion. The order of arrival is kept, so the list does not shift
+    from run to run.
 
     Returns:
-        Een lijst groepen met ``title``, ``severity``, ``failure_type``, ``suggestion``,
-        ``suggestion_is_example`` (waar als de leden verschillende suggesties hadden),
-        ``component_count``, ``deployments`` (lijst van ``{"name", "components"}``) en
-        ``members`` (de oorspronkelijke fouten, voor de logboeklinks per component).
+        A list of groups with ``title``, ``severity``, ``failure_type``, ``suggestion``,
+        ``suggestion_is_example`` (true when the members had different suggestions),
+        ``component_count``, ``deployments`` (a list of ``{"name", "components"}``) and
+        ``members`` (the original failures, for the per-component log links).
     """
     if not failures:
         return []
@@ -900,14 +869,13 @@ def group_component_failures(failures: list[dict] | None) -> list[dict]:
             group = {
                 "title": title,
                 "failure_type": failure_type,
-                # Een groep is zo ernstig als zijn ernstigste lid: één component waar de
-                # gebruiker iets aan moet doen maakt de hele groep actionable.
+                # A group is as severe as its severest member: one component the user has to
+                # act on makes the whole group actionable.
                 "severity": failure.get("severity") or EventSeverity.ACTIONABLE.value,
                 "suggestion": failure.get("suggestion") or "",
-                # De suggesties binnen een groep verschillen als ze een image noemen: elk
-                # component heeft zijn eigen image. Er wordt er EEN getoond -- twaalf keer
-                # dezelfde raad met een ander voorbeeld erin is de muur die we juist
-                # weghalen -- maar dan moet er wel bij staan dat het een voorbeeld is.
+                # The suggestions within a group differ when they name an image: every
+                # component has its own. ONE is shown, but then it has to say that it is an
+                # example.
                 "suggestions_seen": set(),
                 "deployments": {},
                 "members": [],

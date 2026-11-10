@@ -13,7 +13,7 @@ class MemberKind(StrEnum):
     carries the same roles and can hold the same tokens, but there is no human behind it. That
     difference counts for every reader that does something with a HUMAN (Keycloak, invitation,
     mail, OTP, the login list); those read
-    :func:`opi.services.project_leden.human_members` and not ``users`` itself.
+    :func:`opi.services.project_members.human_members` and not ``users`` itself.
     """
 
     PERSON = "person"

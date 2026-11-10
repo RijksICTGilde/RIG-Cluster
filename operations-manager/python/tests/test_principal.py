@@ -27,7 +27,7 @@ from opi.http.auth.principal import (
     tel_gebruik,
 )
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
 
@@ -41,7 +41,7 @@ TOKEN_VERLOPEN = "zad_verlopen"
 
 
 def _token(naam: str, waarde: str, *, dagen: int = 30) -> ProjectToken:
-    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=dagen), hash=hash_van(waarde))
+    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=dagen), hash=hash_of(waarde))
 
 
 def _project(naam: str = "bouwput") -> ProjectSummary:

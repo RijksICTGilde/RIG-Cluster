@@ -1,7 +1,7 @@
 """Measured size of the volumes and databases on the project map.
 
 Read from the metrics store with the same ``last_over_time(...[6h])`` window as the
-shared-services page (``opi/services/gedeelde_diensten.py``): a volume or database that was
+shared-services page (``opi/services/shared_services.py``): a volume or database that was
 not scraped in the last minutes still has its last known size. A failed or slow query
 yields no measurement; the map is drawn without it rather than not at all.
 """

@@ -1,4 +1,4 @@
-"""Where a user configures a service, in words, derived from the registry (RC-33).
+"""Where a user configures a service, in words, derived from the registry.
 
 Two questions look alike and are not the same:
 
@@ -12,11 +12,9 @@ it sits behind login) while its configuration is one realm for the whole project
 config lives at ``ConfigLayer.PROJECT``. Anything telling a user "where do I configure
 this" must read the layers, never the selection.
 
-The concrete gap this closes: on the project-wide services step a user ticks a service
-whose config lives only on the component layer, no configuration screen follows, and
-nothing explains why. ``project_step_config_hint`` produces that explanation, per service,
-from what the service itself declares -- so no template and no screen carries a service
-name.
+``project_step_config_hint`` explains, per service, why a ticked service shows no settings
+on the project-wide services step. It derives that from what the service declares, so no
+template and no screen carries a service name.
 """
 
 from __future__ import annotations
@@ -25,25 +23,18 @@ from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceType
 
-#: De niet-project-lagen, als KORTE aanduiding van waar de dienst wordt ingesteld.
+#: The non-project layers, as a SHORT phrase saying where the service is configured.
 #:
-#: Dit stond als hele zin ("Geen projectbrede instellingen; u stelt deze dienst per
-#: component, bij Componenten en per component binnen een deployment en per deployment
-#: in."). Op een dienstkaart is dat drie regels voor een mededeling die met twee woorden af
-#: kan, en zo is het ook teruggekomen.
+#: THE PHRASE NAMES THE DIMENSIONS, NOT THE LAYERS. There are only two things you configure
+#: something on, a component and a deployment, and the middle layer is the combination of
+#: those two, so it counts for both and duplicate phrases drop out:
 #:
-#: DE AANDUIDING NOEMT DE DIMENSIES, NIET DE LAGEN. Een dienst die op alle drie de lagen
-#: iets draagt gaf "per component en per component in een deployment en per deployment", en
-#: dat is nog steeds te lang. Er zijn maar twee dingen waarop je iets instelt - een
-#: component en een deployment - en de middelste laag is de combinatie van die twee. Hij
-#: telt daarom voor allebei mee, en dubbele aanduidingen vallen weg. Wat er uit komt:
-#:
-#:     alleen component                -> "per component"
+#:     component only                  -> "per component"
 #:     component + deployment          -> "per component per deployment"
 #:     component + component-in-deploy -> "per component per deployment"
 #:
-#: Geordend, zodat een dienst die op meer dan een laag configuratie draagt altijd dezelfde
-#: volgorde geeft.
+#: Ordered, so a service carrying config on more than one layer always gives the same
+#: order.
 _LAYER_PHRASES: dict[ConfigLayer, tuple[str, ...]] = {
     ConfigLayer.COMPONENT: ("per component",),
     ConfigLayer.DEPLOYMENT_COMPONENT: ("per component", "per deployment"),
@@ -77,14 +68,14 @@ def project_step_config_hint(service_type: ServiceType) -> str | None:
     if not layers:
         return None
 
-    aanduidingen: list[str] = []
+    phrases: list[str] = []
     for layer in _LAYER_PHRASES:
         if layer not in layers:
             continue
-        for aanduiding in _LAYER_PHRASES[layer]:
-            if aanduiding not in aanduidingen:
-                aanduidingen.append(aanduiding)
-    return " ".join(aanduidingen)
+        for phrase in _LAYER_PHRASES[layer]:
+            if phrase not in phrases:
+                phrases.append(phrase)
+    return " ".join(phrases)
 
 
 def config_hint_for_value(service_value: str) -> str | None:

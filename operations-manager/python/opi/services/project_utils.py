@@ -14,10 +14,10 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
-from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
+from opi.services.project_members import expiry_date, hash_of, new_token
 from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
-from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
+from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLES
 from opi.utils.age import (
     decrypt_password_smart_sync,
     encrypt_age_content,
@@ -409,7 +409,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
     # through the API. The wizard does not receive it, so there the account stays without a
     # token: a token nobody knows is a credential nobody can use and nobody cleans up. The
     # admin issues one on the Team tab.
-    token_hash = hash_van(api_token) if api_token else None
+    token_hash = hash_of(api_token) if api_token else None
 
     repo_password = encrypted_repository_password()
 
@@ -526,7 +526,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         for email, role_value in zip(project_data.user_email, project_data.user_roles, strict=False):
             if email and email.strip():
                 chosen = sorted(role.value for role in roles_from_value(role_value))
-                users.append({"email": email.strip(), "roles": chosen or list(PROJECT_API_ROLLEN)})
+                users.append({"email": email.strip(), "roles": chosen or list(PROJECT_API_ROLES)})
 
     # The service account carrying the API access of this project, with the roles of an
     # admin: it opens the whole write side.
@@ -534,12 +534,12 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         {
             "type": "service-account",
             "name": PROJECT_API_ACCOUNT,
-            "roles": list(PROJECT_API_ROLLEN),
+            "roles": list(PROJECT_API_ROLES),
             "tokens": (
                 [
                     {
                         "name": "eerste",
-                        "expires": vervaldatum(settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT).isoformat(),
+                        "expires": expiry_date(settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT).isoformat(),
                         "hash": token_hash,
                     }
                 ]
@@ -617,7 +617,7 @@ async def generate_base_project_file(
         components=None,
     )
 
-    token_value, _ = nieuw_token()
+    token_value, _ = new_token()
     yaml_content = await generate_self_service_project_yaml(project_data, api_token=token_value)
     project_dict = load_yaml_from_string(yaml_content)
     if not project_dict:
@@ -635,7 +635,7 @@ async def generate_base_project_file(
     # that matches nothing.
     summary = get_project_service().build_project_from_data(dict(project_dict), f"projects/{project_name}.yaml")
     hashes = {t.hash for member in (summary.users or []) for t in member.tokens} if summary else set()
-    if hash_van(token_value) not in hashes:
+    if hash_of(token_value) not in hashes:
         raise ProjectApiKeyError(
             f"Het eerste API-token voor '{project_name}' staat niet in het projectbestand; "
             f"het project is niet aangemaakt."

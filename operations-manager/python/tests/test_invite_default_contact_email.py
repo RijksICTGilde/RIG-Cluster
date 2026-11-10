@@ -1,7 +1,7 @@
 """``default_contact_email`` slaat een service account over.
 
 Sinds RC-322 draagt ``users`` ook service accounts, die geen postvak hebben. Zonder de
-filter uit ``opi.services.project_leden.menselijke_leden_uit_data`` zou de eerste rij in
+filter uit ``opi.services.project_members.human_members_from_data`` zou de eerste rij in
 de ledenlijst zomaar een service account kunnen zijn, en dan levert de default een adres
 op dat nergens aankomt.
 """

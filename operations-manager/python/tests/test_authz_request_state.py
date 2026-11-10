@@ -18,7 +18,7 @@ from opi.http.auth.authz import authorize
 from opi.http.auth.endpoint_util import handhaaf
 from opi.http.auth.principal import AccessDenied
 from opi.services.members import MemberKind
-from opi.services.project_leden import hash_van, vervaldatum
+from opi.services.project_members import expiry_date, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 TOKEN = "zad_beheerder"
@@ -36,7 +36,7 @@ def _project() -> ProjectSummary:
                 email=BEHEERDER,
                 role="admin",
                 type=MemberKind.PERSON,
-                tokens=[ProjectToken(name="t", hash=hash_van(TOKEN), expires=vervaldatum(30))],
+                tokens=[ProjectToken(name="t", hash=hash_of(TOKEN), expires=expiry_date(30))],
             ),
             ProjectUser(email=KIJKER, role="member", type=MemberKind.PERSON),
         ],

@@ -32,15 +32,15 @@ from opi.core.config import settings
 from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.http.render.lotc_switch import project_tab_url
 from opi.services.api_token_service import (
-    STANDAARD_ROLLEN,
-    TokenAanvraagGeweigerd,
-    geef_token_uit,
-    leden_overzicht,
-    roteer_token,
+    DEFAULT_ROLES,
+    TokenRequestRefusedError,
+    add_service_account,
+    issue_token,
+    members_overview,
+    remove_service_account,
+    revoke_token,
+    rotate_token,
     set_member_roles,
-    trek_token_in,
-    verwijder_service_account,
-    voeg_service_account_toe,
 )
 from opi.services.members import MemberKind
 from opi.services.step_up import StepUpAction
@@ -134,7 +134,7 @@ def _dagen(velden: dict[str, str]) -> int:
     try:
         return int(velden.get("dagen") or "0")
     except ValueError as exc:
-        raise TokenAanvraagGeweigerd("Vul een aantal dagen in.") from exc
+        raise TokenRequestRefusedError("Vul een aantal dagen in.") from exc
 
 
 @token_web_router.post("/{project_name}/leden/toevoegen")
@@ -145,13 +145,13 @@ async def voeg_service_account_toe_web(request: Request, project_name: str) -> R
     """Zet een service account in de leden van dit project."""
     velden = await _velden(request)
     try:
-        await voeg_service_account_toe(
+        await add_service_account(
             project_name=project_name,
-            naam=velden.get("naam", ""),
-            rollen=_rollen_uit(velden) or list(STANDAARD_ROLLEN),
-            door=_email(request),
+            name=velden.get("naam", ""),
+            roles=_rollen_uit(velden) or list(DEFAULT_ROLES),
+            by=_email(request),
         )
-    except TokenAanvraagGeweigerd as exc:
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
     return _terug(request, project_name)
 
@@ -163,8 +163,8 @@ async def voeg_service_account_toe_web(request: Request, project_name: str) -> R
 async def verwijder_service_account_web(request: Request, project_name: str, naam: str) -> Response:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     try:
-        await verwijder_service_account(project_name=project_name, naam=naam, door=_email(request))
-    except TokenAanvraagGeweigerd as exc:
+        await remove_service_account(project_name=project_name, name=naam, by=_email(request))
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
     return _terug(request, project_name)
 
@@ -177,8 +177,8 @@ async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Resp
     """Geef een lid andere rollen. Zijn bestaande tokens volgen die rollen meteen."""
     velden = await _velden(request)
     try:
-        await set_member_roles(project_name=project_name, naam=naam, rollen=_rollen_uit(velden), door=_email(request))
-    except TokenAanvraagGeweigerd as exc:
+        await set_member_roles(project_name=project_name, name=naam, roles=_rollen_uit(velden), by=_email(request))
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
     return _terug(request, project_name)
 
@@ -191,14 +191,14 @@ async def maak_token_web(request: Request, project_name: str, naam: str) -> Resp
     """Geef een token uit aan dit lid. De waarde is daarna een keer te zien."""
     velden = await _velden(request)
     try:
-        waarde = await geef_token_uit(
+        waarde = await issue_token(
             project_name=project_name,
-            naam=naam,
-            tokennaam=velden.get("tokennaam", ""),
-            dagen=_dagen(velden),
-            door=_email(request),
+            name=naam,
+            token_name=velden.get("tokennaam", ""),
+            days=_dagen(velden),
+            by=_email(request),
         )
-    except TokenAanvraagGeweigerd as exc:
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
         return _terug(request, project_name)
 
@@ -214,14 +214,14 @@ async def roteer_token_web(request: Request, project_name: str, naam: str, token
     """Trek dit token in en geef er een nieuw uit onder dezelfde naam."""
     velden = await _velden(request)
     try:
-        waarde = await roteer_token(
+        waarde = await rotate_token(
             project_name=project_name,
-            naam=naam,
-            tokennaam=tokennaam,
-            dagen=_dagen(velden),
-            door=_email(request),
+            name=naam,
+            token_name=tokennaam,
+            days=_dagen(velden),
+            by=_email(request),
         )
-    except TokenAanvraagGeweigerd as exc:
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
         return _terug(request, project_name)
 
@@ -236,8 +236,8 @@ async def roteer_token_web(request: Request, project_name: str, naam: str, token
 async def trek_token_in_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     try:
-        await trek_token_in(project_name=project_name, naam=naam, tokennaam=tokennaam, door=_email(request))
-    except TokenAanvraagGeweigerd as exc:
+        await revoke_token(project_name=project_name, name=naam, token_name=tokennaam, by=_email(request))
+    except TokenRequestRefusedError as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
     return _terug(request, project_name)
 
@@ -248,7 +248,7 @@ def tokencontext(request: Request, project_name: str, user_email: str, is_beheer
     Leest alleen uit het projectbestand, dus er is geen database bij en geen tak voor een
     database die niet meebeweegt.
     """
-    leden = leden_overzicht(project_name)
+    leden = members_overview(project_name)
     for lid in leden:
         lid["is_service_account"] = lid["soort"] == MemberKind.SERVICE_ACCOUNT.value
         lid["is_current_user"] = lid["naam"].lower() == user_email
@@ -267,7 +267,7 @@ def tokencontext(request: Request, project_name: str, user_email: str, is_beheer
         # Label en omschrijving uit het register (B13): een andere naam op het scherm
         # is dan een wijziging op een plek, en geen migratie van projectbestanden.
         "rollen": [{"sleutel": rol.value, "label": role_label(rol), "uitleg": ROLE_DESCRIPTIONS[rol]} for rol in Role],
-        "standaard_rollen": list(STANDAARD_ROLLEN),
+        "standaard_rollen": list(DEFAULT_ROLES),
         "is_project_beheerder": is_beheerder,
         "token_max_dagen_persoonlijk": settings.TOKEN_MAX_DAGEN_PERSOONLIJK,
         "token_max_dagen_service_account": settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT,
