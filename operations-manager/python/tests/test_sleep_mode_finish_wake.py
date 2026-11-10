@@ -388,3 +388,88 @@ async def test_de_sweeper_vraagt_de_gereedheid_via_flow(monkeypatch: pytest.Monk
     gevraagd.assert_awaited_once()
     assert sleep_state.read(data, DEPLOYMENT).state == "awake"
     assert len(omgeving.commits) == 1
+
+
+# --- 8. De sweeper reprocessed alleen wat hij aanraakt ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_de_sweep_reprocessed_alleen_de_aangeraakte_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De sweep kent zijn aangeraakte deployments al (``applied``) en geeft die door aan
+    de reprocess. Scope hij dat niet, dan hangt elke sweep aan de Synced+Healthy-wacht van
+    álle apps van het project -- zo faalde nachts elke sweep van pocpl-0g8 op de 300s-
+    time-out van een verder onaangeroerd deployment (productie, 10-11-2026).
+    """
+    from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
+
+    waking = {"state": "waking", "expires-at": (datetime.now(UTC) + timedelta(minutes=9)).isoformat()}
+    data = _project_data(None)
+    data["deployments"] = [
+        {
+            "name": DEPLOYMENT,
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": waking,
+        },
+        {
+            "name": "pr-690",
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": {"state": "awake"},
+        },
+    ]
+    omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
+    monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
+
+    gewijzigd = await SleepModeScheduler(CLUSTER)._apply(
+        PROJECT, f"{PROJECT}.yaml", [(DEPLOYMENT, CHECK_AWAKE)], datetime.now(UTC)
+    )
+
+    assert gewijzigd is True
+    call = omgeving.reprocess.await_args
+    assert call.kwargs["deployment_names"] == [DEPLOYMENT], "pr-690 hoort niet in deze sweep"
+
+
+@pytest.mark.asyncio
+async def test_een_sweep_die_twee_deployments_raakt_scope_twee_namen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De pacing-troef van de sweep (één commit per project) blijft: één run, alle namen."""
+    from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
+
+    waking = {"state": "waking", "expires-at": (datetime.now(UTC) + timedelta(minutes=9)).isoformat()}
+    data = _project_data(None)
+    data["deployments"] = [
+        {
+            "name": DEPLOYMENT,
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": waking,
+        },
+        {
+            "name": "pr-690",
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": {"state": "waking", "expires-at": waking["expires-at"]},
+        },
+    ]
+    omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
+    monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
+
+    gewijzigd = await SleepModeScheduler(CLUSTER)._apply(
+        PROJECT,
+        f"{PROJECT}.yaml",
+        [(DEPLOYMENT, CHECK_AWAKE), ("pr-690", CHECK_AWAKE)],
+        datetime.now(UTC),
+    )
+
+    assert gewijzigd is True
+    assert len(omgeving.commits) == 1, "nog steeds één commit per project"
+    call = omgeving.reprocess.await_args
+    assert call.kwargs["deployment_names"] == [DEPLOYMENT, "pr-690"]
