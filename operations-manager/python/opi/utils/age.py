@@ -10,6 +10,7 @@ import base64
 import binascii
 import contextlib
 import logging
+import re
 from typing import Any, cast
 
 import pyrage
@@ -25,6 +26,14 @@ class AgeDecryptionError(ValueError):
     A ``ValueError``, so a caller that only distinguishes "unusable value" catches it with
     everything else this module refuses; a type of its own for a caller that treats "this
     key does not open it" as a normal outcome.
+    """
+
+
+class AgeEncryptionError(ValueError):
+    """A value that has to be stored encrypted could not be encrypted.
+
+    Raised instead of writing the plain value down, so the save that triggered it stops. The
+    message names the field, never the value.
     """
 
 
@@ -81,11 +90,17 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
 
 
 async def encrypt_to_base64_age(plain_content: str, public_key: str | None) -> str:
+    """The async side of :func:`encrypt_to_base64_age_sync`."""
+    return encrypt_to_base64_age_sync(plain_content, public_key)
+
+
+def encrypt_to_base64_age_sync(plain_content: str, public_key: str | None) -> str:
     """Encrypt to the one-line ``base64+age:`` form.
 
-    That form fits where a single-line value is expected, such as a ``KEY=value`` env line.
+    That form fits where a single-line value is expected, such as a ``KEY=value`` env line
+    or a password in a project file.
     """
-    encrypted_content = await encrypt_age_content(plain_content, public_key)
+    encrypted_content = encrypt_age_content_sync(plain_content, public_key)
     return f"{BASE64_AGE_PREFIX}{base64.b64encode(encrypted_content.encode()).decode()}"
 
 
@@ -155,15 +170,18 @@ async def decrypt_age_block_to_bytes(age_block: str, private_key: str) -> bytes:
     return decrypt_age_block_to_bytes_sync(age_block, private_key)
 
 
+#: The markers around the armored form.
+AGE_BLOCK_BEGIN = "-----BEGIN AGE ENCRYPTED FILE-----"
+AGE_BLOCK_END = "-----END AGE ENCRYPTED FILE-----"
+
+
 def is_age_encrypted(content: str) -> bool:
     """Whether the content carries the armored AGE markers."""
     if not content:
         return False
 
     content = content.strip()
-    return content.startswith("-----BEGIN AGE ENCRYPTED FILE-----") and content.endswith(
-        "-----END AGE ENCRYPTED FILE-----"
-    )
+    return content.startswith(AGE_BLOCK_BEGIN) and content.endswith(AGE_BLOCK_END)
 
 
 #: Prefix of the single-line encrypted form. Deliberately a plain string in the YAML (it
@@ -171,6 +189,15 @@ def is_age_encrypted(content: str) -> bool:
 #: because that function answers "can I hand this to age --decrypt", which this form
 #: cannot without being decoded first.
 BASE64_AGE_PREFIX = "base64+age:"
+
+#: The two stored forms as one regex, for a pydantic field or a JSON schema. Also what
+#: ``find_plaintext_service_config_violations`` recognises a secret field BY, so a field that
+#: must hold a secret carries this pattern and nothing looser.
+AGE_ENCRYPTED_PATTERN = rf"({AGE_BLOCK_BEGIN}|^{re.escape(BASE64_AGE_PREFIX)})"
+
+#: Prefix that marks a value as deliberately NOT encrypted. A project file may no longer
+#: carry one (schema version 2.18); a setting still may, because the env secret is a SOPS file.
+PLAIN_PREFIX = "plain:"
 
 
 def carries_encrypted_value(value: object) -> bool:
@@ -192,6 +219,16 @@ def carries_encrypted_value(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
     return is_age_encrypted(value) or value.strip().startswith(BASE64_AGE_PREFIX)
+
+
+def has_encrypted_marker(value: object) -> bool:
+    """Whether an encryption marker appears anywhere in *value*.
+
+    The counterpart of :func:`carries_encrypted_value` for the in-between: a value that
+    mentions a marker without BEING an encrypted value is read as plain text by every
+    reader, and written down as it is. Refuse it rather than guess which half was meant.
+    """
+    return isinstance(value, str) and (AGE_BLOCK_BEGIN in value or BASE64_AGE_PREFIX in value)
 
 
 def parse_password_with_prefix(password: str) -> tuple[str, str]:
@@ -216,8 +253,8 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
     elif password.startswith("base64+age:"):
         content = password[11:]
         return ("base64+age", content) if content else ("plain", password)
-    elif password.startswith("plain:"):
-        return "plain", password[6:]
+    elif password.startswith(PLAIN_PREFIX):
+        return "plain", password[len(PLAIN_PREFIX) :]
 
     if is_age_encrypted(password):
         return "age", password

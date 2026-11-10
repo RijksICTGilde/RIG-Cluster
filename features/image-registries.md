@@ -492,7 +492,7 @@ poort, of `localhost`), eventueel een pad, kleine letters, geen protocol en geen
 digest. Allebei de waarden die de vloot werkelijk heeft (`ghcr.io` en `rcr.rijksapps.nl/rig`)
 komen er nog door.
 
-**`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_OR_PLAIN_PATTERN`). Dat is niet alleen
+**`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_PATTERN` in `opi/utils/age.py`). Dat is niet alleen
 een vormregel: `find_plaintext_secret_violations` herkent een AGE-veld AAN dat patroon, en
 `ProjectStore._validate` draait die controle op ELKE schrijfroute, ook op de elf plekken
 met `enforce_validation=False`, waar de rest van de validatie alleen wordt gelogd. De reden
@@ -510,12 +510,12 @@ als iemand de tweede helft eruit haalt. Ook hier is de detectie AFGELEID van het
 schema (een `pattern` met de AGE-markering) en niet van een handgeschreven veldenlijst, dus
 een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zegt.
 
-### Drie opslagvormen, een lezer
+### Twee opslagvormen, een lezer
 
-Datzelfde patroon laat het token in drie vormen toe: het armored AGE-blok, de eenregelige
-`base64+age:`-vorm en een expliciet als platte tekst gemarkeerde `plain:`-waarde. Dat is
-geen randgeval maar de huisvorm van een projectbestand: de repository-password, de
-api-key en de projectsleutel dragen allemaal de eenregelige vorm.
+Datzelfde patroon laat het token in twee vormen toe: het armored AGE-blok en de eenregelige
+`base64+age:`-vorm. Dat laatste is geen randgeval maar de huisvorm van een projectbestand:
+de repository-password, de api-key en de projectsleutel dragen allemaal de eenregelige vorm.
+Een derde vorm, de expliciet als platte tekst gemarkeerde `plain:`-waarde, mocht hier tot RC-463. De LEESkant kent hem nog, voor een bestand dat nog niet gemigreerd is.
 
 Wie de waarde uitleest moet ze dus alle drie kennen. Toetsen op alleen de armored markering
 zet de andere twee LETTERLIJK in de `.dockerconfigjson` (of in het

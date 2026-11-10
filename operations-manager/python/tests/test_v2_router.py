@@ -334,12 +334,23 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             headers={"X-API-Key": API_KEY},
             json={
                 "template": "sso-only",
-                "realms": [{"host": "http://elders", "realm": "x", "username": "u", "password": "p"}],
+                # A shape-valid password, so the refusal is the platform-owned one and not
+                # the pattern on the field (schema version 2.18).
+                "realms": [
+                    {
+                        "host": "http://elders",
+                        "realm": "x",
+                        "username": "u",
+                        "password": "base64+age:Y2lwaGVydGV4dA==",
+                    }
+                ],
             },
         )
 
         assert response.status_code == 422
-        assert "realms" in response.json()["detail"]
+        # The platform-owned refusal, not the pattern on the field: the password above is
+        # shape-valid on purpose.
+        assert "'realms'" in response.json()["detail"]
         mock_task_service.create_task.assert_not_called()
 
     def test_an_empty_realms_list_is_refused_too(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:

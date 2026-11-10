@@ -1,0 +1,47 @@
+{
+  "$comment": "v2.17 -> 2.18 (RC-463) versmalde vijf geheime velden van 'AGE-versleuteld of plain:' naar alleen AGE-versleuteld: het wachtwoord van een repository, het chisel-wachtwoord van een remote-source, en het wachtwoord, de access-key en de secret-key van een remote-source-service. Een 2.17-bestand mag die velden nog met het 'plain:'-voorvoegsel dragen; de migratie versleutelt ze.",
+  "$defs": {
+    "age-encrypted-or-plain": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/age-encrypted"
+        },
+        {
+          "type": "string",
+          "pattern": "^plain:"
+        }
+      ]
+    },
+    "repository": {
+      "properties": {
+        "password": {
+          "$ref": "#/$defs/age-encrypted-or-plain"
+        }
+      }
+    },
+    "remote-source": {
+      "properties": {
+        "chisel": {
+          "properties": {
+            "password": {
+              "$ref": "#/$defs/age-encrypted-or-plain"
+            }
+          }
+        }
+      }
+    },
+    "remote-source-service": {
+      "properties": {
+        "password": {
+          "$ref": "#/$defs/age-encrypted-or-plain"
+        },
+        "access-key": {
+          "$ref": "#/$defs/age-encrypted-or-plain"
+        },
+        "secret-key": {
+          "$ref": "#/$defs/age-encrypted-or-plain"
+        }
+      }
+    }
+  }
+}

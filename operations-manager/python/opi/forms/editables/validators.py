@@ -7,6 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
 from opi.services.catalog.config_settings import ConfigSetting, SettingError
+from opi.utils.age import carries_encrypted_value
 from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
 from opi.utils.naming import CONTAINER_IMAGE_PATTERN, SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
 from opi.utils.redirect_uris import REDIRECT_URI_MESSAGE, validate_redirect_uri
@@ -444,12 +445,17 @@ class KeyValueValidator:
     Delegates to ``validate_and_parse_env_vars`` which is the same parser
     used at deploy time, so validation here matches what will actually be
     accepted.
+
+    An already encrypted value is not judged, the same rule ``AliasMapValidator`` follows:
+    the wizard validates its STORED state at submit, and that state carries ciphertext.
     """
 
     def validate(self, value: Any) -> list[str]:
         if not value or (isinstance(value, str) and not value.strip()):
             return []
         if not isinstance(value, str):
+            return []
+        if carries_encrypted_value(value):
             return []
         try:
             from opi.utils.env_vars import validate_and_parse_env_vars

@@ -106,7 +106,7 @@ BLOKKEN: dict[str, dict[str, Any]] = {
                         "host": "https://kc.example",
                         "realm": "voorbeeld-realm",
                         "username": "voorbeeld_admin",
-                        "password": "VOORBEELDWAARDE-geen-echt-geheim",
+                        "password": "base64+age:Vk9PUkJFRUxEV0FBUkRFLWdlZW4tZWNodC1nZWhlaW0=",
                         "has_totp": True,
                         "totp_code": "123456",
                     }

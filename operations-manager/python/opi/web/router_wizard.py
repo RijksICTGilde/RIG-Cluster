@@ -479,9 +479,9 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         state.populate_virt_mappings(flow.sections)
 
         # Seed template data (repositories, base config) as the lowest-priority layer
-        from opi.forms.editables.template import load_project_template
+        from opi.forms.editables.template import build_new_project_base_data
 
-        state.base_data = load_project_template()
+        state.base_data = build_new_project_base_data()
 
         # Seed the team step with the current user as the first member
         user_email = (user or {}).get("email", "")

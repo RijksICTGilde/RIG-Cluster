@@ -14,6 +14,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationIn
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.age import AGE_ENCRYPTED_PATTERN
 
 #: A host name with an optional path, lowercase, without protocol and without tag. Also a
 #: safety guard, see features/image-registries.md.
@@ -33,12 +34,6 @@ UPSTREAM_MESSAGE = (
     "Vul de registry in als hostnaam met eventueel een pad, in kleine letters, zonder "
     "protocol en zonder tag, bijvoorbeeld code.overheid.nl/jouw-naam"
 )
-
-#: AGE encrypted, or explicitly marked as plain text with ``plain:``. Not only a shape rule:
-#: ``find_plaintext_service_config_violations`` recognises an AGE field BY this pattern and
-#: refuses plain text even without ``enforce_validation``.
-AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+age:|^plain:)"
-
 
 #: The key of the quota on a registry, shared by the model and its approval.
 QUOTA_FIELD = "quota-gib"
@@ -126,7 +121,7 @@ class RegistryEntry(BaseModel):
     )
     password: str | None = Field(
         default=None,
-        pattern=AGE_ENCRYPTED_OR_PLAIN_PATTERN,
+        pattern=AGE_ENCRYPTED_PATTERN,
         description="Het token dat leesrecht op de packages geeft, AGE-versleuteld opgeslagen.",
     )
     secret_name: str | None = Field(

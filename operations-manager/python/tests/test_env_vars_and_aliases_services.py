@@ -292,11 +292,12 @@ class TestTheConverterNeverLogsAValue:
             KeyValueConverter(fmt="env").read({"API_KEY": "s3cr3t-value"})
         assert "s3cr3t-value" not in caplog.text
 
-    def test_write_logs_neither_input_nor_result(self, caplog) -> None:
+    def test_write_logs_neither_input_nor_result(self, caplog, age_keypair: tuple[str, str]) -> None:
         from opi.forms.editables.converters import KeyValueConverter
 
+        project = {"config": {"age-public-key": age_keypair[1]}}
         with caplog.at_level("DEBUG", logger="opi.forms.editables.converters"):
-            KeyValueConverter(fmt="env", write_as="string").write("API_KEY=s3cr3t-value")
+            KeyValueConverter(fmt="env", write_as="string").write("API_KEY=s3cr3t-value", context_data=project)
         assert "s3cr3t-value" not in caplog.text
 
 

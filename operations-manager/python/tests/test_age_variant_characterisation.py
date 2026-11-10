@@ -19,6 +19,7 @@ from opi.services.catalog.image_registries.converters import ProjectAgeSecretCon
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.age import (
     AgeDecryptionError,
+    AgeEncryptionError,
     carries_encrypted_value,
     decrypt_age_block_to_bytes,
     decrypt_age_content_sync,
@@ -191,8 +192,12 @@ class TestHandlerDecryptWrapper:
             handler._decrypt_with_private_key("whatever", None)
 
 
-class TestFailOpenConverters:
-    """Deliberately kept (RC-453): making these fail-closed is a security decision of its own."""
+class TestConvertersRefuseWithoutAProjectKey:
+    """RC-463: a converter that cannot encrypt refuses, instead of writing the value down.
+
+    The READ side still fails open: a value this key cannot open is shown as stored, so a
+    save does not replace a secret it never managed to read.
+    """
 
     def test_key_value_converter_keeps_ciphertext_it_cannot_open(self, kek: str) -> None:
         block = encrypt_age_content_sync("FOO=bar", OTHER_PUBLIC_KEY)
@@ -207,13 +212,24 @@ class TestFailOpenConverters:
         block = encrypt_age_content_sync("FOO=bar", OTHER_PUBLIC_KEY)
         data = _project_data()
         shown = KeyValueConverter._maybe_decrypt(block, data)
-        assert KeyValueConverter._maybe_encrypt(shown, data) == block
+        assert KeyValueConverter._encrypt(shown, data) == block
 
-    def test_key_value_converter_writes_plaintext_without_a_public_key(self) -> None:
-        assert KeyValueConverter._maybe_encrypt("FOO=bar", {"config": {}}) == "FOO=bar"
+    def test_key_value_converter_refuses_without_a_public_key(self) -> None:
+        with pytest.raises(AgeEncryptionError):
+            KeyValueConverter._encrypt("FOO=bar", {"config": {}})
 
-    def test_registry_converter_writes_plaintext_without_a_public_key(self) -> None:
-        assert ProjectAgeSecretConverter().write("ghp_token", {"config": {}}) == "ghp_token"
+    def test_registry_converter_refuses_without_a_public_key(self) -> None:
+        with pytest.raises(AgeEncryptionError):
+            ProjectAgeSecretConverter().write("ghp_token", {"config": {}})
+
+
+class TestFailOpenComponentConfig:
+    """Deliberately kept (RC-453): the API builder stores less rather than refusing.
+
+    Unlike the converters above this is not a form path: ``build_component_config`` is
+    called with the key it was handed, and the schema gate downstream refuses what would
+    be plain text in the project file.
+    """
 
     @pytest.mark.asyncio
     async def test_aliases_stay_a_plain_mapping_without_a_public_key(self) -> None:

@@ -24,6 +24,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.age import AGE_ENCRYPTED_PATTERN
 from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.url_paths import normalize_logout_path
 
@@ -137,8 +138,7 @@ class KeycloakRealm(BaseModel):
     """Per-realm admin connection (OPI-managed, one per cluster).
 
     Matched by ``realm`` (deterministic ``{project}-{cluster}``). ``extra="allow"`` tolerates
-    fields written over time (e.g. ``service_client_secret``); password is stored
-    AGE-encrypted or ``plain:``-prefixed, so it's just a string here.
+    fields written over time (e.g. ``service_client_secret``).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -146,7 +146,10 @@ class KeycloakRealm(BaseModel):
     host: str = Field(description="Keycloak base URL this realm lives on. Written by the platform.")
     realm: str = Field(description="Realm name, {project}-{cluster}. Written by the platform.")
     username: str = Field(description="Realm-admin account the platform manages the realm with.")
-    password: str = Field(description="That account's password, AGE-encrypted or 'plain:'-prefixed.")
+    password: str = Field(
+        pattern=AGE_ENCRYPTED_PATTERN,
+        description="That account's password, AGE-encrypted.",
+    )
     totp_secret: str | None = Field(
         default=None,
         description=(

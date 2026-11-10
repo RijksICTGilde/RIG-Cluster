@@ -257,6 +257,18 @@ class TestEverythingOnTheNewKey:
 
         assert decrypt_age_content_sync(registries[0]["password"], new_private) == SANDBOX_PLACEHOLDER
 
+    def test_the_repository_password_is_not_flagged_as_unreadable(
+        self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Step 7 already replaces this field on the cluster key (``AGE_FIELD_HANDLING``), so
+        the safety net in ``replace_remaining_secrets`` must not flag it as unreadable too.
+        Once the password itself became an AGE value (RC-463) it fell into the generic scan,
+        with a "check this value" that had nothing to check."""
+        with caplog.at_level("WARNING"):
+            migrate_project(production_project, keys.prod_private, keys.sandbox_public)
+
+        assert "repositories" not in caplog.text
+
 
 class TestRekeyAliasesUnreadable:
     """Een alias die met geen van beide projectsleutels opent: blijft staan, wordt gemeld."""

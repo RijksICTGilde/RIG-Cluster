@@ -32,8 +32,13 @@ from pydantic import ValidationError
 
 CLUSTER_DEFAULT = 10
 
+#: Since schema version 2.18 the token field only takes an encrypted form.
+ENCRYPTED_TOKEN = "base64+age:dG9rZW4="
+
 
 def _registry(name: str, quota: int | None = None) -> dict[str, Any]:
+    # A readable token: the render tests below DECRYPT it, and the question here is the
+    # quota. ``TestModel`` judges the stored form and sets it itself.
     registry: dict[str, Any] = {"name": name, "upstream": f"ghcr.io/{name}", "password": "plain:token"}
     if quota is not None:
         registry["quota-gib"] = quota
@@ -79,16 +84,21 @@ def _quota(project: dict[str, Any], name: str = "nldd") -> int:
 
 
 class TestModel:
+    @staticmethod
+    def _entry(name: str, quota: int | None = None) -> dict[str, Any]:
+        """The stored shape: a token in a project file is encrypted (schema version 2.18)."""
+        return {**_registry(name, quota), "password": ENCRYPTED_TOKEN}
+
     def test_accepts_a_quota_within_bounds(self) -> None:
-        assert RegistryEntry.model_validate(_registry("nldd", QUOTA_MAX_GIB)).quota_gib == QUOTA_MAX_GIB
+        assert RegistryEntry.model_validate(self._entry("nldd", QUOTA_MAX_GIB)).quota_gib == QUOTA_MAX_GIB
 
     @pytest.mark.parametrize("quota", [0, QUOTA_MAX_GIB + 1])
     def test_refuses_a_quota_out_of_bounds(self, quota: int) -> None:
         with pytest.raises(ValidationError):
-            RegistryEntry.model_validate(_registry("nldd", quota))
+            RegistryEntry.model_validate(self._entry("nldd", quota))
 
     def test_without_the_field_it_is_unset(self) -> None:
-        assert RegistryEntry.model_validate(_registry("nldd")).quota_gib is None
+        assert RegistryEntry.model_validate(self._entry("nldd")).quota_gib is None
 
 
 class TestEffectiveQuota:

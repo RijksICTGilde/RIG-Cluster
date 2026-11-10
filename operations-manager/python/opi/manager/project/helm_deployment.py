@@ -33,6 +33,7 @@ from opi.utils.age import (
     carries_encrypted_value,
     decrypt_password_smart,
     get_project_public_key,
+    has_encrypted_marker,
     project_private_key_or_none,
 )
 from opi.utils.fs_paths import reject_escaping_symlinks, safe_join, single_segment
@@ -744,6 +745,14 @@ class HelmDeployment:
                             )
                         plain_value = await decrypt_password_smart(value, env_private_key)
                     else:
+                        if has_encrypted_marker(value):
+                            # Neither encrypted nor plain: on one line with a literal \n it
+                            # passes the schema and cmp_env_rejection, and would reach the
+                            # CMP as readable text.
+                            raise ValueError(
+                                f"Helmfile deployment {deployment_name} has env var '{key}' that holds an "
+                                f"AGE marker without being an encrypted value; encrypt the whole value"
+                            )
                         plain_value = str(value)
 
                     # The plugin reads the env vars as KEY=value lines and refuses the same.

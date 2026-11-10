@@ -310,3 +310,54 @@ async def test_een_ongewijzigde_waarde_levert_geen_nieuwe_cijfertekst_op(tmp_pat
     ontsleuteld = decrypt_sops_with_key(str(gewijzigd), private_key)
     assert ontsleuteld is not None
     assert YAML(typ="safe").load(ontsleuteld) == {"ENVIRONMENT": "acceptatie"}
+
+
+#: An AGE block written on one line with LITERAL backslash-n, which is what a paste through a
+#: single-line form leaves behind. It passes the schema (no real newline) and
+#: ``cmp_env_rejection``, so without the guard below it reached the CMP readable.
+ONE_LINE_BLOCK = r"-----BEGIN AGE ENCRYPTED FILE-----\nZW5l\n-----END AGE ENCRYPTED FILE-----"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        f"zie dit: {ONE_LINE_BLOCK}",
+        f"zie dit: {AGE_BLOCK_1}",
+        "base64+age staat hier: base64+age:ZW5l",
+    ],
+    ids=["one-line-with-literal-newlines", "text-before-a-real-block", "prefix-inside-the-text"],
+)
+async def test_a_marker_in_the_middle_of_the_text_is_refused(tmp_path: Path, value: str) -> None:
+    """Neither encrypted nor plain: every reader takes it for plain text and writes it down."""
+    manager = _manager()
+    _wire(manager)
+
+    with pytest.raises(ValueError, match=r"production.*'GEHEIM'.*AGE marker"):
+        await _process(manager, _deployment({"GEHEIM": value}), tmp_path)
+
+    assert not (tmp_path / CMP_ENV_TO_SOPS).exists()
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_does_not_repeat_the_value(tmp_path: Path) -> None:
+    manager = _manager()
+    _wire(manager)
+    value = f"token-dat-nergens-anders-staat {ONE_LINE_BLOCK}"
+
+    with pytest.raises(ValueError, match=r"AGE marker") as refusal:
+        await _process(manager, _deployment({"GEHEIM": value}), tmp_path)
+
+    assert "token-dat-nergens-anders-staat" not in str(refusal.value)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_block_and_a_prefixed_value_still_work(tmp_path: Path) -> None:
+    manager = _manager()
+    _wire(manager)
+
+    deployment = _deployment({"BLOK": AGE_BLOCK_1, "PREFIX": "base64+age:ZW5l"})
+    with patch(f"{_HELM}.decrypt_password_smart", AsyncMock(side_effect=lambda content, key: "open")):
+        await _process(manager, deployment, tmp_path)
+
+    assert _env_vars_op_schijf(tmp_path) == {"BLOK": "open", "PREFIX": "open"}

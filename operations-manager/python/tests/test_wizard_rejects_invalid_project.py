@@ -304,16 +304,20 @@ def _project_with_a_payload_in_an_image(payload: str) -> dict[str, Any]:
     return data
 
 
-def test_the_reason_never_repeats_the_rejected_value() -> None:
-    """jsonschema quotes the instance; the reason must be built from the schema only."""
+def test_neither_the_reason_nor_the_message_repeats_the_rejected_value() -> None:
+    """jsonschema quotes the instance; both are built from the schema only.
+
+    The reason was the value-free half from the start; since RC-463 the message itself is
+    built from the field path and that reason, so no caller can leak the value by logging
+    or showing ``str(exc)``.
+    """
     with pytest.raises(ProjectSchemaError) as exc:
         _validate_finished_project(_project_with_a_payload_in_an_image("geheim abc"), project_name="nep-wfo")
 
     assert exc.value.field_path == "deployments/0/components/0/image"
     assert exc.value.reason is not None
     assert "geheim abc" not in exc.value.reason
-    # The raw message still quotes it -- which is exactly why callers use the reason.
-    assert "geheim abc" in str(exc.value)
+    assert "geheim abc" not in str(exc.value)
 
 
 def test_the_logged_warning_does_not_leak_the_value(caplog: pytest.LogCaptureFixture) -> None:

@@ -441,20 +441,24 @@ def test_repository_url_normal_values_are_accepted() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: Since schema version 2.18 a secret field in a project file only takes an encrypted form.
+ENCRYPTED_SECRET = "base64+age:Y2lwaGVydGV4dA=="
+
+
 def _remote_source(**overrides: object) -> dict:
     source: dict = {
         "name": "odcn-production",
         "chisel": {
             "server-url": "https://chisel-server.prd.example.com",
             "username": "admin",
-            "password": "plain:secret",
+            "password": ENCRYPTED_SECRET,
         },
         "services": {
             "postgresql-database": {
                 "host": "amt-cluster-db-r",
                 "port": 5432,
                 "username": "tad",
-                "password": "plain:secret",
+                "password": ENCRYPTED_SECRET,
                 "database": "tad",
                 "schema": "public",
             }

@@ -82,7 +82,9 @@ AGE_ENTRY = {"name": "versleuteld", "upstream": "ghcr.io", "username": "u", "pas
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
-CREDS = {"username": "u", "password": "plain:een-token"}
+#: A token in its encrypted stored form. Since schema version 2.18 a project file may not
+#: carry ``plain:``, and these tests are about something other than the token.
+CREDS = {"username": "u", "password": "base64+age:ZWVuLXRva2Vu"}
 
 #: De andere manier om te pullen: een secret dat het platform zelf neerzet.
 SECRET = {"secretName": "rig-robot-pull-secret"}
@@ -221,7 +223,18 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
                     "services": [
                         {
                             "name": "image-registries",
-                            "config": {"registries": [{"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM, **CREDS}]},
+                            # A readable token: this render DECRYPTS it, and the question
+                            # here is the upstream, not the stored form.
+                            "config": {
+                                "registries": [
+                                    {
+                                        "name": "eigen",
+                                        "upstream": YAML_INJECTIE_UPSTREAM,
+                                        "username": "u",
+                                        "password": "plain:een-token",
+                                    }
+                                ]
+                            },
                         }
                     ],
                 },
@@ -632,7 +645,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         een entry met alleen een token is sinds RC-187 juist geldig.
         """
         with pytest.raises(ProjectIntegrityError) as excinfo:
-            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, "password": "plain:ghp_GEHEIM"}))
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, "password": "base64+age:ghp_GEHEIM"}))
         assert "ghp_GEHEIM" not in str(excinfo.value)
 
     @pytest.mark.asyncio
@@ -641,7 +654,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         submitted, errors = await EditableFormProcessor().process_json_submission(
-            _inzending({"name": "eigen", "upstream": "ghcr.io/team", "username": "", "password": "plain:een-token"}),
+            _inzending({"name": "eigen", "upstream": "ghcr.io/team", "username": "", "password": CREDS["password"]}),
             section.editables,
             copy.deepcopy(_leeg_project()),
             edit_mode=True,
@@ -695,7 +708,7 @@ class TestDeGebruikersnaamBlijftLeegInHetProjectbestand:
     async def test_na_een_save_staat_er_nog_steeds_geen_gebruikersnaam(self, ingevuld: str | None) -> None:
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
-        registry: dict[str, Any] = {"name": "eigen", "upstream": "ghcr.io/team", "password": "plain:een-token"}
+        registry: dict[str, Any] = {"name": "eigen", "upstream": "ghcr.io/team", "password": CREDS["password"]}
         if ingevuld is not None:
             registry["username"] = ingevuld
         submitted, errors = await EditableFormProcessor().process_json_submission(

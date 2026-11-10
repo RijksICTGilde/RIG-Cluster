@@ -12,6 +12,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from opi.core.config import settings
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
@@ -20,7 +21,14 @@ from opi.services.project import Project
 from opi.services.project_schema import SchemaVersion, parse_schema_version, version_key
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, project_private_key_or_none
+from opi.utils.age import (
+    PLAIN_PREFIX,
+    decrypt_age_content_sync,
+    encrypt_to_base64_age_sync,
+    get_project_public_key,
+    is_age_encrypted,
+    project_private_key_or_none,
+)
 from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
@@ -56,6 +64,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.15",
         "2.16",
         "2.17",
+        "2.18",
     )
 )
 
@@ -1582,6 +1591,58 @@ def source_code_links(project_data: dict[str, Any]) -> bool:
     return False
 
 
+def _encrypt_plain_value(holder: dict[str, Any], field: str, public_key: str | None, where: str) -> bool:
+    """Replace one ``plain:`` value with its encrypted form; says whether it changed."""
+    value = holder.get(field)
+    if not isinstance(value, str) or not value.startswith(PLAIN_PREFIX):
+        return False
+    if not public_key:
+        logger.warning("Cannot encrypt %s/%s: no AGE public key available", where, field)
+        return False
+    holder[field] = encrypt_to_base64_age_sync(value[len(PLAIN_PREFIX) :], public_key)
+    logger.info("Encrypted the stored %s/%s", where, field)
+    return True
+
+
+def encrypt_plain_secrets(project_data: dict[str, Any]) -> bool:
+    """Encrypt the five secret fields that could still carry ``plain:`` (v2.17 -> v2.18).
+
+    Each value is encrypted with the key its READER opens it with: the repository password
+    with the platform key (``ArgoManager`` and the git connectors decrypt with
+    ``SOPS_AGE_PRIVATE_KEY``), the remote-source credentials with the project key
+    (``database_manager`` and ``minio_manager`` decrypt with the project key).
+
+    A value without a key to encrypt it with is left as it is and logged; the schema gate
+    then refuses the file naming that field, which beats writing down a guess.
+    """
+    platform_key = settings.SOPS_AGE_PUBLIC_KEY
+    project_key = get_project_public_key(project_data)
+    changed = False
+
+    for index, repository in enumerate(project_data.get("repositories") or []):
+        if isinstance(repository, dict):
+            changed |= _encrypt_plain_value(repository, "password", platform_key, f"repositories/{index}")
+
+    for source in project_data.get("remote-sources") or []:
+        if not isinstance(source, dict):
+            continue
+        name = source.get("name", "?")
+        chisel = source.get("chisel")
+        if isinstance(chisel, dict):
+            changed |= _encrypt_plain_value(chisel, "password", project_key, f"remote-sources/{name}/chisel")
+        services = source.get("services")
+        if not isinstance(services, dict):
+            continue
+        for service_name, service in services.items():
+            if not isinstance(service, dict):
+                continue
+            where = f"remote-sources/{name}/services/{service_name}"
+            for field in ("password", "access-key", "secret-key"):
+                changed |= _encrypt_plain_value(service, field, project_key, where)
+
+    return changed
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1604,6 +1665,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.15"), component_description),
     (parse_schema_version("2.16"), restore_run_reference),
     (parse_schema_version("2.17"), source_code_links),
+    (parse_schema_version("2.18"), encrypt_plain_secrets),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

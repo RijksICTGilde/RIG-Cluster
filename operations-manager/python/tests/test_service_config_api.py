@@ -28,6 +28,10 @@ from opi.services.services import (
 )
 from opi.services.services_enums import ServiceType
 
+#: A realm-admin password only takes an encrypted form (schema version 2.18); the value
+#: itself is never read here.
+ENCRYPTED_REALM_PASSWORD = "base64+age:QUdFLVZFUlNMRVVURUxE"
+
 
 def _project() -> dict:
     """A minimal but real-shaped project with one component and one deployment."""
@@ -593,7 +597,7 @@ class TestPlatformManagedFieldsSurviveAWrite:
                             "host": "https://keycloak.example",
                             "realm": "demo-odcn",
                             "username": "realm-admin",
-                            "password": "AGE-VERSLEUTELD",
+                            "password": ENCRYPTED_REALM_PASSWORD,
                         }
                     ],
                 },
@@ -642,7 +646,7 @@ class TestPlatformManagedFieldsSurviveAWrite:
                 "host": "https://keycloak.example",
                 "realm": "demo-odcn",
                 "username": "realm-admin",
-                "password": "AGE-VERSLEUTELD",
+                "password": ENCRYPTED_REALM_PASSWORD,
             }
         ]
         validate_service_configs(data)
@@ -677,7 +681,7 @@ class TestPlatformManagedFieldsSurviveAWrite:
                 "realms": [{"host": "http://elders", "realm": "x", "username": "u", "password": "p"}],
             },
         )
-        assert self._keycloak_config(data)["realms"][0]["password"] == "AGE-VERSLEUTELD"
+        assert self._keycloak_config(data)["realms"][0]["password"] == ENCRYPTED_REALM_PASSWORD
 
     def test_clearing_the_config_keeps_the_platform_field_and_drops_the_rest(self) -> None:
         """DELETE means 'reset my settings', not 'throw away the realm-admin password'."""
@@ -687,7 +691,7 @@ class TestPlatformManagedFieldsSurviveAWrite:
         assert changed is True
         config = self._keycloak_config(data)
         assert "template" not in config
-        assert config["realms"][0]["password"] == "AGE-VERSLEUTELD"
+        assert config["realms"][0]["password"] == ENCRYPTED_REALM_PASSWORD
         validate_service_configs(data)
 
     def test_a_service_without_platform_fields_still_clears_completely(self) -> None:

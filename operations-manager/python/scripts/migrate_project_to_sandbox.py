@@ -64,6 +64,7 @@ from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
     decrypt_password_smart_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    encrypt_to_base64_age_sync,
     generate_age_key_pair,
     project_key_candidates_for,
     unwrap_project_key_sync,
@@ -97,12 +98,15 @@ DEFAULT_PROBE_PORT = 8080
 #: on sight in a manifest or a pod, so nobody mistakes a sandbox copy for real configuration.
 SANDBOX_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
 SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLLEN)}
+#: The sandbox Forgejo password. Encrypted into the converted file with the sandbox platform
+#: key, not written down: a project file may not carry a ``plain:`` value (schema 2.18).
+SANDBOX_REPOSITORY_PASSWORD = "admin1234"  # noqa: S105  # the sandbox admin, no production secret
+
 SANDBOX_REPOSITORIES = [
     {
         "name": "main-repo",
         "url": f"https://forgejo.{SANDBOX_DOMAIN}/rig-admin/zad-deployments.git",
         "username": "rig-admin",
-        "password": "plain:admin1234",
         "branch": "main",
         "path": ".",
     }
@@ -366,6 +370,8 @@ def migrate_project(
 
     # 7. Replace repositories with sandbox Forgejo config
     project["repositories"] = deepcopy(SANDBOX_REPOSITORIES)
+    for repository in project["repositories"]:
+        repository["password"] = encrypt_to_base64_age_sync(SANDBOX_REPOSITORY_PASSWORD, sandbox_public_key)
     logger.info(f"  [{name}] Replaced repositories with sandbox Forgejo config")
 
     # 8. Transform deployments
@@ -662,9 +668,12 @@ def regenerate_wake_tokens(project: dict, new_public_key: str | None, name: str)
         logger.info(f"  [{name}] {minted} wake-token(s) opnieuw gemunt")
 
 
-#: Het enige AGE-blok in de uitvoer dat met geen van beide projectsleutels opengaat en dat
-#: ook niet hoort te doen: de nieuwe private projectsleutel staat op de sandbox-clustersleutel.
-_NOT_ON_A_PROJECT_KEY = ("/config/age-private-key",)
+#: AGE blocks in the output that open with neither project key, and are not meant to: the
+#: new private project key sits on the sandbox cluster key, and the repository password
+#: sits on that same cluster key (``AGE_FIELD_HANDLING`` above already replaces it in step
+#: 7). Without this exclusion the safety net flags them as "check this value" even though
+#: they are exactly as intended.
+_NOT_ON_A_PROJECT_KEY = ("/config/age-private-key", "/repositories[]/password")
 
 
 def _encrypted_values(node: object, path: str = "") -> list[tuple[Any, Any, str, str]]:

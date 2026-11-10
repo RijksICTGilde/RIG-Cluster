@@ -32,7 +32,7 @@ services:
           - realm: test-project-services-local
             host: https://keycloak.voorbeeld.nl
             username: test_project_services_admin
-            password: VOORBEELDWAARDE-geen-echt-geheim
+            password: base64+age:Vk9PUkJFRUxEV0FBUkRFLWdlZW4tZWNodC1nZWhlaW0=
             # De seed met het voorvoegsel ``plain:``, zodat hij zonder AGE-sleutel te
             # lezen is. Hij staat er om te kunnen METEN dat de pagina de CODE rendert en
             # de SEED niet: de test rekent met dezelfde seed de code van dit moment uit en

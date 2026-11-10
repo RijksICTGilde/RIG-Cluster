@@ -18,7 +18,14 @@ from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
 from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
-from opi.utils.age import encrypt_age_content, generate_age_key_pair, wrap_project_key
+from opi.utils.age import (
+    decrypt_password_smart_sync,
+    encrypt_age_content,
+    encrypt_to_base64_age_sync,
+    generate_age_key_pair,
+    parse_password_with_prefix,
+    wrap_project_key,
+)
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_from_string, load_yaml_round_trip
 
@@ -355,6 +362,31 @@ def namespace_level_deployment(
 # should_encrypt_user_env_var function removed - all user env vars are now always encrypted
 
 
+def encrypted_repository_password() -> str:
+    """The deployments-repo password in the form a project file may carry: never plain text.
+
+    Encrypted with the PLATFORM key, because that is the key that reads it back
+    (``ArgoManager`` and the git connectors decrypt with ``SOPS_AGE_PRIVATE_KEY``). A value
+    the environment already supplies as ``base64+age:`` is handed through unchanged. The
+    setting itself may be ``plain:``: the env secret is a SOPS file, the project file is not.
+
+    Raises:
+        HTTPException: 500 when the setting is missing; without it no project file can be
+            written at all.
+    """
+    stored = settings.PROJECT_REPO_PASSWORD
+    if not stored:
+        raise HTTPException(
+            status_code=500,
+            detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
+        )
+    form, _ = parse_password_with_prefix(stored)
+    if form == "base64+age":
+        return stored
+    plain_password = decrypt_password_smart_sync(stored, settings.SOPS_AGE_PRIVATE_KEY)
+    return encrypt_to_base64_age_sync(plain_password, settings.SOPS_AGE_PUBLIC_KEY)
+
+
 async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:
     """Build the project file for a self-service creation, as a YAML string.
 
@@ -379,26 +411,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
     # admin issues one on the Team tab.
     token_hash = hash_van(api_token) if api_token else None
 
-    # Repository password from settings (supports plain:, age:, base64+age: prefixes)
-    repo_password = settings.PROJECT_REPO_PASSWORD
-    if not repo_password:
-        raise HTTPException(
-            status_code=500,
-            detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
-        )
-    # The project file must never carry a plain PAT: where the environment supplies it in
-    # plain form it is encrypted here before it lands on disk; a value that is already
-    # base64+age is encrypted and is left exactly as it is.
-    from opi.utils.age import (
-        decrypt_password_smart,
-        encrypt_to_base64_age,
-        parse_password_with_prefix,
-    )
-
-    form, _ = parse_password_with_prefix(repo_password)
-    if form != "base64+age":
-        plain_password = await decrypt_password_smart(repo_password, settings.SOPS_AGE_PRIVATE_KEY)
-        repo_password = await encrypt_to_base64_age(plain_password, settings.SOPS_AGE_PUBLIC_KEY)
+    repo_password = encrypted_repository_password()
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])

@@ -65,10 +65,10 @@ class ProjectSchemaError(Exception):
     instead of only echoing the message. It is None for the rejections that are
     about the file as a whole (an unknown or missing schema version).
 
-    ``reason`` says WHY the field was rejected without repeating the rejected
-    value. The message itself does repeat it (jsonschema embeds the instance), and
-    a caller that shows the rejection to a user or writes it to a log has to be
-    able to say what is wrong without echoing what may be a stored secret.
+    ``reason`` says WHY the field was rejected: the schema keyword that refused it,
+    in words. The message is built from the path and that reason, so neither carries
+    the rejected value -- a caller that logs this or shows it in a browser would
+    otherwise echo what may be a stored secret.
     """
 
     def __init__(self, message: str, *, field_path: str | None = None, reason: str | None = None) -> None:
@@ -251,12 +251,24 @@ def _describe_violation(error: ValidationError) -> str:
 
     jsonschema's own message quotes the instance ("'geheim' does not match ..."),
     so it can carry a stored secret (``config/api-key``, ``user-env-vars``) or
-    attacker-chosen text into a browser or a log line. The keyword and the limit it
-    was given come from the schema, never from the file, so a description built from
-    those two is safe to show.
+    attacker-chosen text into a browser or a log line. The keyword and the limit it was
+    given come from the schema, so a description built from those two is safe to show.
+
+    A field NAME may be named: the three keywords that are about which fields are there
+    (``additionalProperties``, ``required``, ``not``) say which ones, because without that
+    the rejection cannot be acted on. A name is not a value.
     """
     keyword = str(error.validator)
+    if keyword == "additionalProperties":
+        return _unknown_fields_reason(error)
     limit = error.validator_value
+    if keyword == "required" and isinstance(limit, list):
+        missing = [str(field) for field in limit if not isinstance(error.instance, dict) or field not in error.instance]
+        if missing:
+            return f"een verplicht veld ontbreekt: {', '.join(missing)}"
+    if keyword == "not" and isinstance(limit, dict) and isinstance(limit.get("required"), list):
+        # ``not: {required: [...]}`` is how the schema forbids a field in this shape.
+        return f"dit veld hoort hier niet te staan: {', '.join(str(field) for field in limit['required'])}"
     reasons: dict[str, str] = {
         "required": "een verplicht veld ontbreekt",
         "minItems": f"er is minimaal {limit} waarde nodig",
@@ -269,10 +281,29 @@ def _describe_violation(error: ValidationError) -> str:
         "format": f"de waarde is geen geldige {limit}",
         "type": f"hier hoort een waarde van het type {limit}",
         "enum": "de waarde staat niet in de lijst met toegestane waarden",
-        "additionalProperties": "hier staat een veld dat het schema op deze plek niet kent",
         "uniqueItems": "de lijst bevat een dubbele waarde",
     }
     return reasons.get(keyword, f"de waarde is afgekeurd door schemaregel '{keyword}'")
+
+
+def _unknown_fields_reason(error: ValidationError) -> str:
+    """Name the fields the schema does not know here; a field NAME is not a value.
+
+    Derived from the schema rather than from jsonschema's own message, which quotes the
+    whole instance alongside the names.
+    """
+    base = "hier staat een veld dat het schema op deze plek niet kent"
+    schema = error.schema if isinstance(error.schema, dict) else {}
+    if not isinstance(error.instance, dict):
+        return base
+    allowed = set(schema.get("properties") or ())
+    patterns = [re.compile(pattern) for pattern in (schema.get("patternProperties") or ())]
+    unknown = sorted(
+        key
+        for key in error.instance
+        if key not in allowed and not any(pattern.search(str(key)) for pattern in patterns)
+    )
+    return f"{base}: {', '.join(unknown)}" if unknown else base
 
 
 def validate_project_schema(project_data: dict[str, Any], *, schema_version: SchemaVersion | None = None) -> None:
@@ -283,7 +314,8 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: Sch
     that state is migrated.
 
     Raises ``ProjectSchemaError`` when the project does not conform. Its message is a Dutch
-    user-facing error naming the first offending field path and the validation message.
+    user-facing error naming the first offending field path and why it was refused, never
+    the refused value.
     """
     validator = _get_validator(schema_version)
     errors = sorted(validator.iter_errors(project_data), key=lambda e: list(e.absolute_path))
@@ -294,9 +326,13 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: Sch
     location = "/".join(str(part) for part in first.absolute_path) or "(root)"
     project_name = project_data.get("name", "(onbekend)") if isinstance(project_data, dict) else "(onbekend)"
     described = version_key(schema_version) if schema_version is not None else version_key(latest_schema_version())
+    reason = _describe_violation(first)
+    # Not jsonschema's own message: that one quotes the rejected value, and callers log this
+    # message and show it in a browser (``web/router_env_vars.py``), where a stored secret or
+    # attacker-chosen text must not end up. Field path plus reason says the same thing.
     message = (
         f"Projectbestand '{project_name}' is afgekeurd: het voldoet niet aan het projectschema "
-        f"(versie {described}). Veld '{location}': {first.message}"
+        f"(versie {described}). Veld '{location}': {reason}"
     )
     # A pattern says nothing to the user; the description of the field does.
     if first.validator == "pattern" and isinstance(first.schema, dict) and first.schema.get("description"):
@@ -307,7 +343,7 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: Sch
     raise ProjectSchemaError(
         message,
         field_path=location if first.absolute_path else None,
-        reason=_describe_violation(first),
+        reason=reason,
     )
 
 

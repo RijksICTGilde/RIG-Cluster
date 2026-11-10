@@ -92,7 +92,7 @@
         "password": {
           "anyOf": [
             {
-              "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:|^plain:)",
+              "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:)",
               "type": "string"
             },
             {

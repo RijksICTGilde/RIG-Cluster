@@ -37,7 +37,9 @@ PLATFORM_REPO = f"{REGISTRY_URL}/{REGISTRY_ORG}"
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
-CREDS = {"username": "u", "password": "plain:een-token"}
+#: A token in its encrypted stored form. Since schema version 2.18 a project file may not
+#: carry ``plain:``, and these tests are about something other than the token.
+CREDS = {"username": "u", "password": "base64+age:ZWVuLXRva2Vu"}
 
 
 @pytest.fixture(autouse=True)

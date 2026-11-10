@@ -12,6 +12,10 @@ from opi.core.config import settings
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.catalog.keycloak.config_model import KeycloakRealm
 
+#: The realm-admin password only takes an encrypted form (schema version 2.18); the value
+#: itself is never read here.
+ENCRYPTED_PASSWORD = "base64+age:Y2lwaGVydGV4dA=="
+
 
 def test_keycloak_realm_accepts_totp_secret() -> None:
     """The realm-admin connection model carries the shared OTP seed as a string."""
@@ -19,7 +23,7 @@ def test_keycloak_realm_accepts_totp_secret() -> None:
         host="https://kc.example",
         realm="proj-local",
         username="proj_local_admin",
-        password="plain:pw",
+        password=ENCRYPTED_PASSWORD,
         totp_secret="plain:seed",
     )
     assert realm.totp_secret == "plain:seed"
@@ -31,7 +35,7 @@ def test_keycloak_realm_totp_secret_defaults_none() -> None:
         host="https://kc.example",
         realm="proj-local",
         username="proj_local_admin",
-        password="plain:pw",
+        password=ENCRYPTED_PASSWORD,
     )
     assert realm.totp_secret is None
 
@@ -97,7 +101,7 @@ async def test_ensure_admin_otp_noop_when_already_provisioned(monkeypatch) -> No
                                 "host": "https://kc.example",
                                 "realm": "proj-local",
                                 "username": "proj_local_admin",
-                                "password": "plain:pw",
+                                "password": ENCRYPTED_PASSWORD,
                                 "totp_secret": "plain:already",
                             }
                         ]

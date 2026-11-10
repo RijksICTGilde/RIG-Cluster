@@ -338,13 +338,13 @@ class TestElkBestandIsWeerOpTeRuimen:
 class TestDeDrieOpslagvormenVanHetToken:
     """Wat er in het secret komt te staan, per opslagvorm van ``password``.
 
-    Het veld draagt er drie (``AGE_ENCRYPTED_OR_PLAIN_PATTERN``): het armored blok, de
-    eenregelige ``base64+age:``-vorm en ``plain:``. Alle drie komen langs de poort die een
-    save valideert, dus alle drie kunnen in een projectbestand staan, en de eenregelige
-    vorm is de HUISVORM voor eenregelige geheimen (de repository-password, de api-key en de
-    projectsleutel dragen hem allemaal). Code die alleen op de armored markering toetst zet
-    de andere twee LETTERLIJK in de ``.dockerconfigjson``: geen fout, wel een credential dat
-    niet klopt.
+    Het veld draagt er twee (``AGE_ENCRYPTED_PATTERN``): het armored blok en de eenregelige
+    ``base64+age:``-vorm, en die laatste is de HUISVORM voor eenregelige geheimen (de
+    repository-password, de api-key en de projectsleutel dragen hem allemaal). ``plain:``
+    mag sinds RC-463 niet meer in een projectbestand staan, maar de LEZER kent hem nog,
+    want een bestand van voor de migratie draagt hem. Code die alleen op de armored
+    markering toetst zet de andere twee LETTERLIJK in de ``.dockerconfigjson``: geen fout,
+    wel een credential dat niet klopt.
 
     Alles hier draait tegen de echte ``age``-binary; een mock zou "wel ontsleuteld" en "de
     cijfertekst doorgegeven" niet uit elkaar kunnen houden, en dat is precies het verschil

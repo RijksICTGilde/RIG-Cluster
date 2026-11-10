@@ -32,7 +32,7 @@ def _render(**realm_extra: object) -> str:
         "host": "https://kc.example",
         "realm": "demo-realm",
         "username": "demo_admin",
-        "password": "VOORBEELDWAARDE-geen-echt-geheim",
+        "password": "base64+age:Vk9PUkJFRUxEV0FBUkRFLWdlZW4tZWNodC1nZWhlaW0=",
         **realm_extra,
     }
     section = type("Section", (), {"context": {"realms": [realm]}})()

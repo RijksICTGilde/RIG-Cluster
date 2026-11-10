@@ -1,9 +1,8 @@
 """Computed value generators for editables.
 
 Generators produce values at submit time from the merged YAML data.
-They are executed in a defined order so that later generators can
-depend on values produced by earlier ones (e.g., the encrypted
-private key depends on the public key).
+They are executed in the order of ``GENERATED_EDITABLES_PURE``, so a later
+generator may depend on what an earlier one produced.
 """
 
 from __future__ import annotations
@@ -12,13 +11,8 @@ import logging
 from typing import Any
 
 from opi.core import config as opi_config
-from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
-from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.publish_on_web.issuer import derive_issuer
-from opi.services.component_values import ComponentValuesError
-from opi.services.component_values import decode as decode_component_values
-from opi.services.component_values import encode as encode_component_values
-from opi.utils.age import carries_encrypted_value, get_project_public_key, is_age_encrypted
+from opi.utils.age import get_project_public_key
 
 logger = logging.getLogger(__name__)
 
@@ -34,38 +28,6 @@ class ProjectNameGenerator:
             raise ValueError("Display-name is required to generate project name")
         technical_name, _ = generate_project_name(display_name)
         return technical_name
-
-
-class AGEKeyPairGenerator:
-    """Generate an AGE key pair and store both keys.
-
-    Stores the public key at its own yaml_path and puts the plain
-    private key into ``_generated/age-private-key-plain`` for use
-    by the ``EncryptedPrivateKeyGenerator``.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.age import generate_age_key_pair
-
-        private_key, public_key = generate_age_key_pair()
-        # Stash plain private key in a temp namespace for later encryption
-        yaml_data.setdefault("_generated", {})["age-private-key-plain"] = private_key
-        logger.debug("Generated AGE key pair for project")
-        return public_key
-
-
-class EncryptedPrivateKeyGenerator:
-    """Pak de gegenereerde AGE-privesleutel in met de project-KEK."""
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.age import wrap_project_key_sync
-
-        generated = yaml_data.get("_generated", {})
-        plain_private_key = generated.get("age-private-key-plain")
-        if not plain_private_key:
-            raise ValueError("AGE private key not found in _generated data")
-
-        return wrap_project_key_sync(plain_private_key)
 
 
 class IssuerGenerator:
@@ -99,10 +61,9 @@ class AttachmentStagingResolveGenerator:
     """Resolve staged attachment uploads into encrypted catalog entries.
 
     During the create-wizard a file is parked in the staging store and the
-    catalog entry carries ``content: "staging:<token>"``. At submit time (after
-    ``AGEKeyPairGenerator`` has produced the project public key) this generator
-    reads each staged file, encrypts it into an AGE block, replaces the
-    placeholder, and removes the staged file. Uses a ``_generated`` path - the
+    catalog entry carries ``content: "staging:<token>"``. At submit time this generator
+    reads each staged file, encrypts it with the project public key into an AGE block,
+    replaces the placeholder, and removes the staged file. Uses a ``_generated`` path - the
     return value is discarded during cleanup.
     """
 
@@ -141,129 +102,5 @@ class AttachmentStagingResolveGenerator:
                 entry["content"] = LiteralScalarString(encrypt_file_to_age_block_sync(raw_bytes, public_key))
                 upload_staging.delete_staged(token)
                 logger.debug("Resolved staged attachment '%s'", entry.get("id"))
-
-        return True
-
-
-class UserEnvVarsEncryptGenerator:
-    """Encrypt user-env-vars with the project's AGE public key, on BOTH layers.
-
-    Encrypts any non-empty ``user-env-vars`` string value that is not already an AGE
-    block. Skips values that are already encrypted.
-
-    Both layers, not just ``components[*]``: the same service owns
-    ``deployments[*]/components[*]/user-env-vars`` (RC-25), and a deployment override
-    holds exactly the same kind of secret as the component value it overrides. This
-    generator is the backstop for when the converter did not encrypt (no context data,
-    a hand-edited file), and a backstop that covers half the layers leaves the other
-    half in plaintext in git -- which is what it did until RC-55.
-
-    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
-    Uses a ``_generated`` path - the return value is discarded during cleanup.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = get_project_public_key(yaml_data)
-        if not public_key:
-            logger.debug("No project public key available, skipping user-env-vars encryption")
-            return True
-
-        for component in yaml_data.get("components", []):
-            self._encrypt(component, public_key, component.get("name") if isinstance(component, dict) else None)
-        for deployment in yaml_data.get("deployments", []):
-            if not isinstance(deployment, dict):
-                continue
-            for component in deployment.get("components", []):
-                self._encrypt(
-                    component,
-                    public_key,
-                    component.get("reference") if isinstance(component, dict) else None,
-                )
-
-        return True
-
-    @staticmethod
-    def _encrypt(component: Any, public_key: str, label: str | None) -> None:
-        from ruamel.yaml.scalarstring import LiteralScalarString
-
-        from opi.utils.age import encrypt_age_content_sync
-
-        if not isinstance(component, dict):
-            return
-        user_env_vars = component.get("user-env-vars")
-        if not user_env_vars or not isinstance(user_env_vars, str):
-            return
-        if carries_encrypted_value(user_env_vars):
-            return
-        component["user-env-vars"] = LiteralScalarString(encrypt_age_content_sync(user_env_vars, public_key))
-        logger.debug("Encrypted user-env-vars for component %s", label or "unknown")
-
-
-class RegistryPasswordsEncryptGenerator:
-    """Encrypt the image-registry tokens with the project's AGE public key.
-
-    In the create wizard the key does not exist yet while the steps are filled in, so
-    ``ProjectAgeSecretConverter`` leaves a typed token as it is. The same backstop as
-    ``UserEnvVarsEncryptGenerator``, through the converter's own write so the wizard and
-    the project page store the same form.
-
-    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
-    Uses a ``_generated`` path - the return value is discarded during cleanup.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = get_project_public_key(yaml_data)
-        if not public_key:
-            logger.debug("No project public key available, skipping registry token encryption")
-            return True
-
-        converter = ProjectAgeSecretConverter()
-        for registry in project_registries(yaml_data):
-            password = registry.get("password")
-            if isinstance(password, str) and password:
-                registry["password"] = converter.write(password, yaml_data)
-        return True
-
-
-class ComponentAliasesEncryptGenerator:
-    """Encrypt a component's aliases with the project's AGE public key.
-
-    Since RC-106 aliases are stored exactly like ``user-env-vars``: ONE AGE block whose
-    plaintext is ``KEY=value`` lines. A mapping still found here is the unencrypted
-    shape (a hand-written file, or an older per-value one) and is joined into that block
-    first; a value that is already an AGE block is decrypted first, because a block
-    inside a block is not readable by anything downstream.
-
-    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
-    Uses a ``_generated`` path - the return value is discarded during cleanup.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = get_project_public_key(yaml_data)
-        if not public_key:
-            logger.debug("No project public key available, skipping aliases encryption")
-            return True
-
-        for component in yaml_data.get("components", []):
-            if not isinstance(component, dict):
-                continue
-            aliases = component.get("aliases")
-            if not aliases or (isinstance(aliases, str) and is_age_encrypted(aliases)):
-                continue
-            try:
-                values = decode_component_values(aliases, yaml_data)
-            except (ComponentValuesError, ValueError) as error:
-                logger.warning(
-                    "Could not read aliases of component %s, leaving them as stored: %s",
-                    component.get("name", "unknown"),
-                    error,
-                )
-                continue
-            encoded = encode_component_values(values, yaml_data)
-            if encoded is None:
-                component.pop("aliases", None)
-            else:
-                component["aliases"] = encoded
-            logger.debug("Encrypted aliases for component %s", component.get("name", "unknown"))
 
         return True

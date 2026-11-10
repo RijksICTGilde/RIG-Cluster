@@ -344,7 +344,7 @@ async def test_saving_writes_the_encrypted_block() -> None:
         _access_patch(),
         patcher,
         patch(
-            "opi.utils.age.encrypt_age_content_sync",
+            "opi.forms.editables.converters.encrypt_age_content_sync",
             return_value="-----BEGIN AGE ENCRYPTED FILE-----\nversleuteld\n-----END AGE ENCRYPTED FILE-----\n",
         ),
         patch(
@@ -405,6 +405,10 @@ async def test_unchanged_text_does_not_reach_git() -> None:
         _access_patch(),
         patcher,
         patch(
+            "opi.forms.editables.converters.encrypt_age_content_sync",
+            return_value="-----BEGIN AGE ENCRYPTED FILE-----\nversleuteld\n-----END AGE ENCRYPTED FILE-----\n",
+        ),
+        patch(
             "opi.web.router_env_vars.keep_existing_ciphertext_if_unchanged",
             lambda bestaand, nieuw, _ctx: bestaand,
         ),
@@ -424,7 +428,7 @@ async def test_saving_in_a_deployment_scope_writes_only_the_override() -> None:
         _access_patch(),
         patcher,
         patch(
-            "opi.utils.age.encrypt_age_content_sync",
+            "opi.forms.editables.converters.encrypt_age_content_sync",
             return_value="-----BEGIN AGE ENCRYPTED FILE-----\noverschrijving\n-----END AGE ENCRYPTED FILE-----\n",
         ),
         patch(
@@ -448,7 +452,7 @@ async def test_saving_on_a_component_without_a_block_creates_it() -> None:
         _access_patch(),
         patcher,
         patch(
-            "opi.utils.age.encrypt_age_content_sync",
+            "opi.forms.editables.converters.encrypt_age_content_sync",
             return_value="-----BEGIN AGE ENCRYPTED FILE-----\neerste\n-----END AGE ENCRYPTED FILE-----\n",
         ),
         patch(
@@ -478,7 +482,7 @@ async def test_a_git_conflict_on_save_rerenders_the_window_and_changes_nothing()
         _access_patch(),
         patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
         patch(
-            "opi.utils.age.encrypt_age_content_sync",
+            "opi.forms.editables.converters.encrypt_age_content_sync",
             return_value="-----BEGIN AGE ENCRYPTED FILE-----\nversleuteld\n-----END AGE ENCRYPTED FILE-----\n",
         ),
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
@@ -506,3 +510,60 @@ def test_the_repeat_of_a_get_action_is_a_get() -> None:
     )
     assert 'hx-get="/projects/bouwput/componenten/web/env-vars"' in html
     assert "hx-post" not in html
+
+
+# --- a refused save never repeats the value ---------------------------------
+
+#: A value nothing else in the suite uses, so a hit anywhere is this one.
+PROBE_VALUE = "waarde-die-nergens-anders-voorkomt"
+
+ENCRYPTED = "-----BEGIN AGE ENCRYPTED FILE-----\nversleuteld\n-----END AGE ENCRYPTED FILE-----\n"
+
+
+def _schema_refusal() -> Exception:
+    """The real refusal of a project whose env vars are stored readable.
+
+    Through ``validate_project_schema`` rather than hand-written, so the test judges the
+    message the write path actually raises.
+    """
+    from opi.services.project_schema import ProjectSchemaError, latest_schema_version, validate_project_schema
+
+    data = copy.deepcopy(PROJECT_DATA)
+    data["schema-version"] = str(latest_schema_version())
+    data["components"][0]["user-env-vars"] = f"SECRET={PROBE_VALUE}"
+    try:
+        validate_project_schema(data)
+    except ProjectSchemaError as refusal:
+        return refusal
+    raise AssertionError("a readable env var should not pass the project schema")
+
+
+async def test_the_schema_refusal_itself_carries_no_value() -> None:
+    refusal = _schema_refusal()
+
+    assert PROBE_VALUE not in str(refusal)
+    assert "user-env-vars" in str(refusal), "the message still has to name the field"
+
+
+async def test_a_refused_save_shows_and_logs_no_value(caplog: Any) -> None:
+    """The window comes back with the refusal, and neither page nor log carries the value."""
+
+    class _Refusing(_Manager):
+        async def save_and_commit_project(self, project_data: dict[str, Any], message: str) -> None:
+            raise _schema_refusal()
+
+    manager = _Refusing(copy.deepcopy(PROJECT_DATA))
+    with (
+        _access_patch(),
+        patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
+        patch("opi.forms.editables.converters.encrypt_age_content_sync", return_value=ENCRYPTED),
+        patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
+        caplog.at_level("DEBUG"),
+    ):
+        response = await _opslaan(_request({"vars": f"SECRET={PROBE_VALUE}"}), "web")
+
+    # The form keeps what was typed; the MESSAGE is what must not carry the value.
+    message = response.body.decode().split("'fout': ", 1)[1]
+    assert "Projectbestand" in message, message[:120]
+    assert PROBE_VALUE not in message
+    assert PROBE_VALUE not in caplog.text

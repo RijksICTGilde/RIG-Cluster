@@ -174,19 +174,18 @@ teruggelezen.
 
 Deze twee valkuilen zaten er al, en de keuze hierin is bewust:
 
-1. **`KeyValueConverter._maybe_encrypt` vangt breed af en geeft dan de plaintext terug**
-   met een warning (`opi/forms/editables/converters.py`). Voor een formulier
-   verdedigbaar - de invuller staat ernaar te kijken en kan het opnieuw proberen. Voor een
-   API-schrijfpad is het fail-open op een geheim. **Keuze: niet hergebruiken.**
-   `component_values.py` is een eigen, fail-closed schrijfhelper. De converter blijft
-   ongewijzigd; die is het lees/schrijfpad van de wizard en zijn faalgedrag veranderen is
-   een aparte wijziging met een eigen blast radius.
+1. **`KeyValueConverter._maybe_encrypt` ving breed af en gaf dan de plaintext terug**
+   met een warning (`opi/forms/editables/converters.py`). Voor een formulier leek dat
+   verdedigbaar; voor een schrijfpad is het fail-open op een geheim. Dat was de reden om
+   hem hier niet te hergebruiken: `component_values.py` is een eigen, fail-closed
+   schrijfhelper. **Die aparte wijziging is RC-463**: de converter heet nu `_encrypt` en
+   gooit `AgeEncryptionError` zonder projectsleutel, dus beide paden zijn fail-closed.
 2. **`UserEnvVarsEncryptGenerator` liep alleen over `components[*]`**, terwijl dezelfde
-   service ook `deployments[*]/components[*]/user-env-vars` bezit. Die generator is de
-   vangnetlaag voor wanneer er niets anders versleuteld heeft (geen contextdata, een
-   handmatig bewerkt bestand) - en een vangnet dat de helft van de lagen dekt, laat de
-   andere helft in plaintext in git belanden. **Keuze: gerepareerd**, de generator loopt nu
-   over beide lagen.
+   service ook `deployments[*]/components[*]/user-env-vars` bezit. De generator was de
+   vangnetlaag voor wanneer er niets anders versleuteld had, en een vangnet dat de helft
+   van de lagen dekt laat de andere helft in plaintext in git belanden. Eerst gerepareerd
+   over beide lagen, en met RC-463 weg: de wizard heeft vanaf zijn eerste stap een
+   projectsleutel, dus de converter versleutelt meteen en er valt niets te repareren.
 
 Concreet betekent fail-closed hier:
 

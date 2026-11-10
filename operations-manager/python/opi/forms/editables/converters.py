@@ -3,9 +3,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ruamel.yaml.scalarstring import LiteralScalarString
+
 from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
 from opi.utils.age import (
+    AgeEncryptionError,
     carries_encrypted_value,
+    encrypt_age_content_sync,
     get_project_public_key,
     is_age_encrypted,
     project_private_key_or_none,
@@ -342,10 +346,10 @@ class KeyValueConverter:
         logger.debug("[KeyValueConverter.write] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
         if result and self.write_as == "string" and isinstance(result, str):
-            result = self._maybe_encrypt(result, context_data)
+            result = self._encrypt(result, context_data)
         elif result and self.write_as == "dict" and isinstance(result, dict):
             # Map mode: encrypt each value independently (values may hold secrets).
-            result = {k: self._maybe_encrypt(str(v), context_data) for k, v in result.items()}
+            result = {k: self._encrypt(str(v), context_data) for k, v in result.items()}
         logger.debug(
             "[KeyValueConverter.write] result type=%s", type(result).__name__ if result is not None else "None"
         )
@@ -427,27 +431,23 @@ class KeyValueConverter:
             return value
 
     @staticmethod
-    def _maybe_encrypt(value: str, context_data: dict[str, Any] | None) -> str:
-        """Encrypt a plain-text value using the project's AGE public key."""
+    def _encrypt(value: str, context_data: dict[str, Any] | None) -> str:
+        """Encrypt a plain-text value with the project's AGE public key.
+
+        The fields on this converter (``user-env-vars``, ``aliases``) hold secrets, so
+        failing means refusing the save: returning the plain value would write it down.
+
+        Raises:
+            AgeEncryptionError: when the project has no AGE public key.
+        """
         if carries_encrypted_value(value):
             return value
-        if not context_data:
-            return value
-        try:
-            from ruamel.yaml.scalarstring import LiteralScalarString
-
-            from opi.utils.age import encrypt_age_content_sync
-
-            public_key = get_project_public_key(context_data)
-            if not public_key:
-                logger.debug("[KeyValueConverter] No project AGE public key, skipping encryption")
-                return value
-            encrypted = encrypt_age_content_sync(value, public_key)
-            logger.debug("[KeyValueConverter] Encrypted value with project AGE key")
-            return LiteralScalarString(encrypted)
-        except Exception:
-            logger.warning("[KeyValueConverter] AGE encryption failed, returning plain value", exc_info=True)
-            return value
+        public_key = get_project_public_key(context_data or {})
+        if not public_key:
+            raise AgeEncryptionError(
+                "Deze waarde kan niet worden opgeslagen: het project heeft geen AGE-publieke sleutel."
+            )
+        return LiteralScalarString(encrypt_age_content_sync(value, public_key))
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return self.read(value, context_data=context_data)

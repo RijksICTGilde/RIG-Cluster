@@ -10,13 +10,8 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.generators import (
-    AGEKeyPairGenerator,
     AttachmentStagingResolveGenerator,
-    ComponentAliasesEncryptGenerator,
-    EncryptedPrivateKeyGenerator,
     ProjectNameGenerator,
-    RegistryPasswordsEncryptGenerator,
-    UserEnvVarsEncryptGenerator,
 )
 
 # --- Pure Editable definitions (data logic only) ---
@@ -26,31 +21,6 @@ PROJECT_NAME_EDITABLE = Editable(
     generator=ProjectNameGenerator(),
 )
 
-AGE_PUBLIC_KEY_GEN_EDITABLE = Editable(
-    yaml_path="config/age-public-key",
-    generator=AGEKeyPairGenerator(),
-)
-
-AGE_PRIVATE_KEY_GEN_EDITABLE = Editable(
-    yaml_path="config/age-private-key",
-    generator=EncryptedPrivateKeyGenerator(),
-)
-
-USER_ENV_VARS_ENCRYPT_GEN_EDITABLE = Editable(
-    yaml_path="_generated/user-env-vars-encrypted",
-    generator=UserEnvVarsEncryptGenerator(),
-)
-
-REGISTRY_PASSWORDS_ENCRYPT_GEN_EDITABLE = Editable(
-    yaml_path="_generated/registry-passwords-encrypted",
-    generator=RegistryPasswordsEncryptGenerator(),
-)
-
-ALIASES_ENCRYPT_GEN_EDITABLE = Editable(
-    yaml_path="_generated/aliases-encrypted",
-    generator=ComponentAliasesEncryptGenerator(),
-)
-
 ATTACHMENTS_RESOLVE_GEN_EDITABLE = Editable(
     yaml_path="_generated/attachments-resolved",
     generator=AttachmentStagingResolveGenerator(),
@@ -58,10 +28,5 @@ ATTACHMENTS_RESOLVE_GEN_EDITABLE = Editable(
 
 GENERATED_EDITABLES_PURE: list[Editable] = [
     PROJECT_NAME_EDITABLE,
-    AGE_PUBLIC_KEY_GEN_EDITABLE,
-    AGE_PRIVATE_KEY_GEN_EDITABLE,
-    USER_ENV_VARS_ENCRYPT_GEN_EDITABLE,
-    REGISTRY_PASSWORDS_ENCRYPT_GEN_EDITABLE,
-    ALIASES_ENCRYPT_GEN_EDITABLE,
     ATTACHMENTS_RESOLVE_GEN_EDITABLE,
 ]

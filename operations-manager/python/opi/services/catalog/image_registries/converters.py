@@ -13,6 +13,7 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.utils.age import (
+    AgeEncryptionError,
     carries_encrypted_value,
     decrypt_password_smart_sync,
     encrypt_age_content_sync,
@@ -45,7 +46,7 @@ class ProjectAgeSecretConverter:
 
     The read side knows all three shapes the field may carry (armored block,
     ``base64+age:``, ``plain:``); an unrecognised shape would be encrypted as a new token on
-    the next save.
+    the next save. The write side refuses rather than storing the token readable.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
@@ -76,8 +77,9 @@ class ProjectAgeSecretConverter:
             return value
         public_key = get_project_public_key(context_data or {})
         if not public_key:
-            logger.warning("[ProjectAgeSecretConverter] Geen project-publieke sleutel; token blijft leesbaar")
-            return text
+            raise AgeEncryptionError(
+                "Het registry-token kan niet worden opgeslagen: het project heeft geen AGE-publieke sleutel."
+            )
         return LiteralScalarString(encrypt_age_content_sync(text, public_key))
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:

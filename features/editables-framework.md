@@ -280,20 +280,17 @@ class ProjectNameGenerator:
     def generate(self, yaml_data):
         return generate_project_name(yaml_data["display-name"])
 
-class AGEKeyPairGenerator:
+class AttachmentStagingResolveGenerator:
     def generate(self, yaml_data):
-        private_key, public_key = generate_age_key_pair()
-        # Stash private key voor EncryptedPrivateKeyGenerator
-        yaml_data.setdefault("_generated", {})["age-private-key-plain"] = private_key
-        return public_key
-
-class EncryptedPrivateKeyGenerator:
-    def generate(self, yaml_data):
-        plain = yaml_data["_generated"]["age-private-key-plain"]
-        return encrypt_age_content_sync(plain, settings.SOPS_AGE_PUBLIC_KEY)
+        # Vervangt elke "staging:<token>"-plaatshouder door een AGE-blok
+        ...
 ```
 
 Generators draaien in volgorde, waardoor latere generators afhankelijk kunnen zijn van eerdere resultaten.
+
+Het AGE-sleutelpaar van een nieuw project kwam hier ook uit, bij de eindinzending. Sinds
+RC-463 maakt `build_new_project_base_data()` het bij de START van de wizard: anders stond
+elk geheim dat de gebruiker eerder intypte als platte tekst in het wizardstaatbestand.
 
 ### Condition — conditioneel veldgedrag
 

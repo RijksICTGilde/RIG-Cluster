@@ -63,7 +63,7 @@ class TestEncryptWithAgeAndBase64Encode:
     async def test_returns_prefixed_base64_string(self):
         """Should return base64+age: prefixed string."""
         encrypted = "-----BEGIN AGE ENCRYPTED FILE-----\ndata\n-----END AGE ENCRYPTED FILE-----"
-        with patch("opi.utils.age.encrypt_age_content", return_value=encrypted):
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=encrypted):
             result = await encrypt_to_base64_age("my_secret", "age1pub")
 
         assert result.startswith("base64+age:")

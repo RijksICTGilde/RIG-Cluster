@@ -68,13 +68,21 @@ class TestHetSchemaWeigertBijDePoort:
         assert "Veld 'repositories/0/path'" in str(exc.value)
         assert "zonder '..'" in str(exc.value)
 
-    def test_een_patroonveld_zonder_beschrijving_houdt_de_kale_melding(self) -> None:
+    def test_een_patroonveld_zonder_beschrijving_houdt_de_generieke_reden(self) -> None:
+        """Without a field description the generic reason is what is left, never the pattern.
+
+        This used to be jsonschema's own message, which quotes the pattern AND the rejected
+        value. That message is logged and shown in a browser, so since RC-463
+        ``validate_project_schema`` builds it from the path and the schema keyword.
+        """
         project = _project(".")
         project["name"] = "Demo"
         with pytest.raises(ProjectSchemaError) as exc:
             validate_project_schema(project)
         pattern = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))["properties"]["name"]["pattern"]
-        assert str(exc.value).endswith(f"does not match {pattern!r}")
+        assert "Veld 'name'" in str(exc.value)
+        assert "de waarde heeft niet de vorm die het schema voorschrijft" in str(exc.value)
+        assert pattern not in str(exc.value)
 
     @pytest.mark.parametrize("path", TOEGESTAAN)
     def test_laat_door(self, path: str) -> None:

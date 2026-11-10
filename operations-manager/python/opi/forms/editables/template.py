@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
+from opi.services.project_utils import encrypted_repository_password
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
+from opi.utils.age import generate_age_key_pair, wrap_project_key_sync
 from opi.utils.yaml_util import load_yaml_safe
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-template.yaml"
@@ -43,3 +45,24 @@ def load_project_template() -> dict[str, Any]:
     resolved = _resolve_placeholders(data or {})
     resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
     return resolved
+
+
+def build_new_project_base_data() -> dict[str, Any]:
+    """The template plus what a new project must own before its first step is filled in.
+
+    Its own AGE key pair, because the wizard keeps its state in a file on disk: without a
+    public key from the start the converters have nothing to encrypt the first secret the
+    user types with, and it would sit in that file as plain text until submit.
+
+    The repository password likewise, through the same function the creation API uses: the
+    setting may be ``plain:``, a project file may not.
+    """
+    base_data = load_project_template()
+    private_key, public_key = generate_age_key_pair()
+    base_data["config"] = {
+        "age-public-key": public_key,
+        "age-private-key": wrap_project_key_sync(private_key),
+    }
+    for repository in base_data.get("repositories") or []:
+        repository["password"] = encrypted_repository_password()
+    return base_data

@@ -42,13 +42,18 @@ _TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 
 _STORE_DIR: str | None = None
 
+#: A state file holds a copy of a project file, encrypted secrets included, so it is for
+#: its owner only. Same modes as ``services/upload_staging.py``, which stages uploads.
+_DIR_MODE = 0o700
+_FILE_MODE = 0o600
+
 
 def _get_store_dir() -> str:
     """Return (and lazily create) the wizard session storage directory."""
     global _STORE_DIR
     if _STORE_DIR is None:
         _STORE_DIR = os.path.join(settings.TEMP_DIR, "wizard-sessions")
-    os.makedirs(_STORE_DIR, exist_ok=True)
+    os.makedirs(_STORE_DIR, mode=_DIR_MODE, exist_ok=True)
     return _STORE_DIR
 
 
@@ -139,13 +144,19 @@ def get_wizard_state(request: Request) -> WizardState | None:
         return None
 
 
+def _write_state(path: Path, state: WizardState) -> None:
+    """Write one state file, readable by its owner only."""
+    path.write_text(json.dumps(state.to_dict()))
+    os.chmod(path, _FILE_MODE)
+
+
 def save_wizard_state(request: Request, state: WizardState) -> None:
     """Save wizard state to the file-based store."""
     token = request.session.get(SESSION_KEY)
     if token is None:
         token = uuid.uuid4().hex
         request.session[SESSION_KEY] = token
-    _store_path(token).write_text(json.dumps(state.to_dict()))
+    _write_state(_store_path(token), state)
 
 
 def clear_wizard_state(request: Request) -> None:
@@ -230,7 +241,7 @@ def save_modal_state_by_token(token: str | None, state: WizardState) -> None:
     """Save modal wizard state by token."""
     if not token or not _is_valid_token(token):
         return
-    _store_path(token).write_text(json.dumps(state.to_dict()))
+    _write_state(_store_path(token), state)
 
 
 def clear_modal_state_by_token(token: str | None) -> None:
