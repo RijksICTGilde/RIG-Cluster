@@ -59,7 +59,7 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
     ): "de ArgoCD repository-secrets zijn platformsecrets",
     (
         "opi/manager/argo_manager.py",
-        "ArgoManager.create_infrastructure_application._infrastructuur",
+        "ArgoManager.create_infrastructure_application._infrastructure",
     ): "de ArgoCD repository-secrets zijn platformsecrets",
     (
         "opi/services/user_otp_service.py",

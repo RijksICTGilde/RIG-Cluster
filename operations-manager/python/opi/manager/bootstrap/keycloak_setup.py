@@ -1,12 +1,8 @@
-"""
-Keycloak bootstrap setup logic.
+"""Setting up Keycloak during application startup, from YAML configuration.
 
-This module contains the business logic for setting up Keycloak during application startup.
-It orchestrates the proper sequence of operations using YAML configuration.
-
-The setup creates two realms:
-1. rig-platform realm (from bootstrap YAML) - the platform realm with SSO configuration
-2. operations-manager realm (from project file) - OPI's own realm, like any other project
+The setup creates two realms: rig-platform (from the bootstrap YAML), the platform realm
+with the SSO configuration, and operations-manager (from a project file), OPI's own realm,
+like any other project.
 """
 
 import logging
@@ -31,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 OPERATIONS_REALM_NAME = "operations-manager"
 
-#: Keycloak drukt eventsExpiration in seconden uit, de instelling in dagen.
+#: Keycloak expresses eventsExpiration in seconds, the setting in days.
 SECONDS_PER_DAY = 86400
 
 
@@ -43,41 +39,27 @@ class KeycloakSetup:
         self.kubectl = None
 
     async def setup_all(self) -> bool:
-        """
-        Run the complete Keycloak setup sequence using YAML configuration.
-
-        This creates:
-        1. The rig-platform realm (from bootstrap YAML)
-        2. The operations-manager realm (from project file, like any other project)
-        3. A deployment client in the operations-manager realm
-
-        Returns:
-            True if all setup steps completed successfully
-        """
+        """Create the rig-platform realm, OPI's own realm, and a deployment client in it."""
         logger.info("Starting Keycloak setup")
 
         try:
-            # Step 0: Ensure OPI's client-credentials service account exists. On a
-            # fresh cluster this uses the admin password once to create it; on
-            # later boots OPI runs purely on client-credentials.
+            # On a fresh cluster this uses the admin password once to create the service
+            # account; on later boots OPI runs purely on client-credentials.
             await self.ensure_master_admin_service_account()
 
-            # Initialize connectors (uses client-credentials when configured)
             self.keycloak = await create_keycloak_connector()
 
-            # Step 0b: a human master admin that already has OTP, so a fresh cluster is
-            # not left with one shared password-only account.
+            # A human master admin that already has OTP, so a fresh cluster is not left
+            # with one shared password-only account.
             await self.ensure_otp_master_admin()
 
-            # Step 0c: the master realm's own security stand. Keycloak creates that realm
-            # itself, so it never passes create_realm and gets nothing from a blueprint.
+            # Keycloak creates the master realm itself, so it never passes create_realm and
+            # gets nothing from a blueprint.
             await self.ensure_master_realm_hardening()
 
-            # Step 0d: every password login in master requires an OTP.
             await self.ensure_master_otp()
             self.kubectl = KubectlConnector()
 
-            # Build context from settings
             context = {
                 "realm_name": settings.KEYCLOAK_DEFAULT_REALM,
                 "realm_display_name": settings.KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME,
@@ -89,7 +71,6 @@ class KeycloakSetup:
                 "saml_sp_entity_id": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}",
             }
 
-            # Select bootstrap configuration based on setting
             bootstrap_config = settings.KEYCLOAK_BOOTSTRAP_CONFIG
             if bootstrap_config == "local":
                 yaml_filename = "bootstrap-local.yaml"
@@ -101,16 +82,13 @@ class KeycloakSetup:
                 yaml_filename = "bootstrap.yaml"
                 logger.info("Using default bootstrap configuration (production mode)")
 
-            # Step 1: Execute bootstrap (creates rig-platform realm)
             yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / yaml_filename
             handler = KeycloakYamlHandler(self.keycloak)
             await handler.execute_config(yaml_path, context)
             logger.info("Bootstrap realm setup completed")
 
-            # Step 2: Create OPI's own realm (like any other project)
             await self.setup_operations_realm()
 
-            # Step 3: Create deployment client in OPI realm and update K8s secret
             success = await self.setup_operations_client(realm_name=OPERATIONS_REALM_NAME)
 
             if success:
@@ -127,17 +105,9 @@ class KeycloakSetup:
     async def ensure_otp_master_admin(self) -> None:
         """Create a second master admin that carries an OTP credential from the start.
 
-        Keycloak creates the ``KEYCLOAK_ADMIN`` account itself at first boot from the
-        environment, so there is no moment where we could give it an OTP credential; and
-        Keycloak 25 imports an OTP credential only when a user is created, so retrofitting
-        means delete-and-recreate. Doing that to the one account OPI is authenticated as,
-        and that is the break-glass, is not worth it.
-
-        Creating a *second* admin does work: at creation the credential is imported
-        verbatim. A fresh cluster then has a human admin with a second factor from minute
-        one, while the shared ``admin`` stays as break-glass. That is also the better end
-        state -- named accounts rather than one shared login, so the audit log says who did
-        what.
+        Keycloak 25 imports an OTP credential only when a user is created, and Keycloak
+        creates ``KEYCLOAK_ADMIN`` itself at first boot, so that account can never get one
+        without delete-and-recreate. This second admin gets its credential at creation.
 
         Idempotent and opt-in: without a seed in the secret nothing happens, and an
         existing user is left alone (recreating it would rotate the operator's OTP).
@@ -165,18 +135,19 @@ class KeycloakSetup:
             last_name="Administrator",
             enabled=True,
             totp_secret=seed,
-            # @localhost bestaat niet als postbus; verificatie afdwingen sluit de
-            # break-glass-beheerder buiten.
+            # @localhost is not a mailbox, so requiring verification would lock the
+            # break-glass admin out.
             skip_email_verification=True,
         )
         await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
         logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")
 
     async def ensure_master_realm_hardening(self) -> None:
-        """Zet lockout, wachtwoordbeleid en events op de master-realm.
+        """Set lockout, password policy and events on the master realm.
 
-        Zie features/opi-keycloak-service-account.md: De master-realm maakt Keycloak zelf,
-        dus hij krijgt deze bescherming niet via create_realm. Faalt dit, gaat de bootstrap door.
+        Keycloak creates the master realm itself, so it does not get this protection via
+        create_realm (features/opi-keycloak-service-account.md). A failure here does not
+        stop the bootstrap.
         """
         keycloak = self.keycloak or await create_keycloak_connector()
         yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / "master-realm.yaml"
@@ -205,14 +176,14 @@ class KeycloakSetup:
             await keycloak.ensure_browser_flow("master", REQUIRED_OTP_BROWSER_FLOW)
             # Skip KEYCLOAK_ADMIN_USERNAME: an open required action blocks the password grant that
             # OPI falls back to when KEYCLOAK_ADMIN_CLIENT_SECRET is absent.
-            gewijzigd = await keycloak.ensure_configure_totp_required(
+            users_to_configure = await keycloak.ensure_configure_totp_required(
                 "master", skip_usernames=frozenset({settings.KEYCLOAK_ADMIN_USERNAME})
             )
         except KeycloakError as e:
             logger.error(f"Could not set required OTP on master realm: {e}")
             return
 
-        logger.info(f"Required OTP on master realm set; {len(gewijzigd)} user(s) will configure on next login")
+        logger.info(f"Required OTP on master realm set; {len(users_to_configure)} user(s) will configure on next login")
 
     async def ensure_master_admin_service_account(self) -> None:
         """First-boot self-bootstrap of OPI's client-credentials service account.
@@ -246,7 +217,6 @@ class KeycloakSetup:
         - "default" (production) and "staging": uses operations-manager.yaml (sso-only).
           Staging is a pentest environment, so it gets no local admin with a known password.
         """
-        # Select project file based on bootstrap config
         if settings.KEYCLOAK_BOOTSTRAP_CONFIG in ("local", "sandbox"):
             project_filename = "operations-manager-local.yaml"
         else:
@@ -255,14 +225,11 @@ class KeycloakSetup:
         project_file = Path(__file__).parent.parent.parent / "configs" / "projects" / project_filename
         logger.info(f"Setting up OPI realm from project file: {project_filename}")
 
-        # Read bundled project file
         project_data = load_yaml_safe(project_file.read_text(encoding="utf-8"))
 
-        # Extract keycloak config from services section
         keycloak_config = self._extract_keycloak_service_config(project_data)
         template_name = keycloak_config["template"]
 
-        # Build context for the template
         operations_manager_domain = extract_domain_from_url(settings.OWN_DOMAIN)
 
         context = {
@@ -282,14 +249,12 @@ class KeycloakSetup:
         }
         context.update(keycloak_config.get("variables", {}))
 
-        # Execute YAML template (creates realm, IDP, client scopes, invite client)
         yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
         keycloak = self.keycloak or await create_keycloak_connector()
         handler = KeycloakYamlHandler(keycloak)
         await handler.execute_config(yaml_path, context)
         logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
 
-        # Create default users from project file (if defined)
         for item in keycloak_config.get("users", []):
             username = item["username"]
             password = next(
@@ -300,7 +265,7 @@ class KeycloakSetup:
                 raise ValueError(msg)
 
             await keycloak.create_user(
-                # Letterlijke realm, de guard eist dat.
+                # Literal realm name, which is what the guard requires.
                 realm_name="operations-manager",
                 username=username,
                 password=password,
@@ -308,32 +273,21 @@ class KeycloakSetup:
                 first_name=item.get("firstName"),
                 last_name=item.get("lastName"),
                 enabled=item.get("enabled", True),
-                # Adres bestaat niet als postbus; verificatie houdt hem tegen.
+                # The address is not a mailbox, so verification would hold the user back.
                 skip_email_verification=True,
             )
             logger.info(f"Created user '{username}' in realm '{OPERATIONS_REALM_NAME}'")
 
     def _extract_keycloak_service_config(self, project_data: dict) -> dict:
-        """Extract keycloak config from project file services section.
-
-        Simplified version of keycloak_manager._get_keycloak_service_config()
-        for the OPI's own project files.
-
-        Args:
-            project_data: The project file data
-
-        Returns:
-            Dictionary with template, variables, and users config
-        """
+        """The template, variables and users from the keycloak entry in ``services``."""
         from opi.services.services import service_entry_config, service_entry_name
         from opi.services.services_enums import ServiceType
 
         default: dict[str, Any] = {"template": "sso-support", "variables": {}, "users": []}
         services = project_data.get("services", [])
         for service in services:
-            # Format-agnostic: the keycloak entry may be a record ({name, config}), a
-            # legacy single-key dict, or a bare string. Matching on ``"keycloak" in dict``
-            # only saw the legacy form and silently missed the uniform record.
+            # The keycloak entry may be a record ({name, config}), a legacy single-key dict,
+            # or a bare string, so the name is read rather than matched on a dict key.
             if service_entry_name(service) != ServiceType.KEYCLOAK.value:
                 continue
             config = service_entry_config(service) or {}
@@ -346,17 +300,10 @@ class KeycloakSetup:
         return default
 
     async def setup_operations_client(self, realm_name: str | None = None) -> bool:
-        """
-        Setup the operations manager's deployment client.
-
-        Creates the client for the operations manager GUI and updates the
-        Kubernetes secret with the credentials.
+        """Create the client for the OPI GUI and put its credentials in the Kubernetes secret.
 
         Args:
-            realm_name: The realm to create the client in. Defaults to KEYCLOAK_DEFAULT_REALM.
-
-        Returns:
-            True if operations client setup was successful
+            realm_name: Defaults to KEYCLOAK_DEFAULT_REALM.
         """
         target_realm = realm_name or settings.KEYCLOAK_DEFAULT_REALM
         logger.info(f"Setting up operations manager client in realm '{target_realm}'")
@@ -367,7 +314,6 @@ class KeycloakSetup:
             expected_client_id = f"{project_name}-{deployment_name}"
             ingress_hosts = [settings.OWN_DOMAIN]
 
-            # Add additional domains if configured
             if settings.ADDITIONAL_DOMAINS:
                 additional = [d.strip() for d in settings.ADDITIONAL_DOMAINS.split(",") if d.strip()]
                 ingress_hosts.extend(additional)
@@ -375,20 +321,18 @@ class KeycloakSetup:
 
             logger.info(f"Creating/updating client '{expected_client_id}' with domains: {ingress_hosts}")
 
-            # Create or get the client
             client_info = await self.keycloak.create_deployment_client(
                 deployment_name=deployment_name,
                 project_name=project_name,
                 ingress_hosts=ingress_hosts,
                 realm_name=target_realm,
-                # De OPI-login stuurt PKCE mee (opi/runtime/startup/startup.py), dus Keycloak mag een
-                # authorization code zonder challenge weigeren.
+                # The OPI login sends PKCE along (opi/runtime/startup/startup.py), so Keycloak
+                # may refuse an authorization code without a challenge.
                 require_pkce=True,
             )
 
             logger.info(f"Successfully created/retrieved client: {expected_client_id}")
 
-            # Update the operations-manager-keycloak secret
             success = await self._update_operations_secret(client_info)
 
             if success:
@@ -407,18 +351,15 @@ class KeycloakSetup:
         try:
             logger.info("Updating operations-manager-keycloak secret with OIDC credentials")
 
-            # Create a temporary directory for the manifest
             from opi.core.config import settings
 
             with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as temp_dir:
                 manifest_generator = ManifestGenerator()
 
-                # Get the template path for generic secret
                 template_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
                 )
 
-                # Prepare the values for the secret
                 secret_values = {
                     "name": "operations-manager-keycloak",
                     "namespace": get_namespace(settings.CLUSTER_MANAGER),
@@ -436,7 +377,7 @@ class KeycloakSetup:
                     },
                 }
 
-                # Create the manifest file (without SOPS encryption since we're applying directly)
+                # No SOPS encryption: the manifest is applied straight away.
                 manifest_file_path = manifest_generator.create_manifest_file(
                     template_path=template_path,
                     values=secret_values,
@@ -465,29 +406,14 @@ class KeycloakSetup:
 
 
 def extract_realm_from_discovery_url(discovery_url: str | None) -> str | None:
-    """Extract realm name from OIDC discovery URL.
-
-    Args:
-        discovery_url: The OIDC discovery URL (e.g., https://keycloak.example.com/realms/my-realm/.well-known/...)
-
-    Returns:
-        The realm name, or None if not extractable
-    """
+    """The realm in an OIDC discovery URL (.../realms/<realm>/.well-known/...), or None."""
     if not discovery_url:
         return None
     match = re.search(r"/realms/([^/]+)/", discovery_url)
     return match.group(1) if match else None
 
 
-# Convenience function for startup
 async def setup_keycloak() -> bool:
-    """
-    Run the complete Keycloak setup sequence.
-
-    This is the main entry point called from startup.py.
-
-    Returns:
-        True if all Keycloak setup completed successfully
-    """
+    """The entry point startup.py calls."""
     setup = KeycloakSetup()
     return await setup.setup_all()

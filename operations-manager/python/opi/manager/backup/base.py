@@ -36,15 +36,13 @@ logger = logging.getLogger(__name__)
 
 
 class ResourceType(StrEnum):
-    """Types of resources that can be backed up and restored."""
-
     PVC = "pvc"
     DATABASE = "database"
     BUCKET = "bucket"
 
     @classmethod
     def from_string(cls, value: str | None) -> ResourceType:
-        """Convert string to ResourceType, defaulting to PVC."""
+        """Unknown or missing values become PVC, the type that predates the tag."""
         if not value:
             return cls.PVC
         try:
@@ -54,14 +52,11 @@ class ResourceType(StrEnum):
 
 
 def utc_now() -> datetime:
-    """Get current UTC datetime."""
     return datetime.now(UTC)
 
 
 @dataclass
 class BackupResult:
-    """Result of a backup operation."""
-
     namespace: str
     pvc_name: str
     success: bool
@@ -72,8 +67,6 @@ class BackupResult:
 
 @dataclass
 class BackupStatus:
-    """Current backup status."""
-
     lock_held: bool = False
     current_namespace: str | None = None
     current_pvc: str | None = None
@@ -83,13 +76,10 @@ class BackupStatus:
 
 @dataclass
 class SnapshotInfo:
-    """Information about a Kopia snapshot."""
-
     snapshot_id: str
     pvc_name: str
     timestamp: str
     size_bytes: int | None = None
-    # Extended metadata
     cluster: str | None = None
     namespace: str | None = None
     project_name: str | None = None
@@ -97,8 +87,8 @@ class SnapshotInfo:
     component_name: str | None = None
     storage_name: str | None = None
     generation: int | None = None
-    #: For database snapshots: the database the dump was taken from, as tagged by the
-    #: backup pod. None on snapshots taken before that tag existed.
+    #: For database snapshots: the database the dump came from, as tagged by the backup
+    #: pod. None on a snapshot from before that tag existed.
     source_database: str | None = None
     backup_run_id: str | None = None  # Groups PVCs from same backup run
     # Resource type for filtering (pvc, database, bucket)
@@ -111,16 +101,11 @@ class SnapshotInfo:
     # runs where the identity override was not applied.
     source_user: str | None = None
     source_host: str | None = None
-    # Raw tags for debugging
     tags: dict[str, str] | None = None
 
     @property
     def reference_name(self) -> str | None:
-        """Get reference name based on resource type.
-
-        For PVCs: returns storage_name
-        For databases/buckets: extracts from tags
-        """
+        """A PVC carries its reference in ``storage_name``; a database or bucket in its tags."""
         rt = ResourceType.from_string(self.resource_type)
         if rt == ResourceType.PVC:
             return self.storage_name
@@ -133,8 +118,6 @@ class SnapshotInfo:
 
 @dataclass
 class RestoreResult:
-    """Result of a restore operation."""
-
     namespace: str
     pvc_name: str
     success: bool
@@ -142,10 +125,8 @@ class RestoreResult:
     snapshot_id: str | None = None
     error: str | None = None
     duration_seconds: float = 0
-    # True when the restore pod reported that the destination itself was unusable
-    # (RESTORE_TARGET_UNUSABLE_EXIT_CODE). Anything else -- our repository, the
-    # snapshot, the cluster -- leaves this False, so "your input" stays separable
-    # from "our platform" without reading the pod's log text (RC-82).
+    #: Only RESTORE_TARGET_UNUSABLE_EXIT_CODE from the restore pod sets this; every other
+    #: failure leaves it False, so "your input" stays separable from "our platform" (RC-82).
     target_unusable: bool = False
 
 
@@ -198,7 +179,6 @@ class BackupLock:
 
         while True:
             try:
-                # Inspect the current lock state.
                 args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
                 stdout, _stderr, code = await self.kubectl.run_command(args)
 
@@ -223,7 +203,6 @@ class BackupLock:
                             )
                             should_take_over = True
                         elif age_seconds < timeout_seconds:
-                            # Lock is held by a live pod. Wait for release.
                             if utc_now().timestamp() >= deadline:
                                 logger.warning(
                                     f"Backup lock held by {locked_by} since {locked_at_str} "
@@ -245,7 +224,7 @@ class BackupLock:
                             )
                             should_take_over = True
                     else:
-                        # ConfigMap exists but has no locked_at — treat as orphan.
+                        # A ConfigMap without locked_at is an orphan from an older lock format.
                         should_take_over = True
 
                 if should_take_over:
@@ -262,7 +241,6 @@ class BackupLock:
                     ]
                     await self.kubectl.run_command(delete_args)
 
-                # Atomically claim the lock.
                 lock_content = {
                     "locked_at": utc_now().isoformat(),
                     "locked_by": os.environ.get("HOSTNAME", "unknown"),
@@ -301,12 +279,6 @@ data:
                 return False
 
     async def release(self) -> bool:
-        """
-        Release the backup lock.
-
-        Returns:
-            True if released successfully, False otherwise
-        """
         if not self._held:
             return True
 
@@ -327,7 +299,6 @@ data:
             return False
 
     async def _check_pod_exists(self, pod_name: str) -> bool:
-        """Check if a pod exists in the rig-system namespace."""
         if not pod_name or pod_name == "unknown":
             return False
 
@@ -340,7 +311,6 @@ data:
             return False
 
     async def get_status(self) -> BackupStatus:
-        """Get current lock status."""
         try:
             args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
             stdout, _, code = await self.kubectl.run_command(args)
@@ -363,7 +333,6 @@ data:
             return BackupStatus(lock_held=False)
 
     async def update_progress(self, namespace: str, pvc_name: str) -> None:
-        """Update lock with current progress."""
         if not self._held:
             return
 
@@ -408,15 +377,10 @@ def normalize_bucket_name(name: str) -> str:
     - Must start and end with letter or number
     - No consecutive hyphens
     """
-    # Convert to lowercase
     name = name.lower()
-    # Replace underscores and other invalid chars with hyphens
     name = re.sub(r"[^a-z0-9-]", "-", name)
-    # Remove consecutive hyphens
     name = re.sub(r"-+", "-", name)
-    # Remove leading/trailing hyphens
     name = name.strip("-")
-    # Truncate to 63 chars (S3 limit)
     if len(name) > 63:
         name = name[:63].rstrip("-")
     return name
@@ -426,19 +390,9 @@ def get_backup_bucket_name(
     project_name: str | None = None,
     cluster: str | None = None,
 ) -> str:
-    """
-    Get the backup bucket name based on configuration mode.
+    """In "single" mode BACKUP_S3_BUCKET, in "per-project" mode backup-{org}-{project}-{cluster}.
 
-    If BACKUP_S3_BUCKET_MODE is "single", returns BACKUP_S3_BUCKET.
-    If BACKUP_S3_BUCKET_MODE is "per-project", generates a bucket name
-    using the pattern: backup-{org}-{project}-{cluster}
-
-    Args:
-        project_name: Project name (required for per-project mode)
-        cluster: Cluster name (required for per-project mode, defaults to CLUSTER_MANAGER)
-
-    Returns:
-        The bucket name to use for backups
+    Per-project mode needs ``project_name``; ``cluster`` falls back to CLUSTER_MANAGER.
     """
     bucket_mode = settings.BACKUP_S3_BUCKET_MODE
 
@@ -450,35 +404,32 @@ def get_backup_bucket_name(
             logger.warning("per-project bucket mode requires project_name, falling back to single bucket")
             return settings.BACKUP_S3_BUCKET
 
-        # Use provided cluster or default to current cluster
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         org_prefix = settings.BACKUP_S3_ORG_PREFIX
 
-        # Generate normalized bucket name
         raw_name = f"backup-{org_prefix}-{project_name}-{effective_cluster}"
         bucket_name = normalize_bucket_name(raw_name)
 
         logger.debug(f"Generated per-project bucket name: {bucket_name}")
         return bucket_name
 
-    # Unknown mode, fall back to single bucket
     logger.warning(f"Unknown BACKUP_S3_BUCKET_MODE '{bucket_mode}', using single bucket")
     return settings.BACKUP_S3_BUCKET
 
 
 def backup_bucket_account_name(bucket_name: str) -> str:
-    """De naam van het S3-account dat alleen bij deze ene back-upbucket mag."""
+    """Name of the S3 account that may reach only this one backup bucket."""
     return f"backup-{bucket_name}"
 
 
-# MinIO weigert een langer geheim, dus de afleiding kapt af.
+# MinIO refuses a longer secret, so the derivation truncates.
 _MINIO_SECRET_MAX_LENGTH = 40
 
 
 def derive_bucket_account_secret(admin_secret_key: str, bucket_name: str) -> str:
-    """Leid het geheim van dat account af uit het beheergeheim, zodat OPI het niet hoeft te bewaren.
+    """Derive that account's secret from the admin secret, so OPI does not have to store it.
 
-    Wijzigt het beheergeheim, dan wijzigen alle accountgeheimen mee.
+    Changing the admin secret changes every account secret with it.
     """
     digest = hmac.new(admin_secret_key.encode(), f"backup-bucket-account-{bucket_name}".encode(), hashlib.sha256)
     return base64.urlsafe_b64encode(digest.digest()).decode().rstrip("=")[:_MINIO_SECRET_MAX_LENGTH]
@@ -486,8 +437,6 @@ def derive_bucket_account_secret(admin_secret_key: str, bucket_name: str) -> str
 
 @dataclass
 class BackupConfig:
-    """Configuration for backup operations."""
-
     s3_endpoint: str
     s3_bucket: str  # Default bucket (used when project context not available)
     s3_access_key: str
@@ -505,17 +454,10 @@ class BackupConfig:
         project_name: str | None = None,
         cluster: str | None = None,
     ) -> str:
-        """
-        Get the bucket name for a specific project/cluster.
-
-        Uses the centralized get_backup_bucket_name function.
-        """
         return get_backup_bucket_name(project_name, cluster)
 
     @classmethod
     def from_settings(cls) -> BackupConfig:
-        """Create BackupConfig from application settings."""
-        # Get snapshot class from cluster config, fall back to settings if not configured
         snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER) or settings.BACKUP_SNAPSHOT_CLASS
         return cls(
             s3_endpoint=settings.BACKUP_S3_ENDPOINT,
@@ -536,10 +478,10 @@ _KOPIA_USERNAME = "opi-backup"
 
 
 def derive_backup_password(namespace: str, age_key: str) -> str:
-    """Kopia-wachtwoord van een namespace, afgeleid uit zijn SOPS-age-sleutel.
+    """Kopia password of a namespace, derived from its SOPS age key.
 
-    Vervangt een projectsleutel, dan verandert deze afleiding mee: de rotatie zet het
-    wachtwoord van de bestaande repository over (``features/projectsleutel-vervangen.md``).
+    Replacing a project key changes this derivation with it, so the rotation carries the
+    password of the existing repository over (``features/projectsleutel-vervangen.md``).
     """
     material = f"kopia-backup-{namespace}-{age_key}".encode()
     return base64.b64encode(hashlib.sha256(material).digest()).decode()[:32]
@@ -601,8 +543,10 @@ def kopia_backup_identity(
 
 
 class BaseBackupManager:
-    """Base class for PVC, database, and bucket backup managers.
-    Coordinates locking, S3 bucket management, key derivation, and pod lifecycle."""
+    """Shared ground for the PVC, database and bucket backup managers.
+
+    Coordinates locking, S3 bucket management, key derivation and pod lifecycle.
+    """
 
     # Path from /app/opi/manager/backup/ to /app/manifests/
     MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "manifests")
@@ -632,7 +576,7 @@ class BaseBackupManager:
         }
 
     def _pod_s3_credentials(self, bucket_name: str) -> tuple[str, str]:
-        """Het account dat een pod meekrijgt: per bucket, of het beheeraccount in single-modus."""
+        """The account a pod is given: per bucket, or the admin account in single mode."""
         if settings.BACKUP_S3_BUCKET_MODE != "per-project":
             logger.warning(
                 f"BACKUP_S3_BUCKET_MODE is '{settings.BACKUP_S3_BUCKET_MODE}', so backup and restore pods get "
@@ -702,13 +646,12 @@ class BaseBackupManager:
 
     @staticmethod
     def _pod_service_account_name(project_name: str | None) -> str:
-        """Weigert zonder project, want een leeg ``serviceAccountName`` is stil ``default``."""
+        """Refuses without a project, because an empty ``serviceAccountName`` silently means ``default``."""
         if not project_name:
             raise ValueError("A backup or restore pod needs a project to run under its service account")
         return generate_project_service_account_name(project_name)
 
     async def get_status(self) -> BackupStatus:
-        """Get current backup status."""
         return await self.lock.get_status()
 
     async def _ensure_backup_bucket_exists(
@@ -716,23 +659,10 @@ class BaseBackupManager:
         project_name: str | None = None,
         cluster: str | None = None,
     ) -> str:
-        """
-        Ensure the backup S3 bucket exists, creating it if necessary.
-
-        Uses the minio connector to check and create the bucket on the
-        backup destination minio instance.
-
-        Args:
-            project_name: Project name for per-project bucket mode
-            cluster: Cluster name for per-project bucket mode
-
-        Returns:
-            The bucket name that was ensured to exist
-        """
+        """Returns the bucket name, created on the backup destination MinIO when it was missing."""
         minio_connector = create_minio_connector()
 
-        # Configure alias for backup destination minio
-        # Endpoint format: "host:port" (e.g., "minio.rig-backup-destination.svc:9000")
+        # Endpoint format: "host:port" (e.g. "minio.rig-backup-destination.svc:9000").
         endpoint = self.config.s3_endpoint
         host_with_port = endpoint if ":" in endpoint else f"{endpoint}:9000"
 
@@ -748,10 +678,8 @@ class BaseBackupManager:
         if not alias_configured:
             raise RuntimeError(f"Failed to configure MinIO alias for backup destination: {host_with_port}")
 
-        # Get the bucket name (may be per-project or single bucket based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
-        # Check if bucket exists and create if needed
         bucket_result = await minio_connector.create_bucket(alias_name, bucket_name)
 
         if bucket_result["status"] == "created":
@@ -775,12 +703,12 @@ class BaseBackupManager:
         namespace: str,
         new_age_key: str,
     ) -> bool:
-        """Zet het wachtwoord van de Kopia-repository van een namespace over op een nieuwe projectsleutel.
+        """Carry a namespace's Kopia repository password over to a new project key.
 
-        Zonder deze stap opent de repository na een sleutelvervanging niet meer en staat de
-        backup van die namespace stil. False betekent: daar staat nog geen repository.
+        Without this step the repository no longer opens after a key replacement and the
+        backup of that namespace stands still. False means there is no repository yet.
         """
-        # Lokaal: opi.connectors.kopia leest ResourceType uit deze module.
+        # Local import: opi.connectors.kopia reads ResourceType from this module.
         from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 
         old_password = await self._derive_backup_key(namespace)
@@ -805,9 +733,9 @@ class BaseBackupManager:
         alias_name: str,
         bucket_name: str,
     ) -> tuple[str, str]:
-        """Zorgt dat het S3-account van deze bucket bestaat en alleen rechten op die bucket heeft.
+        """Ensure this bucket's S3 account exists and holds rights on that bucket only.
 
-        ``mc admin user add`` zet het afgeleide geheim bij elke aanroep opnieuw, dus dit is idempotent.
+        ``mc admin user add`` sets the derived secret again on every call, so this is idempotent.
         """
         access_key, secret_key = self._pod_s3_credentials(bucket_name)
 
@@ -825,24 +753,16 @@ class BaseBackupManager:
         return access_key, secret_key
 
     async def _derive_backup_key(self, namespace: str) -> str:
-        """
-        Derive Kopia password from namespace's SOPS age key.
-
-        Uses HKDF-like derivation to create a backup-specific password
-        from the project's SOPS key.
-        """
-        # Get the SOPS age secret from the namespace
+        """Derive the namespace's Kopia password from its SOPS age key."""
         age_key = await self.kubectl.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME)
 
         if not age_key:
-            # Fallback to a namespace-based key if no SOPS key found
             logger.warning(f"No SOPS key found in namespace {namespace}, using namespace-based key")
             age_key = f"fallback-key-{namespace}"
 
         return derive_backup_password(namespace, age_key)
 
     async def _get_pvc_info(self, namespace: str, pvc_name: str) -> dict[str, str] | None:
-        """Get PVC size and storage class."""
         args = ["get", "pvc", pvc_name, "-n", namespace, "-o", "json"]
         stdout, stderr, code = await self.kubectl.run_command(args)
 
@@ -854,7 +774,6 @@ class BaseBackupManager:
         spec = pvc_data.get("spec", {})
         status = pvc_data.get("status", {})
 
-        # Get actual size from status if available, otherwise from spec
         size = status.get("capacity", {}).get("storage") or spec.get("resources", {}).get("requests", {}).get(
             "storage", "1Gi"
         )
@@ -865,7 +784,6 @@ class BaseBackupManager:
         }
 
     async def _wait_for_pvc(self, namespace: str, pvc_name: str, timeout: int = 300) -> None:
-        """Wait for PVC to be bound."""
         logger.info(f"Waiting for PVC {pvc_name} to be bound...")
 
         start_time = asyncio.get_event_loop().time()
@@ -884,7 +802,7 @@ class BaseBackupManager:
 
             await asyncio.sleep(5)
 
-    # Container statuses that are unrecoverable - fail immediately.
+    #: Container waiting-states that are unrecoverable, so the wait fails at once.
     FATAL_CONTAINER_STATUSES = frozenset(
         {
             "crashloopbackoff",
@@ -893,19 +811,12 @@ class BaseBackupManager:
             "errimageneverpull",
         }
     )
-    # Image-pull failures kubelet keeps retrying (e.g. a transient registry/network
-    # hiccup). NOT fatal on first sight - we let kubelet's backoff retry recover, and
-    # only give up if it stays stuck past IMAGE_PULL_GRACE_SECONDS.
+    #: Image-pull failures kubelet keeps retrying, so the wait only gives up once one of
+    #: them stays past IMAGE_PULL_GRACE_SECONDS.
     RETRYABLE_PULL_STATUSES = frozenset({"imagepullbackoff", "errimagepull"})
     IMAGE_PULL_GRACE_SECONDS = 180
 
     async def _wait_for_pod(self, namespace: str, pod_name: str, timeout: int | None = None) -> bool:
-        """
-        Wait for pod to complete.
-
-        Returns:
-            True if pod completed successfully, False if failed
-        """
         timeout = timeout or self.config.timeout_seconds
         logger.info(f"Waiting for pod {pod_name} to complete (timeout: {timeout}s)...")
 
@@ -918,7 +829,6 @@ class BaseBackupManager:
                 logger.error(f"Timeout waiting for pod {pod_name} after {timeout}s")
                 return False
 
-            # Get pod status as JSON for detailed inspection
             args = ["get", "pod", pod_name, "-n", namespace, "-o", "json"]
             stdout, stderr, code = await self.kubectl.run_command(args)
 
@@ -933,9 +843,6 @@ class BaseBackupManager:
                 pod_data = json.loads(stdout)
                 phase = pod_data.get("status", {}).get("phase", "").lower()
 
-                # Inspect container waiting-states. Truly-fatal states fail immediately;
-                # image-pull failures are left to kubelet's retry and only fail after a grace,
-                # so a transient registry/network hiccup doesn't kill an otherwise-fine backup.
                 container_statuses = pod_data.get("status", {}).get("containerStatuses", [])
                 fatal: tuple[str, str] | None = None
                 pull_retry_reason: str | None = None
@@ -966,7 +873,7 @@ class BaseBackupManager:
                         )
                         return False
                 else:
-                    pull_backoff_since = None  # recovered or no longer in a pull-backoff state
+                    pull_backoff_since = None
 
                 if phase == "succeeded":
                     logger.info(f"Pod {pod_name} completed successfully")
@@ -1020,7 +927,6 @@ class BaseBackupManager:
         return f"Backup pod failed. Logs: {logs[-500:] if logs else 'no logs'}"
 
     async def _get_pod_logs(self, namespace: str, pod_name: str) -> str:
-        """Get logs from a pod."""
         args = ["logs", pod_name, "-n", namespace, "--tail=100"]
         stdout, stderr, code = await self.kubectl.run_command(args)
 

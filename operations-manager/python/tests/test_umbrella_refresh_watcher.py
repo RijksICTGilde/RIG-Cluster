@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.manager.argo_manager import (
-    UMBRELLA_REFRESH_MAX_POGINGEN,
-    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
+    UMBRELLA_REFRESH_MAX_ATTEMPTS,
+    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS,
     ArgoManager,
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
@@ -91,7 +91,7 @@ async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert len(sleeps) == connector.refreshes - 1, "alleen tússen twee refreshes wordt gewacht"
-    assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN for wachttijd in sleeps), (
+    assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS for wachttijd in sleeps), (
         "nooit langer dan de ondergrens, want de refresh wachtte zelf al op een reconcile"
     )
 
@@ -102,7 +102,7 @@ async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None
 
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
-    assert connector.refreshes == UMBRELLA_REFRESH_MAX_POGINGEN, "niet eindeloos doorprikken"
+    assert connector.refreshes == UMBRELLA_REFRESH_MAX_ATTEMPTS, "niet eindeloos doorprikken"
 
 
 async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[float]) -> None:

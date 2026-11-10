@@ -316,7 +316,7 @@ async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
     Gemeten op de sandbox met een kale ``!=``: twee verwerkingen achter elkaar leverden twee
     keer ``Updated realm ...: ['supportedLocales']``. Elke verwerking van elk project zou dus
     een wijziging schrijven die niets wijzigt, in het admin-event-logboek van elke realm.
-    Deze toets is de grendel daarop, en hij is de reden dat ``_veld_is_gelijk`` bestaat.
+    Deze toets is de grendel daarop, en hij is de reden dat ``_field_matches`` bestaat.
     """
     handler, keycloak = _handler_with_fake_connector(
         realm={
@@ -341,7 +341,7 @@ async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
 
 @pytest.mark.usefixtures("_met_relay")
 async def test_een_echt_andere_talenlijst_wordt_wel_geschreven() -> None:
-    """De tegenproef: ``_veld_is_gelijk`` mag alleen de VOLGORDE wegstrepen, niet de inhoud.
+    """De tegenproef: ``_field_matches`` mag alleen de VOLGORDE wegstrepen, niet de inhoud.
     Zonder deze toets zou een grendel die altijd ``True`` teruggeeft er net zo uitzien."""
     handler, keycloak = _handler_with_fake_connector(realm={"supportedLocales": ["en"]})
 

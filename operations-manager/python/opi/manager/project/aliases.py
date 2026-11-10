@@ -129,10 +129,9 @@ def scope_direct_aliases_to_component(
         ),
         None,
     )
-    # Decoded rather than read as a mapping: the stored shape is one AGE block, so
-    # membership has to be tested on the decrypted names (RC-106). Without this the
-    # test below is a substring/character test on a ciphertext and every direct
-    # alias silently drops out.
+    # Decoded rather than read as a mapping: the stored shape is one AGE block, so membership
+    # has to be tested on the decrypted names. Without this the test below is a character test
+    # on a ciphertext and every direct alias silently drops out.
     own_aliases = decode_component_values(raw_aliases, project_data)
     if not own_aliases:
         return {}
@@ -278,12 +277,11 @@ class DeploymentAliases:
             if not component_definition:
                 logger.warning("Component '%s' referenced in deployment but not found in project", component_name)
                 continue
-            # Aliases are stored as ONE AGE block whose plaintext is KEY=value lines
-            # (RC-106), so reading them is a decrypt-and-parse and never a walk over the
-            # stored value. Through the shared decoder, which also still reads the
-            # unencrypted mapping and the per-value shape aliases used to be written in
-            # -- this is the deploy path, and an alias that fell away silently here is a
-            # running pod with a missing variable.
+            # Aliases are stored as ONE AGE block whose plaintext is KEY=value lines, so
+            # reading them is a decrypt-and-parse and never a walk over the stored value.
+            # Through the shared decoder, which also reads the unencrypted mapping and the
+            # per-value shape: this is the deploy path, and an alias that falls away silently
+            # here is a running pod with a missing variable.
             try:
                 component_aliases = decode_component_values(component_definition.get("aliases"), project_data)
             except ComponentValuesError as e:

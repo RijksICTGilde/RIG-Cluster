@@ -7,7 +7,7 @@ uit de argo-repo gehaald, en de projectbrede taak begon er om 09:22:02 op te wac
 ArgoCD antwoordde vanaf 09:22:16 dat de app niet bestaat, en de wachtlus las dat 144
 keer als een tijdelijke leesfout tot de time-out vol was.
 
-Deze test houdt de uitkomst vast: de wacht meldt ``ApplicationGone``, de deployment
+Deze test houdt de uitkomst vast: de wacht meldt ``ApplicationGoneError``, de deployment
 komt als ``removed`` uit ``_refresh_and_wait``, en de verwerking daarvan levert nul
 sync-fouten op - de run slaagt.
 """
@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.argo_manager import ApplicationGone
+from opi.manager.argo_manager import ApplicationGoneError
 from opi.runtime.tasks.persistent_task_progress import TaskStatus
 
 DEPLOYMENT = {
@@ -93,7 +93,7 @@ def _subtasks(progress: Any) -> list[tuple[str, str]]:
 
 @pytest.mark.asyncio
 async def test_verdwenen_applicatie_levert_geen_syncfout_op(monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = _project_manager(monkeypatch, wacht_fout=ApplicationGone("Application 'mpfb-8wh-pr-244' verdween"))
+    manager = _project_manager(monkeypatch, wacht_fout=ApplicationGoneError("Application 'mpfb-8wh-pr-244' verdween"))
     progress = _progress()
 
     geslaagd = await manager.process_project_from_git("projects/mpfb-8wh.yaml", task_progress_manager=progress)
@@ -109,7 +109,7 @@ async def test_verdwenen_applicatie_levert_geen_syncfout_op(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_een_echte_syncfout_blijft_wel_falen(monkeypatch: pytest.MonkeyPatch) -> None:
-    """De tegenproef: alleen ApplicationGone is onschuldig, een gewone RuntimeError niet."""
+    """De tegenproef: alleen ApplicationGoneError is onschuldig, een gewone RuntimeError niet."""
     manager = _project_manager(monkeypatch, wacht_fout=RuntimeError("Application 'mpfb-8wh-pr-244' is degraded"))
     progress = _progress()
 

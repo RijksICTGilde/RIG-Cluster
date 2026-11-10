@@ -204,7 +204,7 @@ def _validate_remote_source(project_data: dict[str, Any], reference: str) -> lis
 def _validate_backup_source(
     project_data: dict[str, Any], clone_from: dict[str, Any], deployment_name: str
 ) -> list[dict[str, str]]:
-    """The source is a backup: the clone-from names the run, and the deployment it was taken from.
+    """The source is a backup: the clone-from names the run, and the deployment it came from.
 
     Which snapshots that run holds is runtime state at Kopia, not project data, so this
     dry run checks the reference only; ``backup_run_items`` reports a run that is gone.
@@ -394,7 +394,7 @@ def build_restore_target_deployment(
     Args:
         project_data: The project the deployment is added to.
         target_deployment: The name of the new deployment.
-        backup_source: The deployment the backup was taken from.
+        backup_source: The deployment the backup came from.
         backup_run_id: The backup run to restore.
         config_source: The deployment whose config is inherited, or None for an empty one.
         wizard_config: What the wizard collected (name, environment, components, web address).

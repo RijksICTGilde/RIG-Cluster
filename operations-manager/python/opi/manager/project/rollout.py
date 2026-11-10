@@ -14,7 +14,7 @@ from opi.connectors import create_argo_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.metrics import PHASE_AFTER_SYNC, rollout_phase
-from opi.manager.argo_manager import APPLICATIE_AANMAAK_TIMEOUT_SECONDEN, ApplicationGone
+from opi.manager.argo_manager import APPLICATION_CREATION_TIMEOUT_SECONDS, ApplicationGoneError
 from opi.services.argocd_operation import describe_sync_waiting
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.event_interpreter import _interpret_by_reason, condense_render_error
@@ -140,7 +140,7 @@ class DeploymentRolloutAccess(Protocol):
 
     def _begin_phase(self, name: str) -> str | None: ...
 
-    def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]: ...
+    def _umbrella_refresh_watcher(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]: ...
 
     async def _render_already_proven(
         self, argo_connector: ArgoConnector, app_name: str, reconciled_at: str | None
@@ -293,7 +293,7 @@ class DeploymentRollout:
         async def _wait_created(app_name: str) -> str | None:
             try:
                 await self._host._argo_manager.wait_for_application_created(
-                    app_name=app_name, timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN, poll_interval=1
+                    app_name=app_name, timeout=APPLICATION_CREATION_TIMEOUT_SECONDS, poll_interval=1
                 )
                 return None
             except TimeoutError:
@@ -301,7 +301,7 @@ class DeploymentRollout:
                 return f"{app_name}: timed out waiting for application to be created"
 
         # All waits run concurrently: read-only polls.
-        async with self._host._umbrella_verversbewaker(round_.argo_connector):
+        async with self._host._umbrella_refresh_watcher(round_.argo_connector):
             created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
         tally.sync_failures.extend(result for result in created_results if result)
 
@@ -463,7 +463,7 @@ class DeploymentRollout:
             if app_subtask and progress_manager:
                 progress_manager.fail_subtask(app_subtask, "time-out na 300s")
             return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
-        except ApplicationGone as e:
+        except ApplicationGoneError as e:
             # Not a sync failure: another task (usually a delete_deployment for the same
             # deployment) removed the Application while we were waiting on it. There is
             # nothing left to report about a deployment that is gone.
@@ -529,9 +529,8 @@ class DeploymentRollout:
         if oom_failures:
             await self._tune_after_oom(round_, app_name, dep_name, oom_failures, tally)
 
-        # One list, one destination: reporting (RC-243). There used to be a split here on
-        # what the registry said, and the "absent" half was scaled to 0 replicas. The
-        # wording below still distinguishes the two; nothing else does.
+        # One list, one destination: reporting. The wording below still distinguishes an
+        # absent image from an auth failure; nothing else does.
         _report_image_pull_failures(
             app_name, dep_name, [f for f in error.failures if f.failure_type == "image_pull"], tally
         )

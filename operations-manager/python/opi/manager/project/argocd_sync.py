@@ -19,12 +19,12 @@ from opi.core.metrics import (
     umbrella_refresh_lost_total,
 )
 from opi.manager.argo_manager import (
-    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-    ARGOCD_HERSTEL_BUDGET_SECONDEN,
-    ARGOCD_HERSTEL_POLL_SECONDEN,
-    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
-    UMBRELLA_REFRESH_MAX_POGINGEN,
-    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
+    APPLICATION_CREATION_TIMEOUT_SECONDS,
+    ARGOCD_RECOVERY_BUDGET_SECONDS,
+    ARGOCD_RECOVERY_POLL_SECONDS,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS,
+    UMBRELLA_REFRESH_MAX_ATTEMPTS,
+    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS,
 )
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
 from opi.services.tasks import progress_steps as steps
@@ -90,7 +90,7 @@ class ArgoCDSync:
 
         Runs alongside the waits and is cancelled by the caller.
         """
-        for attempt in range(1, UMBRELLA_REFRESH_MAX_POGINGEN + 1):
+        for attempt in range(1, UMBRELLA_REFRESH_MAX_ATTEMPTS + 1):
             started = time.monotonic()
             if not await argo_connector.refresh_application("user-applications"):
                 logger.warning(
@@ -109,7 +109,7 @@ class ArgoCDSync:
                 logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
                 return
 
-            if attempt == UMBRELLA_REFRESH_MAX_POGINGEN:
+            if attempt == UMBRELLA_REFRESH_MAX_ATTEMPTS:
                 break
 
             umbrella_refresh_lost_total.inc()
@@ -119,18 +119,18 @@ class ArgoCDSync:
             )
             # The refresh above waited for a reconcile itself; came it back at once anyway,
             # then this floor keeps it a loop instead of a storm.
-            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN - (time.monotonic() - started)
+            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS - (time.monotonic() - started)
             if rest > 0:
                 await asyncio.sleep(rest)
 
         logger.warning(
-            f"user-applications staat na {UMBRELLA_REFRESH_MAX_POGINGEN} refreshes nog op revisie "
+            f"user-applications staat na {UMBRELLA_REFRESH_MAX_ATTEMPTS} refreshes nog op revisie "
             f"{self._host._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
             "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
         )
 
     @asynccontextmanager
-    async def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AsyncIterator[None]:
+    async def _umbrella_refresh_watcher(self, argo_connector: ArgoConnector) -> AsyncIterator[None]:
         """Run `_keep_umbrella_refreshed` alongside a wait and clean it up afterwards.
 
         Every wait on the EXISTENCE of a child Application needs this watcher: our refresh
@@ -247,7 +247,7 @@ class ArgoCDSync:
         """The wait itself; see :meth:`wait_for_project_level_application`."""
         argo_connector = create_argo_connector()
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
+        deadline = loop.time() + ARGOCD_RECOVERY_BUDGET_SECONDS
 
         async def _keep_trying[T](what: str, attempt: Callable[[], Awaitable[T]]) -> T:
             """Retry until result or budget exhausted. Empty result means not ready."""
@@ -258,10 +258,10 @@ class ArgoCDSync:
                 over = deadline - loop.time()
                 if over <= 0:
                     raise RuntimeError(
-                        f"{what} within the {ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget for a recovering ArgoCD"
+                        f"{what} within the {ARGOCD_RECOVERY_BUDGET_SECONDS}s budget for a recovering ArgoCD"
                     )
                 logger.warning("%s: opnieuw proberen, %ds van het budget over", what, int(over))
-                await asyncio.sleep(ARGOCD_HERSTEL_POLL_SECONDEN)
+                await asyncio.sleep(ARGOCD_RECOVERY_POLL_SECONDS)
 
         await _keep_trying("Failed to login to ArgoCD", argo_connector.login)
 
@@ -273,10 +273,10 @@ class ArgoCDSync:
             app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
         )
         if exists is not True:
-            async with self._umbrella_verversbewaker(argo_connector):
+            async with self._umbrella_refresh_watcher(argo_connector):
                 await self._host._argo_manager.wait_for_application_created(
                     app_name=app_name,
-                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+                    timeout=APPLICATION_CREATION_TIMEOUT_SECONDS,
                     poll_interval=1,
                 )
 
@@ -289,7 +289,7 @@ class ArgoCDSync:
 
         await self._host._argo_manager.wait_for_application_synced(
             app_name=app_name,
-            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS,
             refreshed_after=reconciled_at,
         )
         logger.info(f"Project-level application '{app_name}' is synced; de ServiceAccount staat er")

@@ -42,12 +42,7 @@ async def _restore_pvc_with_versioning(
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
-    """
-    Restore a PVC with versioning support.
-
-    Returns dict with: success, error, old_generation, new_generation, old_resource_name, new_resource_name
-    """
-    # Get current generation
+    """Returns success, error, old_generation, new_generation, old_resource_name, new_resource_name."""
     current_generation = project_file_handler.get_storage_generation(
         project_data, deployment_name, component_name, storage_name
     )
@@ -55,12 +50,10 @@ async def _restore_pvc_with_versioning(
         current_generation = 0
     next_generation = current_generation + 1
 
-    # Calculate PVC names
     unique_name = generate_unique_name(deployment_name, component_name)
     source_pvc_name = generate_pvc_name(unique_name, storage_name, current_generation)
     target_pvc_name = generate_pvc_name(unique_name, storage_name, next_generation)
 
-    # Get storage info from base component
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
     storage_list = extract_storage_from_component_services(base_component)
@@ -87,7 +80,6 @@ async def _restore_pvc_with_versioning(
         f"(generation {current_generation} -> {next_generation}) in {namespace}"
     )
 
-    # Perform the restore
     backup_manager = create_backup_manager()
     result = await backup_manager.restore_to_project_pvc(
         cluster=deployment_cluster,
@@ -103,8 +95,8 @@ async def _restore_pvc_with_versioning(
     )
 
     if not result.success:
-        # De melding van de terugzetlaag noemt de pod en de laatste 500 tekens van zijn
-        # log; dat hoort in de log en niet in een antwoord.
+        # The restore layer's message names the pod and the last 500 characters of its
+        # log, which belongs in the log and not in a response.
         logger.error("Terugzetten van PVC %s mislukt: %s", target_pvc_name, result.error)
         return {
             "success": False,
@@ -136,24 +128,19 @@ async def _restore_database_with_versioning(
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
-    """
-    Restore a database with versioning support.
+    """Creates a new versioned database and restores data into it.
 
-    Creates a new versioned database, restores data to it.
-
-    Returns dict with: success, error, old_generation, new_generation, old_resource_name, new_resource_name
+    Returns success, error, old_generation, new_generation, old_resource_name, new_resource_name.
     """
     from opi.connectors.postgres import create_postgres_connector
     from opi.core.cluster_config import get_database_server
     from opi.utils.passwords import generate_secure_password
 
-    # Get current generation
     current_generation = project_file_handler.get_database_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
 
-    # Generate database names
     old_database_name = generate_database_name(project_name, deployment_name, current_generation)
     new_database_name = generate_database_name(project_name, deployment_name, next_generation)
 
@@ -162,21 +149,19 @@ async def _restore_database_with_versioning(
         f"(generation {current_generation} -> {next_generation})"
     )
 
-    # Get database connection info
     db_host = get_database_server(deployment_cluster)
     admin_username = settings.DATABASE_ADMIN_NAME
     admin_password = settings.DATABASE_ADMIN_PASSWORD
 
     try:
-        # Create new database with versioned name
         postgres_connector = create_postgres_connector(
             host=db_host,
             admin_username=admin_username,
             admin_password=admin_password,
         )
 
-        # The versioned database is owned by the SAME user as every other generation --
-        # the username carries no generation suffix.
+        # The versioned database is owned by the same user as every other generation: the
+        # username carries no generation suffix.
         db_username = generate_database_username(project_name, deployment_name)
 
         # Reuse the deployment's password: ArgoCD owns the secret (selfHeal policy)
@@ -199,7 +184,6 @@ async def _restore_database_with_versioning(
         if user_result["status"] == "exists" and not reuse_password:
             await postgres_connector.update_user_password(username=db_username, new_password=db_password)
 
-        # Create new versioned database
         db_result = await postgres_connector.create_database(database_name=new_database_name, owner=db_username)
         if db_result["status"] not in ["created", "exists"]:
             await postgres_connector.close()
@@ -231,14 +215,13 @@ async def _restore_database_with_versioning(
 
         logger.info(f"Created new database: {new_database_name}")
 
-        # Een nieuwe generatie is een nieuwe database, dus ook hier dicht voor PUBLIC
-        # (RC-285). Alleen de eigenaar: de read-only rol krijgt zijn CONNECT bij de
-        # verwerking die deze generatie in gebruik neemt, en heeft hem daarvoor niet nodig.
+        # A new generation is a new database, so it is closed to PUBLIC here too (RC-285).
+        # Owner only: the read-only role gets its CONNECT from the processing that puts this
+        # generation to use, and does not need it before that.
         await postgres_connector.restrict_database_to_roles(new_database_name, [db_username])
 
-        # Create schema in new database
         schema_result = await postgres_connector.create_schema(
-            schema_name=new_database_name,  # Schema name matches database name
+            schema_name=new_database_name,
             database=new_database_name,
             owner=db_username,
         )
@@ -247,7 +230,6 @@ async def _restore_database_with_versioning(
 
         await postgres_connector.close()
 
-        # Restore data to new database using backup manager
         database_backup_manager = create_database_backup_manager()
         restore_result = await database_backup_manager.restore_database(
             cluster=deployment_cluster,
@@ -309,23 +291,18 @@ async def _restore_bucket_with_versioning(
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
-    """
-    Restore a bucket with versioning support.
+    """Creates a new versioned bucket and restores data into it.
 
-    Creates a new versioned bucket, restores data to it.
-
-    Returns dict with: success, error, old_generation, new_generation, old_resource_name, new_resource_name
+    Returns success, error, old_generation, new_generation, old_resource_name, new_resource_name.
     """
     from opi.connectors.minio_mc import create_minio_connector
     from opi.utils.passwords import generate_secure_password
 
-    # Get current generation
     current_generation = project_file_handler.get_bucket_generation(project_data, deployment_name)
     if current_generation is None:
         current_generation = 0
     next_generation = current_generation + 1
 
-    # Generate bucket names
     old_bucket_name = generate_bucket_name(project_name, deployment_name, current_generation)
     new_bucket_name = generate_bucket_name(project_name, deployment_name, next_generation)
 
@@ -335,7 +312,6 @@ async def _restore_bucket_with_versioning(
     )
 
     try:
-        # Create new bucket with versioned name
         minio_connector = create_minio_connector()
         alias_name = "default-minio"
 
@@ -358,7 +334,6 @@ async def _restore_bucket_with_versioning(
                 "new_resource_name": new_bucket_name,
             }
 
-        # Create new versioned bucket
         bucket_result = await minio_connector.create_bucket(alias_name, new_bucket_name)
         if bucket_result["status"] not in ["created", "exists"]:
             return {
@@ -391,12 +366,10 @@ async def _restore_bucket_with_versioning(
 
         logger.info(f"Created new bucket: {new_bucket_name}")
 
-        # Grant access to user (same user pattern as original bucket)
         from opi.utils.naming import generate_minio_username
 
         minio_username = generate_minio_username(project_name, deployment_name)
 
-        # Ensure user exists and has access to new bucket
         user_result = await minio_connector.create_user(
             alias_name,
             minio_username,
@@ -405,14 +378,12 @@ async def _restore_bucket_with_versioning(
         if user_result["status"] not in ["created", "exists"]:
             logger.warning(f"Could not ensure user exists: {user_result}")
 
-        # Grant bucket access
         access_result = await minio_connector.grant_bucket_access(
             alias_name, minio_username, new_bucket_name, ["read", "write", "delete", "list"]
         )
         if access_result["status"] not in ["granted", "attached"]:
             logger.warning(f"Could not grant bucket access: {access_result}")
 
-        # Restore data to new bucket using backup manager
         bucket_backup_manager = create_bucket_backup_manager()
         restore_result = await bucket_backup_manager.restore_bucket(
             cluster=deployment_cluster,

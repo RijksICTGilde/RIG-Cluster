@@ -6,7 +6,7 @@ failure or a real sync error fails the task, while a not-yet-built image, a regi
 outage, a crashing app, or an OOM auto-tune are reported as a health warning and the
 rollout still succeeds. This file locks that decision for each failure type, reusing the
 harness from ``test_verdwenen_applicatie_tijdens_wacht`` (one DeploymentHealthError per
-run, in place of its ApplicationGone/RuntimeError) instead of a second one next to it.
+run, in place of its ApplicationGoneError/RuntimeError) instead of a second one next to it.
 """
 
 from unittest.mock import AsyncMock, patch

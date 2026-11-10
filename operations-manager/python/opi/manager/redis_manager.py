@@ -21,7 +21,8 @@ from opi.utils.passwords import generate_secure_password
 
 logger = logging.getLogger(__name__)
 
-#: Datacommando's op eigen sleutels; beheer- en dangerous-categorieen eruit, INFO + CLIENT SETNAME terug.
+#: Data commands on the user's own keys: the admin and dangerous categories out, INFO and
+#: CLIENT SETNAME back in.
 ACL_COMMAND_RULES = ("+@all", "-@admin", "-@dangerous", "+info", "+client|setname")
 
 
@@ -47,16 +48,7 @@ class RedisManager:
         project_data: dict[str, Any],
         deployment: dict[str, Any],
     ) -> None:
-        """
-        Create Redis resources for a deployment that has Redis service enabled.
-
-        Creates a per-project Redis ACL user with a unique password, restricted
-        to keys with the deployment-project prefix.
-
-        Args:
-            project_data: The project configuration data
-            deployment: The specific deployment configuration
-        """
+        """Create the per-project Redis ACL user, restricted to the deployment-project prefix."""
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
         cluster_name = deployment.get("cluster")
@@ -84,14 +76,12 @@ class RedisManager:
                     "but not yet implemented. Using shared Redis instead."
                 )
 
-            # Shared Redis configuration
             redis_host = get_redis_server(cluster_name)
             redis_port = settings.REDIS_PORT
             admin_password = settings.REDIS_PASSWORD
 
             logger.info(f"Using shared Redis for {project_name}/{deployment_name} (host: {redis_host})")
 
-            # Verify admin connectivity before proceeding
             connection_valid = await self._test_redis_connection(redis_host, redis_port, admin_password)
             if not connection_valid:
                 raise RuntimeError(
@@ -99,11 +89,10 @@ class RedisManager:
                     "Check that the Redis server is running and the REDIS_PASSWORD setting is correct."
                 )
 
-            # Generate per-project Redis username and key prefix
             redis_username = generate_redis_username(project_name, deployment_name)
-            # Het prefix blijft, tenzij een platformbeheerder de opt-out heeft goedgekeurd.
-            # Een functie beslist (de poort van de dienst), zodat de manager de status niet
-            # zelf leest en een niet-goedgekeurde opt-out nergens half kan gelden.
+            # The prefix stays unless a platform admin approved the opt-out. The service's own
+            # gate decides, so the manager never reads that state itself and an unapproved
+            # opt-out cannot half apply anywhere.
             use_key_prefix = not is_acl_key_prefix_approved(project_data)
             key_prefix = generate_redis_key_prefix(project_name, deployment_name) if use_key_prefix else ""
 
@@ -115,13 +104,11 @@ class RedisManager:
                     f"ACL key prefix disabled for {project_name}/{deployment_name}, user will have access to all keys"
                 )
 
-            # Check for existing Redis credentials in Kubernetes
             existing_redis_secret = await self._get_existing_redis_credentials_from_k8s(deployment_name, deployment)
 
             if existing_redis_secret:
                 logger.info(f"Found existing Redis secret in Kubernetes for {project_name}/{deployment_name}")
 
-                # Check if key prefix config has changed (ACL needs to be updated)
                 acl_needs_update = existing_redis_secret.key_prefix != key_prefix
                 if acl_needs_update:
                     logger.info(
@@ -129,7 +116,6 @@ class RedisManager:
                         f"(was: '{existing_redis_secret.key_prefix}', now: '{key_prefix}'), updating ACL"
                     )
 
-                # Verify existing credentials still work
                 existing_valid = await self._test_redis_connection(
                     existing_redis_secret.host,
                     existing_redis_secret.port,
@@ -137,7 +123,7 @@ class RedisManager:
                     username=redis_username,
                 )
                 if existing_valid:
-                    # SETUSER is idempotent; de regel wordt opnieuw gezet met hetzelfde wachtwoord.
+                    # SETUSER is idempotent: the rule is set again with the same password.
                     await self._create_acl_user(
                         redis_host,
                         redis_port,
@@ -176,13 +162,12 @@ class RedisManager:
                         key_prefix=key_prefix,
                     )
             else:
-                # Create new per-project ACL user
                 logger.info(f"No Redis secret found, creating ACL user for {project_name}/{deployment_name}")
                 user_password = generate_secure_password(
                     min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20
                 )
 
-                # Check if user already exists in Redis (e.g., secret was deleted but user remains)
+                # The secret may have been deleted while the Redis user stayed.
                 user_exists = await self._check_acl_user_exists(redis_host, redis_port, admin_password, redis_username)
                 if user_exists:
                     logger.info(f"Redis ACL user {redis_username} already exists, resetting password")
@@ -203,7 +188,6 @@ class RedisManager:
                     key_prefix=key_prefix,
                 )
 
-            # Verify the new/existing credentials actually work
             final_valid = await self._test_redis_connection(
                 redis_secret.host,
                 redis_secret.port,
@@ -216,7 +200,6 @@ class RedisManager:
                     "Check Redis ACL configuration."
                 )
 
-            # Store Redis credentials in private secrets map
             self.project_manager._add_secret_to_create(
                 deployment_name,
                 "redis",
@@ -232,18 +215,7 @@ class RedisManager:
     async def delete_resources_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any]
     ) -> dict[str, Any]:
-        """
-        Delete Redis resources for a deployment.
-
-        Removes the per-project Redis ACL user.
-
-        Args:
-            project_data: The project configuration data
-            deployment: The specific deployment configuration
-
-        Returns:
-            Dictionary containing deletion results and status
-        """
+        """Remove the per-project Redis ACL user, and report the result."""
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
         cluster_name = deployment.get("cluster")
@@ -308,29 +280,21 @@ class RedisManager:
         project_data: dict[str, Any],
         marked_for_deletion_service: Any = None,
     ) -> dict[str, Any]:
-        """Handle cleanup when Redis service is removed from a deployment.
+        """Clean up when the Redis service is removed from a deployment.
 
-        Redis resources are ephemeral (ACL users), so they are always deleted
-        immediately.  The ``marked_for_deletion_service`` parameter is accepted
-        for interface consistency but is ignored.
+        An ACL user is ephemeral, so it is always deleted at once.
 
         Args:
-            project_name: Name of the project.
-            deployment_name: Name of the deployment losing the service.
-            deployment_data: The deployment dict from the *previous* YAML.
-            project_data: The *previous* project YAML (so internal service
-                checks still pass).
-            marked_for_deletion_service: Ignored (Redis is always immediate).
-
-        Returns:
-            Structured result dict with operations, errors, success.
+            deployment_data: The deployment dict from the PREVIOUS YAML.
+            project_data: The PREVIOUS project YAML, so the internal service checks
+                still pass.
+            marked_for_deletion_service: Ignored; accepted for interface consistency.
         """
         result = await self.delete_resources_for_deployment(project_data, deployment_data)
         result["trigger"] = "service_removal"
         return result
 
     async def _deployment_uses_redis(self, project_data: dict[str, Any], deployment_name: str) -> bool:
-        """Check if a deployment uses Redis service."""
         return self.project_manager._project_file_handler.deployment_uses_service(
             project_data,
             deployment_name,
@@ -338,7 +302,6 @@ class RedisManager:
         )
 
     def _project_uses_namespace_redis(self, project_data: dict[str, Any]) -> bool:
-        """Check if project uses namespace-specific Redis service."""
         project_services = project_data.get("services", [])
         # Format-agnostic (bare string / legacy name-as-key / new {name, config} record).
         return any(
@@ -348,7 +311,6 @@ class RedisManager:
     async def _get_existing_redis_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]
     ) -> RedisSecret | None:
-        """Get existing Redis credentials from Kubernetes secret."""
         try:
             from opi.core.cluster_config import get_prefixed_namespace
 
@@ -366,18 +328,7 @@ class RedisManager:
 
     @staticmethod
     async def _send_redis_command(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *args: str) -> str:
-        """
-        Send a command to Redis using RESP protocol and return the response.
-
-        Args:
-            reader: Async stream reader
-            writer: Async stream writer
-            *args: Command arguments (e.g., "AUTH", "password")
-
-        Returns:
-            Raw response string from Redis
-        """
-        # Build RESP array command
+        """Send a RESP command and return the raw response."""
         cmd = f"*{len(args)}\r\n"
         for arg in args:
             cmd += f"${len(arg)}\r\n{arg}\r\n"
@@ -395,23 +346,15 @@ class RedisManager:
         password: str,
         username: str | None = None,
     ) -> bool:
-        """
-        Test if Redis credentials are valid by connecting and sending AUTH + PING.
+        """Whether AUTH plus PING succeeds with these credentials.
 
         Args:
-            host: Redis server hostname
-            port: Redis server port
-            password: Redis password
-            username: Redis ACL username (None for default user)
-
-        Returns:
-            True if connection and authentication successful, False otherwise
+            username: None authenticates as the default user.
         """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
 
             try:
-                # AUTH with username (ACL) or just password (default user)
                 if username:
                     auth_cmd = (
                         f"*3\r\n$4\r\nAUTH\r\n${len(username)}\r\n{username}\r\n${len(password)}\r\n{password}\r\n"
@@ -429,7 +372,6 @@ class RedisManager:
                     )
                     return False
 
-                # Send PING
                 ping_cmd = "*1\r\n$4\r\nPING\r\n"
                 writer.write(ping_cmd.encode())
                 await writer.drain()
@@ -458,42 +400,28 @@ class RedisManager:
         user_password: str,
         key_prefix: str,
     ) -> None:
-        """
-        Create or update a Redis ACL user with key prefix restrictions.
+        """Create or update a Redis ACL user with key prefix restrictions.
 
-        Uses: ACL SETUSER <username> on resetpass ><password> ~<prefix>:* &<prefix>:*
+        Runs ``ACL SETUSER <username> on resetpass ><password> ~<prefix>:* &<prefix>:*``
         plus :data:`ACL_COMMAND_RULES`.
 
-        When key_prefix is empty, the user gets access to all keys and channels
-        (~* &*). This is needed for applications that don't support key prefixing.
-
         Args:
-            host: Redis server hostname
-            port: Redis server port
-            admin_password: Admin password for authentication
-            username: ACL username to create
-            user_password: Password for the new user
-            key_prefix: Key prefix token (e.g., "main-myproject"), or empty for all keys.
+            key_prefix: Key prefix token (e.g. "main-myproject"), or empty to grant every
+                key and channel (~* &*), which an application without key prefixing needs.
                 The ':' boundary delimiter is appended here, not carried in the token.
         """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
 
             try:
-                # Authenticate as admin
                 response = await RedisManager._send_redis_command(reader, writer, "AUTH", admin_password)
                 if not response.startswith("+OK"):
                     raise RuntimeError(f"Redis admin AUTH failed: {response}")
 
-                # Create/update ACL user:
-                # - on: enable the user
-                # - resetpass: clear any existing passwords
-                # - ><password>: set the new password
-                # - ~<prefix>:* or ~*: restrict to keys matching prefix (or all keys)
-                # - &<prefix>:* or &*: restrict pub/sub channels to same prefix (or all channels)
-                # - ACL_COMMAND_RULES: data commands only, no administration
-                # The ':' delimiter is added here so the exported prefix token stays
-                # a bare identifier; the boundary still requires a "<prefix>:" segment.
+                # ``on`` enables the user, ``resetpass`` clears its existing passwords,
+                # ``~`` scopes the keys and ``&`` the pub/sub channels. The ':' delimiter is
+                # added here so the exported prefix token stays a bare identifier, while the
+                # boundary still requires a "<prefix>:" segment.
                 if key_prefix:
                     key_pattern = f"~{key_prefix}:*"
                     channel_pattern = f"&{key_prefix}:*"
@@ -520,7 +448,7 @@ class RedisManager:
                 scope = f"{key_prefix}:*" if key_prefix else "* (all keys)"
                 logger.info(f"Created/updated Redis ACL user: {username} (keys+channels: {scope})")
 
-                # Persist ACL changes to disk so users survive Redis restarts
+                # Persist to disk so the user survives a Redis restart.
                 save_response = await RedisManager._send_redis_command(reader, writer, "ACL", "SAVE")
                 if not save_response.startswith("+OK"):
                     logger.warning(f"ACL SAVE failed after creating user {username}: {save_response}")
@@ -533,15 +461,6 @@ class RedisManager:
 
     @staticmethod
     async def _delete_acl_user(host: str, port: int, admin_password: str, username: str) -> None:
-        """
-        Delete a Redis ACL user.
-
-        Args:
-            host: Redis server hostname
-            port: Redis server port
-            admin_password: Admin password for authentication
-            username: ACL username to delete
-        """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
 
@@ -551,10 +470,10 @@ class RedisManager:
                     raise RuntimeError(f"Redis admin AUTH failed: {response}")
 
                 response = await RedisManager._send_redis_command(reader, writer, "ACL", "DELUSER", username)
-                # Response is :1 for deleted, :0 for not found - both are acceptable
+                # :1 is deleted and :0 is not found; both are fine here.
                 logger.info(f"Deleted Redis ACL user: {username} (response: {response})")
 
-                # Persist ACL changes to disk so deletions survive Redis restarts
+                # Persist to disk so the deletion survives a Redis restart.
                 save_response = await RedisManager._send_redis_command(reader, writer, "ACL", "SAVE")
                 if not save_response.startswith("+OK"):
                     logger.warning(f"ACL SAVE failed after deleting user {username}: {save_response}")
@@ -567,18 +486,6 @@ class RedisManager:
 
     @staticmethod
     async def _check_acl_user_exists(host: str, port: int, admin_password: str, username: str) -> bool:
-        """
-        Check if a Redis ACL user exists.
-
-        Args:
-            host: Redis server hostname
-            port: Redis server port
-            admin_password: Admin password for authentication
-            username: ACL username to check
-
-        Returns:
-            True if user exists, False otherwise
-        """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
 
@@ -587,7 +494,6 @@ class RedisManager:
                 if not response.startswith("+OK"):
                     return False
 
-                # ACL GETUSER returns user info or error if not found
                 cmd = f"*3\r\n$3\r\nACL\r\n$7\r\nGETUSER\r\n${len(username)}\r\n{username}\r\n"
                 writer.write(cmd.encode())
                 await writer.drain()
@@ -595,7 +501,7 @@ class RedisManager:
                 response_line = await asyncio.wait_for(reader.readline(), timeout=5.0)
                 decoded = response_line.decode().strip()
 
-                # If user exists, response starts with * (array); if not, starts with - (error) or $-1 (nil)
+                # An existing user comes back as an array (*); absent is an error (-) or nil.
                 return decoded.startswith("*")
             finally:
                 writer.close()

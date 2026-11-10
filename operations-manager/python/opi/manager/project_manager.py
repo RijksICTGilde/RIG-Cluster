@@ -1125,9 +1125,9 @@ class ProjectManager:
 
         return deployment_changes
 
-    def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]:
+    def _umbrella_refresh_watcher(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]:
         """Run the umbrella refresh watcher alongside a wait; see :class:`ArgoCDSync`."""
-        return ArgoCDSync(self)._umbrella_verversbewaker(argo_connector)
+        return ArgoCDSync(self)._umbrella_refresh_watcher(argo_connector)
 
     async def wait_for_project_level_application(self, app_name: str) -> None:
         """Wait until the project level of this project is really synchronised."""

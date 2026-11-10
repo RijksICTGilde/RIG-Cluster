@@ -28,9 +28,9 @@ import pytest
 from opi.connectors.git_repo import WriteResult
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
-    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-    ARGOCD_HERSTEL_BUDGET_SECONDEN,
-    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+    APPLICATION_CREATION_TIMEOUT_SECONDS,
+    ARGOCD_RECOVERY_BUDGET_SECONDS,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS,
     ArgoManager,
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
@@ -366,7 +366,7 @@ class TestDeGrendelZelf:
 
         with (
             _klok_die_doorloopt(),
-            pytest.raises(RuntimeError, match=f"refresh.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+            pytest.raises(RuntimeError, match=f"refresh.*{ARGOCD_RECOVERY_BUDGET_SECONDS}s budget"),
         ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
@@ -443,9 +443,9 @@ class TestDeGrendelZelf:
 
     @pytest.mark.asyncio
     async def test_de_wacht_krijgt_de_afgesproken_bovengrens_mee(self, monkeypatch: Any) -> None:
-        """``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN`` is de grens waar de constante zijn
+        """``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS`` is de grens waar de constante zijn
         onderbouwing bij draagt: ruimte voor de umbrella plus een sync. Hetzelfde voor
-        ``APPLICATIE_AANMAAK_TIMEOUT_SECONDEN`` op de wacht ervoor. Een eigen getal hier zou
+        ``APPLICATION_CREATION_TIMEOUT_SECONDS`` op de wacht ervoor. Een eigen getal hier zou
         die onderbouwing stil loskoppelen van wat er gebeurt."""
         connector = AsyncMock()
         connector.login = AsyncMock(return_value=True)
@@ -455,9 +455,9 @@ class TestDeGrendelZelf:
         await manager.wait_for_project_level_application(PROJECT_APP)
 
         aanmaak = manager._argo_manager.wait_for_application_created.await_args.kwargs
-        assert aanmaak["timeout"] == APPLICATIE_AANMAAK_TIMEOUT_SECONDEN
+        assert aanmaak["timeout"] == APPLICATION_CREATION_TIMEOUT_SECONDS
         kwargs = manager._argo_manager.wait_for_application_synced.await_args.kwargs
-        assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN
+        assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
     async def test_een_login_die_het_hele_budget_faalt_stopt_voor_de_wacht(self, monkeypatch: Any) -> None:
@@ -471,7 +471,7 @@ class TestDeGrendelZelf:
 
         with (
             _klok_die_doorloopt(),
-            pytest.raises(RuntimeError, match=f"login.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+            pytest.raises(RuntimeError, match=f"login.*{ARGOCD_RECOVERY_BUDGET_SECONDS}s budget"),
         ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
@@ -546,7 +546,7 @@ class TestWaarDeGrendelZijnNaamVandaanHaalt:
 class TestDeVerversbewaker:
     """De bewaker is een vangnet: valt hij zelf om, dan mag hij de wacht niet meeslepen.
 
-    Vandaar de generieke ``except`` in ``_umbrella_verversbewaker``, tegen de afspraak in
+    Vandaar de generieke ``except`` in ``_umbrella_refresh_watcher``, tegen de afspraak in
     ``CLAUDE.md`` dat een nieuwe ``except`` specifiek is. Hij staat nu op een plek in plaats
     van drie, en dit is wat hij moet doen: een wacht op het bestaan van een applicatie hoort
     niet te stranden op een ververspoging die ernaast liep.
@@ -569,7 +569,7 @@ class TestDeVerversbewaker:
 
         gewacht = False
         with caplog.at_level(logging.WARNING):
-            async with manager._umbrella_verversbewaker(AsyncMock()):
+            async with manager._umbrella_refresh_watcher(AsyncMock()):
                 # De bewaker draait naast de wacht, dus hij moet wel aan de beurt komen.
                 await asyncio.sleep(0)
                 gewacht = True
@@ -598,7 +598,7 @@ class TestDeVerversbewaker:
         monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", _blijft_hangen)
 
         async def _wacht() -> None:
-            async with manager._umbrella_verversbewaker(AsyncMock()):
+            async with manager._umbrella_refresh_watcher(AsyncMock()):
                 await asyncio.sleep(0)
 
         # Gemeten op het AFLOPEN van de wacht als losse taak, niet met een

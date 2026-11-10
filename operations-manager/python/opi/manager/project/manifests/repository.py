@@ -127,9 +127,8 @@ class RepositoryManifests:
             logger.warning("No repositories defined in project data")
             return
 
-        # Group deployments by repository (only for current cluster), already
-        # filtered to the requested scope -- get_deployments honours both
-        # deployment_name and deployment_names.
+        # Grouped by repository and already filtered to the requested scope:
+        # get_deployments honours both deployment_name and deployment_names.
         deployments = await self._host.get_deployments(
             cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
         )
@@ -143,7 +142,6 @@ class RepositoryManifests:
                 deployments_by_repo[repo_name] = []
             deployments_by_repo[repo_name].append(deployment)
 
-        # Process each repository
         for repo_name, repo_deployments in deployments_by_repo.items():
             logger.info(f"Processing repository: {repo_name} with {len(repo_deployments)} deployments")
 
@@ -181,7 +179,6 @@ class RepositoryManifests:
 
         async def _generate() -> None:
             """Write this repository's manifests into this round's working directory."""
-            # Deployments are already filtered for current cluster by caller
             for deployment in deployments:
                 with self._host._step(steps.DEPLOYMENT_CONFIG_BUILD, subject=str(deployment["name"])):
                     await self.process_deployment_manifests(deployment, workspace)
@@ -345,30 +342,24 @@ class RepositoryManifests:
             output_dir=target_path,
         )
 
-        # Check if this is a helmfile deployment, helm chart deployment, or component deployment
         if deployment_uses_helmfile(deployment):
-            # Process helmfile deployment (ArgoCD CMP runs helmfile template)
             logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
             await self._host._process_helmfile_deployment(
                 deployment, git_connector, target_path, namespace_policy_files
             )
-            # Note: SOPS encryption is handled inside _process_helmfile_deployment
             return
 
         if deployment_uses_helm_charts(deployment):
-            # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
             await self._host._process_helm_chart_deployment(
                 deployment, git_connector, target_path, namespace_policy_files
             )
-            # Note: SOPS encryption is handled inside _process_helm_chart_deployment
             return
 
-        # Standard component-based deployment processing
         logger.info(f"Deployment '{deployment_name}' uses components - processing as standard deployment")
 
-        # Pre-scan: Collect all aliases from components before creating any manifests
-        # This allows deployment-level secrets to include aliases from all components
+        # Collected before any manifest is written, so a deployment-level secret can carry the
+        # aliases of every component.
         self._host._deployment_aliases[deployment_name] = await self._host._collect_deployment_aliases(deployment_name)
 
         try:
@@ -376,14 +367,11 @@ class RepositoryManifests:
                 deployment, git_connector, deployment_path
             )
         except Exception:
-            # Rollback subdomain registration if manifest creation fails
             await ApplicationManifests(self._host).rollback_subdomain_if_needed()
             raise
 
         # Part of this directory's desired state, so the prunes below leave them alone.
         created_files.extend(namespace_policy_files)
-
-        # Note: SSO and user secrets are already created in create_application_manifests above
 
         # Prune obsolete per-component manifests: any file this run did not regenerate
         # (removed component, or a renamed/dropped file of a surviving component such as
@@ -403,8 +391,6 @@ class RepositoryManifests:
         # as a sidecar with a fixed value in its template. Idempotent on the rest.
         apply_rules_to_directory(target_path, build_rules(project_data, cluster_name))
 
-        # Create a kustomization file BEFORE encrypting .to-sops.yaml files
-        # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
         sops_files, regular_files = self._host._manifest_generator.collect_manifest_files(
             target_path, include_subfolders=False
         )
@@ -413,15 +399,12 @@ class RepositoryManifests:
             git_connector, prefixed_namespace, sops_files, regular_files, deployment_path, deployment
         )
 
-        # FINAL STEP: Convert .to-sops.yaml files to .sops.yaml files
-        # This must be done AFTER kustomization creation so that decrypt-sops.yaml
-        # can reference the original .to-sops.yaml filenames
+        # After the kustomization, so decrypt-sops.yaml can still name the original
+        # .to-sops.yaml filenames.
         public_key = get_project_public_key(project_data)
         logger.info(f"Encrypting .to-sops.yaml files for deployment: {deployment_name}")
         logger.info(f"Using SOPS public key for namespace: {prefixed_namespace}")
         logger.info(f"SOPS encryption target path: {target_path}")
-
-        # List .to-sops.yaml files before encryption for debugging
 
         to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)

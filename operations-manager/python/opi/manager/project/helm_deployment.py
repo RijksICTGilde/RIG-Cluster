@@ -105,12 +105,10 @@ def resolve_nested_aliases(obj: Any, context: dict[str, Any]) -> Any:
     string that only contains references becomes a string.
     """
     if isinstance(obj, str):
-        # Check if entire string is exactly a single variable reference
         # This preserves types (e.g., integers) instead of converting to string
         for key, value in context.items():
             if obj == f"${key}" or obj == f"${{{key}}}":
-                return value  # Return raw value, preserving original type
-        # Otherwise do string replacement (for partial matches or multiple variables)
+                return value
         result = obj
         for key, value in context.items():
             result = result.replace(f"${key}", str(value))
@@ -162,7 +160,7 @@ async def clone_helm_chart(
 
     logger.info(f"Cloning helm chart '{chart_name}' from {git_url}#{git_ref}")
 
-    dest_chart_path = ""  # Will be set inside the temp directory context
+    dest_chart_path = ""
 
     with tempfile.TemporaryDirectory() as temp_dir:
         git_connector = GitConnector(
@@ -173,7 +171,6 @@ async def clone_helm_chart(
 
         await git_connector.clone()
 
-        # Get the chart source path
         source_chart_path = path_inside_clone(temp_dir, chart_path, f"helm chart '{chart_name}'")
 
         if not os.path.exists(source_chart_path):
@@ -181,11 +178,9 @@ async def clone_helm_chart(
 
         reject_escaping_symlinks(source_chart_path)
 
-        # Create charts directory in target
         charts_dir = os.path.join(target_dir, "charts")
         os.makedirs(charts_dir, exist_ok=True)
 
-        # Copy chart to target directory
         dest_chart_path = safe_join(charts_dir, single_segment(chart_name, "helm-charts[].name"))
         if os.path.exists(dest_chart_path):
             await asyncio.to_thread(shutil.rmtree, dest_chart_path)
@@ -193,7 +188,6 @@ async def clone_helm_chart(
 
         logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
 
-        # Check for chart dependencies (common chart)
         chart_yaml_path = os.path.join(dest_chart_path, "Chart.yaml")
         if os.path.exists(chart_yaml_path):
             with open(chart_yaml_path) as f:
@@ -204,7 +198,6 @@ async def clone_helm_chart(
                 dep_name = dep.get("name")
                 dep_repo = dep.get("repository", "")
 
-                # Handle local file:// dependencies
                 if dep_repo.startswith("file://"):
                     rel_path = dep_repo.replace("file://", "")
                     dep_source = path_inside_clone(
@@ -220,11 +213,9 @@ async def clone_helm_chart(
                             await asyncio.to_thread(shutil.rmtree, dep_dest)
                         await asyncio.to_thread(shutil.copytree, dep_source, dep_dest, symlinks=True)
 
-                        # Update the dependency path in Chart.yaml
                         dep["repository"] = f"file://../{dep_name}"
                         logger.info(f"Copied dependency chart '{dep_name}' to {dep_dest}")
 
-            # Write updated Chart.yaml if dependencies were modified
             with open(chart_yaml_path, "w") as f:
                 f.write(dump_yaml_for_go(chart_data))
 
@@ -246,11 +237,9 @@ def write_helmfile_custom_files(
     """
     written_files: list[str] = []
 
-    # Merge files: base files first, then deployment files override
     base_files = helmfile_def.get("files", {}) or {}
     deployment_files = helmfile_ref.get("files", {}) or {}
 
-    # Combine with deployment files taking precedence
     all_files = {**base_files, **deployment_files}
 
     if not all_files:
@@ -277,7 +266,6 @@ def write_helmfile_custom_files(
 
         file_path = os.path.join(target_path, filename)
 
-        # Create parent directories if needed
         file_dir = os.path.dirname(file_path)
         if file_dir and file_dir != target_path:
             os.makedirs(file_dir, exist_ok=True)
@@ -311,7 +299,6 @@ async def clone_helmfile_source(
 
     require_allowed_render_source(source_url, f"helmfile '{helmfile_name}'")
 
-    # Create a temporary directory for cloning the source
     with tempfile.TemporaryDirectory() as temp_dir:
         git_connector = GitConnector(
             repo_url=source_url,
@@ -320,7 +307,6 @@ async def clone_helmfile_source(
         )
         await git_connector.clone()
 
-        # Determine source path within the cloned repo
         full_source_path = path_inside_clone(temp_dir, source_path, f"helmfile '{helmfile_name}'")
 
         if not os.path.exists(full_source_path):
@@ -329,7 +315,6 @@ async def clone_helmfile_source(
 
         reject_escaping_symlinks(full_source_path)
 
-        # If entry is specified, verify it exists within the source path
         if entry_path:
             full_entry_path = path_inside_clone(full_source_path, entry_path, f"helmfile '{helmfile_name}'")
             if not os.path.exists(full_entry_path):
@@ -338,13 +323,9 @@ async def clone_helmfile_source(
                     f"Helmfile entry '{entry_path}' not found within path '{source_path}' for '{helmfile_name}'"
                 )
 
-        # Copy helmfile content to target directory
-        # This includes the helmfile.yaml and all related files (charts, values, etc.)
         dest_helmfile_path = target_path
         os.makedirs(dest_helmfile_path, exist_ok=True)
 
-        # Copy all files from source to destination
-        # Skip .git directory to prevent Git from treating the target as a submodule
         for item in os.listdir(full_source_path):
             if item == ".git":
                 continue
@@ -393,13 +374,11 @@ class HelmDeployment:
         """
         context: dict[str, Any] = {}
 
-        # Get deployment for cluster info
         deployment = await self._host.get_deployment_by_name(deployment_name)
         if not deployment:
             logger.warning(f"Deployment '{deployment_name}' not found")
             return context
 
-        # Add deployment-level variables for hostname, subdomain, base-domain, issuer
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
@@ -408,33 +387,25 @@ class HelmDeployment:
         issuer_config = effective_issuer(await self._host.get_contents(record_base=False), deployment, cluster_name)
         use_https = get_ingress_tls_enabled(cluster_name)
 
-        # Calculate hostname based on configuration
         if base_domain and subdomain:
-            # External domain mode: subdomain.base-domain
             hostname = generate_external_hostname(subdomain, base_domain)
         elif subdomain:
-            # Subdomain with cluster domain
             ingress_postfix = get_ingress_postfix(cluster_name)
             hostname = f"{subdomain}.{ingress_postfix}"
         else:
-            # Fallback: use deployment name with cluster domain
             ingress_postfix = get_ingress_postfix(cluster_name)
             hostname = f"{deployment_name}.{ingress_postfix}"
 
-        # Determine issuer name
         if issuer_config:
             if issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
-                # Generate full issuer name to match the Issuer resource we create
                 context["ISSUER"] = generate_issuer_name(base_domain, issuer_config, deployment_name)
             else:
                 context["ISSUER"] = issuer_config
         else:
-            # Use cluster's default ClusterIssuer
             cluster_issuer = get_ingress_cluster_issuer(cluster_name)
             if cluster_issuer:
                 context["ISSUER"] = cluster_issuer
 
-        # Add hostname-related variables
         public_url = generate_public_url(hostname, use_https)
         context["PUBLIC_HOST"] = public_url
         context["PUBLIC_HOSTNAME"] = hostname
@@ -446,21 +417,21 @@ class HelmDeployment:
 
         logger.debug(f"Added deployment variables: PUBLIC_HOST={public_url}, HOSTNAME={hostname}")
 
-        # Get database credentials if available
         db_secret = self._host._get_secret_from_map(deployment_name, "database", DatabaseSecret)
         if db_secret:
             context["DATABASE_SERVER_HOST"] = db_secret.host
-            context["DATABASE_SERVER_PORT"] = db_secret.port  # Keep as int for YAML type preservation
+            # Stays an int, so the YAML keeps its type.
+            context["DATABASE_SERVER_PORT"] = db_secret.port
             context["DATABASE_SERVER_USER"] = db_secret.username
             context["DATABASE_PASSWORD"] = db_secret.password
             context["DATABASE_DB"] = db_secret.database
             context["DATABASE_SCHEMA"] = db_secret.schema
 
-        # Get MinIO credentials if available
         minio_secret = self._host._get_secret_from_map(deployment_name, "minio", MinIOSecret)
         if minio_secret:
             context["OBJECT_STORE_HOST"] = minio_secret.host
-            context["OBJECT_STORE_PORT"] = minio_secret.port  # Keep as int for YAML type preservation
+            # Stays an int, so the YAML keeps its type.
+            context["OBJECT_STORE_PORT"] = minio_secret.port
             context["OBJECT_STORE_URL"] = minio_secret.url
             context["OBJECT_STORE_ENDPOINT_URL"] = minio_secret.endpoint_url
             context["OBJECT_STORE_USER"] = minio_secret.access_key
@@ -468,7 +439,6 @@ class HelmDeployment:
             context["OBJECT_STORE_BUCKET_NAME"] = minio_secret.bucket_name
             context["OBJECT_STORE_REGION"] = minio_secret.region
 
-        # Get Keycloak credentials if available
         keycloak_secret = self._host._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
         if keycloak_secret:
             context["OIDC_DISCOVERY_URL"] = keycloak_secret.discovery_url
@@ -477,11 +447,11 @@ class HelmDeployment:
             context["KEYCLOAK_BASE_URL"] = keycloak_secret.base_url
             context["KEYCLOAK_REALM"] = keycloak_secret.realm
 
-        # Get Redis credentials if available
         redis_secret = self._host._get_secret_from_map(deployment_name, "redis", RedisSecret)
         if redis_secret:
             context["REDIS_HOST"] = redis_secret.host
-            context["REDIS_PORT"] = redis_secret.port  # Keep as int for YAML type preservation
+            # Stays an int, so the YAML keeps its type.
+            context["REDIS_PORT"] = redis_secret.port
             context["REDIS_PASSWORD"] = redis_secret.password
             context["REDIS_USERNAME"] = redis_secret.username
             context["REDIS_URL"] = redis_secret.url
@@ -511,17 +481,14 @@ class HelmDeployment:
 
         logger.info(f"Processing helm chart deployment: {deployment_name}")
 
-        # Ensure target directory exists
         os.makedirs(target_path, exist_ok=True)
 
-        # Get helm charts from deployment
         helm_chart_refs = deployment.get("helm-charts", [])
 
-        # Build the credentials context for alias resolution
         context = await self.get_helm_values_context(deployment_name)
 
-        # Process each helm chart reference
-        helm_charts_config: list[dict[str, Any]] = []  # For kustomization.yaml helmCharts section
+        # For the helmCharts section of kustomization.yaml.
+        helm_charts_config: list[dict[str, Any]] = []
 
         for helm_chart_ref in helm_chart_refs:
             chart_reference = helm_chart_ref.get("reference")
@@ -532,31 +499,24 @@ class HelmDeployment:
 
             logger.info(f"Processing helm chart reference: {chart_reference}")
 
-            # Find the helm-chart definition in project
             helm_chart_def = self._host._project_file_handler.get_helm_chart_by_name(project_data, chart_reference)
             if not helm_chart_def:
                 raise ValueError(f"Helm chart '{chart_reference}' not found in project definition")
 
-            # Clone the chart to target directory
             chart_path = await clone_helm_chart(helm_chart_def, target_path)
 
-            # Extract base helm-values from helm-chart definition
             base_values = await self._host._project_file_handler.extract_helm_chart_values(
                 project_data, chart_reference
             )
 
-            # Extract deployment-level helm-values
             deployment_values = await self._host._project_file_handler.extract_deployment_helm_chart_values(
                 project_data, deployment_name, chart_reference
             )
 
-            # Deep merge values (deployment overrides base)
             merged_values = deep_merge_dicts(base_values, deployment_values)
 
-            # Resolve $ALIAS references in the merged values
             resolved_values = resolve_nested_aliases(merged_values, context)
 
-            # Write values as .to-sops.yaml (will be encrypted later)
             # Use naming convention that matches CMP plugin pattern: *-helm-values.sops.yaml
             values_file_sops = generate_helm_values_filename(deployment_name, chart_reference, encrypted=True)
             values_file_to_sops = sops_filenames(values_file_sops).plaintext
@@ -567,7 +527,6 @@ class HelmDeployment:
 
             logger.info(f"Created helm values file (to be encrypted): {values_path}")
 
-            # Add to helmCharts config for kustomization.yaml
             # Reference the final .sops.yaml name (after encryption)
             helm_charts_config.append(
                 {
@@ -579,7 +538,6 @@ class HelmDeployment:
                 }
             )
 
-        # Create service secret manifests (database, minio, redis, keycloak)
         secret_files = await self.create_deployment_secrets(
             deployment_name,
             target_path,
@@ -592,12 +550,11 @@ class HelmDeployment:
         # kustomization, which is built here from a list and not from a directory scan.
         regular_files: list[str] = list(namespace_policy_files or [])
 
-        # Create Let's Encrypt Issuer manifest if configured
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
-        # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
-        # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
+        # An ``issuer_config`` that already carries a domain suffix is used as it stands, so
+        # only the bare "letsencrypt" and "letsencrypt-staging" generate an Issuer.
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
             regular_files.extend(
                 emit_letsencrypt_issuer(
@@ -612,7 +569,6 @@ class HelmDeployment:
                 )
             )
 
-        # Create kustomization.yaml with helmCharts section and secret resources
         await self.create_helm_kustomization(
             target_path,
             prefixed_namespace,
@@ -621,7 +577,6 @@ class HelmDeployment:
             regular_files,
         )
 
-        # Encrypt .to-sops.yaml files to .sops.yaml
         public_key = get_project_public_key(project_data)
         if not public_key:
             raise ValueError(
@@ -631,7 +586,6 @@ class HelmDeployment:
 
         logger.info(f"Encrypting helm values files for deployment: {deployment_name}")
 
-        # List .to-sops.yaml files before encryption for debugging
         to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
@@ -673,16 +627,12 @@ class HelmDeployment:
 
         logger.info(f"Processing helmfile deployment: {deployment_name}")
 
-        # Ensure target directory exists
         os.makedirs(target_path, exist_ok=True)
 
-        # Get helmfile references from deployment
         helmfile_refs = deployment.get("helmfile", [])
 
-        # Build the credentials context for alias resolution
         context = await self.get_helm_values_context(deployment_name)
 
-        # Add namespace to context for alias resolution
         context["NAMESPACE"] = prefixed_namespace
 
         # The chart renders the ingresses of a helmfile deployment itself, so the annotation from
@@ -696,7 +646,6 @@ class HelmDeployment:
             get_external_dns_target_for_hostname(cluster_name, helmfile_hostname) if helmfile_hostname else None
         )
 
-        # Process each helmfile reference
         for helmfile_ref in helmfile_refs:
             helmfile_reference = helmfile_ref.get("reference")
             if not helmfile_reference:
@@ -704,15 +653,12 @@ class HelmDeployment:
 
             logger.info(f"Processing helmfile reference: {helmfile_reference}")
 
-            # Find the helmfile definition in project
             helmfile_def = self._host._project_file_handler.get_helmfile_by_name(project_data, helmfile_reference)
             if not helmfile_def:
                 raise ValueError(f"Helmfile '{helmfile_reference}' not found in project definition")
 
-            # Clone the helmfile source to target directory
             _, entry_path = await clone_helmfile_source(helmfile_def, target_path)
 
-            # Write helmfile entry config for CMP to use
             if entry_path:
                 helmfile_config_path = os.path.join(target_path, ".helmfile-entry")
                 with open(helmfile_config_path, "w") as f:
@@ -727,8 +673,6 @@ class HelmDeployment:
             cmp_env_plaintext_path = os.path.join(target_path, CMP_ENV_PLAINTEXT_FILENAME)
             cmp_env_vars: dict[str, str] = {}
 
-            # Add env-vars from the deployment's helmfile reference
-            # These can be plain text or AGE-encrypted values
             env_vars = helmfile_ref.get("env-vars", {})
             if env_vars and isinstance(env_vars, dict):
                 # Only fetched when an encrypted value is actually present, so a
@@ -779,17 +723,14 @@ class HelmDeployment:
                 os.remove(cmp_env_plaintext_path)
                 logger.info(f"Removed plain-text CMP environment file: {cmp_env_plaintext_path}")
 
-            # Extract base helm-values from helmfile definition
             base_values = await self._host._project_file_handler.extract_helmfile_values(
                 project_data, helmfile_reference
             )
 
-            # Extract deployment-level helm-values
             deployment_values = await self._host._project_file_handler.extract_deployment_helmfile_values(
                 project_data, deployment_name, helmfile_reference
             )
 
-            # Deep merge values (deployment overrides base)
             merged_values = deep_merge_dicts(base_values, deployment_values)
 
             # Merged in as the base, not over it: existing annotations stay, and a target from
@@ -804,10 +745,8 @@ class HelmDeployment:
                     f"{deployment_name} ({helmfile_hostname})"
                 )
 
-            # Resolve $ALIAS references in the merged values
             resolved_values = resolve_nested_aliases(merged_values, context)
 
-            # Write values as .to-sops.yaml (will be encrypted later)
             # CMP plugin looks for values.sops.yaml in helmfile directories
             values_file_to_sops = sops_filenames("values").plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
@@ -817,13 +756,10 @@ class HelmDeployment:
 
             logger.info(f"Created helmfile values file (to be encrypted): {values_path}")
 
-            # Write custom files defined in project (base) and deployment (override)
-            # This allows users to override helmfile.yaml.gotmpl or add other files
             custom_files = write_helmfile_custom_files(helmfile_def, helmfile_ref, target_path)
             if custom_files:
                 logger.info(f"Wrote {len(custom_files)} custom file(s) for helmfile deployment")
 
-        # Create service secret manifests (database, minio, redis, keycloak)
         secret_files = await self.create_deployment_secrets(
             deployment_name,
             target_path,
@@ -836,7 +772,6 @@ class HelmDeployment:
         # kustomization, which is built here from a list and not from a directory scan.
         regular_files: list[str] = list(namespace_policy_files or [])
 
-        # Create Let's Encrypt Issuer manifest if configured
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
@@ -867,15 +802,15 @@ class HelmDeployment:
             self._host._manifest_generator.create_kustomization_files(
                 output_dir=target_path,
                 namespace=prefixed_namespace,
-                sops_files=sops_files,  # Include secret SOPS files
+                sops_files=sops_files,
                 regular_files=regular_files,
-                helm_charts=[],  # No helm charts - helmfile handles this
+                # No helm charts: helmfile renders those itself.
+                helm_charts=[],
             )
             logger.info(f"Created kustomization.yaml with resources: {regular_files}, sops: {sops_files}")
         else:
             logger.debug("No additional resources for kustomization.yaml, skipping creation")
 
-        # Encrypt .to-sops.yaml files to .sops.yaml
         public_key = get_project_public_key(project_data)
         if not public_key:
             raise ValueError(
@@ -885,7 +820,6 @@ class HelmDeployment:
 
         logger.info(f"Encrypting helmfile values files for deployment: {deployment_name}")
 
-        # List .to-sops.yaml files before encryption for debugging
         to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
@@ -919,7 +853,6 @@ class HelmDeployment:
 
         secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
 
-        # Create Keycloak/SSO secret if available
         keycloak_secret = self._host._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
         if keycloak_secret:
             keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
@@ -939,7 +872,6 @@ class HelmDeployment:
             created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Keycloak secret manifest: {manifest_name}")
 
-        # Create Database secret if available
         db_secret = self._host._get_secret_from_map(deployment_name, "database", DatabaseSecret)
         if db_secret:
             db_secret_data = db_secret.to_k8s_secret_data()
@@ -959,7 +891,6 @@ class HelmDeployment:
             created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Database secret manifest: {manifest_name}")
 
-        # Create MinIO secret if available
         minio_secret = self._host._get_secret_from_map(deployment_name, "minio", MinIOSecret)
         if minio_secret:
             minio_secret_data = minio_secret.to_k8s_secret_data()
@@ -979,7 +910,6 @@ class HelmDeployment:
             created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created MinIO secret manifest: {manifest_name}")
 
-        # Create Redis secret if available
         redis_secret = self._host._get_secret_from_map(deployment_name, "redis", RedisSecret)
         if redis_secret:
             redis_secret_data = redis_secret.to_k8s_secret_data()
@@ -1019,7 +949,6 @@ class HelmDeployment:
         if secret_files:
             all_sops_files.extend(secret_files)
 
-        # Use the shared manifest generator method
         self._host._manifest_generator.create_kustomization_files(
             output_dir=target_path,
             namespace=namespace,

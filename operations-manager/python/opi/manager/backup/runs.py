@@ -1,9 +1,9 @@
-"""De onderdelen van een backup-run opzoeken bij Kopia.
+"""Look up the items of a backup run at Kopia.
 
-Het projectbestand zegt alleen WELKE run terug moet (``clone-from.run``); de onderdelen
-zelf zijn runtime-gegevens en staan niet in het bestand. Daardoor is er een plek die
-snapshots naar runs groepeert: de restore-wizard en de managers die data terugzetten
-lezen dezelfde definitie van wat een onderdeel is.
+The project file only says WHICH run has to come back (``clone-from.run``); the items
+themselves are runtime data and are not in the file. So the grouping of snapshots into
+runs lives here, and the restore wizard and the managers that put data back read the
+same definition of what an item is.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ def group_snapshots_into_runs(
     snapshots: Iterable[SnapshotInfo],
     deployment_name: str,
 ) -> dict[str, dict[str, Any]]:
-    """De snapshots van een deployment, gegroepeerd per backup-run.
+    """The snapshots of a deployment, grouped per backup run.
 
-    Een snapshot zonder ``backup_run_id`` staat op zichzelf en vormt een run met zijn
-    eigen snapshot-id als sleutel.
+    A snapshot without ``backup_run_id`` stands on its own and forms a run keyed by its
+    own snapshot id.
     """
     runs: dict[str, dict[str, Any]] = {}
     for snapshot in snapshots:
@@ -71,11 +71,11 @@ async def backup_run_items(
     deployment_name: str,
     run_id: str,
 ) -> list[dict[str, Any]]:
-    """De onderdelen van precies deze backup-run.
+    """The items of exactly this backup run.
 
     Raises:
-        ValueError: als de run niet (meer) bij deze deployment bestaat. Een lege lijst
-            teruggeven zou een leeg herstel als geslaagd laten eindigen.
+        ValueError: when the run no longer exists for this deployment. Returning an empty
+            list would let an empty restore end as a success.
     """
     snapshots = await BackupManager().list_snapshots(cluster, namespace, project_name=project_name)
     runs = group_snapshots_into_runs(snapshots, deployment_name)
@@ -94,10 +94,10 @@ async def clone_backup_items(
     deployment: dict[str, Any],
     clone_from: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """De onderdelen van de backup-run die het ``clone-from``-blok van deze deployment noemt.
+    """The items of the backup run named in this deployment's ``clone-from`` block.
 
-    De run hoort bij de bron-deployment (``reference``), dus cluster en namespace komen
-    van die deployment en niet van de deployment die hersteld wordt.
+    The run belongs to the source deployment (``reference``), so cluster and namespace come
+    from that deployment and not from the deployment being restored.
     """
     deployment_name = str(deployment.get("name") or "")
     reference = str(clone_from.get("reference") or "")

@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class InviteError(Exception):
-    """Base exception for invite-related errors."""
-
     def __init__(self, message: str, error_code: str) -> None:
         super().__init__(message)
         self.message = message
@@ -27,16 +25,12 @@ class InviteError(Exception):
 
 
 class InviteNotFoundError(InviteError):
-    """Raised when an invite key is not found."""
-
     def __init__(self, key: str) -> None:
         super().__init__(f"Invite '{key}' not found", "invite_not_found")
         self.key = key
 
 
 class InviteDomainError(InviteError):
-    """Raised when email domain doesn't match restriction."""
-
     def __init__(self, email: str, required_domain: str) -> None:
         super().__init__(
             f"Email '{email}' does not match required domain '{required_domain}'",
@@ -47,8 +41,6 @@ class InviteDomainError(InviteError):
 
 
 class InviteAuthMethodError(InviteError):
-    """Raised when the requested auth method is not allowed."""
-
     def __init__(self, method: str) -> None:
         super().__init__(
             f"Authentication method '{method}' is not allowed for this invite",
@@ -58,45 +50,24 @@ class InviteAuthMethodError(InviteError):
 
 
 class UserExistsError(InviteError):
-    """Raised when trying to create a local user that already exists."""
-
     def __init__(self, email: str) -> None:
         super().__init__(f"User with email '{email}' already exists", "user_exists")
         self.email = email
 
 
 class InviteManager:
-    """Manager for invite operations and user onboarding."""
-
     def __init__(self, project_file_handler: ProjectFileHandler | None = None) -> None:
-        """
-        Initialize the InviteManager.
-
-        Args:
-            project_file_handler: Optional ProjectFileHandler instance
-        """
         self.project_file_handler = project_file_handler or ProjectFileHandler()
 
     def validate_email_domain(self, email: str, invite: dict[str, Any]) -> bool:
-        """
-        Validate that an email address matches any domain restriction.
-
-        Args:
-            email: The email address to validate
-            invite: The invite configuration
-
-        Returns:
-            True if email is valid
-
-        Raises:
-            InviteDomainError: If email doesn't match required domain
+        """Raises:
+        InviteDomainError: the address is outside the invite's domain restriction.
         """
         restrict_domain = invite.get("restrict_domain")
 
         if not restrict_domain:
             return True
 
-        # Normalize domain (ensure it starts with @)
         if not restrict_domain.startswith("@"):
             restrict_domain = f"@{restrict_domain}"
 
@@ -111,19 +82,11 @@ class InviteManager:
         invite: dict[str, Any],
         method: str,
     ) -> bool:
-        """
-        Validate that the requested auth method is allowed for this invite.
-
-        Args:
-            project_data: The project configuration data
-            invite: The invite configuration
-            method: The authentication method ('sso' or 'local')
-
-        Returns:
-            True if method is allowed
+        """Args:
+            method: 'sso' or 'local'.
 
         Raises:
-            InviteAuthMethodError: If the method is not allowed
+            InviteAuthMethodError: that method is not allowed for this invite.
         """
         auth_methods = self.project_file_handler.get_invite_auth_methods(project_data, invite)
 
@@ -139,7 +102,6 @@ class InviteManager:
         user_id: str,
         client_roles: dict[str, Any],
     ) -> dict[str, Any]:
-        """Assign client roles to a user."""
         assigned: dict[str, list[str]] = {}
         errors: list[str] = []
 
@@ -173,35 +135,18 @@ class InviteManager:
         user_id: str,
         invite: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Assign roles and groups from invite configuration to a user.
+        """Assign the invite's roles and groups to a user, and report what was assigned.
 
-        Supports both realm roles and client roles:
-        - roles: ["role1", "role2"] - assigns realm-level roles (legacy)
-        - realm_roles: ["role1", "role2"] - assigns realm-level roles (new, preferred)
-        - client_roles: {"client-id": ["role1"]} - assigns client-level roles
-
-        Both `roles` and `realm_roles` assign realm-level roles. The `realm_roles`
-        field is preferred for consistency with the keycloak config `realm-roles`.
-
-        Args:
-            keycloak: KeycloakConnector instance
-            realm_name: The Keycloak realm name
-            user_id: The Keycloak user ID
-            invite: The invite configuration
-
-        Returns:
-            Dict with assigned roles, client_roles, and groups
+        Both ``roles`` and ``realm_roles`` hold realm-level roles; ``realm_roles`` is the
+        preferred spelling, matching the keycloak config's ``realm-roles``. ``client_roles``
+        maps a client id to its role names.
         """
         assigned: dict[str, Any] = {"roles": [], "client_roles": {}, "groups": []}
         errors: list[str] = []
 
-        # Assign realm roles (support both 'roles' and 'realm_roles' fields)
-        # 'realm_roles' is the new preferred field for consistency with config
         roles = invite.get("roles", [])
         realm_roles = invite.get("realm_roles", [])
 
-        # Merge both role lists, removing duplicates
         all_realm_roles = list(set(roles + realm_roles))
 
         if all_realm_roles:
@@ -215,7 +160,6 @@ class InviteManager:
                 errors.append(f"Failed to assign realm roles: {e}")
                 logger.error(f"Failed to assign realm roles: {e}")
 
-        # Assign client roles
         client_roles_raw = invite.get("client_roles", {})
         if client_roles_raw and isinstance(client_roles_raw, dict):
             client_roles = cast("dict[str, Any]", client_roles_raw)
@@ -224,7 +168,6 @@ class InviteManager:
             if client_result["errors"]:
                 errors.extend(client_result["errors"])
 
-        # Add to groups
         groups = invite.get("groups", [])
         for group_name in groups:
             try:
@@ -235,7 +178,6 @@ class InviteManager:
                 errors.append(f"Group '{group_name}' not found or could not be joined: {e}")
                 logger.error(f"Failed to add user to group {group_name}: {e}")
 
-        # Include errors in the result
         if errors:
             assigned["errors"] = errors
 
@@ -249,60 +191,39 @@ class InviteManager:
         user_info: dict[str, Any],
         realm_name: str,
     ) -> dict[str, Any]:
-        """
-        Complete the SSO invite flow for a user.
+        """Find or create the SSO user in the project realm and assign the invite's permissions.
 
-        This finds or creates a user in the project realm based on SSO user info,
-        then assigns the configured roles and groups.
-
-        Args:
-            project_data: The project configuration data
-            project_name: The project name
-            invite: The invite configuration
-            user_info: User info from SSO (contains email, name, sub, etc.)
-            realm_name: The project's Keycloak realm name
-
-        Returns:
-            Dict with user_id and assigned permissions
+        Returns the user_id and the assigned permissions.
 
         Raises:
-            InviteDomainError: If email doesn't match domain restriction
+            InviteDomainError: the address is outside the invite's domain restriction.
         """
         email = user_info.get("email")
         if not email:
             raise InviteError("SSO user info missing email", "missing_email")
 
-        # NOTE: Intentionally no email_verified check here, unlike the platform login flow
-        # (auth_routes.py). That flow gates access to OPI itself, so an unverified email must be
-        # rejected. This flow only provisions the user into the *project's own* Keycloak realm and
-        # assigns the invite's realm roles/groups -- it grants no OPI platform access. A Keycloak
-        # account (even with roles) is not application access: the application behind the realm is
-        # the resource server and remains responsible for enforcing email_verified before trusting
-        # the identity. This contract matters because get_user_by_email() below binds an incoming
-        # SSO login onto any existing realm user with the same email, so an unverified email could
-        # otherwise collide onto an existing account. Domain restriction is the only guard applied
-        # at this layer by design.
-
-        # Validate email domain
+        # Deliberately no email_verified check, unlike the platform login flow in
+        # auth_routes.py: this route grants no OPI access, only a user plus roles in the
+        # project's OWN realm, and the application behind that realm stays responsible for
+        # enforcing email_verified. Mind that get_user_by_email() below binds an incoming SSO
+        # login onto any existing realm user with the same address. The domain restriction is
+        # the only guard at this layer.
         self.validate_email_domain(email, invite)
 
         keycloak = await create_keycloak_connector()
 
-        # Check if user already exists
         existing_user = await keycloak.get_user_by_email(realm_name, email)
 
         if existing_user:
             user_id = existing_user["id"]
             logger.info(f"Found existing user {email} in realm {realm_name}")
         else:
-            # Create user from SSO info
-            # Generate a random password since SSO users don't need it
+            # An SSO user never uses this password.
             import secrets
             import string
 
             temp_password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
 
-            # Extract first and last name from SSO user info
             full_name: str = str(user_info.get("name", "") or "")
             name_parts: list[str] = full_name.split() if full_name else []
             given_name = user_info.get("given_name")
@@ -324,7 +245,6 @@ class InviteManager:
             user_id = created_user["id"]
             logger.info(f"Created new user {email} in realm {realm_name}")
 
-        # Assign permissions
         assigned = await self.assign_invite_permissions(keycloak, realm_name, user_id, invite)
 
         return {
@@ -342,34 +262,21 @@ class InviteManager:
         form_data: dict[str, str],
         realm_name: str,
     ) -> dict[str, Any]:
-        """
-        Complete the local account invite flow for a user.
+        """Create a local user in the project realm and assign the invite's permissions.
 
-        This creates a new local user in the project realm with the provided
-        credentials, then assigns the configured roles and groups. If the user
-        already exists, just assigns the roles/groups without creating a new user.
+        An address that already exists is refused, not reused.
 
-        Args:
-            project_data: The project configuration data
-            project_name: The project name
-            invite: The invite configuration
-            form_data: Registration form data (email, first_name, last_name, password)
-            realm_name: The project's Keycloak realm name
-
-        Returns:
-            Dict with user_id, email, created (bool), assigned permissions and
-            verification_mail_sent (bool)
+        Returns user_id, email, created, the assigned permissions and verification_mail_sent.
 
         Raises:
-            InviteDomainError: If email doesn't match domain restriction
-            InviteError: For validation errors
+            InviteDomainError: the address is outside the invite's domain restriction.
+            InviteError: any other validation error.
         """
         email = form_data.get("email", "").strip()
         first_name = form_data.get("first_name", "").strip()
         last_name = form_data.get("last_name", "").strip()
         password = form_data.get("password", "")
 
-        # Validate required fields
         if not email:
             raise InviteError("Email is required", "missing_email")
         if not first_name:
@@ -379,31 +286,24 @@ class InviteManager:
         if not password:
             raise InviteError("Password is required", "missing_password")
 
-        # Validate email format
         email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         if not re.match(email_pattern, email):
             raise InviteError("Invalid email format", "invalid_email")
 
-        # Validate email domain
         self.validate_email_domain(email, invite)
 
-        # Validate password strength
         self._validate_password(password)
 
         keycloak = await create_keycloak_connector()
 
-        # Check if user already exists - for local registration, reject existing emails
         existing_user = await keycloak.get_user_by_email(realm_name, email)
         if not existing_user:
-            # Also check by username (email)
             existing_user = await keycloak.get_user_by_username(realm_name, email)
 
         if existing_user:
-            # For local account registration, don't allow using existing email addresses
             logger.warning(f"Local registration rejected: email {email} already exists in realm {realm_name}")
             raise UserExistsError(email)
 
-        # Create new user
         created_user = await keycloak.create_user(
             realm_name=realm_name,
             username=email,
@@ -416,8 +316,8 @@ class InviteManager:
         user_id = created_user["id"]
         logger.info(f"Created new local user {email} in realm {realm_name}")
 
-        # Nu, want de succespagina vraagt om te bevestigen. Mislukt het, dan stuurt Keycloak
-        # de mail bij de eerste login alsnog: het account draagt de required action.
+        # Sent now, because the success page asks the user to confirm. If it fails, Keycloak
+        # still sends it at the first login: the account carries the required action.
         verification_mail_sent = True
         try:
             await keycloak.send_verify_email(realm_name, user_id)
@@ -425,7 +325,6 @@ class InviteManager:
             logger.warning(f"Could not send the verification mail to {email} in realm {realm_name}: {e}")
             verification_mail_sent = False
 
-        # Assign permissions
         assigned = await self.assign_invite_permissions(keycloak, realm_name, user_id, invite)
 
         return {
@@ -437,20 +336,10 @@ class InviteManager:
         }
 
     def _validate_password(self, password: str) -> None:
-        """
-        Validate password meets minimum requirements.
-
-        Requirements:
-        - Minimum 12 characters
-        - At least one uppercase letter
-        - At least one lowercase letter
-        - At least one digit
-
-        Args:
-            password: The password to validate
+        """At least 12 characters, with an upper-case letter, a lower-case letter and a digit.
 
         Raises:
-            InviteError: If password doesn't meet requirements
+            InviteError: the password does not meet those requirements.
         """
         if len(password) < 12:
             raise InviteError("Password must be at least 12 characters", "password_too_short")
@@ -481,13 +370,11 @@ class InviteManager:
         Returns:
             Two-letter language code (e.g., 'nl', 'en')
         """
-        # Check explicit URL parameter
         if request_lang and request_lang.lower() in ("nl", "en"):
             return request_lang.lower()
 
-        # Check Accept-Language header
         if accept_language:
-            # Parse Accept-Language header (e.g., "en-US,en;q=0.9,nl;q=0.8")
+            # The header looks like "en-US,en;q=0.9,nl;q=0.8".
             for lang_part in accept_language.split(","):
                 lang = lang_part.split(";")[0].strip().lower()
                 if lang.startswith("nl"):
@@ -517,7 +404,6 @@ class InviteManager:
         try:
             keycloak = await create_keycloak_connector()
 
-            # Get identity providers
             identity_providers = await keycloak.get_identity_providers(realm_name)
             enabled_idps = [
                 {
@@ -529,7 +415,6 @@ class InviteManager:
                 if idp.get("enabled", True)
             ]
 
-            # Get realm configuration to check local auth settings
             realm_config = await keycloak.get_realm(realm_name)
 
             # Local auth is available if the browser flow shows a username/password form.
@@ -542,8 +427,7 @@ class InviteManager:
                 browser_flow = realm_config.get("browserFlow", DEFAULT_BROWSER_FLOW)
                 local_available = browser_flow in PASSWORD_FORM_BROWSER_FLOWS
 
-                # If there are no identity providers, local must be available
-                # (otherwise users couldn't login at all)
+                # Without an identity provider local must be available, or nobody can log in.
                 if not enabled_idps:
                     local_available = True
 
@@ -562,7 +446,7 @@ class InviteManager:
 
         except Exception as e:
             logger.warning(f"Failed to query Keycloak for realm {realm_name} auth methods: {e}")
-            # Fall back to safe defaults - assume both are available
+            # Safe default: assume both are available.
             return {
                 "sso": True,
                 "local": True,

@@ -23,23 +23,13 @@ logger = logging.getLogger(__name__)
 
 #: The realm fields a blueprint decides, applied on create AND on reconcile.
 #:
-#: Before this list existed they were hardcoded in ``create_realm()`` and the blueprints
-#: that named them were simply not read -- so ``sso-support.yaml`` promised self-registration,
-#: password reset and login-by-email and delivered none of the three. The blueprints now
-#: DESCRIBE what happens, which for three of the first four fields meant writing down the
-#: value that was already live rather than the one that had been promised.
-#:
 #: A key that is absent from a blueprint is not touched, so a realm keeps whatever it has
 #: and a blueprint that says nothing about a field claims nothing about it.
 #:
-#: The last three are the LANGUAGE of what a realm shows and sends. Keycloak's texts are
-#: English until a realm turns internationalisation on and picks a default: the three fields
-#: appeared in no blueprint and in no code, so every confirmation mail went out in English
-#: no matter which theme was loaded. Note that this reaches further than the post -- the
-#: LOGIN SCREEN of these realms becomes Dutch too, which is wanted but is a visible change
-#: for existing users. ``supportedLocales`` keeps ``en`` alongside ``nl`` so a user can still
-#: switch, and Keycloak's own Dutch translation is incomplete (406 lines against 534 English
-#: at the time of writing), so an occasional sentence falls back to English.
+#: The last three are the LANGUAGE of what a realm shows and sends, the login screen
+#: included. Keycloak's texts stay English until a realm turns internationalisation on and
+#: picks a default. ``supportedLocales`` keeps ``en`` alongside ``nl`` so a user can switch,
+#: and Keycloak's own Dutch translation is incomplete, so a sentence falls back to English.
 _BLUEPRINT_REALM_FIELDS = (
     "registrationAllowed",
     "loginWithEmailAllowed",
@@ -50,13 +40,13 @@ _BLUEPRINT_REALM_FIELDS = (
     "defaultLocale",
 )
 
-#: De velden die een blauwdruk op een BESTAANDE realm zet als BESCHERMING: lockout,
-#: wachtwoordbeleid en het bewaren van events.
+#: The fields a blueprint sets on an EXISTING realm as protection: lockout, password policy
+#: and event retention.
 #:
-#: Apart van ``_BLUEPRINT_REALM_FIELDS``, want dat lijstje loopt over elke projectrealm en
-#: ``bruteForceProtected`` hoort daar niet bij: ``configure_sso_redirect_flow`` zet hem op
-#: een realm met SSO-redirect juist UIT, en de twee zouden dan elke verwerking om dat veld
-#: vechten, met een admin-event per ronde. Alleen ``master-realm.yaml`` noemt deze velden.
+#: Apart from ``_BLUEPRINT_REALM_FIELDS``, which runs over every project realm, because
+#: ``configure_sso_redirect_flow`` turns ``bruteForceProtected`` OFF on a realm with SSO
+#: redirect: the two would fight over that field on every reconcile. Only
+#: ``master-realm.yaml`` names these fields.
 _HARDENING_REALM_FIELDS = (
     "bruteForceProtected",
     "failureFactor",
@@ -72,73 +62,47 @@ _HARDENING_REALM_FIELDS = (
 
 #: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.
 #:
-#: Not a defence -- the defence is that Keycloak's sender is replaced and ignores this whole
-#: map (``images/keycloak-zad/extensions/relay-email-sender/``). A realm administrator keeps
-#: ``manage-realm`` and can write these back a second after the reconcile, and it still
-#: leads nowhere.
-#:
-#: It is DRIFT REPAIR of a property worth keeping true: "it fails closed" holds only while
-#: no realm names a destination. Should the SPI ever silently fall back -- a Keycloak upgrade
-#: is the realistic way -- then a realm with a ``host`` delivers there and a realm without
-#: one fails with "Please provide a valid address" and sends nothing. So the reconcile keeps
-#: sweeping them off.
+#: Not a defence: Keycloak's sender is replaced and ignores this whole map
+#: (``images/keycloak-zad/extensions/relay-email-sender/``), and a realm administrator keeps
+#: ``manage-realm`` and can write these back a second after the reconcile. It is drift
+#: repair of the fail-closed property, which holds only while no realm names a destination:
+#: should the SPI ever silently fall back, a realm with a ``host`` would deliver there.
 #:
 #: Everything not in this list survives, ``replyTo`` above all: the relay does not touch
 #: ``Reply-To:``, so that is the one field a realm can really have of its own.
 _SMTP_CONNECTION_KEYS = ("host", "port", "auth", "user", "password", "ssl", "starttls")
 
 
-def _veld_is_gelijk(huidig: Any, gewenst: Any) -> bool:
-    """Draagt de realm dit veld al, zodat er niets geschreven hoeft te worden?
+def _field_matches(current: Any, wanted: Any) -> bool:
+    """Does the realm already carry this field, so nothing has to be written?
 
-    Voor bijna elk veld is dat gewoon ``==``. Voor een LIJST niet, en dat is gemeten: Keycloak
-    bewaart ``supportedLocales`` als een SET en geeft hem in een eigen volgorde terug. Een
-    blauwdruk die ``["nl", "en"]`` zegt krijgt ``["en", "nl"]`` terug, en met een kale ``!=``
-    schrijft ELKE verwerking van ELK project dat veld opnieuw - een wijziging die niets
-    wijzigt, in het admin-event-logboek van elke realm, precies de ruis die deze vergelijking
-    hoort te voorkomen. Waargenomen op de sandbox: twee verwerkingen achter elkaar leverden
-    twee keer ``Updated realm ...: ['supportedLocales']``.
-
-    De volgorde is dus geen bewering en wordt zo ook niet gemeten. Wat we WEL schrijven is de
-    volgorde uit de blauwdruk; Keycloak maakt er alsnog een set van.
+    ``==`` for almost every field, but not for a LIST: Keycloak keeps ``supportedLocales`` as
+    a SET and returns it in an order of its own, so a bare ``!=`` would rewrite the field on
+    every single reconcile. The order is therefore not a claim and is not compared as one.
     """
-    if isinstance(huidig, list) and isinstance(gewenst, list):
-        return sorted(huidig) == sorted(gewenst)
-    return huidig == gewenst
+    if isinstance(current, list) and isinstance(wanted, list):
+        return sorted(current) == sorted(wanted)
+    return current == wanted
 
 
 class KeycloakYamlHandler:
-    """Handler for processing Keycloak YAML configurations."""
-
     def __init__(self, keycloak_connector: KeycloakConnector) -> None:
-        """Initialize handler with Keycloak connector.
-
-        Args:
-            keycloak_connector: Configured Keycloak connector instance
-        """
         self.keycloak = keycloak_connector
-        self.outputs: dict[str, Any] = {}  # Store outputs from operations with 'as' key
+        #: Outputs of operations that carried an ``as`` key.
+        self.outputs: dict[str, Any] = {}
 
     async def execute_config(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Execute YAML configuration with provided context.
-
-        Args:
-            yaml_path: Path to YAML configuration file
-            context: Dictionary of variables for substitution
-        """
+        """Run a YAML configuration, substituting the variables in ``context``."""
         logger.info(f"Executing Keycloak configuration from {yaml_path}")
 
-        # Load YAML
         config = self._load_yaml(yaml_path)
-
-        # Merge variables: YAML variables + context (context overrides)
+        # Context overrides the YAML's own variables.
         variables = {**config.get("variables", {}), **context}
 
         logger.debug(f"Context variables: {list(variables.keys())}")
 
-        # Process sections in dependency order
-        # Platform clients must be processed before identity providers since
-        # identity providers may reference platform_client outputs (client_id, client_secret)
+        # Platform clients go before identity providers: an identity provider may reference
+        # a platform_client output (client_id, client_secret).
         await self._process_realms(config.get("realms"), variables)
         await self._process_platform_clients(config.get("platformClients"), variables)
         await self._process_identity_providers(config.get("identityProviders"), variables)
@@ -153,24 +117,17 @@ class KeycloakYamlHandler:
         logger.info("Keycloak configuration execution completed")
 
     async def ensure_authentication_flows(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Ensure authentication flows are correctly configured (idempotent).
-
-        This method only processes the authenticationFlows section of the YAML config.
-        It's used to update existing realms where the full execute_config is not needed.
+        """Only the authenticationFlows section, for an existing realm (idempotent).
 
         Args:
-            yaml_path: Path to YAML configuration file
-            context: Dictionary of variables for substitution (must include realm_name)
+            context: Must include realm_name.
         """
         logger.info(f"Ensuring authentication flows from {yaml_path}")
 
-        # Load YAML
         config = self._load_yaml(yaml_path)
-
-        # Merge variables: YAML variables + context (context overrides)
+        # Context overrides the YAML's own variables.
         variables = {**config.get("variables", {}), **context}
 
-        # Process authentication flows and browser flow setting
         flows_section = config.get("authenticationFlows")
         if flows_section:
             await self._process_authentication_flows(flows_section, variables)
@@ -181,14 +138,13 @@ class KeycloakYamlHandler:
         await self._process_browser_flow(config.get("browserFlow"), variables)
 
     async def ensure_identity_providers(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Ensure identity providers are correctly configured (idempotent).
+        """Only the identityProviders section (idempotent).
 
-        Processes platformClients first so the IDP config block can reference
-        captured client_id/client_secret outputs, then processes identityProviders.
+        platformClients goes first, so the IDP config block can reference the captured
+        client_id/client_secret outputs.
 
         Args:
-            yaml_path: Path to YAML configuration file
-            context: Dictionary of variables for substitution (must include realm_name)
+            context: Must include realm_name.
         """
         logger.info(f"Ensuring identity providers from {yaml_path}")
 
@@ -207,25 +163,17 @@ class KeycloakYamlHandler:
             logger.debug("No identityProviders section in configuration")
 
     async def ensure_clients(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Ensure clients are correctly configured (idempotent).
-
-        This method only processes the clients section of the YAML config.
-        It's used to update existing realms where clients may have been added
-        to the template after initial realm creation.
+        """Only the clients section, for a realm that already exists (idempotent).
 
         Args:
-            yaml_path: Path to YAML configuration file
-            context: Dictionary of variables for substitution (must include realm_name)
+            context: Must include realm_name.
         """
         logger.info(f"Ensuring clients from {yaml_path}")
 
-        # Load YAML
         config = self._load_yaml(yaml_path)
-
-        # Merge variables: YAML variables + context (context overrides)
+        # Context overrides the YAML's own variables.
         variables = {**config.get("variables", {}), **context}
 
-        # Process only clients
         clients_section = config.get("clients")
         if clients_section:
             await self._process_clients(clients_section, variables)
@@ -234,14 +182,6 @@ class KeycloakYamlHandler:
             logger.debug("No clients section in configuration")
 
     def _load_yaml(self, yaml_path: str | Path) -> dict[str, Any]:
-        """Load YAML file.
-
-        Args:
-            yaml_path: Path to YAML file
-
-        Returns:
-            Parsed YAML as dictionary
-        """
         return self._load_yaml_resolving_extends(yaml_path, ())
 
     def _load_yaml_resolving_extends(self, yaml_path: str | Path, seen: tuple[str, ...]) -> dict[str, Any]:
@@ -316,23 +256,13 @@ class KeycloakYamlHandler:
         return None
 
     def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:
-        """Recursively substitute {{ variable }} placeholders.
-
-        Args:
-            value: Value to process (can be str, dict, list, or other)
-            variables: Dictionary of variable values
-
-        Returns:
-            Value with substitutions applied
-        """
+        """Recursively substitute {{ variable }} placeholders in a str, dict or list."""
         if isinstance(value, str):
-            # Check if entire string is a variable reference
             match = re.fullmatch(r"\{\{\s*([^}]+)\s*\}\}", value)
             if match:
                 var_path = match.group(1).strip()
                 return self._get_nested_value(variables, var_path)
 
-            # Replace inline variables
             def replace_var(match_obj: re.Match) -> str:
                 var_path = match_obj.group(1).strip()
                 result = self._get_nested_value(variables, var_path)
@@ -349,23 +279,13 @@ class KeycloakYamlHandler:
         return value
 
     def _get_nested_value(self, data: dict[str, Any], path: str) -> Any:
-        """Get value from nested dict using dot notation.
-
-        Checks outputs first (for captured operation results), then context data.
-
-        Args:
-            data: Dictionary to search (context)
-            path: Dot-separated path (e.g., "user.name" or "platform_client.client_secret")
-
-        Returns:
-            Value at path
+        """The value at a dot-separated ``path``, looked up in the outputs before the context.
 
         Raises:
-            KeyError: If variable path is not found in context or outputs
+            KeyError: the path is in neither.
         """
         keys = path.split(".")
 
-        # Check if first key is in outputs (captured operation results)
         if keys[0] in self.outputs:
             value = self.outputs
             for key in keys:
@@ -379,7 +299,6 @@ class KeycloakYamlHandler:
                     )
             return value
 
-        # Check context data
         value = data
         for key in keys:
             if isinstance(value, dict) and key in value:
@@ -393,54 +312,31 @@ class KeycloakYamlHandler:
         return value
 
     def _expand_list(self, section: Any, variables: dict[str, Any]) -> list[dict[str, Any]]:
-        """Expand list section, handling forEach loops.
-
-        Args:
-            section: YAML section (can be list or dict with forEach)
-            variables: Context variables
-
-        Returns:
-            List of expanded items with variables substituted
-        """
+        """Expand a section into a list of items, resolving forEach loops and variables."""
         if section is None:
             return []
 
-        # Case 1: Section is entire forEach loop (dict with forEach key)
         if isinstance(section, dict) and "forEach" in section:
             return self._expand_foreach(section, variables)
 
-        # Case 2: Section is a list
         if isinstance(section, list):
             expanded = []
             for item in section:
-                # Check if this item is a forEach loop
                 if isinstance(item, dict) and "forEach" in item:
                     expanded.extend(self._expand_foreach(item, variables))
                 else:
-                    # Regular item - substitute variables
                     expanded.append(self._substitute_variables(item, variables))
             return expanded
 
-        # Case 3: Single dict item (not forEach)
         if isinstance(section, dict):
             return [self._substitute_variables(section, variables)]
 
         return []
 
     def _expand_foreach(self, loop_def: dict[str, Any], variables: dict[str, Any]) -> list[dict[str, Any]]:
-        """Expand a forEach loop definition.
-
-        Args:
-            loop_def: Loop definition with forEach, as, and singular key
-            variables: Context variables
-
-        Returns:
-            List of expanded items
-        """
-        # Get loop variable name
+        """Expand a forEach loop: the collection, the ``as`` name, and the singular key."""
         loop_var = loop_def.get("as", "item")
 
-        # Get collection to iterate over
         for_each_expr = loop_def.get("forEach", "")
         collection = self._substitute_variables(for_each_expr, variables)
 
@@ -448,7 +344,7 @@ class KeycloakYamlHandler:
             logger.warning(f"forEach expression did not resolve to a list: {for_each_expr}")
             return []
 
-        # Find the singular key (e.g., "user" in users section)
+        # The singular key, e.g. "user" in a users section.
         template_key = None
         for key in loop_def:
             if key not in ("forEach", "as"):
@@ -461,24 +357,15 @@ class KeycloakYamlHandler:
 
         template = loop_def[template_key]
 
-        # Expand loop
         expanded = []
         for item in collection:
-            # Create loop context
             loop_context = {**variables, loop_var: item}
-            # Substitute variables in template
             expanded_item = self._substitute_variables(template, loop_context)
             expanded.append(expanded_item)
 
         return expanded
 
     async def _process_realms(self, realms_section: Any, variables: dict[str, Any]) -> None:
-        """Process realms section.
-
-        Args:
-            realms_section: Realms YAML section
-            variables: Context variables
-        """
         if not realms_section:
             return
 
@@ -506,10 +393,9 @@ class KeycloakYamlHandler:
     async def _apply_realm_self_service(self, realm_name: str, item: dict[str, Any]) -> None:
         """Apply everything a realms item decides about an EXISTING realm.
 
-        Three things, and all three idempotent, so this runs on the create path and on
-        reconcile alike -- which is the whole point: ``create_realm()`` is skipped once a
-        realm exists, so anything applied only there never reaches a realm that was made
-        before the blueprint said it.
+        All three are idempotent, so this runs on the create path and on reconcile alike:
+        ``create_realm()`` is skipped once a realm exists, so anything applied only there
+        never reaches a realm that was made before the blueprint said it.
 
         1. the minimal ``smtpServer``, which no tenant chooses;
         2. the realm fields in ``_BLUEPRINT_REALM_FIELDS``;
@@ -528,11 +414,10 @@ class KeycloakYamlHandler:
         for alias in item.get("disabledRequiredActions") or []:
             await self.keycloak.set_required_action_enabled(realm_name, alias, enabled=False)
 
-        # Een KAART en geen lijst, want hier moeten BEIDE standen beschreven staan. Een
-        # blauwdruk die alleen "aan" kan zeggen laat de stand van zijn voorganger staan: een
-        # realm die van sso-support-otp terug naar sso-support ging, bleef elk NIEUW lokaal
-        # account om een OTP vragen terwijl het realm er niet meer naar vroeg (gemeten op de
-        # sandbox, 22 oktober 2026).
+        # A MAP and not a list, because BOTH states have to be describable. A blueprint that
+        # can only say "on" leaves its predecessor's state standing, so a realm moving back
+        # from sso-support-otp to sso-support would keep asking every new local account for
+        # an OTP.
         for alias, default in (item.get("requiredActionDefaults") or {}).items():
             await self.keycloak.set_required_action_default(realm_name, alias, default=bool(default))
 
@@ -547,15 +432,10 @@ class KeycloakYamlHandler:
     def _platform_can_send_mail() -> bool:
         """Whether the PLATFORM has a mail relay, which is what decides ``verifyEmail``.
 
-        The measure is the relay and no longer the realm's ``smtpServer``. Under the
-        previous design that map held the destination, so "the realm can mail" and "there is
-        an smtpServer" were the same question. They are not any more: every realm carries a
+        The measure is the relay and not the realm's ``smtpServer``: every realm carries a
         minimal ``smtpServer`` (see ``_apply_smtp_server``) whether the post works or not,
-        and the destination lives in the Keycloak POD's environment.
-
-        Not theoretical. This switch was really turned off on production on 21 August 2026
-        during the relay's crash loop, and a realm that verifies while it cannot send locks
-        out every user who changes their address.
+        and the destination lives in the Keycloak POD's environment. A realm that verifies
+        while it cannot send locks out every user who changes their address.
         """
         return bool(settings.MAIL_RELAY_API_URL)
 
@@ -574,31 +454,31 @@ class KeycloakYamlHandler:
         A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
         carries on, and the next reconcile after the relay is configured completes it.
 
-        Comparing is done through ``_veld_is_gelijk``, because a LIST does not come back the
-        way it went in -- see there.
+        Comparing is done through ``_field_matches``, because a LIST does not come back the
+        way it went in; see there.
         """
-        gewenst = {veld: item[veld] for veld in _BLUEPRINT_REALM_FIELDS if veld in item}
-        if gewenst.get("verifyEmail") and not self._platform_can_send_mail():
+        wanted = {field: item[field] for field in _BLUEPRINT_REALM_FIELDS if field in item}
+        if wanted.get("verifyEmail") and not self._platform_can_send_mail():
             logger.warning(
                 f"Geen mailrelay op dit cluster, dus verifyEmail blijft uit op realm {realm_name}: een realm "
                 "die verifieert en niet kan mailen sluit wie zijn adres wijzigt buiten. Stel MAIL_RELAY_API_URL in; "
                 "de volgende verwerking zet het dan alsnog aan."
             )
-            del gewenst["verifyEmail"]
-        if not gewenst:
+            del wanted["verifyEmail"]
+        if not wanted:
             return
 
-        await self._schrijf_verschil(realm_name, realm, gewenst)
+        await self._write_drift(realm_name, realm, wanted)
 
-    async def _schrijf_verschil(self, realm_name: str, realm: dict[str, Any], gewenst: dict[str, Any]) -> None:
-        """Schrijf alleen de velden die op de realm anders staan dan de blauwdruk vraagt.
+    async def _write_drift(self, realm_name: str, realm: dict[str, Any], wanted: dict[str, Any]) -> None:
+        """Write only the fields that stand differently on the realm than the blueprint asks.
 
-        Een write die niets wijzigt staat alsnog in het admin-event-logboek, bij elke
-        verwerking van elk project. Vergelijken gaat via ``_veld_is_gelijk``, want een LIJST
-        komt niet terug zoals hij erin ging.
+        A write that changes nothing still lands in the admin event log, on every reconcile
+        of every project. Comparing goes through ``_field_matches``, because a LIST does not
+        come back the way it went in.
         """
-        verschil = {veld: waarde for veld, waarde in gewenst.items() if not _veld_is_gelijk(realm.get(veld), waarde)}
-        await self.keycloak.update_realm_settings(realm_name, verschil)
+        drift = {field: value for field, value in wanted.items() if not _field_matches(realm.get(field), value)}
+        await self.keycloak.update_realm_settings(realm_name, drift)
 
     async def _apply_smtp_server(self, realm_name: str, realm: dict[str, Any]) -> None:
         """Give the realm the MINIMAL ``smtpServer``: one key, ``from``, and no destination.
@@ -606,27 +486,21 @@ class KeycloakYamlHandler:
         Keycloak's own ``EmailSenderProvider`` is replaced on this platform
         (``images/keycloak-zad/extensions/relay-email-sender/``): the relay, the credentials and the
         sender come out of the POD's environment and the realm's ``smtpServer`` is ignored
-        entirely. So there is nothing a realm NEEDS here -- and that is the point, because a
-        realm that names a destination is a realm whose administrator can move that
-        destination to a listener of their own and read the platform's shared relay password
-        out of Keycloak's AUTH exchange. Measured, with the attack, in RC-158.
+        entirely. A realm that names a destination is a realm whose administrator can move
+        that destination to a listener of their own and read the platform's shared relay
+        password out of Keycloak's AUTH exchange (RC-158), so none is written.
 
-        Then why write anything at all? Because of exactly one authenticator that decides
-        BEFORE the SPI is in the picture:
-        ``IdpEmailVerificationAuthenticator`` checks ``realm.getSmtpConfig().isEmpty()`` and
-        skips itself. That is the "Verify existing account by Email" step in the
-        first-broker-login flow. Measured minimum to keep that step working: an
-        ``smtpServer`` that is not empty. ONE key is enough and the content does not matter,
-        so it is the one key that names no destination.
+        One key is still needed: ``IdpEmailVerificationAuthenticator`` decides before the SPI
+        is in the picture, checks ``realm.getSmtpConfig().isEmpty()`` and skips itself, which
+        is the "Verify existing account by Email" step of the first-broker-login flow. The
+        content does not matter, so it is the one key that names no destination.
 
-        ``from`` is DESCRIPTIVE, not steering. The relay rewrites the sender itself, so what
-        belongs here is the address that actually comes out; it comes from
-        ``get_mail_from_address``, the same value ``MailManager`` hands to the relay, so the
-        two cannot drift.
+        ``from`` is descriptive, not steering: the relay rewrites the sender itself, and the
+        address comes from ``get_mail_from_address``, the same value ``MailManager`` hands to
+        the relay, so the two cannot drift.
 
-        Nothing happens on a cluster with no relay, and that is not laziness: on such a
-        cluster the post does not work either way, and writing this key would take the
-        ``isEmpty()`` fallback away from that one authenticator -- turning a working
+        Nothing happens on a cluster with no relay: writing this key would take the
+        ``isEmpty()`` fallback away from that one authenticator, turning a working
         "authenticate to link your account" screen into a failed send.
 
         Everything OPI does not write survives, ``replyTo`` above all: the relay does not
@@ -636,27 +510,26 @@ class KeycloakYamlHandler:
             logger.debug(f"Geen mailrelay op dit cluster, realm {realm_name} krijgt geen smtpServer")
             return
 
-        gewenst = self._smtp_server_settings()
-        huidig = dict(realm.get("smtpServer") or {})
-        nieuw = {
-            **{sleutel: waarde for sleutel, waarde in huidig.items() if sleutel not in _SMTP_CONNECTION_KEYS},
-            **gewenst,
+        wanted = self._smtp_server_settings()
+        current = dict(realm.get("smtpServer") or {})
+        merged = {
+            **{key: value for key, value in current.items() if key not in _SMTP_CONNECTION_KEYS},
+            **wanted,
         }
-        if nieuw == huidig:
+        if merged == current:
             return
 
-        await self.keycloak.update_realm_settings(realm_name, {"smtpServer": nieuw})
+        await self.keycloak.update_realm_settings(realm_name, {"smtpServer": merged})
 
     @staticmethod
     def _smtp_server_settings() -> dict[str, str]:
         """The whole of what OPI writes into a realm's ``smtpServer``: one key.
 
-        There is deliberately no ``host``, no ``user`` and no ``password``. A ``host`` is
-        the field this entire feature exists to remove; and without one, a silent fallback
-        to Keycloak's own sender cannot deliver anywhere either -- it fails with "Please
-        provide a valid address" and a ``SEND_VERIFY_EMAIL_ERROR``. That is the fail-closed
-        property, and it holds only as long as this map names no destination. What a tenant
-        writes there anyway is swept off again; see ``_SMTP_CONNECTION_KEYS``.
+        There is deliberately no ``host``, no ``user`` and no ``password``. Without a
+        ``host`` a silent fallback to Keycloak's own sender cannot deliver anywhere either:
+        it fails with "Please provide a valid address" and a ``SEND_VERIFY_EMAIL_ERROR``.
+        That fail-closed property holds only as long as this map names no destination. What
+        a tenant writes there anyway is swept off again; see ``_SMTP_CONNECTION_KEYS``.
         """
         return {"from": get_mail_from_address(settings.CLUSTER_MANAGER)}
 
@@ -665,8 +538,7 @@ class KeycloakYamlHandler:
 
         Reconcile counterpart of the create path: ``create_realm()`` only runs when a realm is
         actually created, so without this an existing realm would never pick these up. That is
-        exactly why the identity-field lock never reached any pre-existing realm, and it is why
-        the realm fields and the ``smtpServer`` go through the same method.
+        why the realm fields and the ``smtpServer`` go through the same method.
         """
         config = self._load_yaml(yaml_path)
         variables = {**config.get("variables", {}), **context}
@@ -679,11 +551,11 @@ class KeycloakYamlHandler:
             await self._apply_realm_self_service(realm_name, item)
 
     async def ensure_realm_hardening(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
-        """Zet de velden uit ``_HARDENING_REALM_FIELDS`` op elke realm in deze blauwdruk.
+        """Set the fields from ``_HARDENING_REALM_FIELDS`` on every realm in this blueprint.
 
-        Smaller dan ``ensure_realm_self_service``: een realm die hier langskomt bestaat al
-        en krijgt verder niets van ons, geen ``smtpServer`` en geen required actions. De
-        master-realm is de enige die deze weg gebruikt, en daar is dat precies de bedoeling.
+        Smaller than ``ensure_realm_self_service``: a realm passing here already exists and
+        gets nothing else, no ``smtpServer`` and no required actions. The master realm is the
+        only one that uses this route.
         """
         config = self._load_yaml(yaml_path)
         variables = {**config.get("variables", {}), **context}
@@ -699,22 +571,14 @@ class KeycloakYamlHandler:
                 logger.warning(f"Realm {realm_name} not found, skipping hardening fields")
                 continue
 
-            gewenst = {veld: item[veld] for veld in _HARDENING_REALM_FIELDS if veld in item}
-            await self._schrijf_verschil(realm_name, realm, gewenst)
+            wanted = {field: item[field] for field in _HARDENING_REALM_FIELDS if field in item}
+            await self._write_drift(realm_name, realm, wanted)
 
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
-        """Process identityProviders section.
-
-        Supports both OIDC and SAML identity providers based on the providerId field.
-
-        Args:
-            idp_section: Identity providers YAML section
-            variables: Context variables
-        """
+        """The identityProviders section; ``providerId`` picks between OIDC and SAML."""
         if not idp_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for identity providers, skipping")
@@ -725,10 +589,8 @@ class KeycloakYamlHandler:
         #   confirm   -> same, after one confirmation screen
         #   unset (the default) -> Keycloak's stock flow: the user proves ownership of the
         #                          existing account by email link or re-authentication
-        # For automatic/confirm, ensure the custom first-broker-login flow exists (the IdPs below
-        # reference it by alias) and point the IdPs at it; otherwise keep the stock flow. Switching
-        # modes on an existing realm is picked up on reconcile: the flow is reconciled in place and
-        # the IdP's firstBrokerLoginFlowAlias is re-pointed via the connector's 409-diff-update.
+        # automatic and confirm need the custom first-broker-login flow to exist, because the
+        # IdPs below reference it by alias.
         account_link = variables.get("account_link")
         first_broker_login_flow_alias = "first broker login"
         if account_link in ("automatic", "confirm"):
@@ -748,7 +610,7 @@ class KeycloakYamlHandler:
             provider_id = item.get("providerId", "oidc")
             logger.info(f"Adding {provider_id} identity provider: {alias} to realm {realm_name}")
 
-            # Keys consumed by named parameters - remaining config entries flow through as overrides
+            # Keys consumed by named parameters; the remaining config entries are overrides.
             saml_named_keys = {
                 "idpEntityId",
                 "singleSignOnServiceUrl",
@@ -766,7 +628,6 @@ class KeycloakYamlHandler:
 
             if provider_id == "saml":
                 saml_overrides = {k: v for k, v in config.items() if k not in saml_named_keys}
-                # SAML identity provider
                 await self.keycloak.add_saml_identity_provider(
                     realm_name=realm_name,
                     provider_alias=alias,
@@ -792,7 +653,6 @@ class KeycloakYamlHandler:
                 )
             else:
                 oidc_overrides = {k: v for k, v in config.items() if k not in oidc_named_keys}
-                # OIDC identity provider (default)
                 await self.keycloak.add_identity_provider(
                     realm_name=realm_name,
                     provider_alias=alias,
@@ -806,24 +666,14 @@ class KeycloakYamlHandler:
                     first_broker_login_flow_alias=first_broker_login_flow_alias,
                 )
 
-            # Process mappers if present
             if "mappers" in item:
                 await self._process_idp_mappers(realm_name, alias, item["mappers"], variables)
 
     async def _process_idp_mappers(
         self, realm_name: str, provider_alias: str, mappers: list[dict[str, Any]], variables: dict[str, Any]
     ) -> None:
-        """Process identity provider mappers from YAML configuration.
-
-        Args:
-            realm_name: Realm name
-            provider_alias: Identity provider alias
-            mappers: List of mapper definitions from YAML
-            variables: Context variables
-        """
         logger.info(f"Processing {len(mappers)} mappers for {provider_alias}")
 
-        # Get existing mappers for create-or-update logic
         existing_mappers = await self.keycloak.get_identity_provider_mappers(realm_name, provider_alias)
         existing_mapper_by_name = {m.get("name"): m for m in existing_mappers}
 
@@ -833,7 +683,6 @@ class KeycloakYamlHandler:
                 logger.warning("Mapper missing 'name' field, skipping")
                 continue
 
-            # Build mapper config for Keycloak API
             mapper_config = {
                 "name": mapper_name,
                 "identityProviderAlias": provider_alias,
@@ -856,16 +705,9 @@ class KeycloakYamlHandler:
                 await self.keycloak.create_identity_provider_mapper(realm_name, provider_alias, mapper_config)
 
     async def _process_authentication_flows(self, flows_section: Any, variables: dict[str, Any]) -> None:
-        """Process authenticationFlows section.
-
-        Args:
-            flows_section: Authentication flows YAML section
-            variables: Context variables
-        """
         if not flows_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for authentication flows, skipping")
@@ -879,15 +721,14 @@ class KeycloakYamlHandler:
                 f"Processing flow item: alias={item.get('alias')}, setAsBrowserFlow={item.get('setAsBrowserFlow')}"
             )
 
-            # Geneste subflows kan deze lezer niet aanmaken, en de verplichte OTP-stap zit in
-            # een subflow. De blauwdruk noemt het alias, de connector bouwt de structuur; de
-            # ``browserFlow``-sleutel bindt hem daarna aan de realm.
+            # This reader cannot create nested subflows, and the required OTP step sits in
+            # one. The blueprint names the alias, the connector builds the structure, and the
+            # ``browserFlow`` key then binds it to the realm.
             if item.get("requireOtp"):
                 await self.keycloak.ensure_required_otp_browser_flow(realm_name, item["alias"])
                 continue
 
             if item.get("setAsBrowserFlow"):
-                # Extract provider alias from the identity-provider-redirector execution config
                 provider_alias = None
                 executions = item.get("executions", [])
                 logger.debug(f"Flow has {len(executions)} executions")
@@ -907,7 +748,6 @@ class KeycloakYamlHandler:
                         break
 
                 if not provider_alias:
-                    # Fallback to context variable or default
                     provider_alias = variables.get("provider_alias", "sso-rijk")
                     logger.warning(f"Could not find defaultProvider in flow config, using fallback: {provider_alias}")
 
@@ -915,11 +755,8 @@ class KeycloakYamlHandler:
                 await self.keycloak.configure_sso_redirect_flow(realm_name, provider_alias)
 
     async def _process_browser_flow(self, flow_alias: str | None, variables: dict[str, Any]) -> None:
-        """Set the realm's browser flow to the specified flow alias.
-
-        Args:
-            flow_alias: The flow alias to set as browser flow (e.g., "browser")
-            variables: Context variables (must include realm_name or project_realm_name)
+        """Args:
+        variables: Must include realm_name or project_realm_name.
         """
         if not flow_alias:
             return
@@ -937,16 +774,9 @@ class KeycloakYamlHandler:
             logger.debug(f"Browser flow already '{resolved_alias}' for realm {realm_name}")
 
     async def _process_client_scopes(self, scopes_section: Any, variables: dict[str, Any]) -> None:
-        """Process clientScopes section.
-
-        Args:
-            scopes_section: Client scopes YAML section
-            variables: Context variables
-        """
         if not scopes_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for client scopes, skipping")
@@ -956,10 +786,8 @@ class KeycloakYamlHandler:
         for item in items:
             scope_name = item.get("name")
             if not scope_name or scope_name != "custom_attributes_passthrough":
-                # Only handle our specific scope for now
                 continue
 
-            # Determine realm type
             realm_type_str = item.get("realmType", "PROJECT")
             realm_type = RealmType.PLATFORM if realm_type_str == "PLATFORM" else RealmType.PROJECT
 
@@ -969,12 +797,11 @@ class KeycloakYamlHandler:
             )
 
     async def _process_platform_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
-        """Process platformClients section (federation clients in the platform realm).
+        """The platformClients section: federation clients in the platform realm.
 
-        Mirrors _process_clients but creates clients in the YAML-supplied platform
-        realm rather than the context's project realm, and captures the created
-        client_id + client_secret as an output under `as:` so downstream sections
-        (notably the project realm's OIDC IdP) can reference them.
+        Like _process_clients, but in the YAML-supplied platform realm rather than the
+        context's project realm, and the created client_id and client_secret are captured as
+        an output under ``as:`` so a later section can reference them.
         """
         if not clients_section:
             return
@@ -1005,8 +832,8 @@ class KeycloakYamlHandler:
                             f"Platform client '{client_id}' already exists in realm '{realm_name}', reconciling"
                         )
                         await self._update_existing_client(realm_name, client_id, client_data)
-                        # Existing client may have a different secret; fetch the current one
-                        # so downstream references resolve to a working credential.
+                        # An existing client may have a different secret; fetch the current
+                        # one so later references resolve to a working credential.
                         existing = await self.keycloak.find_client_by_client_id(client_id, realm_name)
                         if existing:
                             self.keycloak.admin.change_current_realm(realm_name)
@@ -1032,11 +859,10 @@ class KeycloakYamlHandler:
 
     @staticmethod
     def _build_client_data_from_yaml(item: dict[str, Any]) -> dict[str, Any]:
-        """Build a Keycloak client representation from a YAML client definition.
+        """A Keycloak client representation from a YAML client definition.
 
-        Honors all common client fields declared in YAML and generates a secret
-        for confidential clients. Used by both platform and regular client flows
-        to keep YAML as the single source of truth.
+        Generates a secret for a confidential client. Used by both the platform and the
+        regular client route, so the YAML stays the single source of truth.
         """
         import secrets
         import string
@@ -1074,16 +900,9 @@ class KeycloakYamlHandler:
         return client_data
 
     async def _process_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
-        """Process clients section.
-
-        Args:
-            clients_section: Clients YAML section
-            variables: Context variables
-        """
         if not clients_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for clients, skipping")
@@ -1098,7 +917,6 @@ class KeycloakYamlHandler:
 
             logger.info(f"Creating client: {client_id} in realm {realm_name}")
 
-            # Build client data from YAML configuration
             client_data = {
                 "clientId": client_id,
                 "name": item.get("name", client_id),
@@ -1112,43 +930,33 @@ class KeycloakYamlHandler:
                 "authorizationServicesEnabled": item.get("authorizationServicesEnabled", False),
             }
 
-            # Add redirect URIs
             if "redirectUris" in item:
-                # Filter out None values
                 redirect_uris = [uri for uri in item["redirectUris"] if uri is not None]
                 if redirect_uris:
                     client_data["redirectUris"] = redirect_uris
 
-            # Add post-logout redirect URIs
             if "postLogoutRedirectUris" in item:
                 client_data["attributes"] = client_data.get("attributes", {})
-                # Filter out None values before joining
                 post_logout_uris = [uri for uri in item["postLogoutRedirectUris"] if uri is not None]
                 if post_logout_uris:
                     client_data["attributes"]["post.logout.redirect.uris"] = "+".join(post_logout_uris)
 
-            # Add web origins
             if "webOrigins" in item:
-                # Filter out None values
                 web_origins = [origin for origin in item["webOrigins"] if origin is not None]
                 if web_origins:
                     client_data["webOrigins"] = web_origins
 
-            # Add PKCE code challenge method for public clients
             if "pkceCodeChallengeMethod" in item:
                 client_data["attributes"] = client_data.get("attributes", {})
                 client_data["attributes"]["pkce.code.challenge.method"] = item["pkceCodeChallengeMethod"]
 
-            # Merge any additional attributes from YAML (e.g., login_theme)
             if "attributes" in item and isinstance(item["attributes"], dict):
                 client_data["attributes"] = client_data.get("attributes", {})
                 client_data["attributes"].update(item["attributes"])
 
-            # Add protocol mappers if specified
             if "protocolMappers" in item:
                 client_data["protocolMappers"] = item["protocolMappers"]
 
-            # Generate secret for confidential clients
             if not client_data["publicClient"]:
                 import secrets
                 import string
@@ -1156,7 +964,6 @@ class KeycloakYamlHandler:
                 alphabet = string.ascii_letters + string.digits
                 client_data["secret"] = "".join(secrets.choice(alphabet) for _ in range(32))
 
-            # Create or update the client
             try:
                 self.keycloak.admin.change_current_realm(realm_name)
 
@@ -1168,26 +975,21 @@ class KeycloakYamlHandler:
                         logger.info(
                             f"Client '{client_id}' already exists in realm '{realm_name}', updating redirect URIs"
                         )
-                        # Find existing client and update redirect URIs and web origins
                         await self._update_existing_client(realm_name, client_id, client_data)
                     else:
                         raise
 
-                # Handle service account client roles
                 if "serviceAccountClientRoles" in item:
                     await self._assign_service_account_roles(realm_name, client_id, item["serviceAccountClientRoles"])
 
                 self.keycloak.admin.change_current_realm("master")
 
-                # Handle client roles
                 if "clientRoles" in item:
                     await self._process_client_roles(realm_name, client_id, item["clientRoles"])
 
-                # Handle access restriction
                 if "restrictAccess" in item:
                     await self._process_restrict_access(realm_name, client_id, item["restrictAccess"])
 
-                # Handle browser flow override (e.g., to bypass access restrictions for invite client)
                 if "browserFlowOverride" in item:
                     flow_alias = item["browserFlowOverride"]
                     logger.info(f"Setting browser flow override '{flow_alias}' for client '{client_id}'")
@@ -1203,19 +1005,16 @@ class KeycloakYamlHandler:
                 raise
 
     async def _update_existing_client(self, realm_name: str, client_id: str, client_data: dict[str, Any]) -> None:
-        """Reconcile an existing client against YAML-driven client_data.
+        """Partially update the stored client with the fields that drifted from the YAML.
 
-        Compares the supplied YAML-derived client_data against the stored client and
-        issues a partial update for fields that drifted. Scalar fields (name, enabled),
-        list fields (redirectUris, webOrigins), and the attributes map are all reconciled.
+        Scalar fields (name, enabled), list fields (redirectUris, webOrigins) and the
+        attributes map are reconciled.
 
         Args:
-            realm_name: Realm name (for logging only; caller is expected to have switched).
-            client_id: Client ID (the clientId field, not internal ID)
-            client_data: YAML-derived client data
+            realm_name: For logging only; the caller is expected to have switched realm.
+            client_id: The clientId field, not the internal id.
         """
         try:
-            # Find existing client by clientId
             all_clients = self.keycloak.admin.get_clients()
             existing_client = None
             for client in all_clients:
@@ -1230,13 +1029,12 @@ class KeycloakYamlHandler:
             update_data: dict[str, Any] = {}
             changed_keys: list[str] = []
 
-            # Scalar fields: only update if drift
             for field in ("name", "enabled"):
                 if field in client_data and client_data[field] != existing_client.get(field):
                     update_data[field] = client_data[field]
                     changed_keys.append(field)
 
-            # List fields: compare as sets (order-insensitive)
+            # Compared as sets: the order is not a claim.
             for field in ("redirectUris", "webOrigins"):
                 if field in client_data:
                     expected = set(client_data[field])
@@ -1245,7 +1043,6 @@ class KeycloakYamlHandler:
                         update_data[field] = client_data[field]
                         changed_keys.append(field)
 
-            # Attributes: merge YAML on top of existing; record which keys actually drifted
             if "attributes" in client_data:
                 existing_attrs = existing_client.get("attributes", {}) or {}
                 drifted_attrs = {k: v for k, v in client_data["attributes"].items() if existing_attrs.get(k) != v}
@@ -1262,19 +1059,14 @@ class KeycloakYamlHandler:
 
         except Exception as e:
             logger.error(f"Failed to update existing client '{client_id}': {e}")
-            # Don't raise - this is best-effort update during refresh
+            # Best effort: a failed update during a refresh does not stop the refresh.
 
     async def _assign_service_account_roles(
         self, realm_name: str, client_id: str, role_mappings: dict[str, list[str]]
     ) -> None:
-        """Assign roles to a service account.
-
-        Args:
-            realm_name: Realm name
-            client_id: Client ID
-            role_mappings: Dict mapping client IDs to lists of role names
+        """Args:
+        role_mappings: Per client id the role names to assign.
         """
-        # Find the service account client
         all_clients = self.keycloak.admin.get_clients()
         service_client = None
         for client in all_clients:
@@ -1286,7 +1078,6 @@ class KeycloakYamlHandler:
             logger.warning(f"Could not find client '{client_id}' for service account role assignment")
             return
 
-        # Get service account user
         service_account_user = self.keycloak.admin.get_client_service_account_user(client_id=service_client["id"])
 
         if not service_account_user:
@@ -1295,9 +1086,7 @@ class KeycloakYamlHandler:
 
         user_id = service_account_user["id"]
 
-        # Assign roles for each target client
         for target_client_id, role_names in role_mappings.items():
-            # Find target client
             target_client = None
             for client in all_clients:
                 if client.get("clientId") == target_client_id:
@@ -1308,10 +1097,8 @@ class KeycloakYamlHandler:
                 logger.warning(f"Could not find target client '{target_client_id}' for role assignment")
                 continue
 
-            # Get available roles for this client
             available_roles = self.keycloak.admin.get_client_roles(client_id=target_client["id"])
 
-            # Filter to requested roles
             roles_to_assign = [role for role in available_roles if role["name"] in role_names]
 
             if roles_to_assign:
@@ -1323,16 +1110,9 @@ class KeycloakYamlHandler:
                 logger.warning(f"No matching roles found in '{target_client_id}' for: {role_names}")
 
     async def _process_realm_roles(self, roles_section: Any, variables: dict[str, Any]) -> None:
-        """Process realmRoles section.
-
-        Args:
-            roles_section: Realm roles YAML section
-            variables: Context variables
-        """
         if not roles_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for realm roles, skipping")
@@ -1351,16 +1131,9 @@ class KeycloakYamlHandler:
             )
 
     async def _process_groups(self, groups_section: Any, variables: dict[str, Any]) -> None:
-        """Process groups section.
-
-        Args:
-            groups_section: Groups YAML section
-            variables: Context variables
-        """
         if not groups_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for groups, skipping")
@@ -1377,16 +1150,9 @@ class KeycloakYamlHandler:
             await self.keycloak.create_group(realm_name=realm_name, group_name=group_name, path=item.get("path"))
 
     async def _process_users(self, users_section: Any, variables: dict[str, Any]) -> None:
-        """Process users section.
-
-        Args:
-            users_section: Users YAML section
-            variables: Context variables
-        """
         if not users_section:
             return
 
-        # Get realm name from context
         realm_name = variables.get("realm_name") or variables.get("project_realm_name")
         if not realm_name:
             logger.warning("No realm_name in context for users, skipping")
@@ -1399,7 +1165,6 @@ class KeycloakYamlHandler:
                 logger.warning("User missing 'username', skipping")
                 continue
 
-            # Extract password from credentials
             password = None
             credentials = item.get("credentials", [])
             if credentials and isinstance(credentials, list):
@@ -1425,11 +1190,9 @@ class KeycloakYamlHandler:
 
             user_id = user_info["id"]
 
-            # Remove all default realm roles if explicitly requested
             if item.get("removeDefaultRoles", False):
                 await self.keycloak.remove_all_realm_roles(realm_name, user_id)
 
-            # Assign realm roles if specified
             if "realmRoles" in item:
                 role_names = item["realmRoles"]
                 if isinstance(role_names, list):
@@ -1437,7 +1200,6 @@ class KeycloakYamlHandler:
                 else:
                     logger.warning(f"realmRoles for user {username} is not a list, skipping")
 
-            # Add to groups if specified
             if "groups" in item:
                 group_names = item["groups"]
                 if isinstance(group_names, list):
@@ -1447,13 +1209,6 @@ class KeycloakYamlHandler:
                     logger.warning(f"groups for user {username} is not a list, skipping")
 
     async def _process_client_roles(self, realm_name: str, client_id: str, client_roles: list[dict[str, Any]]) -> None:
-        """Process client roles for a client.
-
-        Args:
-            realm_name: Realm name
-            client_id: Client ID
-            client_roles: List of client role definitions
-        """
         for role_def in client_roles:
             role_name = role_def.get("name")
             if not role_name:
@@ -1470,16 +1225,7 @@ class KeycloakYamlHandler:
             )
 
     async def _process_restrict_access(self, realm_name: str, client_id: str, restrict_access: dict[str, Any]) -> None:
-        """Process access restriction configuration for a client.
-
-        This creates a restricted browser flow and sets it as the client's
-        authentication flow override.
-
-        Args:
-            realm_name: Realm name
-            client_id: Client ID
-            restrict_access: Access restriction configuration
-        """
+        """Create a restricted browser flow and set it as the client's flow override."""
         if not restrict_access.get("enabled", False):
             logger.debug(f"Access restriction not enabled for client '{client_id}'")
             return
@@ -1491,12 +1237,10 @@ class KeycloakYamlHandler:
 
         error_message = restrict_access.get("errorMessage", "${accessDeniedNoPermission}")
 
-        # Generate a flow alias based on the client ID
         flow_alias = role_gate_flow_alias(client_id)
 
         logger.info(f"Setting up access restriction for client '{client_id}' with role '{role_name}'")
 
-        # Step 1: Create the restricted browser flow
         await self.keycloak.create_restricted_browser_flow(
             realm_name=realm_name,
             flow_alias=flow_alias,
@@ -1505,7 +1249,6 @@ class KeycloakYamlHandler:
             error_message=error_message,
         )
 
-        # Step 2: Set the flow override on the client
         await self.keycloak.set_client_authentication_flow_override(
             realm_name=realm_name,
             client_id=client_id,

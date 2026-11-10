@@ -59,8 +59,6 @@ class JobError(Exception):
 
 @dataclass
 class JobRun:
-    """Public description of a job run (live state from the pod)."""
-
     session_id: str
     name: str
     namespace: str
@@ -74,8 +72,6 @@ class JobRun:
 
 
 class JobManager:
-    """Orchestrates the lifecycle of ad-hoc job pods."""
-
     def __init__(self) -> None:
         self._kubectl = create_kubectl_connector()
 
@@ -107,8 +103,8 @@ class JobManager:
                 f"Deployment '{deployment_name}' draait op cluster '{cluster}', niet beheerd door deze instance."
             )
 
-        # Deze image komt uit een formulierveld en ziet dus geen van de validators die bij
-        # het opslaan draaien, terwijl apply_bundle er wel een pull-secret aan hangt.
+        # This image comes from a form field and so passes none of the validators that run
+        # on save, while apply_bundle does hang a pull secret on it.
         owner = foreign_proxy_organization_owner(image, cluster, project_name)
         if owner is not None:
             raise JobError(
@@ -234,7 +230,7 @@ class JobManager:
                     "db_secret_name": db_secret_name,
                 },
             )
-            # Met project_data tellen ook de eigen private registries mee in de regels.
+            # With project_data the project's own private registries count in the rules too.
             project_data = await get_project_store().get_decrypted(project_name)
             ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster, project_data)
             if not ok:

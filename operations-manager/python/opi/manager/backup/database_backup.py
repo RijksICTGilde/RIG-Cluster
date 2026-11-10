@@ -31,8 +31,6 @@ _SCHEMA_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 @dataclass
 class DatabaseBackupResult(BackupResult):
-    """Result of a database backup operation."""
-
     database_name: str | None = None
     reference_name: str | None = None
     source_type: str | None = None
@@ -40,29 +38,16 @@ class DatabaseBackupResult(BackupResult):
 
 @dataclass
 class DatabaseRestoreResult(RestoreResult):
-    """Result of a database restore operation."""
-
     target_database_name: str | None = None
     reference_name: str | None = None
 
 
 class DatabaseBackupManager(BaseBackupManager):
-    """
-    Orchestrates PostgreSQL database backups to external S3 using Kopia.
+    """Orchestrates PostgreSQL database backups to external S3 using Kopia.
 
-    Flow:
-    1. Acquire distributed lock
-    2. Connect to Kopia repository (create if not exists)
-    3. Stream pg_dump output through Kopia snapshot
-    4. Apply retention policy
-    5. Release lock
-
-    Restore Flow:
-    1. Acquire lock
-    2. Connect to Kopia repository
-    3. Restore dump file from snapshot
-    4. Stream to pg_restore
-    5. Cleanup and release lock
+    Backup: take the lock, connect to the Kopia repository, stream pg_dump through a
+    snapshot, apply the retention policy, release the lock. Restore runs the same steps
+    with the dump streamed into pg_restore.
     """
 
     async def backup_database(
@@ -83,29 +68,13 @@ class DatabaseBackupManager(BaseBackupManager):
         generation: int | None = None,
         trigger: str = "manual",
     ) -> DatabaseBackupResult:
-        """
-        Backup a PostgreSQL database to S3 via Kopia with SOPS-derived encryption.
+        """Backup a PostgreSQL database to S3 via Kopia with SOPS-derived encryption.
 
         Args:
-            namespace: Kubernetes namespace
-            database_host: PostgreSQL host
-            database_port: PostgreSQL port
-            database_name: Database name to backup
-            database_user: Database user
-            database_password: Database password
-            reference_name: Reference name for the database (used in naming/tags)
-            source_type: "shared" or "namespace" - indicates database source
-            cluster: Cluster name for metadata
-            project_name: Project name for metadata
-            deployment_name: Deployment name for metadata
-            component_name: Component name for metadata
-            generation: Generation number for metadata
-            backup_run_id: Backup run ID to group backups (required)
-
-        Returns:
-            DatabaseBackupResult with operation details
+            reference_name: Name the database is known by in naming and tags.
+            source_type: "shared" or "namespace".
+            backup_run_id: Groups the backups of one run; required.
         """
-        # Ensure backup bucket exists before starting
         await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
 
         async with self.lock:
@@ -146,25 +115,19 @@ class DatabaseBackupManager(BaseBackupManager):
         generation: int | None = None,
         trigger: str = "manual",
     ) -> DatabaseBackupResult:
-        """
-        Internal: backup a PostgreSQL database (lock must be held).
-        """
+        """The lock must be held."""
         start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
-        # Generate pod name
         pod_name = f"db-backup-{reference_name[:20]}-{timestamp}"
 
-        # Determine cluster for backup prefix
         backup_cluster = cluster or settings.CLUSTER_MANAGER
 
         logger.info(f"Starting database backup of {reference_name} ({database_name}@{database_host})")
 
         try:
-            # 1. Derive backup encryption key from namespace's SOPS key
             kopia_password = await self._derive_backup_key(namespace)
 
-            # 2. Create backup pod
             logger.info(f"Creating database backup pod {pod_name}")
             backup_prefix = generate_backup_prefix(backup_cluster, namespace)
             await self._create_database_backup_pod(
@@ -189,7 +152,6 @@ class DatabaseBackupManager(BaseBackupManager):
                 trigger=trigger,
             )
 
-            # 3. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
@@ -235,7 +197,6 @@ class DatabaseBackupManager(BaseBackupManager):
             )
 
         finally:
-            # Cleanup pod (best effort)
             await self._cleanup_pod(namespace, pod_name)
 
     async def _create_database_backup_pod(
@@ -260,13 +221,11 @@ class DatabaseBackupManager(BaseBackupManager):
         backup_run_id: str | None = None,
         trigger: str = "manual",
     ) -> None:
-        """Create the database backup pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-database-pod.yaml.jinja")
 
         with open(template_path) as f:
             template_content = f.read()
 
-        # Get the bucket name (may be per-project based on config)
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
 
@@ -305,7 +264,6 @@ class DatabaseBackupManager(BaseBackupManager):
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
                 "retention_keep_monthly": self.config.retention_keep_monthly,
-                # Metadata
                 "cluster": effective_cluster,
                 "project_name": project_name,
                 "deployment_name": deployment_name,
@@ -324,10 +282,6 @@ class DatabaseBackupManager(BaseBackupManager):
             what="database backup",
         )
 
-    # =========================================================================
-    # Restore Methods
-    # =========================================================================
-
     async def restore_database(
         self,
         cluster: str,
@@ -342,27 +296,14 @@ class DatabaseBackupManager(BaseBackupManager):
         project_name: str | None = None,
         source_database_name: str | None = None,
     ) -> DatabaseRestoreResult:
-        """
-        Restore a PostgreSQL database from a Kopia backup.
+        """Restore a PostgreSQL database from a Kopia backup.
 
         Args:
-            cluster: Cluster name where backup was made
-            namespace: Namespace for key derivation
-            reference_name: Reference name of the database backup
-            target_database_host: Target PostgreSQL host
-            target_database_port: Target PostgreSQL port
-            target_database_name: Target database name
-            target_database_user: Target database user
-            target_database_password: Target database password
-            snapshot_id: Optional specific snapshot ID (defaults to latest)
-            project_name: Project name for per-project backup bucket
-            source_database_name: Name of the database the dump was taken from, if the
+            snapshot_id: A specific snapshot; the latest one without it.
+            source_database_name: Name of the database the dump came from, if the
                 caller knows it. That name is also its default schema, which the restore
                 pod renames to the target name. Used only when the snapshot itself does
                 not say (see _resolve_source_database_name for the order).
-
-        Returns:
-            DatabaseRestoreResult with operation details
         """
         # Ensure the bucket and its scoped S3 account exist before the restore pod needs them
         await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
@@ -397,9 +338,7 @@ class DatabaseBackupManager(BaseBackupManager):
         project_name: str | None = None,
         source_database_name: str | None = None,
     ) -> DatabaseRestoreResult:
-        """
-        Internal: restore a PostgreSQL database (lock must be held).
-        """
+        """The lock must be held."""
         start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
@@ -443,10 +382,8 @@ class DatabaseBackupManager(BaseBackupManager):
             logger.info(f"Source schema for restore of {reference_name}: {source_schema}")
 
         try:
-            # 1. Derive restore key (same as backup key)
             kopia_password = await self._derive_backup_key(namespace)
 
-            # 2. Create restore pod
             logger.info(f"Creating database restore pod {pod_name}")
             await self._create_database_restore_pod(
                 namespace=namespace,
@@ -465,7 +402,6 @@ class DatabaseBackupManager(BaseBackupManager):
                 source_schema=source_schema,
             )
 
-            # 3. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
@@ -514,7 +450,6 @@ class DatabaseBackupManager(BaseBackupManager):
             )
 
         finally:
-            # Cleanup restore pod (best effort)
             await self._cleanup_pod(namespace, pod_name)
 
     async def _resolve_source_database_name(
@@ -526,7 +461,7 @@ class DatabaseBackupManager(BaseBackupManager):
         project_name: str | None,
         caller_supplied: str | None,
     ) -> str | None:
-        """The name of the database the dump was taken from -- which is its default schema.
+        """The name of the database the dump came from, which is its default schema.
 
         That schema is what the restore pod renames to the target name. It is established
         here rather than read from the dump, because the dump carries the extra schemas
@@ -538,15 +473,13 @@ class DatabaseBackupManager(BaseBackupManager):
            actually dumped, so this is the dump itself talking.
         2. What the caller passed. A generation restore knows which generation it is
            restoring from.
-        3. Composed from the snapshot's project/deployment/generation metadata, for
-           snapshots taken before the tag existed.
+        3. Composed from the snapshot's project/deployment/generation metadata, for a
+           snapshot from before the tag existed.
 
-        The order is what the cluster measurement forced: a second generation restore
-        passed ``{db}`` while the backup had dumped ``{db}_v1``, because the generation in
-        the project file lagged behind. Both reconstructions (2 and 3) were wrong there;
-        the tag is right by construction.
+        Keep that order: both reconstructions (2 and 3) are wrong whenever the generation
+        in the project file lags behind what the backup dumped.
 
-        Returns None when none of the three can produce a name -- the pod then refuses to
+        Returns None when none of the three can produce a name, so the pod refuses to
         rename anything rather than guessing.
         """
         snapshots = await self.list_database_snapshots(
@@ -600,13 +533,11 @@ class DatabaseBackupManager(BaseBackupManager):
         cluster: str | None = None,
         source_schema: str | None = None,
     ) -> None:
-        """Create the database restore pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-database-pod.yaml.jinja")
 
         with open(template_path) as f:
             template_content = f.read()
 
-        # Get the bucket name (may be per-project based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
         manifest = self._template_manifest(
@@ -641,10 +572,6 @@ class DatabaseBackupManager(BaseBackupManager):
             what="database restore",
         )
 
-    # =========================================================================
-    # List Snapshots
-    # =========================================================================
-
     async def list_database_snapshots(
         self,
         cluster: str,
@@ -652,18 +579,7 @@ class DatabaseBackupManager(BaseBackupManager):
         reference_name: str | None = None,
         project_name: str | None = None,
     ) -> list[SnapshotInfo]:
-        """
-        List available database snapshots for a namespace.
-
-        Args:
-            cluster: Cluster name
-            namespace: Namespace name
-            reference_name: Optional database reference name to filter by
-            project_name: Optional project name for per-project bucket mode
-
-        Returns:
-            List of available snapshots
-        """
+        """The database snapshots of a namespace, optionally only those of one reference."""
         from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
 
         backup_prefix = generate_backup_prefix(cluster, namespace)
@@ -689,17 +605,13 @@ class DatabaseBackupManager(BaseBackupManager):
         try:
             kopia_snapshots = await kopia.list_snapshots(repo_config)
 
-            # Filter by resource_type=database and optionally by reference_name
             snapshots: list[SnapshotInfo] = []
             for ks in kopia_snapshots:
-                # Only include database snapshots
                 if ks.resource_type != "database":
                     continue
 
-                # Get database reference from tags
                 db_ref = ks.tags.get("tag:database") if ks.tags else None
 
-                # Apply filter if specified
                 if reference_name and db_ref != reference_name:
                     continue
 
@@ -733,13 +645,5 @@ class DatabaseBackupManager(BaseBackupManager):
 
 
 def create_database_backup_manager(config: BackupConfig | None = None) -> DatabaseBackupManager:
-    """
-    Create a DatabaseBackupManager instance.
-
-    Args:
-        config: Optional BackupConfig. If not provided, uses settings.
-
-    Returns:
-        DatabaseBackupManager instance
-    """
+    """Without a ``config`` the manager is built from the settings."""
     return DatabaseBackupManager(config)

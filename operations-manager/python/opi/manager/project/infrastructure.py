@@ -30,7 +30,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.generation.manifests import render_template
-from opi.manager.argo_manager import APPLICATIE_AANMAAK_TIMEOUT_SECONDEN
+from opi.manager.argo_manager import APPLICATION_CREATION_TIMEOUT_SECONDS
 from opi.services.catalog.image_registries.resolution import resolve_project_image
 from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
 from opi.services.project_utils import resolve_deployment_filter
@@ -103,7 +103,7 @@ class InfrastructureAccess(Protocol):
 
     async def _ensure_database_manager(self, skip_credential_check: bool = False) -> DatabaseManager: ...
 
-    def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]: ...
+    def _umbrella_refresh_watcher(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]: ...
 
 
 class Infrastructure:
@@ -129,13 +129,11 @@ class Infrastructure:
         project_data: dict[str, str | list | dict[str, str]] = await self._host.get_contents()
         logger.info(f"Checking namespaces for project: {project_data['name']}")
 
-        # Track namespace creation with progress manager if available
         progress_manager = self._host.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
             namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP)
 
-        # Get deployments for THIS cluster using helper method
         deployments = await self._host.get_deployments(
             cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
         )
@@ -177,7 +175,6 @@ class Infrastructure:
                 logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
             else:
                 logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
-                # Create the namespace using shared function
                 await self.create_namespace_with_argocd_label(namespace)
                 labels_are_correct = True  # applied as part of creation
 
@@ -188,7 +185,6 @@ class Infrastructure:
             if progress_manager:
                 progress_manager.set_namespace(namespace)
 
-        # Complete namespace subtask if progress manager is available
         if progress_manager and namespace_subtask:
             if all_successful:
                 progress_manager.complete_task(namespace_subtask)
@@ -208,10 +204,8 @@ class Infrastructure:
         """
         logger.info(f"Creating namespace '{namespace}'")
 
-        # Create the namespace using the manifest template
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
 
-        # Template variables
         variables = {
             "namespace": namespace,
             "manager": get_argo_namespace(settings.CLUSTER_MANAGER),
@@ -336,7 +330,6 @@ class Infrastructure:
             return True, "success"
 
         try:
-            # Create a direct connection with the superuser credentials to the postgres database
             conn = await asyncpg.connect(
                 host=host, port=5432, user=username, password=password, database="postgres", timeout=5
             )
@@ -345,15 +338,12 @@ class Infrastructure:
             _validated_infrastructure_credentials.add(memo)
             return True, "success"
         except asyncpg.InvalidPasswordError as e:
-            # Authentication failed - wrong password
             logger.debug(f"Infrastructure database authentication failed for user {username}: {e}")
             return False, "auth_error"
         except (ConnectionRefusedError, socket.gaierror, OSError) as e:
-            # Database not reachable - likely not running yet or DNS not ready
             logger.debug(f"Infrastructure database not reachable at {host}: {e}")
             return False, "connection_error"
         except Exception as e:
-            # Other errors
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
             return False, "unknown_error"
 
@@ -460,19 +450,16 @@ class Infrastructure:
         if not project_name:
             raise ValueError("Project name is required in project_data")
 
-        # Get infrastructure namespace with cluster-specific prefix
         infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
 
         logger.info(f"Checking infrastructure namespace '{infrastructure_namespace}' for project '{project_name}'")
 
-        # Track namespace creation with progress manager if available
         progress_manager = self._host.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
             namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP, subject="projectdatabase")
 
         try:
-            # Check if namespace exists, create if needed (using shared function)
             namespace_exists = await self._host._kubectl_connector.namespace_exists(infrastructure_namespace)
             if not namespace_exists:
                 await self.create_namespace_with_argocd_label(infrastructure_namespace)
@@ -481,10 +468,8 @@ class Infrastructure:
                     f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
                 )
 
-            # Always ensure the managed-by and Pod Security labels exist (idempotent)
             await self.ensure_namespace_labels(infrastructure_namespace)
 
-            # Create SOPS secret in the infrastructure namespace (using shared function)
             await self.ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)
 
             if progress_manager and namespace_subtask:
@@ -513,9 +498,7 @@ class Infrastructure:
         if not project_name:
             raise ValueError("Project name is required in project_data")
 
-        # Get configuration
         infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
-        # Initialize database manager for configuration only (skip credential check during bootstrap)
         db_manager = await self._host._ensure_database_manager(skip_credential_check=True)
         database_cluster_config = db_manager._get_database_cluster_config(project_data, cluster_name)
         storage_class = get_storage_class_name(cluster_name)
@@ -523,14 +506,12 @@ class Infrastructure:
 
         logger.info(f"Creating infrastructure resources for project '{project_name}' in cluster '{cluster_name}'")
 
-        # Track infrastructure creation with progress manager
         progress_manager = self._host.get_progress_manager()
         infra_task = None
         if progress_manager:
             infra_task = progress_manager.add_task(steps.PROJECT_DATABASE_SETUP)
 
         try:
-            # STEP 1: Check for existing superuser credentials and validate them
             superuser_secret_name = generate_postgres_superuser_secret_name(project_name)
             existing_secret = await self._host._kubectl_connector.get_secret(
                 superuser_secret_name, infrastructure_namespace
@@ -547,7 +528,6 @@ class Infrastructure:
                         f"Manual intervention required to fix or delete the secret."
                     )
 
-                # Test the credentials against the PostgreSQL cluster
                 db_host = get_database_cluster_service_endpoint(cluster_name, project_name)
                 credentials_valid, error_type = await self.test_infrastructure_database_connection(
                     username=superuser_username,
@@ -557,7 +537,6 @@ class Infrastructure:
 
                 if not credentials_valid:
                     if error_type == "auth_error":
-                        # Actual authentication failure - wrong password
                         raise RuntimeError(
                             f"Superuser credentials for project '{project_name}' are invalid. "
                             f"The password in secret '{superuser_secret_name}' does not match the PostgreSQL cluster. "
@@ -566,13 +545,11 @@ class Infrastructure:
                             f"or delete both the secret and the PostgreSQL cluster to recreate from scratch."
                         )
                     elif error_type == "connection_error":
-                        # Database not reachable yet - assume credentials are correct and continue
                         logger.info(
                             f"Cannot verify superuser credentials for project '{project_name}' because database is not reachable yet. "
                             f"Assuming existing credentials are correct and proceeding with infrastructure creation."
                         )
                     else:
-                        # Unknown error - log warning but continue
                         logger.warning(
                             f"Could not verify superuser credentials for project '{project_name}' due to unknown error. "
                             f"Assuming existing credentials are correct and proceeding with infrastructure creation."
@@ -580,7 +557,6 @@ class Infrastructure:
                 else:
                     logger.info(f"Existing superuser credentials validated successfully for project '{project_name}'")
             else:
-                # No existing secret - generate new credentials for first-time creation
                 logger.info(
                     f"No existing superuser secret found, generating new credentials for project '{project_name}'"
                 )
@@ -589,7 +565,6 @@ class Infrastructure:
                     min_uppercase=3, min_lowercase=3, min_digits=3, total_length=32
                 )
 
-            # STEP 2: Create secret manifest with validated or new credentials
             secret_manifest = render_template(
                 "generic-secret.yaml.to-sops.jinja",
                 {
@@ -601,10 +576,8 @@ class Infrastructure:
                 },
             )
 
-            # STEP 2: Generate PostgreSQL cluster manifest
             logger.info(f"Generating PostgreSQL cluster manifest for project '{project_name}'")
 
-            # Handle registry configuration for PostgreSQL image
             database_config = database_cluster_config["database_config"]
             registry_name = database_config.get("registry")
             image_pull_secrets_map = {}
@@ -613,7 +586,6 @@ class Infrastructure:
             if registry_name:
                 logger.info(f"PostgreSQL database configured with registry: {registry_name}")
 
-                # Reuse existing registry extraction logic
                 registries = self._host._project_file_handler.extract_registries(project_data)
                 for registry in registries:
                     if registry.get("name") == registry_name:
@@ -631,20 +603,17 @@ class Infrastructure:
                 secret_name_ref = registry_config.get("secretName")
 
                 if secret_name_ref:
-                    # Pre-existing secret: use directly, skip creation
                     registry_secret_name = secret_name_ref
                     logger.info(
                         f"PostgreSQL will use pre-existing imagePullSecret '{registry_secret_name}' "
                         f"for image '{database_image}'"
                     )
                 else:
-                    # Generate registry secret name for infrastructure (using "infrastructure" as deployment name)
                     registry_secret_name = generate_registry_secret_name("infrastructure", registry_name)
                     logger.info(
                         f"PostgreSQL will use imagePullSecret '{registry_secret_name}' for image '{database_image}'"
                     )
 
-                # Map the database image to its registry secret
                 image_pull_secrets_map[database_image] = registry_secret_name
 
             # The cluster rewrite applies to the database image as well. Without it the bare
@@ -673,16 +642,13 @@ class Infrastructure:
                 },
             )
 
-            # STEP 3: Write infrastructure resource manifests to deployment Git repository
             logger.info(f"Committing infrastructure manifests to deployment repo for project '{project_name}'")
 
-            # Get project's main repository (infrastructure uses same repo as deployments)
             repositories = project_data.get("repositories", [])
             if not repositories:
                 raise ValueError("No repositories defined in project data")
             main_repo = repositories[0]
 
-            # Create repo config for infrastructure (treated as a special deployment)
             infra_repo_config = {
                 "name": "infrastructure",
                 "url": main_repo.get("url", ""),
@@ -698,16 +664,12 @@ class Infrastructure:
                 """Write the infrastructure directory into this round's working copy."""
                 deployment_working_dir = await infra_workspace.get_working_dir()
 
-                # Create infrastructure resources directory in deployment repo
-                # Path: {cluster}/{project_name}/infrastructure/
-                # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
                 infra_resources_dir = os.path.join(
                     deployment_working_dir,
                     generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
                 )
                 os.makedirs(infra_resources_dir, exist_ok=True)
 
-                # Write manifests - secret as .to-sops.yaml for encryption
                 secret_path = os.path.join(
                     infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
                 )
@@ -766,13 +728,11 @@ class Infrastructure:
                     f.write(network_policy_manifest)
                 logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
 
-                # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
                 if registry_name and registry_config and not registry_config.get("secretName"):
                     logger.info(
                         f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
                     )
 
-                    # Decrypt registry credentials (reuse existing logic)
                     registry_url = registry_config.get("upstream", "")
                     username = registry_config.get("username", "")
                     password_encrypted = registry_config.get("password", "")
@@ -780,10 +740,8 @@ class Infrastructure:
                     private_key = await get_decoded_project_private_key(project_data)
                     password = await decrypt_password_smart(password_encrypted, private_key)
 
-                    # Create RegistrySecret instance (same as deployments)
                     registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
 
-                    # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
                     registry_secret_manifest = render_template(
                         "generic-secret.yaml.to-sops.jinja",
                         {
@@ -795,7 +753,6 @@ class Infrastructure:
                         },
                     )
 
-                    # Write registry secret to infrastructure directory
                     registry_secret_path = os.path.join(
                         infra_resources_dir, sops_filenames(registry_secret_name).plaintext
                     )
@@ -806,7 +763,6 @@ class Infrastructure:
                         f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
                     )
 
-                # STEP 4: SOPS encrypt the secrets using project's SOPS key
                 logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
                 project_public_key = get_project_public_key(project_data)
                 if not project_public_key:
@@ -819,7 +775,6 @@ class Infrastructure:
                     private_key=project_private_key_or_none(project_data),
                 )
 
-                # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
                 logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
                 kustomization_success = self._host._manifest_generator.create_kustomization_files(
                     output_dir=infra_resources_dir,
@@ -837,8 +792,6 @@ class Infrastructure:
                 f"Successfully committed infrastructure manifests to deployment repo for project '{project_name}'"
             )
 
-            # STEP 6: Create ArgoCD Application, repo secret, and AppProject in ArgoCD applications repo
-            # This folder is detected by App-of-Apps pattern and creates the ArgoCD Application
             logger.info(
                 f"Creating ArgoCD application resources for infrastructure in {cluster_name}/{project_name}-infrastructure"
             )
@@ -852,7 +805,6 @@ class Infrastructure:
 
             logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
 
-            # STEP 7: the ArgoCD connection for the refresh watcher below and for STEP 9
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
@@ -861,28 +813,26 @@ class Infrastructure:
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")
 
-            # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_ROLLOUT)
 
-            async with self._host._umbrella_verversbewaker(argo_connector):
+            async with self._host._umbrella_refresh_watcher(argo_connector):
                 await self._host._argo_manager.wait_for_application_created(
                     app_name=infra_app_name,
-                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-                    poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
+                    timeout=APPLICATION_CREATION_TIMEOUT_SECONDS,
+                    # A cheap exists-check, so a 5s rhythm would only add latency.
+                    poll_interval=1,
                 )
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
-            # STEP 9: Refresh the infrastructure application to ensure it picks up latest changes
             infra_reconciled_at = await argo_connector.refresh_application(infra_app_name)
             if not infra_reconciled_at:
                 raise RuntimeError(f"Failed to refresh ArgoCD infrastructure application '{infra_app_name}'")
 
             logger.info(f"Infrastructure application '{infra_app_name}' refreshed successfully")
 
-            # STEP 10: Wait for infrastructure to be synced and healthy
             logger.info(
                 f"Waiting for infrastructure to be ready for project '{project_name}' (this may take a few minutes)..."
             )
@@ -893,7 +843,7 @@ class Infrastructure:
             await self._host._argo_manager.wait_for_infrastructure_ready(
                 project_name=project_name,
                 cluster_name=cluster_name,
-                timeout=600,  # 10 minutes timeout
+                timeout=600,
                 refreshed_after=infra_reconciled_at,
             )
 
@@ -937,7 +887,6 @@ class Infrastructure:
         contents = await self._host.get_contents()
         project_name = contents.get("name")
 
-        # Get deployments for THIS cluster using helper method
         deployments = await self._host.get_deployments(
             cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
         )
@@ -959,5 +908,4 @@ class Infrastructure:
         }
 
         for namespace in sorted(namespaces):
-            # Use shared function for SOPS secret creation
             await self.ensure_sops_secret_in_namespace(namespace, contents)

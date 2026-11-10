@@ -25,7 +25,7 @@ import pytest
 from fastapi import HTTPException
 from opi.connectors.git import GitPushConflictError
 from opi.core.config import settings
-from opi.manager.argo_manager import ApplicationGone
+from opi.manager.argo_manager import ApplicationGoneError
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import ProjectManager
 from opi.services.tasks.async_task_service import AsyncTaskService
@@ -219,12 +219,12 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
     # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
     argo.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
     monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: argo)
-    # ApplicationGone is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
+    # ApplicationGoneError is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
     # de wacht stopt daar, zodat deze test de wacht meet en niet de hele uitrol erna.
     monkeypatch.setattr(
         pm._argo_manager,
         "wait_for_application_synced",
-        AsyncMock(side_effect=ApplicationGone("Application 'demo-pr-244' verdween")),
+        AsyncMock(side_effect=ApplicationGoneError("Application 'demo-pr-244' verdween")),
         raising=False,
     )
 

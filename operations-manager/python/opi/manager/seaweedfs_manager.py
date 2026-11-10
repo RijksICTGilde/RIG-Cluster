@@ -1,13 +1,12 @@
-"""Manager voor de object-opslag van seaweedfs-storage (RC-331, RC-381).
+"""Object storage of the seaweedfs-storage service (RC-331, RC-381).
 
-Kleiner dan ``MinioManager``, en dat is geen gat: het beheer loopt over ``weed shell`` in
-plaats van over ``mc admin``, dus een bucket, een identiteit en een policy zijn elk één
-commando. Wat deze manager niet heeft zijn de bucketgeneraties van MinIO: die bestaan daar
-voor een restore in een nieuwe bucket, en voor deze dienst is dat geen vorm die al iets
-oplost.
+Smaller than ``MinioManager`` and not missing anything: management runs over ``weed shell``
+rather than ``mc admin``, so a bucket, an identity and a policy are each one command. There
+are no bucket generations here, unlike MinIO, where they exist for a restore into a new
+bucket.
 
-De kloon kopieert de data met ``mc`` over de S3-poort, met het admin-sleutelpaar uit
-``seaweedfs-credentials``; het beheer van identiteiten gaat nooit die weg op.
+A clone copies the data with ``mc`` over the S3 port, on the admin key pair from
+``seaweedfs-credentials``; identity management never goes that way.
 """
 
 from __future__ import annotations
@@ -40,18 +39,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De mc-alias waarop de bucketkopie van een kloon loopt. Eén alias, want bron en doel
-#: staan op dezelfde server; de kloon van een andere S3-server is een migratie.
+#: The mc alias a clone's bucket copy runs on. One alias, because source and target sit on
+#: the same server; a clone from another S3 server is a migration.
 MC_ALIAS = "seaweedfs-admin"
 
-#: De resourcetypes waarmee een uitgezette dienst in ``marked_for_deletion`` staat. Eigen
-#: namen naast die van MinIO: de naamfuncties zijn dezelfde, dus een bucket van beide
-#: diensten heet hetzelfde en alleen het type zegt waar hij staat.
+#: The resource types a switched-off service is listed under in ``marked_for_deletion``.
+#: Names of their own next to MinIO's, because the naming functions are the same: a bucket of
+#: either service carries the same name and only the type says where it stands.
 MARKED_RESOURCE_TYPES = ("seaweedfs_bucket", "seaweedfs_user", "seaweedfs_policy")
 
 
 class SeaweedfsManager:
-    """Bucket, identiteit en policy per deployment, in SeaweedFS."""
+    """Bucket, identity and policy per deployment, in SeaweedFS."""
 
     def __init__(self, project_manager: ProjectManager) -> None:
         self.project_manager = project_manager
@@ -62,56 +61,56 @@ class SeaweedfsManager:
         )
 
     @staticmethod
-    def _versioning_instelling(project_data: dict[str, Any]) -> bool | None:
-        """``enable-versioning`` uit het projectblok, of None als niemand het koos.
+    def _versioning_setting(project_data: dict[str, Any]) -> bool | None:
+        """``enable-versioning`` from the project block, or None when nobody chose it.
 
-        Vormvrij lezen zoals ``MinioManager._get_minio_service_config``: de entry kan een
-        kale string, een legacy dict of een record zijn.
+        Read form-agnostically, like ``MinioManager._get_minio_service_config``: the entry can
+        be a bare string, a legacy dict or a record.
         """
         for entry in project_data.get("services", []) or []:
             if service_entry_name(entry) != ServiceType.SEAWEEDFS_STORAGE.value:
                 continue
             config = service_entry_config(entry) or {}
-            waarde = config.get("enable-versioning")
-            return None if waarde is None else bool(waarde)
+            value = config.get("enable-versioning")
+            return None if value is None else bool(value)
         return None
 
     @staticmethod
-    async def _grens_op_oude_versies(
+    async def _limit_noncurrent_versions(
         connector: SeaweedfsConnector, bucket: str, project_data: dict[str, Any], deployment_name: str
     ) -> None:
-        """De grens op oude versies op een bucket die versioning heeft (RC-380).
+        """Put the limit on noncurrent versions on a bucket that has versioning (RC-380).
 
-        Ook op een bucket waar versioning buiten OPI om aanstaat: zonder regel houdt die
-        elke oude versie. Een bucket zonder versioning heeft geen oude versies en krijgt
-        dus geen regel.
+        Runs on a bucket where versioning was turned on outside OPI too: without a rule such
+        a bucket keeps every old version. A bucket without versioning has no noncurrent
+        versions, so it gets no rule.
 
         Raises:
-            RuntimeError: als de regel niet te zetten is.
+            RuntimeError: the rule cannot be set.
         """
         if not await connector.get_versioning(bucket):
             logger.debug("Bucket %s heeft geen versioning, dus geen grens op oude versies", bucket)
             return
 
-        regel = deployment_noncurrent_rule(project_data, deployment_name, ServiceType.SEAWEEDFS_STORAGE)
+        rule = deployment_noncurrent_rule(project_data, deployment_name, ServiceType.SEAWEEDFS_STORAGE)
         try:
-            uitkomst = await connector.ensure_noncurrent_version_rule(bucket, regel.max_versions, regel.expire_days)
+            outcome = await connector.ensure_noncurrent_version_rule(bucket, rule.max_versions, rule.expire_days)
         except (SeaweedfsConfigurationError, SeaweedfsExecutionError) as e:
             raise RuntimeError(f"de grens op oude versies van bucket {bucket} zetten mislukte: {e}") from e
 
         logger.info(
             "Bucket %s houdt hoogstens %s oude versies per object%s (%s)",
             bucket,
-            regel.max_versions,
-            "" if regel.expire_days is None else f", hoogstens {regel.expire_days} dagen oud",
-            uitkomst["status"],
+            rule.max_versions,
+            "" if rule.expire_days is None else f", hoogstens {rule.expire_days} dagen oud",
+            outcome["status"],
         )
 
-    async def _bestaande_sleutels(self, deployment: dict[str, Any]) -> SeaweedFSSecret | None:
-        """De sleutels uit het k8s-secret, als die er zijn.
+    async def _existing_keys(self, deployment: dict[str, Any]) -> SeaweedFSSecret | None:
+        """The keys from the k8s secret, when they are there.
 
-        ``BaseSecret.get_data`` is de generieke vorm van wat ``MinioManager`` met een eigen
-        private helper doet, dus die wordt hier hergebruikt.
+        ``BaseSecret.get_data`` is the generic form of what ``MinioManager`` does with a
+        private helper of its own, so it is reused here.
         """
         namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment["namespace"])
         return await SeaweedFSSecret.get_data(self.project_manager._kubectl_connector, namespace, deployment["name"])
@@ -126,12 +125,12 @@ class SeaweedfsManager:
         return f"http://{host}:{get_seaweedfs_port(cluster)}"
 
     @staticmethod
-    async def _eis_gesloten_s3_poort(connector: SeaweedfsConnector, cluster: str) -> None:
-        """Weiger te provisioneren zolang de S3-poort anoniem openstaat.
+    async def _require_closed_s3_port(connector: SeaweedfsConnector, cluster: str) -> None:
+        """Refuse to provision while the S3 port is open anonymously.
 
-        Zonder admin-identiteit laat SeaweedFS iedere aanroep door (rij G14), en dan zou een
-        bucket die wij aanmaken voor de hele cluster leesbaar zijn. Dat is geen toestand om
-        een project in te zetten, dus dit is een fout en geen waarschuwing.
+        Without an admin identity SeaweedFS lets every call through (row G14), and a bucket
+        created then would be readable for the whole cluster. That is an error and not a
+        warning, because no project may be put in that state.
         """
         endpoint = SeaweedfsManager._s3_endpoint(cluster)
         if await connector.anonymous_access_allowed(endpoint):
@@ -144,7 +143,7 @@ class SeaweedfsManager:
     async def create_resources_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any], force_clone: bool = False
     ) -> None:
-        """Bucket, identiteit, policy, versioning en eventueel een kloon van de data."""
+        """Bucket, identity, policy, versioning, and a clone of the data when asked for."""
         deployment_name = deployment["name"]
         if not self._deployment_uses_seaweedfs(project_data, deployment_name):
             logger.debug("Deployment %s gebruikt seaweedfs-storage niet, overgeslagen", deployment_name)
@@ -158,32 +157,32 @@ class SeaweedfsManager:
             )
 
         project_name = await self.project_manager.get_name()
-        gebruiker = generate_minio_username(project_name, deployment_name)
+        user = generate_minio_username(project_name, deployment_name)
         bucket = generate_bucket_name(project_name, deployment_name)
         policy = generate_minio_policy_name(project_name, deployment_name)
 
         connector = create_seaweedfs_connector()
-        await self._eis_gesloten_s3_poort(connector, cluster)
-        bestaand = await self._bestaande_sleutels(deployment)
-        # De identiteit uit het secret is alleen te vertrouwen als SeaweedFS hem ook kent:
-        # een verse SeaweedFS naast een blijvend secret is precies het geval waar
-        # _validate_and_fix_credentials bij MinIO voor bestaat (rij G10).
-        if bestaand is not None and await connector.user_exists(gebruiker):
-            secret_key = bestaand.secret_key
+        await self._require_closed_s3_port(connector, cluster)
+        existing = await self._existing_keys(deployment)
+        # The identity in the secret is only trustworthy while SeaweedFS knows it too: a
+        # fresh SeaweedFS next to a surviving secret is the case MinIO's
+        # _validate_and_fix_credentials exists for (row G10).
+        if existing is not None and await connector.user_exists(user):
+            secret_key = existing.secret_key
             logger.info("Bestaande SeaweedFS-sleutels hergebruikt voor %s", deployment_name)
         else:
             secret_key = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
-            await connector.delete_user(gebruiker)
-            await connector.create_user(gebruiker, gebruiker, secret_key)
-            logger.info("SeaweedFS-identiteit %s aangemaakt voor %s", gebruiker, deployment_name)
+            await connector.delete_user(user)
+            await connector.create_user(user, user, secret_key)
+            logger.info("SeaweedFS-identiteit %s aangemaakt voor %s", user, deployment_name)
 
-        await connector.create_bucket(bucket, owner=gebruiker)
-        await connector.grant_bucket_access(gebruiker, bucket, policy)
-        # Niets doen als niemand iets koos, zoals bij minio: een verse bucket staat uit.
-        versioning = self._versioning_instelling(project_data)
+        await connector.create_bucket(bucket, owner=user)
+        await connector.grant_bucket_access(user, bucket, policy)
+        # Nothing to do when nobody chose, as with minio: a fresh bucket has it off.
+        versioning = self._versioning_setting(project_data)
         if versioning is not None:
             await connector.set_versioning(bucket, versioning)
-        await self._grens_op_oude_versies(connector, bucket, project_data, deployment_name)
+        await self._limit_noncurrent_versions(connector, bucket, project_data, deployment_name)
 
         self.project_manager._add_secret_to_create(
             deployment_name,
@@ -191,7 +190,7 @@ class SeaweedfsManager:
             SeaweedFSSecret(
                 host=host,
                 port=get_seaweedfs_port(cluster),
-                access_key=gebruiker,
+                access_key=user,
                 secret_key=secret_key,
                 bucket_name=bucket,
                 region=settings.MINIO_REGION,
@@ -199,20 +198,20 @@ class SeaweedfsManager:
         )
         logger.info("SeaweedFS-resources klaar voor %s", deployment_name)
 
-        await self._kloon_indien_gevraagd(project_data, deployment, bucket, force_clone)
+        await self._clone_if_requested(project_data, deployment, bucket, force_clone)
 
-    async def _kloon_indien_gevraagd(
+    async def _clone_if_requested(
         self,
         project_data: dict[str, Any],
         deployment: dict[str, Any],
-        doelbucket: str,
+        target_bucket: str,
         force_clone: bool,
     ) -> None:
-        """De data van ``clone-from`` in de net klaargezette bucket zetten.
+        """Put the data of ``clone-from`` into the bucket that was just prepared.
 
-        Na het provisioneren en niet ervoor: bucket, identiteit en policy zijn dan al klaar,
-        en de kloon is alleen nog een kopie. Dat is de hele reden dat deze manager geen
-        kloonvariant van het provisioneringspad nodig heeft zoals ``MinioManager``.
+        After provisioning and not before: bucket, identity and policy are then ready and the
+        clone is only a copy, which is why this manager needs no clone variant of the
+        provisioning path the way ``MinioManager`` has one.
         """
         clone_from = deployment.get("clone-from")
         if not clone_from:
@@ -225,62 +224,62 @@ class SeaweedfsManager:
             )
 
         status = clone_from.get("status")
-        afgerond = status.get("completed", False) if isinstance(status, dict) else False
-        if clone_from.get("mode", "once") == "once" and afgerond and not force_clone:
+        completed = status.get("completed", False) if isinstance(status, dict) else False
+        if clone_from.get("mode", "once") == "once" and completed and not force_clone:
             logger.info("Kloon van %s overgeslagen: mode once en al afgerond", deployment_name)
             return
 
-        soort = clone_from.get("type")
-        if soort == CloneFromType.DEPLOYMENT.value:
-            await self._kloon_van_deployment(
-                project_data, deployment, doelbucket, str(clone_from.get("reference") or "")
+        kind = clone_from.get("type")
+        if kind == CloneFromType.DEPLOYMENT.value:
+            await self._clone_from_deployment(
+                project_data, deployment, target_bucket, str(clone_from.get("reference") or "")
             )
-        elif soort == CloneFromType.BACKUP.value:
-            await self._kloon_uit_backup(project_data, deployment, doelbucket, clone_from)
-        elif soort == CloneFromType.REMOTE_SOURCE.value:
-            # Een remote-source draagt zijn sleutels onder `minio-storage`, dus dit is een
-            # kopie van MinIO naar SeaweedFS: een migratie, met de versiehistorie als open
-            # punt. Zie features/seaweedfs-objectopslag.md.
+        elif kind == CloneFromType.BACKUP.value:
+            await self._clone_from_backup(project_data, deployment, target_bucket, clone_from)
+        elif kind == CloneFromType.REMOTE_SOURCE.value:
+            # A remote-source carries its keys under `minio-storage`, so this would be a copy
+            # from MinIO to SeaweedFS: a migration, with the version history still open. See
+            # `features/seaweedfs-objectopslag.md`.
             raise RuntimeError(
                 f"deployment '{deployment_name}' gebruikt seaweedfs-storage met clone-from van een remote-source. "
                 "Een remote-source beschrijft een MinIO-bucket, dus dat is een migratie en geen kloon; "
                 "kloon van een deployment of uit een back-up werkt wel."
             )
         else:
-            raise ValueError(f"onbekend clone-from type '{soort}' voor deployment '{deployment_name}'")
+            raise ValueError(f"onbekend clone-from type '{kind}' voor deployment '{deployment_name}'")
 
-    async def _kloon_van_deployment(
+    async def _clone_from_deployment(
         self,
         project_data: dict[str, Any],
         deployment: dict[str, Any],
-        doelbucket: str,
-        bron_deployment: str,
+        target_bucket: str,
+        source_deployment: str,
     ) -> None:
-        """De bucket van een andere deployment van dit project kopieren (rij K1)."""
+        """Copy the bucket of another deployment of this project (row K1)."""
         deployment_name = deployment["name"]
-        # Via de validatie en niet op de naam zelf: een ongecontroleerde reference stelt een
-        # bucketnaam van een ander project samen.
-        resolve_clone_source_deployment(project_data, bron_deployment, deployment_name)
+        # Through the validation and not on the name itself: an unchecked reference composes a
+        # bucket name of another project.
+        resolve_clone_source_deployment(project_data, source_deployment, deployment_name)
         project_name = await self.project_manager.get_name()
-        bronbucket = generate_bucket_name(project_name, bron_deployment)
+        source_bucket = generate_bucket_name(project_name, source_deployment)
 
         connector = create_seaweedfs_connector()
-        if bronbucket not in await connector.list_buckets():
+        if source_bucket not in await connector.list_buckets():
             raise RuntimeError(
-                f"de bronbucket '{bronbucket}' van deployment '{bron_deployment}' bestaat niet, dus er is niets te klonen"
+                f"de bronbucket '{source_bucket}' van deployment '{source_deployment}' bestaat niet, dus er is niets te klonen"
             )
 
-        await self._mirror(bronbucket, doelbucket, deployment["cluster"])
+        await self._mirror(source_bucket, target_bucket, deployment["cluster"])
         self.project_manager.report_clone_performed(deployment_name, ServiceType.SEAWEEDFS_STORAGE.value, None)
 
-    async def _kloon_uit_backup(
+    async def _clone_from_backup(
         self,
         project_data: dict[str, Any],
         deployment: dict[str, Any],
-        doelbucket: str,
+        target_bucket: str,
         clone_from: dict[str, Any],
     ) -> None:
-        """De bucket uit een Kopia-back-up terugzetten, zoals ``MinioManager`` dat doet."""
+        """Restore the bucket from a Kopia backup, the way ``MinioManager`` does."""
         from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 
         deployment_name = deployment["name"]
@@ -296,26 +295,26 @@ class SeaweedfsManager:
 
         cluster = deployment["cluster"]
         namespace = get_prefixed_namespace(cluster, deployment.get("namespace", project_name))
-        resultaat = await create_bucket_backup_manager().restore_bucket(
+        result = await create_bucket_backup_manager().restore_bucket(
             cluster=cluster,
             namespace=namespace,
             reference_name=item.get("reference_name", ""),
             target_minio_endpoint=self._s3_endpoint(cluster),
-            target_bucket_name=doelbucket,
+            target_bucket_name=target_bucket,
             target_access_key=settings.SEAWEEDFS_ADMIN_ACCESS_KEY,
             target_secret_key=settings.SEAWEEDFS_ADMIN_SECRET_KEY,
             snapshot_id=item.get("snapshot_id"),
             project_name=project_name,
         )
-        if not resultaat.success:
-            raise RuntimeError(f"terugzetten van bucket {doelbucket} uit de back-up mislukte: {resultaat.error}")
+        if not result.success:
+            raise RuntimeError(f"terugzetten van bucket {target_bucket} uit de back-up mislukte: {result.error}")
         self.project_manager.report_clone_performed(deployment_name, ServiceType.SEAWEEDFS_STORAGE.value, None)
 
-    async def _mirror(self, bronbucket: str, doelbucket: str, cluster: str) -> None:
-        """De objecten van de ene bucket naar de andere, met `mc` op het admin-sleutelpaar.
+    async def _mirror(self, source_bucket: str, target_bucket: str, cluster: str) -> None:
+        """The objects of one bucket into another, with `mc` on the admin key pair.
 
-        `mc` en niet `weed shell`: die kent geen bucketkopie. Gemeten in rij K1. De laatste
-        versie gaat mee, de historie niet; dat staat als open punt in de feature-doc.
+        `mc` and not `weed shell`, which has no bucket copy. Only the latest version travels,
+        not the history; that is an open point in the feature document.
         """
         if not settings.SEAWEEDFS_ADMIN_ACCESS_KEY or not settings.SEAWEEDFS_ADMIN_SECRET_KEY:
             raise RuntimeError(
@@ -332,17 +331,20 @@ class SeaweedfsManager:
             region=settings.MINIO_REGION,
         ):
             raise RuntimeError(f"de mc-alias '{MC_ALIAS}' voor SeaweedFS op {cluster} kon niet gezet worden")
-        await mc.mirror_bucket_cross_alias(MC_ALIAS, bronbucket, MC_ALIAS, doelbucket)
-        logger.info("SeaweedFS-bucket %s gekopieerd naar %s", bronbucket, doelbucket)
+        await mc.mirror_bucket_cross_alias(MC_ALIAS, source_bucket, MC_ALIAS, target_bucket)
+        logger.info("SeaweedFS-bucket %s gekopieerd naar %s", source_bucket, target_bucket)
 
     async def delete_resources_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any]
     ) -> dict[str, Any]:
-        """Policy, identiteit en bucket weg, nu. Het uitgestelde pad loopt via
-        ``handle_service_removal`` met een markeringsdienst; dit is wat de verwijderflow van
-        een heel project doet, en wat de purge na de bewaartermijn aanroept."""
+        """Policy, identity and bucket gone, now.
+
+        The deferred path runs through ``handle_service_removal`` with a marking service; this
+        is what the delete flow of a whole project does, and what the purge calls after the
+        retention period.
+        """
         deployment_name = deployment["name"]
-        resultaat: dict[str, Any] = {
+        result: dict[str, Any] = {
             "service": "seaweedfs",
             "deployment": deployment_name,
             "operations": [],
@@ -352,39 +354,38 @@ class SeaweedfsManager:
         if not self.project_manager._project_file_handler.project_declares_service(
             project_data, [ServiceType.SEAWEEDFS_STORAGE.value]
         ):
-            resultaat["operations"].append(
+            result["operations"].append(
                 {"type": "seaweedfs_cleanup", "status": "skipped", "reason": "project noemt seaweedfs-storage nergens"}
             )
-            return resultaat
+            return result
         if not SeaweedfsConnector.is_configured():
-            resultaat["operations"].append(
+            result["operations"].append(
                 {"type": "seaweedfs_cleanup", "status": "skipped", "reason": "cluster levert seaweedfs-storage niet"}
             )
-            return resultaat
+            return result
 
         project_name = await self.project_manager.get_name()
-        gebruiker = generate_minio_username(project_name, deployment_name)
+        user = generate_minio_username(project_name, deployment_name)
         bucket = generate_bucket_name(project_name, deployment_name)
         policy = generate_minio_policy_name(project_name, deployment_name)
 
         connector = create_seaweedfs_connector()
-        # In deze volgorde: eerst het recht weg, dan de identiteit, dan de data. Elke stap
-        # verdraagt "bestaat niet", dus een halve opruiming is af te maken door opnieuw te
-        # draaien.
-        for wat, naam, handeling in (
-            ("seaweedfs_policy_detach", policy, connector.detach_policy(policy, gebruiker)),
+        # In this order: the right first, then the identity, then the data. Every step
+        # tolerates "does not exist", so a half cleanup is finished by running again.
+        for resource_type, name, action in (
+            ("seaweedfs_policy_detach", policy, connector.detach_policy(policy, user)),
             ("seaweedfs_policy", policy, connector.delete_policy(policy)),
-            ("seaweedfs_user", gebruiker, connector.delete_user(gebruiker)),
+            ("seaweedfs_user", user, connector.delete_user(user)),
             ("seaweedfs_bucket", bucket, connector.delete_bucket(bucket)),
         ):
             try:
-                await handeling
-                resultaat["operations"].append({"type": wat, "target": naam, "status": "deleted"})
+                await action
+                result["operations"].append({"type": resource_type, "target": name, "status": "deleted"})
             except Exception as e:
-                resultaat["success"] = False
-                resultaat["errors"].append(f"{wat} van {naam} mislukte: {e}")
-                logger.exception("Opruimen van %s %s mislukte", wat, naam)
-        return resultaat
+                result["success"] = False
+                result["errors"].append(f"{resource_type} van {name} mislukte: {e}")
+                logger.exception("Opruimen van %s %s mislukte", resource_type, name)
+        return result
 
     async def handle_service_removal(
         self,
@@ -394,35 +395,35 @@ class SeaweedfsManager:
         project_data: dict[str, Any],
         marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
-        """De dienst gaat van een deployment af: uitgesteld opruimen, zoals bij minio.
+        """The service comes off a deployment: deferred cleanup, as with minio.
 
-        Met een ``marked_for_deletion_service`` gaan bucket, identiteit en policy op de
-        markeringslijst en ruimt de purge in ``opi/jobs/reconciliation.py`` ze op na de
-        bewaartermijn. Zonder die dienst (de verwijderflow van een heel project) gaan ze
-        direct weg.
+        With a ``marked_for_deletion_service`` the bucket, identity and policy go on the
+        marking list and the purge in ``opi/jobs/reconciliation.py`` removes them after the
+        retention period. Without that service, which is the delete flow of a whole project,
+        they go at once.
         """
         if marked_for_deletion_service is None:
-            resultaat = await self.delete_resources_for_deployment(project_data, deployment_data)
-            resultaat["trigger"] = "service_removal"
-            return resultaat
+            result = await self.delete_resources_for_deployment(project_data, deployment_data)
+            result["trigger"] = "service_removal"
+            return result
 
         cluster = deployment_data.get("cluster", "")
-        namen = {
+        names = {
             "seaweedfs_bucket": generate_bucket_name(project_name, deployment_name),
             "seaweedfs_user": generate_minio_username(project_name, deployment_name),
             "seaweedfs_policy": generate_minio_policy_name(project_name, deployment_name),
         }
-        for soort in MARKED_RESOURCE_TYPES:
+        for kind in MARKED_RESOURCE_TYPES:
             await marked_for_deletion_service.mark_resource(
-                resource_type=soort,
-                resource_name=namen[soort],
+                resource_type=kind,
+                resource_name=names[kind],
                 project_name=project_name,
                 deployment_name=deployment_name,
                 cluster=cluster,
             )
         logger.info(
             "SeaweedFS-resources gemarkeerd voor uitgesteld opruimen: %s (project=%s, deployment=%s)",
-            namen["seaweedfs_bucket"],
+            names["seaweedfs_bucket"],
             project_name,
             deployment_name,
         )
@@ -434,7 +435,7 @@ class SeaweedfsManager:
                 {
                     "type": "mark_for_deletion",
                     "resource_type": "seaweedfs_bucket",
-                    "resource_name": namen["seaweedfs_bucket"],
+                    "resource_name": names["seaweedfs_bucket"],
                     "status": "marked",
                 }
             ],

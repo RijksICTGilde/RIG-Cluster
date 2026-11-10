@@ -32,19 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 class PVCBackupManager(BaseBackupManager):
-    """
-    Orchestrates PVC backups to external S3 using Kopia.
+    """Orchestrates PVC backups to external S3 using Kopia.
 
-    Project-aware entry point: `backup_project_deployment(...)`.
-
-    Flow per PVC:
-    1. Acquire distributed lock
-    2. Create VolumeSnapshot
-    3. Create temp PVC from snapshot
-    4. Derive backup key from namespace's SOPS age key
-    5. Spawn backup Pod (kopia with stable per-resource source identity)
-    6. Wait for completion, then cleanup resources
-    7. Release lock
+    Project-aware entry point: `backup_project_deployment(...)`. Per PVC it takes the lock,
+    snapshots the volume, clones it into a temp PVC, and lets a Kopia pod read that clone.
     """
 
     async def _backup_pvc(
@@ -60,39 +51,23 @@ class PVCBackupManager(BaseBackupManager):
         pvc_generation: int | None = None,
         trigger: str = "manual",
     ) -> BackupResult:
-        """
-        Internal: backup a single PVC (lock must be held).
+        """The lock must be held.
 
         Args:
-            namespace: Namespace containing the PVC
-            pvc_name: Name of the PVC to backup
-            backup_run_id: ID to group all PVCs in the same backup run (required)
-            cluster: Cluster name for backup prefix (defaults to settings.CLUSTER)
-            project_name: Project name for metadata
-            deployment_name: Deployment name for metadata
-            component_name: Component name for metadata
-            storage_name: Storage name for metadata
-            pvc_generation: PVC generation number for metadata
-            backup_run_id: ID to group all PVCs in the same backup run (YYYYMMDDHHmmss)
-
-        Returns:
-            BackupResult with operation details
+            backup_run_id: Groups every PVC of one run (YYYYMMDDHHmmss); required.
         """
         start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
-        # Use naming utilities for consistent naming
         snapshot_name = generate_backup_snapshot_name(pvc_name, timestamp)
         clone_pvc_name = generate_backup_clone_pvc_name(pvc_name, timestamp)
         pod_name = generate_backup_pod_name(pvc_name[:20], timestamp)  # Truncate PVC name if too long
 
-        # Determine cluster for backup prefix
         backup_cluster = cluster or settings.CLUSTER_MANAGER
 
         logger.info(f"Starting backup of {namespace}/{pvc_name}")
 
         try:
-            # 1. Get PVC details (size, storage class)
             pvc_info = await self._get_pvc_info(namespace, pvc_name)
             if not pvc_info:
                 return BackupResult(
@@ -103,12 +78,10 @@ class PVCBackupManager(BaseBackupManager):
                     duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            # 2. Create VolumeSnapshot
             logger.info(f"Creating VolumeSnapshot {snapshot_name}")
             await self._create_snapshot(namespace, pvc_name, snapshot_name)
             await self._wait_for_snapshot(namespace, snapshot_name)
 
-            # 3. Create clone PVC from snapshot
             logger.info(f"Creating clone PVC {clone_pvc_name}")
             await self._create_clone_pvc(
                 namespace=namespace,
@@ -121,10 +94,8 @@ class PVCBackupManager(BaseBackupManager):
             )
             await self._wait_for_pvc(namespace, clone_pvc_name)
 
-            # 4. Derive backup encryption key from namespace's SOPS key
             kopia_password = await self._derive_backup_key(namespace)
 
-            # 5. Spawn backup pod
             logger.info(f"Creating backup pod {pod_name}")
             backup_prefix = generate_backup_prefix(backup_cluster, namespace)
             await self._create_backup_pod(
@@ -145,11 +116,9 @@ class PVCBackupManager(BaseBackupManager):
                 trigger=trigger,
             )
 
-            # 6. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
-                # Get pod logs for debugging
                 logs = await self._get_pod_logs(namespace, pod_name)
                 logger.error(f"Backup pod {pod_name} failed. Full logs:\n{logs}")
                 error = await self._backup_pod_failure_error(namespace, pod_name, logs)
@@ -184,7 +153,6 @@ class PVCBackupManager(BaseBackupManager):
             )
 
         finally:
-            # 7. Cleanup (best effort)
             await self._cleanup(namespace, pod_name, clone_pvc_name, snapshot_name)
 
     async def backup_project_deployment(
@@ -200,65 +168,48 @@ class PVCBackupManager(BaseBackupManager):
         """
         Backup PVCs for a project deployment with full metadata context.
 
-        This method extracts persistent storage definitions from the project file
-        to determine which PVCs to backup. Unlike namespace-level backup endpoints
-        (which rely on the backup.rig.nl/enabled label), this method uses the
-        project file as the source of truth -- consistent with how database and
-        MinIO backups discover their targets.
+        Which PVCs to back up comes from the persistent storage in the project file, not
+        from the backup.rig.nl/enabled label the namespace-level endpoints rely on. That is
+        the same source of truth the database and MinIO backups use.
 
         Args:
-            project_name: Name of the project
-            project_data: Project configuration data
-            deployment_name: Name of the deployment
-            namespace: Kubernetes namespace (with cluster prefix)
-            cluster: Cluster name
-            backup_run_id: Optional backup run ID (generated if not provided)
-
-        Returns:
-            List of BackupResult for each PVC
+            backup_run_id: Generated when not given.
         """
         from opi.services.project_file_handler import create_project_file_handler
         from opi.utils.naming import generate_pvc_name, generate_unique_name
 
-        # Ensure backup bucket exists before starting
         await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
 
         async with self.lock:
             results: list[BackupResult] = []
             project_file_handler = create_project_file_handler()
 
-            # Use provided backup_run_id or generate one for this entire backup run
             if not backup_run_id:
                 backup_run_id = generate_backup_run_id()
             logger.info(f"Starting backup run {backup_run_id} for project {project_name}/{deployment_name}")
 
-            # Extract component references from deployment
             deployment_components = project_file_handler.extract_deployment_components(project_data, deployment_name)
 
-            # Get base components for storage definitions
             base_components = {c.get("name"): c for c in project_data.get("components", [])}
 
             # Build a map of PVC name -> context from the project file.
             # This is the source of truth for which PVCs belong to this deployment.
             pvc_context_map: dict[str, dict[str, str | int | None]] = {}
             for dep_component in deployment_components:
-                # Deployment components use "reference" to point to base component
                 component_name = dep_component.get("reference", "")
                 if not component_name:
                     continue
 
-                # Get storage definitions from the BASE component
                 from opi.services.project_file_handler import extract_storage_from_component_services
 
                 base_component = base_components.get(component_name, {})
                 storages = extract_storage_from_component_services(base_component)
 
                 for idx, storage in enumerate(storages):
-                    # Skip non-persistent storage (ephemeral doesn't have PVCs)
+                    # Ephemeral storage has no PVC.
                     if storage.get("type") != "persistent":
                         continue
 
-                    # Storage name comes from the "name" field, or generate from mount-path
                     storage_name = storage.get("name")
                     if not storage_name:
                         from opi.utils.naming import generate_storage_name
@@ -268,12 +219,10 @@ class PVCBackupManager(BaseBackupManager):
 
                     unique_name = generate_unique_name(deployment_name, component_name)
 
-                    # Get generation from deployment component's services.persistent-storage
                     generation = project_file_handler.get_storage_generation(
                         project_data, deployment_name, component_name, storage_name
                     )
 
-                    # Generate the expected PVC name
                     expected_pvc_name = generate_pvc_name(unique_name, storage_name, generation)
 
                     logger.info(
@@ -299,7 +248,6 @@ class PVCBackupManager(BaseBackupManager):
                 f"for {project_name}/{deployment_name}: {list(pvc_context_map.keys())}"
             )
 
-            # Backup each PVC identified from the project file
             for pvc_name, context in pvc_context_map.items():
                 await self.lock.update_progress(namespace, pvc_name)
 
@@ -324,7 +272,6 @@ class PVCBackupManager(BaseBackupManager):
             return results
 
     async def _create_snapshot(self, namespace: str, pvc_name: str, snapshot_name: str) -> None:
-        """Create a VolumeSnapshot from a PVC."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-snapshot.yaml.jinja")
 
         with open(template_path) as f:
@@ -348,7 +295,6 @@ class PVCBackupManager(BaseBackupManager):
             raise RuntimeError(f"Failed to create snapshot: {stderr}")
 
     async def _wait_for_snapshot(self, namespace: str, snapshot_name: str, timeout: int = 300) -> None:
-        """Wait for VolumeSnapshot to be ready."""
         logger.info(f"Waiting for snapshot {snapshot_name} to be ready...")
 
         start_time = asyncio.get_event_loop().time()
@@ -385,7 +331,6 @@ class PVCBackupManager(BaseBackupManager):
         storage_class: str,
         timestamp: str,
     ) -> None:
-        """Create a PVC clone from a VolumeSnapshot."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-clone-pvc.yaml.jinja")
 
         with open(template_path) as f:
@@ -428,30 +373,17 @@ class PVCBackupManager(BaseBackupManager):
         pvc_generation: int | None = None,
         trigger: str = "manual",
     ) -> None:
-        """Create the backup pod.
+        """Create the backup pod, which reads from ``clone_pvc_name`` and not from the PVC itself.
 
         Args:
-            namespace: Target namespace
-            pvc_name: Original PVC name being backed up
-            clone_pvc_name: Cloned PVC name to read from
-            pod_name: Name for the backup pod
-            kopia_password: Encryption password for Kopia
-            timestamp: Backup timestamp string
-            backup_prefix: S3 prefix for the backup (cluster/namespace)
-            backup_run_id: Backup run ID (required)
-            cluster: Cluster name for metadata (optional)
-            project_name: Project name for metadata (optional)
-            deployment_name: Deployment name for metadata (optional)
-            component_name: Component name for metadata (optional)
-            storage_name: Storage name for metadata (optional)
-            pvc_generation: PVC generation number for metadata (optional)
+            backup_prefix: S3 prefix for the backup (cluster/namespace).
+            backup_run_id: Groups every PVC of one run; required.
         """
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-pod.yaml.jinja")
 
         with open(template_path) as f:
             template_content = f.read()
 
-        # Get the bucket name (may be per-project based on config)
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
 
@@ -488,7 +420,6 @@ class PVCBackupManager(BaseBackupManager):
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
                 "retention_keep_monthly": self.config.retention_keep_monthly,
-                # Project context metadata
                 "cluster": effective_cluster,
                 "project_name": project_name,
                 "deployment_name": deployment_name,
@@ -508,10 +439,6 @@ class PVCBackupManager(BaseBackupManager):
             what="backup",
         )
 
-    # =========================================================================
-    # Restore Methods
-    # =========================================================================
-
     async def list_snapshots(
         self,
         cluster: str,
@@ -519,21 +446,11 @@ class PVCBackupManager(BaseBackupManager):
         pvc_name: str | None = None,
         project_name: str | None = None,
     ) -> list[SnapshotInfo]:
-        """
-        List available Kopia snapshots for a namespace/PVC.
+        """The Kopia snapshots of a namespace, optionally only those of one PVC.
 
         Returns [] when the repository cannot be reached, which is what the backup and
         restore screens have always shown. A caller that has to tell "could not look"
         from "nothing there" uses list_snapshots_or_raise.
-
-        Args:
-            cluster: Cluster name
-            namespace: Namespace name
-            pvc_name: Optional PVC name to filter by
-            project_name: Optional project name for per-project bucket mode
-
-        Returns:
-            List of available snapshots
         """
         try:
             return await self.list_snapshots_or_raise(cluster, namespace, pvc_name, project_name)
@@ -550,11 +467,7 @@ class PVCBackupManager(BaseBackupManager):
         pvc_name: str | None = None,
         project_name: str | None = None,
     ) -> list[SnapshotInfo]:
-        """
-        List available Kopia snapshots for a namespace/PVC, failing loudly.
-
-        Uses the Kopia CLI directly to query the repository, which is much faster
-        than spawning a Kubernetes pod.
+        """The same listing, but failing loudly instead of returning [].
 
         Returns [] only when the repository is reachable and holds no matching snapshot.
 
@@ -562,15 +475,14 @@ class PVCBackupManager(BaseBackupManager):
             KopiaConnectionError: Kopia is unavailable or the repository unreachable
             KopiaExecutionError: the listing itself failed
         """
-        # Local: opi.connectors.kopia imports from this package, so a module-level import
-        # is circular.
+        # Local import: opi.connectors.kopia imports from this package, so a module-level
+        # import is circular.
         from opi.connectors.kopia import KopiaConnectionError, KopiaConnector, KopiaRepositoryConfig
 
         backup_prefix = generate_backup_prefix(cluster, namespace)
         kopia_password = await self._derive_backup_key(namespace)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
-        # Create Kopia connector and query repository directly
         kopia = KopiaConnector()
 
         if not KopiaConnector.is_kopia_available:
@@ -588,15 +500,13 @@ class PVCBackupManager(BaseBackupManager):
 
         kopia_snapshots = await kopia.list_snapshots(repo_config)
 
-        # Convert to SnapshotInfo format and optionally filter by PVC name
         snapshots: list[SnapshotInfo] = []
         for ks in kopia_snapshots:
             # Both read endpoints (backup runs and the snapshot listing) end up here,
             # so this is the one place that decides which name a caller gets to see.
-            # It has to be the name the restore route accepts -- see restore_reference.
+            # It has to be the name the restore route accepts, see restore_reference.
             snapshot_pvc_name = ks.restore_reference
 
-            # Apply filter if specified
             if pvc_name and snapshot_pvc_name != pvc_name:
                 continue
 
@@ -606,7 +516,6 @@ class PVCBackupManager(BaseBackupManager):
                     pvc_name=snapshot_pvc_name,
                     timestamp=ks.timestamp,
                     size_bytes=ks.size_bytes,
-                    # Extended metadata from Kopia tags
                     cluster=ks.cluster,
                     namespace=ks.namespace,
                     project_name=ks.project_name,
@@ -619,7 +528,6 @@ class PVCBackupManager(BaseBackupManager):
                     trigger=ks.trigger,
                     source_user=ks.source_user,
                     source_host=ks.source_host,
-                    # Raw tags for debugging
                     tags=ks.tags,
                 )
             )
@@ -634,20 +542,9 @@ class PVCBackupManager(BaseBackupManager):
         snapshot_ids: list[str],
         project_name: str | None = None,
     ) -> dict[str, bool]:
-        """
-        Delete Kopia snapshots by ID for a namespace.
+        """Delete snapshots over one connection to the namespace's repository.
 
-        Connects to the namespace's repository once and deletes all given
-        snapshots over that connection.
-
-        Args:
-            cluster: Cluster name
-            namespace: Namespace name
-            snapshot_ids: IDs of the snapshots to delete
-            project_name: Optional project name for per-project bucket mode
-
-        Returns:
-            Mapping of snapshot_id -> deletion success
+        Returns per snapshot id whether the delete succeeded.
         """
         from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
 
@@ -677,16 +574,13 @@ class PVCBackupManager(BaseBackupManager):
         return await kopia.delete_snapshots(repo_config, snapshot_ids)
 
     def _parse_snapshot_list(self, logs: str, pvc_filter: str | None = None) -> list[SnapshotInfo]:
-        """Parse Kopia snapshot list output from pod logs."""
         snapshots: list[SnapshotInfo] = []
         try:
-            # Look for JSON output in logs
             for line in logs.split("\n"):
                 if line.strip().startswith("{") and "snapshot_id" in line:
                     data = json.loads(line)
                     pvc_name = data.get("pvc_name", "")
 
-                    # Apply filter if specified
                     if pvc_filter and pvc_name != pvc_filter:
                         continue
 
@@ -715,22 +609,13 @@ class PVCBackupManager(BaseBackupManager):
         overwrite: bool = False,
         project_name: str | None = None,
     ) -> RestoreResult:
-        """
-        Restore a PVC from a Kopia backup.
+        """Restore a PVC from a Kopia backup.
 
         Args:
-            cluster: Cluster name where backup was made
-            namespace: Namespace for the restore
-            pvc_name: Original PVC name (used to find backup)
-            snapshot_id: Optional specific snapshot ID (defaults to latest)
-            target_pvc_name: Name for restored PVC (defaults to {pvc_name}-restored-{timestamp})
-            storage_size: Size for new PVC (required if creating new)
-            storage_class: Storage class for new PVC (optional)
-            overwrite: If True, allows restoring to existing PVC
-            project_name: Project that owns the namespace
-
-        Returns:
-            RestoreResult with operation details
+            snapshot_id: A specific snapshot; the latest one without it.
+            target_pvc_name: Defaults to {pvc_name}-restored-{timestamp}.
+            storage_size: Required when the target PVC has to be created.
+            overwrite: Allow restoring into an existing PVC.
         """
         # Ensure the bucket and its scoped S3 account exist before the restore pod needs them
         await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
@@ -761,13 +646,10 @@ class PVCBackupManager(BaseBackupManager):
         overwrite: bool = False,
         project_name: str | None = None,
     ) -> RestoreResult:
-        """
-        Internal: restore a single PVC (lock must be held).
-        """
+        """The lock must be held."""
         start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
-        # Generate target PVC name if not provided
         if not target_pvc_name:
             target_pvc_name = generate_restored_pvc_name(pvc_name, timestamp)
 
@@ -777,7 +659,6 @@ class PVCBackupManager(BaseBackupManager):
         logger.info(f"Starting restore of {pvc_name} to {target_pvc_name} in {namespace}")
 
         try:
-            # 1. Check if target PVC exists
             existing_pvc = await self._get_pvc_info(namespace, target_pvc_name)
             if existing_pvc and not overwrite:
                 return RestoreResult(
@@ -789,7 +670,6 @@ class PVCBackupManager(BaseBackupManager):
                     duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            # 2. Create target PVC if it doesn't exist
             if not existing_pvc:
                 logger.info(f"Creating target PVC {target_pvc_name}")
                 await self._create_restore_pvc(
@@ -800,10 +680,8 @@ class PVCBackupManager(BaseBackupManager):
                 )
                 await self._wait_for_pvc(namespace, target_pvc_name)
 
-            # 3. Derive restore key (same as backup key)
             kopia_password = await self._derive_backup_key(namespace)
 
-            # 4. Spawn restore pod
             logger.info(f"Creating restore pod {pod_name}")
             await self._create_restore_pod(
                 namespace=namespace,
@@ -817,7 +695,6 @@ class PVCBackupManager(BaseBackupManager):
                 cluster=cluster,
             )
 
-            # 5. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
@@ -857,7 +734,6 @@ class PVCBackupManager(BaseBackupManager):
             )
 
         finally:
-            # Cleanup restore pod (best effort)
             await self._cleanup_pod(namespace, pod_name)
 
     async def _create_restore_pvc(
@@ -867,10 +743,8 @@ class PVCBackupManager(BaseBackupManager):
         size: str,
         storage_class: str | None = None,
     ) -> None:
-        """Create a PVC for restore."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-pvc.yaml.jinja")
 
-        # Check if template exists, if not use inline YAML
         if os.path.exists(template_path):
             with open(template_path) as f:
                 template_content = f.read()
@@ -920,28 +794,14 @@ spec:
         backup_enabled: bool = True,
         project_name: str | None = None,
     ) -> RestoreResult:
-        """
-        Restore a backup to a specific PVC name (for project-based restore).
+        """Restore into a PVC that ArgoCD will manage, created under the exact name given.
 
-        This method is used when restoring to a PVC that will be managed by ArgoCD.
-        It creates a PVC with the exact name specified (matching the next generation),
-        restores data to it, and returns success. The caller is responsible for
-        updating the project file and triggering the refresh.
+        Updating the project file and triggering the refresh is up to the caller.
 
         Args:
-            cluster: Cluster name where backup was made
-            namespace: Namespace for the restore
-            source_pvc_name: Original PVC name (used to find the backup in Kopia)
-            target_pvc_name: Exact name for the new PVC (e.g., webapp-data-pvc-v3)
-            storage_size: Size for the new PVC
-            storage_class: Storage class for the new PVC
-            access_modes: Access modes for the PVC (default: ["ReadWriteOnce"])
-            snapshot_id: Optional specific snapshot ID (defaults to latest)
-            backup_enabled: Whether to enable backup label on restored PVC
-            project_name: Project name for per-project bucket mode
-
-        Returns:
-            RestoreResult with operation details
+            target_pvc_name: Exact name for the new PVC (e.g. webapp-data-pvc-v3).
+            access_modes: Defaults to ["ReadWriteOnce"].
+            snapshot_id: A specific snapshot; the latest one without it.
         """
         # Ensure the bucket and its scoped S3 account exist before the restore pod needs them
         await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
@@ -974,9 +834,7 @@ spec:
         backup_enabled: bool,
         project_name: str | None = None,
     ) -> RestoreResult:
-        """
-        Internal: restore to a project-managed PVC (lock must be held).
-        """
+        """The lock must be held."""
         start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
         pod_name = generate_restore_pod_name(source_pvc_name[:20], timestamp)
@@ -985,7 +843,6 @@ spec:
         logger.info(f"Starting project restore: {source_pvc_name} -> {target_pvc_name} in {namespace}")
 
         try:
-            # 1. Check if target PVC already exists (should not for project restore)
             existing_pvc = await self._get_pvc_info(namespace, target_pvc_name)
             if existing_pvc:
                 return RestoreResult(
@@ -997,7 +854,6 @@ spec:
                     duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            # 2. Create target PVC with project-compatible template
             logger.info(f"Creating target PVC {target_pvc_name} for project restore")
             await self._create_project_restore_pvc(
                 namespace=namespace,
@@ -1012,10 +868,8 @@ spec:
             )
             await self._wait_for_pvc(namespace, target_pvc_name)
 
-            # 3. Derive restore key (same as backup key)
             kopia_password = await self._derive_backup_key(namespace)
 
-            # 4. Spawn restore pod
             logger.info(f"Creating restore pod {pod_name}")
             await self._create_restore_pod(
                 namespace=namespace,
@@ -1029,13 +883,11 @@ spec:
                 cluster=cluster,
             )
 
-            # 5. Wait for pod completion
             success = await self._wait_for_pod(namespace, pod_name)
 
             if not success:
                 logs = await self._get_pod_logs(namespace, pod_name)
                 logger.error(f"Restore pod {pod_name} failed. Full logs:\n{logs}")
-                # Cleanup the PVC we created since restore failed
                 try:
                     args = ["delete", "pvc", target_pvc_name, "-n", namespace, "--ignore-not-found=true"]
                     await self.kubectl.run_command(args)
@@ -1076,7 +928,6 @@ spec:
             )
 
         finally:
-            # Cleanup restore pod (best effort)
             await self._cleanup_pod(namespace, pod_name)
 
     async def _create_project_restore_pvc(
@@ -1091,7 +942,6 @@ spec:
         snapshot_id: str | None,
         backup_enabled: bool,
     ) -> None:
-        """Create a PVC for project-based restore with proper labels and annotations."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-target-pvc.yaml.jinja")
 
         with open(template_path) as f:
@@ -1130,7 +980,6 @@ spec:
         project_name: str | None = None,
         cluster: str | None = None,
     ) -> None:
-        """Create the restore pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-pod.yaml.jinja")
 
         if not os.path.exists(template_path):
@@ -1139,7 +988,6 @@ spec:
         with open(template_path) as f:
             template_content = f.read()
 
-        # Get the bucket name (may be per-project based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
         manifest = self._template_manifest(
@@ -1169,18 +1017,12 @@ spec:
             what="restore",
         )
 
-    # =========================================================================
-    # Cleanup Methods
-    # =========================================================================
-
     async def _cleanup(self, namespace: str, pod_name: str, clone_pvc_name: str, snapshot_name: str) -> None:
-        """Cleanup backup resources (best effort)."""
+        """Best effort: a leftover pod, clone PVC or snapshot does not fail the backup."""
         logger.info(f"Cleaning up backup resources in {namespace}")
 
-        # Delete pod
         await self._cleanup_pod(namespace, pod_name)
 
-        # Delete clone PVC
         try:
             args = ["delete", "pvc", clone_pvc_name, "-n", namespace, "--ignore-not-found=true"]
             await self.kubectl.run_command(args)
@@ -1188,7 +1030,6 @@ spec:
         except Exception as e:
             logger.warning(f"Failed to delete clone PVC {clone_pvc_name}: {e}")
 
-        # Delete snapshot
         try:
             args = ["delete", "volumesnapshot", snapshot_name, "-n", namespace, "--ignore-not-found=true"]
             await self.kubectl.run_command(args)
@@ -1204,13 +1045,5 @@ BackupManager = PVCBackupManager
 
 
 def create_backup_manager(config: BackupConfig | None = None) -> PVCBackupManager:
-    """
-    Create a PVCBackupManager instance.
-
-    Args:
-        config: Optional BackupConfig. If not provided, uses settings.
-
-    Returns:
-        PVCBackupManager instance
-    """
+    """Without a ``config`` the manager is built from the settings."""
     return PVCBackupManager(config)

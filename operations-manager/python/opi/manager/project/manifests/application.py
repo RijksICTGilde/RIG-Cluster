@@ -499,7 +499,6 @@ class ApplicationManifests:
 
         resolved_images, image_pull_secrets_map = _resolve_component_images(project_data, components, cluster)
 
-        # Track created issuers to avoid duplicates (per base-domain/issuer combination)
         created_issuers: set[str] = set()
 
         for component in components:
@@ -699,9 +698,7 @@ class ApplicationManifests:
             created_files=created_files,
         )
 
-        # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
         if settings.base_domain and settings.issuer_config and settings.issuer_config.startswith("letsencrypt"):
-            # Track created issuers to avoid duplicates within this deployment
             issuer_key = f"{settings.base_domain}:{settings.issuer_config}"
             if issuer_key not in created_issuers:
                 created_issuers.add(issuer_key)
@@ -718,12 +715,6 @@ class ApplicationManifests:
                     )
                 )
 
-        # Write each used service's declared secret files via the shared writer
-        # (RC-5 Phase 6c). The typed secret plus alias/register flags are built by
-        # the service provider (build_secret_files); this loop only drives the
-        # shared write. Byte-identical to the old per-service blocks -- write order
-        # is immaterial (kustomization is built from a disk scan and the
-        # obsolete-manifest prune keeps a name set, both order-independent).
         for contribution in contributions.manifest_contributions:
             for spec in contribution.secret_files:
                 await self.write_secret_file(
@@ -754,7 +745,6 @@ class ApplicationManifests:
         Deployment-level settings win over the component definition throughout: ports,
         paths, pull policy, resources, disabled state, user env vars and attachments.
         """
-        # Extract the application port from the component definition using the file handler
         # A component may declare no inbound port (background worker). Read the real
         # list with no default fallback: no ports -> no Service, no probe, no
         # containerPort. application_port is None in that case.
@@ -770,24 +760,18 @@ class ApplicationManifests:
         # overrides scheme/port/paths from here via its manifest contribution.
         probe_scheme = "tcp" if has_inbound_port else "none"
 
-        # Extract publication paths: deployment-level overrides component-level
         component_paths = self._host._project_file_handler.extract_deployment_component_paths(
             project_data, deployment, component_reference
         )
-        # For backward compatibility, use first path as the primary path
         component_path = component_paths[0]["match"] if component_paths else "/"
 
-        # Extract imagePullPolicy from deployment-level component configuration (not component definition)
-        # This allows overriding the pull policy per deployment
         # Resolve image + pull policy via the shared helper (handles the
         # local/ Kind-image special); one implementation across deployments,
         # the database console and jobs.
         image_url, image_pull_policy = resolve_image(image_url, component.get("imagePullPolicy", "Always"))
 
-        # Extract storage configuration from component
         storage_configs = self._host._project_file_handler.extract_component_storage(project_data, component_reference)
 
-        # Extract publish-on-web flag from component
         publish_on_web = self._host._project_file_handler.extract_component_publish_on_web(
             project_data, component_reference
         )
@@ -810,7 +794,6 @@ class ApplicationManifests:
                 project_data, component_reference
             )
 
-        # Extract resource configuration (component-level, then deployment-level overrides)
         component_resources = self._host._project_file_handler.extract_component_resources(
             project_data, component_reference
         )
@@ -840,12 +823,10 @@ class ApplicationManifests:
         elif is_sleeping:
             logger.info(f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0")
 
-        # Extract user environment variables from component definition
         user_env_vars = await self._host._project_file_handler.extract_component_user_env_vars(
             project_data, component_reference
         )
 
-        # Extract deployment-level user-env-vars and merge (deployment takes precedence)
         deployment_user_env_vars = await self._host._project_file_handler.extract_deployment_component_user_env_vars(
             project_data, deployment_name, component_reference
         )
@@ -853,14 +834,11 @@ class ApplicationManifests:
             logger.info(
                 f"Found {len(deployment_user_env_vars)} deployment-level user-env-vars for component: {component_name}"
             )
-            # Deployment-level user-env-vars override component-level user-env-vars
             user_env_vars.update(deployment_user_env_vars)
 
-        # Extract deployment-level env-vars (plaintext) and merge with user-env-vars
         deployment_env_vars = component.get("env-vars", {})
         if deployment_env_vars:
             logger.info(f"Found {len(deployment_env_vars)} deployment-level env-vars for component: {component_name}")
-            # Deployment-level env-vars override all other env-vars
             user_env_vars.update(deployment_env_vars)
 
         # Resolve attachment uses for this component: file mounts and env-var content.
@@ -890,32 +868,24 @@ class ApplicationManifests:
                     }
                 )
 
-        # Create unique name combining deployment name and component name using centralized utility
-        # Project name is not included since resources are deployed within project-specific namespaces
         unique_name = generate_unique_name(deployment_name, component_name)
 
-        # Add unique names to storage configs for templating
         processed_storage_configs = []
         for i, storage in enumerate(storage_configs):
             storage_copy = storage.copy()
-            # Generate unique storage name based on mount path or index using centralized utility
             mount_path = storage.get("mount-path", f"/storage-{i}")
             storage_name = generate_storage_name(mount_path, i)
             storage_copy["name"] = storage_name
 
-            # For persistent storage, add the versioned PVC name
             if storage.get("type") == "persistent":
-                # Get generation for this storage from project data
                 generation = self._host._project_file_handler.get_storage_generation(
                     project_data, deployment_name, component_name, storage_name
                 )
-                # Generate versioned PVC name
                 pvc_name = generate_pvc_name(unique_name, storage_name, generation)
                 storage_copy["pvc_name"] = pvc_name
 
             processed_storage_configs.append(storage_copy)
 
-        # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
         ingress_postfix = get_ingress_postfix(cluster)
         use_https = get_ingress_tls_enabled(cluster)
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
@@ -929,7 +899,6 @@ class ApplicationManifests:
             f"expose-component-on-bare-domain: {expose_on_bare_domain}"
         )
 
-        # Get ingress map using centralized function
         ingress_map = get_component_ingress_map(
             component_name=component_name,
             deployment_name=deployment_name,
@@ -991,16 +960,13 @@ class ApplicationManifests:
         resolved against exactly those, and go into a secret instead of the podspec.
         """
         user_env_vars = settings.user_env_vars
-        # Generate environment variables using service-based registration pattern
         env_vars = {}
 
-        # Register storage environment variables using service definitions
         if settings.storage_configs:
             storage_env_vars = generate_storage_env_vars_from_services(settings.processed_storage_configs)
             if storage_env_vars:
                 env_vars.update(storage_env_vars)
 
-        # Register publish-on-web environment variables using service definitions
         if settings.publish_on_web and settings.hostname:
             web_env_vars = generate_web_env_vars_from_services(settings.hostname, settings.use_https)
             if web_env_vars:
@@ -1021,28 +987,21 @@ class ApplicationManifests:
                 logger.debug(
                     f"Resolving {len(service_aliases)} direct {service_category} aliases for component {component_name}"
                 )
-                # Resolve aliases using current env_vars as context
                 resolved_direct_aliases = resolve_aliases(service_aliases, env_vars)
-                # Add resolved aliases to env_vars
                 env_vars.update(resolved_direct_aliases)
                 logger.info(
                     f"Added {len(resolved_direct_aliases)} resolved direct {service_category} aliases to component {component_name}"
                 )
 
-        # Register user environment variables
-        # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
         if user_env_vars:
-            # Resolve $VAR / ${VAR} in user-env-vars against everything this component
-            # can see: the storage, publish-on-web and resolved-alias variables built
-            # above. This used to special-case PUBLIC_HOST and PUBLIC_HOSTNAME by hand,
-            # with a note to extend the alias system if more were ever needed -- so
-            # this is that extension, using the same engine aliases already use.
+            # Resolve $VAR / ${VAR} in user-env-vars against everything this component can
+            # see: the storage, publish-on-web and resolved-alias variables built above,
+            # through the same engine the aliases use.
             #
-            # Deliberately the LENIENT substitution: an unknown $NAME is left as-is.
-            # In an alias a missing reference is a typo and must fail, but a user-env-var
-            # value is often just a password that happens to contain a dollar. Measured
-            # on production: two projects' ADMIN_PASSWORD and DJANGO_SECRET_KEY both
-            # carry one, and strict substitution would fail their deploy outright.
+            # Deliberately the LENIENT substitution: an unknown $NAME is left as it is. In an
+            # alias a missing reference is a typo and must fail, but a user-env-var value is
+            # often a password that happens to carry a dollar, and strict substitution would
+            # fail such a deploy outright.
             substituted_user_env_vars: dict[str, Any] = {}
             for key, value in user_env_vars.items():
                 if not isinstance(value, str) or "$" not in value:
@@ -1080,9 +1039,8 @@ class ApplicationManifests:
         4180). envFrom is assembled here because it is a template var itself; the
         template_vars and sidecars are merged once the context dict exists.
         """
-        # Service contributions (envFrom, sidecars, template vars, secret files) are
-        # driven generically off the provider registry (RC-5 Phase 6). Only the
-        # auth-wall observability log below still needs an explicit flag.
+        # The service contributions (envFrom, sidecars, template vars, secret files) are driven
+        # off the provider registry; only the auth-wall log below still needs a flag of its own.
         component_uses_authorization_wall = False
         component_def = None
         all_services: list[str] = []
@@ -1093,11 +1051,10 @@ class ApplicationManifests:
 
             component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
 
-        # Collect each used service's manifest contribution once (RC-5 Phase 6).
-        # A provider may add envFrom secrets + sidecars (additive) and override
-        # template vars (e.g. auth-wall service_port 8080 -> 4180). envFrom is
-        # applied here (it is a template var itself); template_vars/sidecars are
-        # merged after the template context dict is built, below.
+        # Each used service's manifest contribution, collected once. A provider may add envFrom
+        # secrets and sidecars (additive) and override template vars (the auth wall moves
+        # service_port from 8080 to 4180). envFrom is applied here, because it is a template var
+        # itself; template_vars and sidecars are merged after the context dict below is built.
         manifest_ctx = ManifestContext(
             deployment_name=deployment_name,
             project_data=project_data,
@@ -1114,30 +1071,20 @@ class ApplicationManifests:
             ),
         )
 
-        # Build envFrom secrets list based on services used and user env vars
-        # This list determines which secrets are referenced in the deployment manifest
-        # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
         env_from_secrets = []
 
-        # Add deployment-level secrets in manifest_order -- byte-identical to the old
-        # fixed db -> minio -> keycloak -> redis -> metrics append sequence.
         for contribution in manifest_contributions:
             env_from_secrets.extend(contribution.env_from_secrets)
 
-        # Platform secret (always present, per-component)
         platform_secret_name = PlatformSecret.get_secret_name(settings.unique_name)
         env_from_secrets.append(platform_secret_name)
         logger.debug(f"Platform secret added to envFrom: {platform_secret_name}")
 
-        # Add component-level user secret if user env vars exist
         if user_env_vars:
             logger.info(f"Processing {len(user_env_vars)} user environment variables for component: {component_name}")
             user_secret_name = UserSecret.get_secret_name(settings.unique_name)
             env_from_secrets.append(user_secret_name)
             logger.debug(f"User secret added to envFrom: {user_secret_name}")
-
-        # NOTE: SSO integration is now handled at deployment level by keycloak_manager
-        # in create_resources_for_deployment(), not per-component here
 
         pod_replacement_mode = (
             "Recreate"
@@ -1166,8 +1113,6 @@ class ApplicationManifests:
         image_pull_secrets_map: dict[str, str],
     ) -> dict[str, Any]:
         """The template context of one component, before the service contributions merge in."""
-        # Prepare variables for templating
-        # Generate timestamp for pod annotation to force restart when secrets change
         generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         variables = {
@@ -1177,12 +1122,13 @@ class ApplicationManifests:
             "namespace": namespace,
             "hostname": settings.hostname,
             "project": {"name": project_name},
-            "cluster": cluster,  # Add cluster information for template conditionals
+            "cluster": cluster,
             "pod_replacement_mode": contributions.pod_replacement_mode,
             "imageURL": settings.image_url,
-            "imagePullPolicy": settings.image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
+            "imagePullPolicy": settings.image_pull_policy,
             "application_port": settings.application_port,
-            "service_port": settings.application_port,  # Service's primary port; overridden to 4180 when an auth wall fronts it
+            # The Service's primary port; an auth wall in front overrides it to 4180.
+            "service_port": settings.application_port,
             # The full inbound-port list. Both the Deployment (containerPorts) and the
             # Service render every port; the first is the primary (ingress + probe).
             "inbound_ports": settings.inbound_ports,
@@ -1190,30 +1136,30 @@ class ApplicationManifests:
             # inbound port). The health-check service overrides these via its
             # manifest contribution; the template keeps its own path defaults
             # (| default('/')) and falls probe_port back to application_port.
-            "probe_scheme": settings.probe_scheme,  # none | tcp | http | https
-            "probe_port": None,  # None -> template falls back to application_port
-            "path": settings.component_path,  # Publication path for ingress routing
+            # none | tcp | http | https; a probe_port of None lets the template fall back to
+            # application_port.
+            "probe_scheme": settings.probe_scheme,
+            "probe_port": None,
+            "path": settings.component_path,
             "storage_configs": settings.processed_storage_configs,
             "env_vars": env_vars,
-            "env_from_secrets": contributions.env_from_secrets,  # List of secrets for envFrom
-            "attachment_secret_mounts": settings.attachment_secret_mounts,  # File-mode attachment volume mounts
+            "env_from_secrets": contributions.env_from_secrets,
+            "attachment_secret_mounts": settings.attachment_secret_mounts,
             # Cluster-specific ingress configuration
             "enable_tls": get_ingress_tls_enabled(cluster),
             "ip_whitelist": get_ingress_ip_whitelist(cluster),
             # Registry authentication
-            "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
+            # Per image URL the name of its registry secret.
+            "imagePullSecretsMap": image_pull_secrets_map,
             # The project's own service account; every podspec also carries its own pull
             # secret, so inheritance from the default service account falls away.
             "service_account_name": generate_project_service_account_name(project_name),
             # Timestamp to force pod restart when secrets are regenerated
             "generated_at": generated_at,
-            # CA certificate configuration for SSL/TLS
             "ca_config": get_ca_certificate_config(cluster),
-            # Prometheus metrics configuration. Base is None; the metrics-scraper
-            # provider overrides this with the component's scrape {port, path} via
-            # its manifest contribution (RC-5 Phase 6b) when the service is used.
+            # None, until the metrics-scraper provider overrides it with the component's
+            # scrape {port, path} through its manifest contribution.
             "metrics_config": None,
-            # Resource configuration (requests and limits)
             "resources_requests_memory": settings.component_resources["requests_memory"],
             "resources_requests_cpu": settings.component_resources["requests_cpu"],
             "resources_limits_memory": settings.component_resources["limits_memory"],
@@ -1303,11 +1249,8 @@ class ApplicationManifests:
                 logger.warning(f"Manifest file not found: {manifest_path}")
                 continue
 
-            # Use enhanced manifest generator for proper directory structure
-            # Extract just the manifest name (without .yaml.jinja extension)
             manifest_name = manifest_file.replace(".yaml.jinja", "")
 
-            # Handle ingress manifests - iterate through paths and ingress_map
             if manifest_name == "ingress":
                 await self._emit_path_ingresses(
                     project_data,
@@ -1346,13 +1289,10 @@ class ApplicationManifests:
                 )
 
             else:
-                # Standard single manifest creation
                 unique_manifest_name = generate_manifest_name(component_name, manifest_name)
 
-                # Use SOPS encryption for generic secrets (SSO/OIDC), regular processing for others
                 use_sops_for_manifest = manifest_name == "generic-secret"
 
-                # Create manifest file in the specific directory structure
                 manifest_file_path = self._host._manifest_generator.create_manifest_file(
                     template_path=manifest_path,
                     values=variables,
@@ -1361,7 +1301,6 @@ class ApplicationManifests:
                     use_sops=use_sops_for_manifest,
                 )
 
-                # Add to the list of created files with component name for uniqueness
                 created_files.append(f"{unique_manifest_name}.yaml")
                 logger.info(f"Successfully created {manifest_file} manifest: {manifest_file_path}")
 
@@ -1388,23 +1327,18 @@ class ApplicationManifests:
         manifest_name = "ingress"
         manifest_file = "ingress.yaml.jinja"
         for ingress_base_name, ingress_hostname in settings.ingress_map.items():
-            # Iterate over each path to create separate ingress for each
             for path_config in settings.component_paths:
                 path_value = path_config["match"] or "/"
                 rewrite_value = path_config.get("rewrite")
 
-                # Generate unique ingress name that includes the path
                 ingress_name = generate_ingress_name_from_path(ingress_base_name, path_value)
 
-                # Create unique manifest filename that includes the path suffix
                 if path_value == "/" or not path_value:
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)
                 else:
-                    # Sanitize path for filename: /api -> api, /v1/users -> v1users
                     path_suffix = path_value.lstrip("/").replace("/", "").lower()
                     unique_manifest_name = generate_manifest_name(component_name, f"{manifest_name}-{path_suffix}")
 
-                # Create ingress-specific variables
                 ingress_variables = variables.copy()
 
                 # Resolve the publish-on-web TLS mode for this component.
@@ -1472,13 +1406,17 @@ class ApplicationManifests:
 
                 ingress_variables.update(
                     {
-                        "name": ingress_name,  # Unique ingress resource name (includes path)
-                        "service_name": settings.unique_name,  # Service name stays the same
+                        # The ingress name carries the path, the Service name does not.
+                        "name": ingress_name,
+                        "service_name": settings.unique_name,
                         "hostname": ingress_hostname,
-                        "path": path_value,  # Path for this specific ingress
-                        "rewrite": rewrite_value,  # Path rewrite target (e.g. "/" to strip prefix)
-                        "issuer_name": ingress_issuer_name,  # Namespace-scoped Issuer (for external domains)
-                        "cluster_issuer": ingress_cluster_issuer,  # ClusterIssuer (for cluster domains)
+                        "path": path_value,
+                        # The rewrite target, e.g. "/" to strip the prefix.
+                        "rewrite": rewrite_value,
+                        # A namespace-scoped Issuer for an external domain, a ClusterIssuer for
+                        # a cluster domain.
+                        "issuer_name": ingress_issuer_name,
+                        "cluster_issuer": ingress_cluster_issuer,
                         "tls_secret_name": generate_tls_secret_name(ingress_name),
                         "external_dns_target": get_external_dns_target_for_hostname(cluster, ingress_hostname),
                         "passthrough": ingress_passthrough,
@@ -1486,7 +1424,6 @@ class ApplicationManifests:
                     }
                 )
 
-                # Create the ingress manifest file
                 manifest_file_path = self._host._manifest_generator.create_manifest_file(
                     template_path=manifest_path,
                     values=ingress_variables,
@@ -1543,7 +1480,6 @@ class ApplicationManifests:
             root_ingress_name = f"{deployment_name}-root"
             root_manifest_name = generate_manifest_name(component_name, "ingress-root")
 
-            # Create root ingress variables
             root_ingress_variables = variables.copy()
 
             root_issuer_name, root_cluster_issuer = _issuer_for(settings, cluster, deployment_name)
@@ -1551,9 +1487,9 @@ class ApplicationManifests:
             root_ingress_variables.update(
                 {
                     "name": root_ingress_name,
-                    "service_name": settings.unique_name,  # Points to same service as component
+                    "service_name": settings.unique_name,
                     "hostname": root_hostname,
-                    "path": "/",  # Root always uses /
+                    "path": "/",
                     "issuer_name": root_issuer_name,
                     "cluster_issuer": root_cluster_issuer,
                     "tls_secret_name": generate_tls_secret_name(root_ingress_name),
@@ -1561,7 +1497,6 @@ class ApplicationManifests:
                 }
             )
 
-            # Create the root ingress manifest
             root_manifest_file_path = self._host._manifest_generator.create_manifest_file(
                 template_path=manifest_path,
                 values=root_ingress_variables,
@@ -1572,12 +1507,10 @@ class ApplicationManifests:
             created_files.append(f"{root_manifest_name}.yaml")
             logger.info(f"Successfully created root ingress manifest for {root_hostname}: {root_manifest_file_path}")
 
-            # Track root URL in deployment results
             root_web_address = generate_public_url(root_hostname, settings.use_https)
             self._host._deployment_results[deployment_name].urls["root"] = root_web_address
             logger.info(f"Tracked root URL: {root_web_address}")
 
-            # Clean up stale root ingress from previous root component
             previous_dep = self._host.get_previous_deployment(deployment_name)
             if previous_dep:
                 old_root = get_domain_setting(previous_dep, DomainSetting.ROOT_COMPONENT)
@@ -1628,7 +1561,7 @@ class ApplicationManifests:
             bare_ingress_variables.update(
                 {
                     "name": bare_ingress_name,
-                    "service_name": settings.unique_name,  # Points to same service as component
+                    "service_name": settings.unique_name,
                     "hostname": bare_hostname,
                     "path": "/",
                     "issuer_name": bare_issuer_name,
@@ -1638,7 +1571,6 @@ class ApplicationManifests:
                 }
             )
 
-            # Create the bare domain ingress manifest
             bare_manifest_file_path = self._host._manifest_generator.create_manifest_file(
                 template_path=manifest_path,
                 values=bare_ingress_variables,
@@ -1651,12 +1583,10 @@ class ApplicationManifests:
                 f"Successfully created bare domain ingress manifest for {bare_hostname}: {bare_manifest_file_path}"
             )
 
-            # Track bare domain URL in deployment results
             bare_web_address = generate_public_url(bare_hostname, settings.use_https)
             self._host._deployment_results[deployment_name].urls["bare-domain"] = bare_web_address
             logger.info(f"Tracked bare domain URL: {bare_web_address}")
 
-            # Clean up stale bare domain ingress from previous component
             previous_dep = self._host.get_previous_deployment(deployment_name)
             if previous_dep:
                 old_bare = get_domain_setting(previous_dep, DomainSetting.BARE_DOMAIN_COMPONENT)
@@ -1686,13 +1616,11 @@ class ApplicationManifests:
 
         That manager owns the generation in the PVC name and the cleanup of an older one.
         """
-        # Create PVC manifests for persistent storage using PVCManager
         persistent_storage = self._host._project_file_handler.get_persistent_storage(settings.processed_storage_configs)
 
         if persistent_storage:
             logger.info(f"Creating {len(persistent_storage)} PVC manifests for component: {component_name}")
 
-            # Delegate PVC creation to PVCManager which handles generation and cleanup
             created_pvc_files = await self._host._pvc_manager.create_pvc_manifests_for_component(
                 project_data=project_data,
                 deployment=deployment,
@@ -1725,19 +1653,14 @@ class ApplicationManifests:
         the matching content. Every one of them is written as plaintext ``.to-sops.yaml``
         and encrypted one level up.
         """
-        # Create SSO secret if Keycloak credentials are available in secrets map
         keycloak_credentials = self._host._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
         if keycloak_credentials:
-            # Always use SOPS encryption for secrets (security requirement)
             use_sops_for_sso = True
 
-            # Use the existing Keycloak secret instance directly (no need to recreate)
             keycloak_secret = keycloak_credentials
 
-            # Get base Keycloak secret data
             keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
 
-            # Add resolved Keycloak aliases from all components
             keycloak_aliases = (
                 self._host._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("keycloak", {})
             )
@@ -1747,16 +1670,14 @@ class ApplicationManifests:
                 keycloak_secret_data.update(resolved_aliases)
                 logger.info(f"Added {len(resolved_aliases)} resolved keycloak aliases to deployment secret")
 
-            # Only include fields needed for the generic-secret template
-            # NOTE: Keycloak secret is per-deployment, not per-component
             sso_secret_vars = {
                 "name": KeycloakSecret.get_secret_name(deployment_name),
                 "namespace": namespace,
-                "secret_type": "keycloak",  # For proper labeling
-                "secret_pairs": keycloak_secret_data,  # Now includes base + aliases
+                "secret_type": "keycloak",
+                # The base secret plus the resolved aliases.
+                "secret_pairs": keycloak_secret_data,
             }
 
-            # Create SSO secret with keycloak naming convention (deployment-level)
             sso_manifest_name = generate_manifest_name(deployment_name, "keycloak-secret")
 
             sso_secret_path = self._host._manifest_generator.create_manifest_file(
@@ -1767,20 +1688,17 @@ class ApplicationManifests:
                 use_sops=use_sops_for_sso,
             )
 
-            # All secrets are SOPS encrypted for security
             sops_filename = sops_filenames(sso_manifest_name).plaintext
             created_files.append(sops_filename)
             logger.info(f"SSO secret will be SOPS encrypted: {sops_filename}")
             logger.info(f"Successfully created SSO secret manifest: {sso_secret_path}")
 
-        # Create platform secret (always present, per-component)
         platform_secret = PlatformSecret(
             deployment_name=deployment_name,
             component_name=component_name,
         )
         platform_secret_data = platform_secret.to_k8s_secret_data()
 
-        # Resolve platform aliases if any
         platform_aliases = self._host._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("platform", {})
         if platform_aliases:
             logger.debug(f"Resolving {len(platform_aliases)} platform aliases for component {component_name}")
@@ -1808,24 +1726,19 @@ class ApplicationManifests:
         created_files.append(f"{platform_manifest_name}.yaml")
         logger.info(f"Created platform secret manifest: {platform_manifest_name}")
 
-        # Create user secret if configured
         if user_env_vars:
             logger.debug(f"Processing {len(user_env_vars)} user environment variables for {component_name}")
 
-            # Create typed User secret
             user_secret = UserSecret(env_vars=user_env_vars)
 
-            # Only include fields needed for the generic-secret template
             user_secret_vars = {
                 "name": UserSecret.get_secret_name(settings.unique_name),
                 "namespace": namespace,
-                "secret_type": "user",  # For proper labeling
+                "secret_type": "user",
                 "secret_pairs": user_secret.to_k8s_secret_data(),
             }
 
-            # Create user secret with user naming convention
             user_manifest_name = generate_manifest_name(component_name, "user-secret")
-            # Always use SOPS encryption for secrets (security requirement)
             use_sops_for_user = True
 
             user_secret_path = self._host._manifest_generator.create_manifest_file(
@@ -1836,7 +1749,6 @@ class ApplicationManifests:
                 use_sops=use_sops_for_user,
             )
 
-            # All secrets are SOPS encrypted for security
             sops_filename = sops_filenames(user_manifest_name).plaintext
             created_files.append(sops_filename)
             logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
@@ -1938,7 +1850,6 @@ class ApplicationManifests:
         if domain_format in ROOT_COMPONENT_FORMAT_IDS and subdomain and base_domain:
             subdomain_connector = SubdomainConnector()
 
-            # Only a registration this round is ours to roll back.
             existing_registration = await subdomain_connector.get_by_deployment(project_name, deployment_name)
             is_new_registration = existing_registration is None
 
@@ -1983,7 +1894,6 @@ class ApplicationManifests:
             bare_domain_registered = True
             logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
         elif base_domain:
-            # Bare domain deselected, or not (yet) approved: clean up any existing registration
             if expose_on_bare_domain:
                 logger.warning(
                     "Bare domain '%s' not applied for deployment '%s': the domain is not approved for project '%s'",
@@ -2132,7 +2042,6 @@ class ApplicationManifests:
         else:
             target_path = working_dir
 
-        # Use the manifest generator to create kustomization files
         result = self._host._manifest_generator.create_kustomization_files(
             output_dir=target_path,
             namespace=namespace,

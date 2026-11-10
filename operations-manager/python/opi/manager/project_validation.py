@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 #: project with a larger mount into a file that can no longer be saved at all, and a
 #: PVC cannot shrink, so its owner could not comply either. Ceilings are enforced where
 #: the value ARRIVES (the config API's request bodies and the form field); here the
-#: shape is checked and the value is taken as it stands.
+#: shape is checked and the value is read as it stands.
 STORED_PROJECT_CONTEXT: dict[str, Any] = {STORED_CONTEXT_KEY: True}
 
 
@@ -97,16 +97,13 @@ def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
 
 
 def validation_reasons(error: ValidationError) -> str:
-    """De redenen van een ValidationError, zoals ze aan een gebruiker getoond mogen worden.
+    """The reasons of a ValidationError, in the form a user may be shown.
 
-    ``str(e)`` van pydantic is uitvoer voor een ontwikkelaar: hij zet er
-    ``[type=value_error, input_value=..., input_type=dict]`` achter en een link naar
-    errors.pydantic.dev. Dat kwam zo op het scherm van iemand die een webadres wilde
-    wijzigen, met de afgekeurde waarde erin -- en die waarde kan een geheim zijn.
-
-    ``error["msg"]`` draagt alleen de reden. Het voorvoegsel ``Value error, `` dat pydantic
-    voor een ``model_validator`` zet valt eraf: de zin eromheen zegt al dat er iets ongeldig
-    is, en "Value error" voegt daar niets aan toe wat de lezer verder helpt.
+    Never ``str(e)``: pydantic appends ``[type=value_error, input_value=..., input_type=dict]``
+    plus a link to errors.pydantic.dev, and the refused value it names there can be a secret.
+    ``error["msg"]`` carries the reason alone. The ``Value error, `` prefix pydantic puts in
+    front of a ``model_validator`` message is dropped: the surrounding sentence already says
+    something is invalid.
     """
     reasons = [
         _located(error_entry["loc"], error_entry["msg"].removeprefix("Value error, ")) for error_entry in error.errors()
@@ -115,11 +112,11 @@ def validation_reasons(error: ValidationError) -> str:
 
 
 def _located(loc: tuple[int | str, ...], reason: str) -> str:
-    """Zet de plek voor de reden, zodat je bij drie registries weet welke je moet repareren.
+    """Put the place in front of the reason, so three registries can be told apart.
 
-    ``loc`` draagt veldnamen, lijstindexen en dict-sleutels, geen waarden, dus hier lekt niets
-    wat ``msg`` alleen zou verbergen. Een index telt vanaf 1: ``registries, nummer 2`` is de
-    tweede entry zoals een mens hem telt.
+    ``loc`` carries field names, list indexes and dict keys, no values, so nothing leaks here
+    that ``msg`` alone would hide. An index counts from 1: ``registries, nummer 2`` is the
+    second entry the way a person counts it.
     """
     parts = [f"nummer {part + 1}" if isinstance(part, int) else part for part in loc]
     return f"{', '.join(parts)}: {reason}" if parts else reason
@@ -151,8 +148,8 @@ def _validate_one_config(block: ServiceConfigBlock, project_name: str) -> None:
                 # stamped version to migrate from; validate the shape directly.
                 model.model_validate(block.config)
         except ValidationError as e:
-            # De lijst geaccepteerde velden helpt alleen bij een onbekende sleutel. Bij een fout
-            # BINNEN een veld las hij alsof dat veld zelf fout was.
+            # The accepted-field list only helps on an unknown key. On an error INSIDE a
+            # field it reads as if that field itself were wrong.
             unknown_key = any(error_entry["type"] == "extra_forbidden" for error_entry in e.errors())
             accepted = _accepted_config_fields(provider, block.layer) if unknown_key else []
             hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
@@ -193,7 +190,7 @@ def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
     """The reason for a refused setting, shared by the value check and the change check.
 
     On an owned-property block it names the declaration instead of the value, old or new:
-    that property can hold a pasted secret (see features/speelruimte-van-een-dienst.md).
+    that property can hold a pasted secret (see `features/speelruimte-van-een-dienst.md`).
     Callers raise ``from None``: the SettingError still names the value, and a handler
     that logs a traceback would print it.
     """
@@ -268,10 +265,8 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
 
     One walk with two readers: the value check (``validate_service_configs``) uses
     ``where`` and ``from_version``, the change check
-    (``validate_service_setting_changes``) uses ``location``. It used to be two walks
-    over the same four layers, and they had already drifted apart -- the owned-property
-    blocks were in only one of them, so a setting declared on such a service would have
-    been judged on its bounds and never on its change.
+    (``validate_service_setting_changes``) uses ``location``. Keep it one walk, so a block
+    cannot be judged on its bounds by one reader and skipped by the other.
 
     Covers every layer a config can live at: project-level service definitions
     (keycloak, namespace-postgres, auth-wall), component-level references
@@ -403,9 +398,8 @@ def _owned_property_blocks(
 
     ``user-env-vars`` and ``aliases`` are services whose config is a property of the
     component rather than a block in a ``services:`` list, so the walk above never sees
-    them -- which is exactly why they went unvalidated until they were declared. The
-    services name the property (``owned_property``) and the layers they carry it on
-    (``config_editables``), so this loop names neither service.
+    them. The services name the property (``owned_property``) and the layers they carry it
+    on (``config_editables``), so this loop names neither service.
     """
     for service in property_owning_services():
         key = service.owned_property
@@ -435,10 +429,9 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
     view = Project(project_data)
     project_name = project_data.get("name", "(onbekend)")
 
-    # The DEFINE side first: what a service stores under ``data`` (the attachments
-    # catalog today). It was validated by nothing at all -- the config walk only ever
-    # looked at ``config`` -- so a catalog entry with a missing filename or an id that
-    # cannot become a volume name was committed and failed at deploy time.
+    # The DEFINE side first: what a service stores under ``data`` (the attachments catalog
+    # today). The config walk only looks at ``config``, so without this a catalog entry with
+    # a missing filename would be committed and fail at deploy time.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
         data = service_entry_data(view.service_entry(name))
         if data is not None:
@@ -486,10 +479,9 @@ def _model_validator(model: type[BaseModel]) -> Draft202012Validator:
 def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str) -> None:
     """Validate one owned-property block from the walk: its model AND its latitude.
 
-    Both, because the walk hands these blocks to the change check as well; judging them
-    on their change but not on their bounds is the same divergence the shared walk closed,
-    only the other way around. Neither of the two names the value: see
-    ``_setting_refusal`` for the latitude check.
+    Both, because the walk hands these blocks to the change check as well, and judging them
+    on their change but not on their bounds would leave the same gap the shared walk closes.
+    Neither of the two names the value: see ``_setting_refusal`` for the latitude check.
     """
     service = get_service(ServiceType(block.name))
     model = service.config_model
@@ -527,16 +519,14 @@ def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any,
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
-    """
-    Validate that all component references exist in the project.
+    """Check that every component reference names a component of this project.
 
     Args:
-        project_data: The project data containing component definitions
-        components: List of ComponentReference objects or dicts with 'reference' key
-        context: Context for error messages (e.g. "deployment", "update")
+        components: ComponentReference objects, or dicts with a 'reference' key.
+        context: Named in the error message, e.g. "deployment" or "update".
 
     Returns:
-        Dict with validation result: {"success": bool, "error": str | None, "invalid_references": list | None}
+        ``{"success": bool, "error": str | None, "invalid_references": list | None}``
     """
     project_components = project_data.get("components", [])
     component_names = {comp.get("name") for comp in project_components}
@@ -655,14 +645,11 @@ def validate_declared_choices(project_data: dict[str, Any]) -> list[str]:
                 allowed = {str(option.get("value")) for option in provider.get_options()}
                 offered = sorted(option for option in allowed if option)
                 if not offered:
-                    # The source is empty, so there is nothing to be measured against. This
-                    # is not "everything is wrong": it is a project whose values come from
-                    # somewhere this provider cannot see -- the four pre-service invite
-                    # files name roles of a realm nobody configured through ZAD. Refusing
-                    # there would claim knowledge we do not have, and would block the next
-                    # edit of a project over a value this release did not introduce. The
-                    # case that matters is never empty: with restrict-access on there is
-                    # always at least the wall role.
+                    # An empty source is not "everything is wrong": it is a project whose
+                    # values come from somewhere this provider cannot see, such as roles of a
+                    # realm nobody configured through ZAD. Refusing there would claim
+                    # knowledge we do not have. The case that matters is never empty: with
+                    # restrict-access on there is always at least the wall role.
                     continue
                 source = getattr(provider_class, "options_source", UNDECLARED_SOURCE)
                 what = f"{source.description} " if isinstance(source, OptionsSource) else ""
@@ -793,13 +780,12 @@ def validate_service_availability(
                 continue
             if not service.replaced_on_cluster(cluster):
                 continue
-            # Via de handler en niet via de componentenlijst zelf: die kent ook de
-            # helm-charts en helmfiles van een deployment, en het v1-sleutelwoord
-            # ``uses-services``.
+            # Through the handler and not the component list itself: the handler also knows a
+            # deployment's helm charts and helmfiles, and the v1 keyword ``uses-services``.
             handler = ProjectFileHandler()
             if previous is not None and not handler.deployment_uses_service(project_data, str(dep_name), [name]):
-                # De dienst staat wel in de projectlijst maar deze deployment gebruikt hem
-                # niet, dus deze deployment krijgt er niets bij.
+                # The service is in the project list but this deployment does not use it, so
+                # this deployment gains nothing from it.
                 continue
             if previous is not None and any(
                 isinstance(prev_dep, dict)
@@ -897,11 +883,11 @@ _NO_APPROVED_VALUE = object()
 def _validate_approved_values_unchanged(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
     """A stored last-approved value may not appear or change outside the approval route.
 
-    The status guard only sees a block that carries a ``value``, so a block holding
-    nothing but an ``approved-value`` slipped past it while counting as approved
-    (``_status_of_value``). Keeping that block unchanged IS legitimate: the platform
-    writes exactly that shape when a value goes back to the last approved one. So the
-    rule is about the value moving, not about the block existing.
+    The status guard only sees a block that carries a ``value``, so a block holding nothing
+    but an ``approved-value`` passes it while counting as approved (``_status_of_value``).
+    Keeping that block unchanged IS legitimate: the platform writes exactly that shape when a
+    value goes back to the last approved one. So the rule is about the value moving, not
+    about the block existing.
     """
     before = collect_approved_values(previous)
     for identity, value in collect_approved_values(project_data).items():
@@ -966,12 +952,11 @@ async def validate_project_structure(
     components = project_data.get("components", []) or []
     deployments = project_data.get("deployments", []) or []
 
-    # Alleen bij een create (geen vorige versie): een bestaand project moet opgeslagen
-    # kunnen blijven worden, ook al zou zijn naam vandaag geweigerd worden.
+    # Only on a create (no previous version): an existing project has to stay saveable, even
+    # when its name would be refused today.
     if previous is None and is_reserved_project_name(str(project_name)):
         raise ProjectIntegrityError(RESERVED_PROJECT_NAME_MESSAGE.format(name=project_name))
 
-    # Component names unique
     seen_components: set[str] = set()
     for comp in components:
         if not isinstance(comp, dict):
@@ -983,7 +968,6 @@ async def validate_project_structure(
             raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
         seen_components.add(cname)
 
-    # A services list is a selection set: each service at most once
     _validate_services_listed_once(project_data.get("services"), project_name, "projectniveau")
     for comp in components:
         if isinstance(comp, dict):
@@ -1005,7 +989,6 @@ async def validate_project_structure(
     )
     component_by_name = {c.get("name"): c for c in components if isinstance(c, dict)}
 
-    # Component service references resolve to a project-level service
     for comp in components:
         if not isinstance(comp, dict):
             continue
@@ -1017,7 +1000,6 @@ async def validate_project_structure(
                 f"projectniveau bestaan: {invalid_services}"
             )
 
-    # Deployment names unique
     seen_deployments: set[str] = set()
     for index, dep in enumerate(deployments):
         if not isinstance(dep, dict):
@@ -1036,12 +1018,10 @@ async def validate_project_structure(
 
         refs = dep.get("components", []) or []
 
-        # All component references resolve to a defined component
         reference_result = validate_component_references(project_data, refs, "deployment")
         if not reference_result["success"]:
             raise ProjectIntegrityError(reference_result["error"])
 
-        # Root component constraints
         root_ref = get_domain_setting(dep, DomainSetting.ROOT_COMPONENT)
         if root_ref:
             ref_names = [name for r in refs if isinstance(r, dict) and (name := r.get("reference"))]
@@ -1119,9 +1099,9 @@ async def validate_project_structure(
         if not approval_decision:
             validate_approval_decisions(previous, project_data)
 
-    # Dezelfde vraag, maar voor een regel die geen declaratie is
-    # (``Service.validate_project_change``). Draait ook zonder vorige versie: een bestand
-    # dat niets vervangt heeft niets opgeslagen staan, dus daarin is elke waarde nieuw.
+    # The same question for a rule that is not a declaration
+    # (``Service.validate_project_change``). Runs without a previous version too: a file that
+    # replaces nothing has nothing stored, so every value in it is new.
     change_errors: list[str] = []
     for service in change_validating_services():
         change_errors.extend(service.validate_project_change(previous or {}, project_data))
