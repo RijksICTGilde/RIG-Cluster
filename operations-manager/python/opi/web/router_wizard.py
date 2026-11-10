@@ -77,15 +77,10 @@ wizard_router = APIRouter(prefix="/forms/wizard", tags=["wizard"])
 
 
 def _create_renderer() -> FormRenderer:
-    """Create a configured FormRenderer for wizard forms.
+    """A configured FormRenderer for the wizard forms.
 
-    De VOORBEREIDING per veldtype is gedeeld - welke opties, welke waarde, hoe een reeks
-    wordt opgebouwd is bedrijfslogica en verandert niet mee met het componentensysteem.
-    Alleen de adapter wisselt, en daarmee welke templates het veld renderen.
-
-    Waarom de import hier binnen staat: de LOTC-bouwlijn is een aparte dependency-groep,
-    dus in de release-image bestaat het pakket niet. Bovenaan importeren zou deze module
-    daar onlaadbaar maken.
+    The PREPARATION per field type is shared business logic: which options, which value, how a
+    sequence is built. Only the adapter changes, and with it the templates that render a field.
     """
     return FormRenderer(
         widget_adapter=LOTCWidgetAdapter(),
@@ -94,10 +89,10 @@ def _create_renderer() -> FormRenderer:
 
 
 def _lotc_page_context(request: Request, user: dict[str, Any] | None) -> dict[str, Any]:
-    """Wat een HELE wizardpagina extra nodig heeft: de navigatie.
+    """What a WHOLE wizard page needs on top: the navigation.
 
-    Het pad is dat van "Nieuw project" in het menu, zodat dat item in de zijkolom
-    oplicht zolang je in de wizard zit.
+    The path is the one of the "Nieuw project" menu item, so that item lights up in the side
+    column for as long as the wizard is open.
     """
     return {"navigation": get_navigation(user, current_path="/forms/wizard/restart")}
 
@@ -111,11 +106,10 @@ def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
     raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden")
 
 
-#: Every Jinja delimiter starts with "{" and ends with "}", so spacing EVERY brace
-#: covers all of them at once. Replacing whole delimiter PAIRS instead is unsafe:
-#: those passes feed each other, and "{{{{" comes back out as "{{" ("{ {" + "{ {"),
-#: which Jinja then reads as an expression again. Single-character replacement in one
-#: translate pass cannot re-form a delimiter, no matter how many braces are nested.
+#: Every Jinja delimiter starts with "{" and ends with "}", so spacing EVERY brace covers all
+#: of them at once. Replacing whole delimiter PAIRS is unsafe: those passes feed each other, and
+#: "{{{{" comes back out as "{{", which Jinja reads as an expression again. A single-character
+#: replacement in one translate pass cannot re-form a delimiter, however deeply braces nest.
 _BRACE_SPACING = str.maketrans({"{": "{ ", "}": " }"})
 
 
@@ -123,10 +117,9 @@ def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, 
     """Space out every brace in per-field messages before they are rendered.
 
     Field messages end up INSIDE the HTML string this module returns, and
-    ``wizard_step.html.j2`` pipes that string through ``process_components``,
-    which compiles it as a Jinja template -- a second render. HTML-escaping does
-    not help there: ``{{ ... }}`` needs no special characters. Several validators
-    quote the rejected value in their message ("Ongeldige waarde: <value>"), so
+    ``wizard_step.html.j2`` pipes that string through ``process_components``, which compiles it
+    as a Jinja template, a second render. HTML-escaping does not help there: ``{{ ... }}`` needs
+    no special characters. Several validators quote the rejected value in their message, so
     without this a value typed into a form would be executed as a template.
 
     Spacing the braces keeps the message readable while making it inert.
@@ -148,12 +141,11 @@ def _render_step_html(
     warnings: dict[str, list[str]] | None = None,
     flow_id: str | None = None,
 ) -> str:
-    """Render the form fields for a single wizard step.
+    """Render the form fields of a single wizard step.
 
-    ``request`` bepaalt alleen WELKE componenten het veld renderen: dezelfde velden,
-    dezelfde waarden, dezelfde foutmeldingen, maar door de LOTC-adapter in plaats van de
-    roos-adapter zodra de pagina eromheen de LOTC-weergave is. Het een zonder het ander
-    zou een pagina opleveren die uit twee componentsystemen bestaat, en dat rendert niet.
+    ``request`` only decides WHICH components render the field: the same fields, the same
+    values, the same messages, through the adapter that matches the page around it. One without
+    the other would yield a page built from two component systems, and that does not render.
     """
     import copy
 
@@ -166,10 +158,8 @@ def _render_step_html(
     if not section.layout:
         return ""
 
-    # General solution: restore transient fields from their parent values before rendering.
-    # When a transient field is deferred to a parent, the transient is stripped from saved state.
-    # But for rendering, we need the transient field value so the input shows the correct value.
-    # For each transient field with a depends_on relationship, restore from the dependency.
+    # A transient field deferred to a parent is stripped from the saved state, so it is
+    # restored from that parent before rendering, or the input shows nothing.
     render_data = copy.deepcopy(yaml_data)
 
     if section.section_id == "domains":
@@ -189,15 +179,12 @@ def _render_step_html(
                     bool(editable.children),
                 )
 
-            # Recursively process children (for GROUP editables)
             if editable.children:
                 _restore_transient_fields(editable.children, data)
 
-            # Check if this is a transient field that depends on another field
             if ed.transient and ed.depends_on:
-                # Een wildcardpad (deployments[*]/...) kan alleen per item geschreven
-                # worden: een kale set_value erop is een ValueError. Gevonden via RC-388:
-                # de bewerkwizard gaf een 500 op elk project met base-domain of backup-schema.
+                # A wildcard path can only be written per item: a bare set_value on it is a
+                # ValueError.
                 if "[*]" in ed.yaml_path:
                     list_path = ed.yaml_path.split("[*]", 1)[0]
                     items = smart_get_value(data, list_path) or []
@@ -207,7 +194,6 @@ def _render_step_html(
                             smart_set_value(data, resolve_path(ed.yaml_path, index), dep_value)
                     continue
 
-                # Get the dependency value (the parent field value)
                 dep_value = smart_get_value(data, ed.depends_on)
 
                 if section.section_id == "domains":
@@ -217,9 +203,9 @@ def _render_step_html(
                         dep_value,
                     )
 
-                # If the parent has a non-sentinel value, it's a custom value - restore it to the transient for display
+                # A non-sentinel parent value is a custom value, so it is restored into the
+                # transient for display.
                 if dep_value and dep_value != "__custom__":
-                    # Restore this transient field from the parent for display
                     smart_set_value(data, ed.yaml_path, dep_value)
                     logger.debug(
                         "[domains render] RESTORED transient field %s from dependency %s (value=%s)",
@@ -239,8 +225,8 @@ def _render_step_html(
         errors=errors,
         edit_mode=edit_mode,
         warnings=warnings,
-        # De wizard waarin we staan, zodat een partial met eigen endpoints (bijlagen) de
-        # goede URL opbouwt in plaats van een vaste create-project.
+        # The wizard we are in, so a partial with endpoints of its own builds the right URL
+        # instead of a fixed create-project.
         flow_id=flow_id,
     )
 
@@ -263,13 +249,12 @@ def _build_step_context(
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    # Build preset cards HTML if presets exist for this section
     yaml_data = state.get_merged_data()
     preset_html = _render_preset_html(
         request, flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
     )
 
-    # All steps already completed = user came back from review/submit to fix something
+    # Every step already completed means the user came back from the review to fix something.
     all_steps_completed = set(steps.all).issubset(set(steps.completed))
 
     user = get_current_user(request)
@@ -286,18 +271,16 @@ def _build_step_context(
         "all_steps_completed": all_steps_completed,
         "menu_items": get_menu_items(user),
         "user": user,
-        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-templates hebben de
-        # NLDD-woordenschat nodig. De roos-templates raken dit niet aan.
+        # Our sections carry Dutch ROOS icon names; the LOTC templates need the NLDD words.
         "nldd_icon": to_nldd_icon,
     }
 
 
 def _step_response(request: Request, context: dict[str, Any]) -> Response:
-    """Het antwoord op een stap, in de weergave die dit verzoek gekozen heeft.
+    """The answer to a step, in the design this request chose.
 
-    Een fragment en geen hele pagina: htmx wisselt hiermee de inhoud van
-    ``#wizard-step-content``. De stappenbalk gaat mee via een OOB-swap in het fragment
-    zelf, precies zoals in de bestaande wizard.
+    A fragment and not a whole page: htmx swaps the content of ``#wizard-step-content`` with
+    it, and the step bar travels along as an out-of-band swap inside the fragment.
     """
     return render(
         request,
@@ -325,9 +308,8 @@ def _render_preset_html(
 
     if yaml_data is not None:
         section = _get_section_from_flow(flow_id, section_id)
-        # Apply locked_by_service forced values so preset detection sees them.
+        # The forced locked_by_service values first, so preset detection sees them.
         _apply_locked_by_service(section.editables, yaml_data)
-        # Detect which presets are locked by active services.
         locked_presets = _detect_locked_presets(presets, section.editables, yaml_data)
 
     return render_preset_cards(
@@ -344,13 +326,9 @@ def _apply_locked_by_service(
     editables: list,
     yaml_data: dict[str, Any],
 ) -> None:
-    """Inject forced True values for fields locked by an active service.
+    """Force True for every field locked by an active service; mutates *yaml_data* in place.
 
-    When a service like ``authorization-wall`` is selected, fields with
-    ``locked_by_service`` pointing to that service are forced to True.
-    This mirrors the logic in ``FormRenderer.render_fields_from_editables``.
-
-    Mutates *yaml_data* in place.
+    The same rule as ``FormRenderer.render_fields_from_editables``.
     """
     from opi.forms.editables.service_path import smart_set_value
     from opi.forms.visualizers.bridge import _is_service_active
@@ -365,17 +343,13 @@ def _detect_locked_presets(
     editables: list,
     yaml_data: dict[str, Any],
 ) -> dict[str, str]:
-    """Find presets that are locked because a service forces their values.
+    """The presets locked because an active service forces their values.
 
-    A preset is locked when any of its value paths corresponds to an
-    editable with ``locked_by_service`` whose service is currently active.
-
-    Returns:
-        Map of preset_id -> hint text (e.g. "Vereist door: Authorization Wall").
+    A preset is locked when one of its value paths belongs to an editable with
+    ``locked_by_service`` whose service is active. Returns preset_id -> hint text.
     """
     from opi.forms.visualizers.bridge import _is_service_active, _service_display_name
 
-    # Build map: yaml_path -> service display name for active locked fields
     locked_paths: dict[str, str] = {}
     for editable in editables:
         if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
@@ -394,11 +368,6 @@ def _detect_locked_presets(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Restart: clear state and redirect to start
-# ---------------------------------------------------------------------------
-
-
 @wizard_router.get("/restart")
 @action(Action.WIZARD_USE)
 @requires_sso
@@ -406,11 +375,6 @@ async def wizard_restart(request: Request) -> RedirectResponse:
     """Clear any existing wizard state and redirect to the start page."""
     clear_wizard_state(request)
     return RedirectResponse(url="/forms/wizard/start", status_code=302)
-
-
-# ---------------------------------------------------------------------------
-# Landing page: wizard introduction
-# ---------------------------------------------------------------------------
 
 
 @wizard_router.get("/start", response_class=HTMLResponse)
@@ -431,25 +395,20 @@ async def wizard_start(request: Request) -> Response:
     )
 
 
-# ---------------------------------------------------------------------------
-# Full page: start wizard
-# ---------------------------------------------------------------------------
+def flow_from_path(flow_id: str, **context: Any) -> FormFlow:
+    """The flow a path points at, or a 404.
 
-
-def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
-    """De flow waar een pad naar wijst, of 404.
-
-    ``get_flow`` werpt een KeyError op onbekende id; dit vangt die en geeft 404 in plaats van 500.
+    ``get_flow`` raises a KeyError on an unknown id; this turns that into a 404.
     """
     try:
         return get_flow(flow_id, **context)
-    except KeyError as fout:
-        raise HTTPException(status_code=404, detail=f"Onbekende wizard: {flow_id}") from fout
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=f"Onbekende wizard: {flow_id}") from error
 
 
 def creator_as_member(email: str) -> dict[str, Any]:
     """The signing-in user as the first member of a new project."""
-    return {"email": email, "roles": sorted(rol.value for rol in CREATOR_ROLES)}
+    return {"email": email, "roles": sorted(role.value for role in CREATOR_ROLES)}
 
 
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)
@@ -457,16 +416,13 @@ def creator_as_member(email: str) -> dict[str, Any]:
 @requires_sso
 async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
-    flow = flow_uit_pad(flow_id)
+    flow = flow_from_path(flow_id)
     user = get_current_user(request)
 
-    # Check for existing wizard state for this flow
     existing_state = get_wizard_state(request)
     if existing_state and existing_state.flow_id == flow_id:
-        # Resume from current step
         state = existing_state
     else:
-        # Start a new wizard
         active_section_ids = resolve_active_section_ids(flow, {})
         if not active_section_ids:
             raise HTTPException(status_code=500, detail="Geen stappen gevonden in de wizard")
@@ -479,12 +435,11 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         )
         state.populate_virt_mappings(flow.sections)
 
-        # Seed template data (repositories, base config) as the lowest-priority layer
+        # The template data (repositories, base config) is the lowest-priority layer.
         from opi.forms.editables.template import build_new_project_base_data
 
         state.base_data = build_new_project_base_data()
 
-        # Seed the team step with the current user as the first member
         user_email = (user or {}).get("email", "")
 
         # The same peer-project list the edit flow gets. Without it the cross-domain step had
@@ -493,22 +448,17 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         if user_email:
             state.store_step_data("team", {"users": [creator_as_member(user_email)]})
 
-        # Seed the components step with one default component.
-        # The services checkbox is left unset (None) so the renderer
-        # auto-populates it with all project-level services on first render.
+        # One default component. The services checkbox is left unset, so the renderer fills it
+        # with every project-level service on the first render.
         state.store_step_data(
             "components",
             {
                 "components": [
-                    # Resources stonden hier ook, met eigen waarden, en die seed won van
-                    # Editable.default -- dus een default aanpassen bij het veld had geen
-                    # effect op de create-wizard. Ze staan er niet meer in: de renderer
-                    # vult een ontbrekende waarde met de default van de editable.
-                    #
-                    # De uitgaande poorten blijven hier wel staan, ook al hebben ze een
-                    # default op hun editable: de stap toont er geen veld voor, en een
-                    # default springt alleen in als het veld gerenderd wordt. Weghalen
-                    # zou ze uit nieuwe projecten laten verdwijnen.
+                    # Resources are deliberately NOT seeded here: a seed wins over
+                    # ``Editable.default``, so a default changed at the field would have no
+                    # effect on this wizard. The outbound ports DO stay, even though their
+                    # editable has a default: the step renders no field for them, and a
+                    # default only steps in for a rendered field.
                     {
                         "name": "",
                         "path": "/",
@@ -518,10 +468,9 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             },
         )
 
-        # Seed the domains step with one empty deployment entry, so the index-based
-        # merge in get_merged_data() has a slot to land on.
-        # Do NOT include "name" here - it comes from the deployment step
-        # and the index-based merge in get_merged_data() would overwrite it.
+        # One empty deployment entry, so the index-based merge in get_merged_data() has a slot
+        # to land on. NOT "name": that comes from the deployment step, and the index-based
+        # merge would overwrite it.
         state.store_step_data(
             "domains",
             {
@@ -532,7 +481,6 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         )
         save_wizard_state(request, state)
 
-    # Render the current step (first step for new, resumed step for existing)
     yaml_data = state.get_merged_data()
     section = _get_section_from_flow(flow_id, state.current_step)
     step_html = _render_step_html(
@@ -569,52 +517,43 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     )
 
 
-# ---------------------------------------------------------------------------
-# Full page: edit wizard (pre-filled from existing project)
-# ---------------------------------------------------------------------------
-
-
 @wizard_router.get("/{flow_id}/edit/{project_name}", response_class=HTMLResponse)
 @action(Action.PROJECT_EDIT)
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    flow = flow_uit_pad(flow_id)
+    flow = flow_from_path(flow_id)
     user = get_current_user(request)
 
-    # De wizard-bewerkstroom toont users en config als bewerkbaar, dus een lid dat het
-    # projectbestand niet mag wijzigen hoort er niet in (projectovername). De poort op de
-    # route weegt dat; hier staat alleen wat zij toeliet.
+    # This flow shows users and config as editable, so a member who may not change the project
+    # file does not belong in it. The gate on the route weighs that.
     project = authorized_project(request)
 
     project_data = project.data
     if not project_data:
         raise HTTPException(status_code=500, detail="Project data niet beschikbaar")
 
-    # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
 
-    # Lokale import: ``router_detail_edit`` importeert deze module.
+    # A local import, because ``router_detail_edit`` imports this module.
     from opi.web.router_detail_edit import _fully_owned_list_keys
 
-    # Pre-fill step data from existing project. Alleen de mensen, zoals in
-    # ``modal_wizard_init``: zonder dit schuift de merge-per-index de tokenhash van een
-    # weggehaald lid naar de rij die zijn plaats inneemt.
+    # Pre-fill the step data from the existing project. Only the people, as in
+    # ``modal_wizard_init``: without this the merge-by-index moves the token hash of a removed
+    # member to the row that takes its place.
     form_data = project_data
     if "users" in _fully_owned_list_keys(flow):
         form_data = members_for_form(project_data)
     step_data = _split_data_across_sections(flow, form_data)
 
-    # Resolve active sections with pre-filled data
     active_section_ids = resolve_active_section_ids(flow, step_data)
     if not active_section_ids:
         raise HTTPException(status_code=500, detail="Geen stappen gevonden in de wizard")
 
     first_step = active_section_ids[0]
 
-    # Initialize wizard state with project data
     state = init_wizard_state(
         request,
         flow_id=flow_id,
@@ -624,13 +563,12 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     )
     state.populate_virt_mappings(flow.sections)
     state.step_data = step_data
-    # Mark all sections with data as completed
+    # Every section that has data counts as completed.
     for section_id in active_section_ids:
         if step_data.get(section_id):
             state.mark_completed(section_id)
     save_wizard_state(request, state)
 
-    # Render the first step with pre-filled data
     section = _get_section_from_flow(flow_id, first_step)
     step_html = _render_step_html(request, section, yaml_data=project_data, edit_mode=True, flow_id=flow_id)
 
@@ -665,14 +603,11 @@ def _split_data_across_sections(
     flow: FormFlow,
     project_data: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """Split existing project data into per-section dicts.
+    """Split existing project data into per-section dicts, so every step can be pre-filled.
 
-    Each section gets the subset of project_data that its editables reference.
-    This allows the wizard to pre-fill each step with existing values.
-
-    Editables with ``virtualize`` store their data under the virtual key
-    (e.g. ``_services-config``) so config sections don't collide with the
-    service selection list in ``services``.
+    Each section gets the subset of *project_data* its editables reference. An editable with
+    ``virtualize`` stores its data under the virtual key, so a config section does not collide
+    with the service selection list in ``services``.
     """
     from opi.forms.editables.service_path import smart_get_value
 
@@ -680,19 +615,16 @@ def _split_data_across_sections(
     for section in flow.sections:
         section_data: dict[str, Any] = {}
         for editable in section.editables:
-            # A readonly visualizer (e.g. the attachments services carrier) never
-            # writes its path; renderers read it from the merged data. Storing a
-            # copy here makes that copy authoritative-but-stale: the by-name union
-            # in merge_service_lists would re-add a service the user deselected
-            # in another section.
+            # A readonly visualizer never writes its path, and renderers read it from the
+            # merged data. A copy here would be authoritative but stale, and the by-name union
+            # in merge_service_lists would re-add a service the user deselected elsewhere.
             if editable.readonly:
                 continue
             ed = editable.editable
             value = smart_get_value(project_data, ed.yaml_path)
             if value is not None:
                 if ed.virtualize:
-                    # Store under virtual key to avoid collisions.
-                    # Extract the service-specific config block.
+                    # Under the virtual key, to avoid a collision with the selection list.
                     virt_key = ed.virtualize[1]
                     parts = ed.yaml_path.split("/")
                     if len(parts) >= 2:
@@ -708,11 +640,6 @@ def _split_data_across_sections(
     return step_data
 
 
-# ---------------------------------------------------------------------------
-# Shared navigation helper
-# ---------------------------------------------------------------------------
-
-
 def _resolve_goto_target(
     goto: str,
     current_section_id: str,
@@ -720,14 +647,8 @@ def _resolve_goto_target(
 ) -> str | None:
     """Resolve a navigation direction to a concrete section_id.
 
-    Args:
-        goto: Direction - "next", "prev", "review", or a section_id.
-        current_section_id: The section the user is currently on.
-        active_section_ids: Ordered list of active section_ids.
-
-    Returns:
-        A section_id to navigate to, "review" for summary, or None if
-        at the end with no review.
+    ``goto`` is "next", "prev", "review" or a section_id. Returns the section_id to navigate to,
+    "review" for the summary, or None when at the end with no review.
     """
     if goto == "review":
         return "review"
@@ -747,11 +668,10 @@ def _resolve_goto_target(
             return active_section_ids[current_idx - 1]
         return active_section_ids[0]  # already at first step
 
-    # Specific section_id (from step indicator jump)
+    # A specific section_id, from a step-indicator jump.
     if goto in active_section_ids:
         return goto
 
-    # Unknown goto - stay on current
     logger.warning("[resolve_goto] unknown goto=%r, staying on %s", goto, current_section_id)
     return current_section_id
 
@@ -762,11 +682,11 @@ async def _navigate_to_step(
     flow_id: str,
     target_section_id: str,
 ) -> HTMLResponse:
-    """Save state and render the target step.
+    """Save the state and render the target step.
 
-    Used by both forward navigation (after validation) and jump/back
-    navigation (skip validation).  Runs validation on load when the
-    target step already has stored data, so errors are shown immediately.
+    Used by forward navigation, after validation, and by jump and back navigation, which skip
+    it. Validates on load when the target step already has stored data, so its errors show at
+    once.
     """
     target_section = _get_section_from_flow(flow_id, target_section_id)
     state.current_step = target_section_id
@@ -781,8 +701,8 @@ async def _navigate_to_step(
     yaml_data = state.get_merged_data()
     edit_mode = state.is_edit
 
-    # Validate on load only for steps the user has explicitly completed (forward-validated).
-    # Steps that merely have saved data from back-navigation should not show errors.
+    # Only a step the user explicitly completed is validated on load; a step that merely has
+    # saved data from back-navigation should show no errors.
     errors: dict[str, list[str]] | None = None
     if target_section_id in state.completed_steps and target_section_id in state.step_data:
         processor = EditableFormProcessor()
@@ -815,24 +735,19 @@ async def _navigate_to_step(
     return response
 
 
-# ---------------------------------------------------------------------------
-# HTMX: load a step (GET)
-# ---------------------------------------------------------------------------
-
-
 @wizard_router.get("/{flow_id}/step/{section_id}", response_class=HTMLResponse)
 @action(Action.WIZARD_USE)
 @requires_sso
 async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse:
-    """Load a wizard step via HTMX or direct browser navigation.
+    """Load a wizard step, over HTMX or by direct browser navigation.
 
-    For HTMX requests, delegates to ``_navigate_to_step`` which validates
-    stored data on load.  For direct browser access, renders the full page.
+    An HTMX request goes through ``_navigate_to_step``, which validates the stored data on
+    load; a direct browser request gets the whole page.
     """
     reject_misfired_form_get(request)
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        # No session - redirect to the wizard start page which will init state
+        # No session: the start page initialises the state.
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
     is_htmx = request.headers.get("HX-Request") == "true"
@@ -840,7 +755,6 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     if is_htmx:
         return await _navigate_to_step(request, state, flow_id, section_id)
 
-    # Direct browser access: return the full page with the step embedded
     section = _get_section_from_flow(flow_id, section_id)
     state.current_step = section_id
     save_wizard_state(request, state)
@@ -848,7 +762,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     yaml_data = state.get_merged_data()
     edit_mode = state.is_edit
 
-    # Validate on load only for completed steps (not just saved from back-navigation)
+    # Only a completed step is validated on load, not one merely saved by back-navigation.
     errors: dict[str, list[str]] | None = None
     if section_id in state.completed_steps and section_id in state.step_data:
         processor = EditableFormProcessor()
@@ -903,52 +817,42 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     )
 
 
-# ---------------------------------------------------------------------------
-# HTMX: validate and advance (POST)
-# ---------------------------------------------------------------------------
-
-
 @wizard_router.post("/{flow_id}/step/{section_id}", response_model=None)
 @action(Action.WIZARD_USE)
 @requires_sso
 async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse | RedirectResponse:
-    """Process form data and navigate to the requested step.
+    """Process the form data and navigate to the requested step.
 
-    Also handles sequence add/remove actions when ``_seq_action`` is present
-    in the form data.
+    Handles the sequence add and remove actions too, when ``_seq_action`` is in the form data.
 
-    Navigation directions (controlled by ``_goto``):
-    - ``"next"`` or empty: validate + advance to next step
-    - ``"prev"``: save without validation + go to previous step
-    - ``"review"``: validate + show summary page
-    - any section_id: save without validation + jump to that step
+    ``_goto`` decides the direction: ``"next"`` or empty validates and advances, ``"prev"``
+    saves without validating and goes back, ``"review"`` validates and shows the summary, and a
+    section_id saves without validating and jumps to that step.
     """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=303)
 
-    # Edit-mode only: fail fast per step instead of stripping data at final
-    # save. Also covers any future step-driven side-effects (e.g. auto-save).
+    # Edit mode only: fail fast per step instead of stripping data at the final save.
     if state.project_name:
         authorize(request, action=Action.PROJECT_EDIT, project_name=state.project_name)
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
 
-    # Parse JSON body (submitted via HTMX json-enc extension)
+    # Submitted through the HTMX json-enc extension.
     body = await request.json()
 
-    # Extract control fields (prefixed with _)
+    # The control fields, prefixed with an underscore.
     seq_action = body.pop("_seq_action", None)
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
     is_rerender = body.pop("_rerender", None) == "1"
     goto = body.pop("_goto", "next")
 
-    # body is now the nested step data
     submitted_data = body
 
-    # Check for sequence add/remove action - handle before normal validation
+    # A sequence add or remove comes before the normal validation.
     if seq_action in ("add", "remove"):
         return await _handle_sequence_action(
             request,
@@ -965,11 +869,10 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     yaml_data = state.get_merged_data()
     edit_mode = state.is_edit
 
-    # Build enforcer context with out-of-scope metadata
     enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
 
-    # Re-render only (preview update) — process submission but skip validation
-    # to prevent spurious "required" errors on newly-visible fields with defaults.
+    # Re-render only, for a preview update: process the submission but skip validation, so a
+    # newly visible field with a default shows no spurious "required".
     if is_rerender:
         submitted_yaml, _errors = await processor.process_json_submission(
             submitted_data,
@@ -996,7 +899,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         context = _build_step_context(request, flow_id, section, step_html)
         return _step_response(request, context)
 
-    # Process the nested JSON: validate, convert, and write to yaml in one pass.
+    # Validate, convert and write to yaml in one pass.
     submitted_yaml, errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
@@ -1005,7 +908,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         enforcer_context=enforcer_context,
     )
 
-    # CENTRALIZED VALIDATION LOGGING - field-level validation
     if errors:
         logger.warning(
             "[%s validation FAILED] field-level errors: %s",
@@ -1015,23 +917,18 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     else:
         logger.info("[%s validation PASSED] field-level validation ok", section_id)
 
-    # --- Resolve navigation direction ---
     is_forward = goto in ("next", "review")
     logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
-    # Verzoen de meegestuurde dienstselectie met de basis: wat het formulier niet aanbood
-    # kan de gebruiker niet hebben uitgevinkt, en een vereiste dienst vult de server aan.
-    # Beide regels wonen in apply_services_mutation, en beide flows lopen er doorheen -- de
-    # aanleiding is dat deze regel eerst aan de sectienaam "services" hing en de bewerk-flow
-    # "services-edit" heet, dus daar liep hij nooit.
+    # Reconcile the submitted service selection with the base: what the form did not offer
+    # cannot have been unticked, and the server fills in a required service. Both rules live in
+    # apply_services_mutation, and both flows run through it.
     apply_services_mutation(section.editables, yaml_data, submitted_yaml)
     apply_component_services_mutation(section.editables, yaml_data, submitted_yaml)
 
-    # Forward navigation (Next / Review): block on field-level validation errors
+    # Forward navigation blocks on a field-level validation error.
     if is_forward and errors:
-        # Een fout op een pad dat deze stap niet tekent gaat naar de algemene balk. De
-        # vormtoets die hier stond zag niet welke paden een veld hebben: hij hield
-        # "deployments[0]" wel tegen en een virtueel dienstpad zonder veld niet.
+        # An error on a path this step draws no field for goes to the general bar.
         group_errors = _create_renderer().take_unrendered_errors(
             section.editables, submitted_yaml, errors, edit_mode=edit_mode
         )
@@ -1055,13 +952,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         )
         return _step_response(request, context)
 
-    # Forward navigation: run section-level enforcer for cross-field validation
+    # The section-level enforcer, for cross-field validation.
     if is_forward and section.enforcer:
         global_errors = await processor.enforce_sections(
             submitted_yaml, [section], enforcer_context, field_errors=errors, field_warnings=processor.field_warnings
         )
 
-        # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
         if global_errors:
             logger.warning(
                 "[%s validation FAILED] section-level (enforcer) errors: %s",
@@ -1089,37 +985,24 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         else:
             logger.info("[%s validation PASSED] section-level (enforcer) validation ok", section_id)
 
-    # Store converted YAML-format data for this section
     section_data = _extract_section_data(section.editables, submitted_yaml)
     state.store_step_data(section_id, section_data)
 
-    # Run the section's post_merge reconciler against the merged view and
-    # persist affected data back into step_data. The services step uses this to
-    # drop component-level service config when a project service is deselected;
-    # without persisting it here the components step would render stale config
-    # blocks until it was itself re-submitted (one navigation late).
+    # The section's post_merge reconciler, against the merged view, with the affected data
+    # persisted back into step_data. The services step uses this to drop component-level
+    # service config when a project service is deselected; without persisting it here the
+    # components step renders stale config blocks until it is re-submitted itself.
     if section.post_merge is not None:
         section.post_merge(submitted_yaml, submitted_yaml)
 
-        # DE EIGEN SECTIE OOK OPNIEUW BEWAREN, en dat is waar het misging.
-        #
-        # De stapgegevens hierboven zijn bewaard VOORDAT deze hook draaide, en daarna werd
-        # alleen ``components`` opnieuw bewaard. Een hook die zijn EIGEN sectie aanvult
-        # schreef daarmee in het lucht: de aanvulling stond in de samengevoegde weergave,
-        # maar niet in de wizardstand, en die stand is wat er aan het eind opgeslagen wordt.
-        #
-        # Zichtbaar geworden bij de uitnodigingen. Het sleutelveld mag leeg blijven en
-        # wordt dan gevuld met een gegenereerde sleutel (InviteService.generate_missing_values,
-        # aangehangen als post_merge). Die sleutel haalde de wizardstand nooit, dus aan het
-        # eind stond er een uitnodiging zonder ``key`` in het bestand, en ``InviteEntry.key``
-        # is verplicht. De wizard eindigde met "Failed Git operations: configuratie van
-        # service 'invite' op projectniveau is ongeldig: Field required", en omdat het
-        # opslaan de laatste stap is, was de hele sessie weg.
+        # The OWN section has to be stored again as well. The step data above was stored
+        # BEFORE this hook ran, so a hook that fills in its OWN section would otherwise write
+        # into the void: the addition would stand in the merged view but not in the wizard
+        # state, and that state is what gets saved at the end.
         state.store_step_data(section_id, _extract_section_data(section.editables, submitted_yaml))
         if "components" in submitted_yaml:
             state.store_step_data("components", {"components": submitted_yaml["components"]})
 
-    # CENTRALIZED LOGGING - navigation decision point
     logger.info(
         "[%s] All validations passed. Forward navigation: is_forward=%s, goto=%r",
         section_id,
@@ -1129,32 +1012,28 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     if is_forward:
         state.mark_completed(section_id)
 
-    # Re-resolve active sections (services step may add/remove conditional steps)
+    # Re-resolve the active sections: the services step can add or remove conditional steps.
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
     state.stash_inactive_sections(active_section_ids)
 
-    # --- Resolve target step ---
     target_section_id = _resolve_goto_target(goto, section_id, active_section_ids)
     logger.info("[submit_step %s] resolved target=%s", section_id, target_section_id)
 
-    # Review page
     if target_section_id == "review":
-        # De sprong "Naar samenvatting" mag stappen overslaan, maar geen verplichte
-        # waarde: valideer de HELE flow zoals de eindinzending dat doet, en land bij
-        # fouten op de eerste stap die nog iets mist (een net aangevinkte service
-        # met een lege verplichte config voorop).
+        # The jump to the summary may skip steps but no required value: validate the WHOLE flow
+        # as the final submission does, and land on the first step that misses something.
         validation = await _validate_whole_flow(request, flow_id, state)
         if validation.error_response is not None:
             return validation.error_response
-        # De overgeslagen stappen zijn zojuist gevalideerd; zonder dit vinkje zou de
-        # stapindicator op de samenvatting ze als onafgemaakt tonen.
+        # The skipped steps were just validated; without this the step indicator on the
+        # summary would show them as unfinished.
         for validated in validation.active_sections:
             state.mark_completed(validated.section_id)
         save_wizard_state(request, state)
         return await _render_review(request, flow_id)
 
-    # Submit (last step, no review)
+    # The last step, with no review: submit.
     if target_section_id is None:
         save_wizard_state(request, state)
         if flow.show_review:
@@ -1162,11 +1041,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         return await _do_submit(request, flow_id)
 
     return await _navigate_to_step(request, state, flow_id, target_section_id)
-
-
-# ---------------------------------------------------------------------------
-# HTMX: apply a preset to the current step
-# ---------------------------------------------------------------------------
 
 
 @wizard_router.post("/{flow_id}/preset/{section_id}/{preset_id}", response_model=None)
@@ -1198,12 +1072,10 @@ async def toggle_preset(
     else:
         _apply_preset(preset, yaml_data)
 
-    # Store updated data back into wizard state
     section_data = _extract_section_data(section.editables, yaml_data)
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
 
-    # Re-render the section with the new values
     step_html = _render_step_html(
         request,
         section,
@@ -1262,10 +1134,8 @@ def _list_remove_item(items: list[Any], candidate: Any) -> None:
 
 
 def _list_contains_item(items: list[Any], candidate: Any) -> bool:
-    """Check if a list already contains a matching item.
-
-    For dicts: matches by ``name`` key (e.g. additional-clients).
-    For scalars: uses equality.
+    """Whether a list already contains a matching item: by ``name`` for a dict, by equality
+    for a scalar.
     """
     if isinstance(candidate, dict):
         name = candidate.get("name")
@@ -1274,15 +1144,11 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
     return candidate in items
 
 
-# ---------------------------------------------------------------------------
-# Service help modal
-# ---------------------------------------------------------------------------
+#: The files a service package may supply as its explanation.
+HELP_FILE_NAMES = ("help.md", "guide.md", "help.html.j2")
 
-#: De bestanden die een dienstpakket als uitleg mag aanleveren.
-HELP_BESTANDSNAMEN = ("help.md", "guide.md", "help.html.j2")
-
-#: De vorm van een helpverwijzing: geen ``.`` in de mapnaam, dus geen pad naar buiten.
-HELP_TEMPLATE_VORM = re.compile(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9_-]+\.(?:html\.j2|md)")
+#: The shape of a help reference: no ``.`` in the directory name, so no path out of the tree.
+HELP_TEMPLATE_PATTERN = re.compile(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9_-]+\.(?:html\.j2|md)")
 
 
 @wizard_router.get("/help/{template_name:path}", response_model=None)
@@ -1293,25 +1159,23 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
 
     Three shapes are accepted:
 
-    * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
-      it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
-      API client read one source (RC-59). It is turned into the components the
-      modal always showed, with the icon taken from the service definition. A service's
-      ``guide.md`` (the ``guide`` field of that same endpoint) travels this route too.
-    * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
-      Jinja loader for any help that has not been converted.
-    * ``<name>.html.j2`` -- a help text that belongs to no single service (the
-      container-image note), still under ``templates/help/``.
+    * ``<service-package>/help.md``: a service's own explanation. It is markdown, and the same
+      file ``GET /api/v2/services/{name}`` returns, so the portal and an API client read one
+      source. A service's ``guide.md`` travels this route too.
+    * ``<service-package>/help.html.j2``: the older Jinja form, still resolved by the Jinja
+      loader for any help that has not been converted.
+    * ``<name>.html.j2``: a help text that belongs to no single service, under
+      ``templates/help/``.
 
-    De bestandsnaam is een vaste lijst: Jinja kent elke template en zou zonder die
-    controle ook beheerschermen renderen.
+    The file name is checked against a fixed list: Jinja knows every template, and without that
+    check this route would render the admin screens too.
     """
-    if not HELP_TEMPLATE_VORM.fullmatch(template_name):
+    if not HELP_TEMPLATE_PATTERN.fullmatch(template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
 
-    dienstmap, _, bestandsnaam = template_name.rpartition("/")
-    hoort_hier = bestandsnaam in HELP_BESTANDSNAMEN if dienstmap else bestandsnaam.endswith(".html.j2")
-    if not hoort_hier:
+    service_dir, _, file_name = template_name.rpartition("/")
+    belongs_here = file_name in HELP_FILE_NAMES if service_dir else file_name.endswith(".html.j2")
+    if not belongs_here:
         raise HTTPException(status_code=404, detail="Help template not found")
 
     if is_markdown_help(template_name):
@@ -1319,9 +1183,9 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
             markup = render_service_help(template_name)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Help template not found") from None
-        # htmx laadt dit in een dialoog en wil het kale fragment; een browser die de URL
-        # rechtstreeks opent krijgt datzelfde fragment ZONDER <head>, dus zonder stylesheets
-        # en zonder marges. Vandaar de splitsing: dezelfde inhoud, twee omhulsels.
+        # htmx loads this in a dialog and wants the bare fragment; a browser opening the URL
+        # directly would get that same fragment WITHOUT a <head>, so without stylesheets.
+        # Hence the split: the same content, two wrappers.
         if request.headers.get("HX-Request"):
             return HTMLResponse(markup)
         from opi.http.render.navigation_lotc import get_menu_items, get_navigation
@@ -1349,11 +1213,6 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="Help template not found") from None
 
 
-# ---------------------------------------------------------------------------
-# Sequence item add / remove
-# ---------------------------------------------------------------------------
-
-
 async def _handle_sequence_action(
     request: Request,
     flow_id: str,
@@ -1367,8 +1226,8 @@ async def _handle_sequence_action(
 ) -> HTMLResponse | RedirectResponse:
     """Add or remove a sequence item and re-render the current step.
 
-    This preserves all current field values by parsing the submitted JSON data,
-    modifying the target sequence, and re-rendering.
+    Keeps every current field value by parsing the submitted JSON, changing the target
+    sequence, and rendering again.
     """
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
 
@@ -1376,7 +1235,6 @@ async def _handle_sequence_action(
     if not state:
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=303)
 
-    # Process the submitted JSON to get current yaml with correct values/counts
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
     edit_mode = state.is_edit
@@ -1413,7 +1271,6 @@ async def _handle_sequence_action(
 
     smart_set_value(yaml_data, data_path, items)
 
-    # Persist the updated data
     section_data = _extract_section_data(section.editables, yaml_data)
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
@@ -1424,11 +1281,10 @@ async def _handle_sequence_action(
 
 
 def _prune_empty_dicts(data: Any) -> None:
-    """Recursively remove empty dict values from nested data structures.
+    """Remove empty dict values from nested data, recursively.
 
-    After field removal (e.g. restrict-access/enabled deleted via
-    remove_when_none), empty parent dicts like ``restrict-access: {}``
-    may remain.  This cleans them up so the YAML output stays tidy.
+    After a field removal through ``remove_when_none``, an empty parent dict can remain; this
+    keeps the YAML output tidy.
     """
     if isinstance(data, dict):
         for key in list(data.keys()):
@@ -1443,38 +1299,31 @@ def _prune_empty_dicts(data: Any) -> None:
 def _assemble_deployment(final_data: dict[str, Any]) -> None:
     """Assemble the full deployment structure for create mode.
 
-    The wizard stores domain config under ``deployments[0]`` and components
-    separately. This function merges them into the deployment YAML format
-    that the project manager expects:
+    The wizard stores the domain config under ``deployments[0]`` and the components separately;
+    this merges them into the deployment YAML the project manager expects, setting ``name``,
+    ``cluster``, ``namespace`` and ``repository`` and building the ``components`` array.
 
-    - Sets ``name``, ``cluster``, ``namespace``, ``repository``
-    - Builds ``components`` array from component names
-
-    The root component is carried as deployment-level ``root-component`` and is
-    left untouched here (it is set during the domain step).
+    The deployment-level ``root-component`` is set during the domain step and is left untouched.
     """
     deployments = final_data.get("deployments", [{}])
     deployment = deployments[0] if deployments else {}
 
-    # Set deployment identity
     deployment.setdefault("name", "productie")
 
-    # Set cluster from identity step
     clusters = final_data.get("clusters", [])
     if isinstance(clusters, list) and clusters:
         deployment["cluster"] = clusters[0]
     elif isinstance(clusters, str):
         deployment["cluster"] = clusters
 
-    # Set namespace to project name - ProjectManager's get_prefixed_namespace()
-    # adds the cluster-specific prefix (e.g. "rig-") at deployment time.
+    # The namespace is the project name; ProjectManager's get_prefixed_namespace() adds the
+    # cluster-specific prefix at deployment time.
     project_name = final_data.get("name", "")
     if project_name:
         deployment["namespace"] = project_name
 
     deployment.setdefault("repository", "main-repo")
 
-    # Build deployment components from project components
     components = final_data.get("components", [])
 
     dep_components: list[dict[str, Any]] = []
@@ -1498,20 +1347,15 @@ def _find_sequence_editable(
 ) -> Any | None:
     """Find the editable definition for a sequence at *path*.
 
-    Handles both top-level sequences (exact match) and nested sequences
-    where ``[*]`` in the template path matches concrete ``[N]`` indices.
-    Searches recursively through all children.
+    Handles a top-level sequence by exact match and a nested one where ``[*]`` in the template
+    path matches a concrete ``[N]`` index, searching recursively through the children.
     """
     import re
 
     def _candidate_paths(ed: Any) -> list[str]:
-        # The rendered sequence path uses the virtualized service-config key,
-        # while the editable carries the real key. Rewrite with the SAME helper
-        # the renderer uses (apply_virtualize) so both the brace form
-        # (``services{attachments}`` -> ``_services-config{attachments}``) and the
-        # segment form (``services/keycloak/...`` -> ``_services-config/keycloak/...``)
-        # match. A hand-rolled brace-only replace silently missed the segment form,
-        # so e.g. the keycloak "add client" button no-op'd.
+        # The rendered sequence path uses the virtualized service-config key while the editable
+        # carries the real key, so rewrite with the SAME helper the renderer uses: a brace-only
+        # replace of its own misses the segment form silently.
         from opi.forms.editables.editable import apply_virtualize
 
         paths = [ed.yaml_path]
@@ -1525,12 +1369,11 @@ def _find_sequence_editable(
         for candidate in _candidate_paths(ed):
             if candidate == path:
                 return editable
-            # Check if the template path (with [*]) matches the concrete path (with [N])
+            # Does the template path, with [*], match the concrete path, with [N]?
             if str(editable.widget) == "sequence":
                 pattern = re.escape(candidate).replace(r"\[\*\]", r"\[\d+\]")
                 if re.fullmatch(pattern, path):
                     return editable
-        # Recurse into children
         if editable.children:
             for child in editable.children:
                 result = _match(child)
@@ -1546,13 +1389,11 @@ def _find_sequence_editable(
 
 
 def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any:
-    """Return the right empty item for a sequence.
+    """The right empty item for a sequence.
 
-    For simple sequences (single non-sequence child) returns ``""``.
-    For complex sequences returns a dict, populated with any ``default``
-    values declared on the child editables.  Nested sequence children
-    are seeded with ``min_items`` empty entries so the renderer and
-    processor can find them.
+    ``""`` for a simple sequence with a single non-sequence child; for a complex one a dict
+    with the ``default`` values the child editables declare. A nested sequence child is seeded
+    with ``min_items`` empty entries, so the renderer and the processor can find them.
     """
     if not editable or not editable.children:
         return ""
@@ -1560,21 +1401,20 @@ def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any
     if not has_complex:
         return ""
 
-    # Use the framework's own path writer so {K} dict-key filters materialise into
-    # lists. The previous hand-walker stripped/ignored {K} and wrote literal keys like
-    # "services{metrics-scraper}", which additionalProperties:false rejects (it broke
-    # the modal add-component flow for any component with services).
+    # The framework's own path writer, so a {K} dict-key filter materialises into a list. A
+    # hand-walker that ignores {K} writes a literal key like "services{metrics-scraper}", which
+    # ``additionalProperties: false`` rejects.
     from opi.forms.editables.path import set_value
 
     seq_path = editable.editable.yaml_path
 
     def _relative(child_path: str) -> str:
-        # Path relative to the sequence item: drop the "{seq_path}[*]/" prefix (the
-        # item's own index) but KEEP the {K}/[N] filter segments so set_value
-        # materialises them into lists. Any residual wildcard becomes the first entry.
+        # Relative to the sequence item: drop the item's own index prefix but KEEP the {K} and
+        # [N] filter segments, so set_value materialises them into lists. A residual wildcard
+        # becomes the first entry.
         rest = child_path.removeprefix(seq_path)
         if "/" in rest:
-            rest = rest.split("/", 1)[1]  # drop the leading "[*]"/"[N]" index segment
+            rest = rest.split("/", 1)[1]
         return rest.replace("[*]", "[0]")
 
     item: dict[str, Any] = {}
@@ -1584,14 +1424,12 @@ def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any
         if not rel:
             continue
         if _is_service_config_child(rel):
-            # A service's config default (tls, metrics port, storage mount) belongs to a
-            # service the item HAS. Seeding it materialises that service into the item's
-            # services list, which both picks services the user never chose and -- because
-            # the list is then no longer unset -- suppresses the "select all project
-            # services" default a new component is supposed to start with.
+            # A service's config default belongs to a service the item HAS. Seeding it would
+            # materialise that service into the item's services list, which picks a service the
+            # user never chose and, the list no longer being unset, suppresses the "select all
+            # project services" default a new component starts with.
             continue
         if str(child.widget) == "sequence" and child_ed.min_items:
-            # Seed nested sequences with min_items empty entries
             set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
             # A callable default derives its value from the project, like the processor does.
@@ -1604,11 +1442,6 @@ def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any
 def _is_service_config_child(relative_path: str) -> bool:
     """Whether a sequence child's path targets a service's config (``services{X}/...``)."""
     return relative_path.startswith("services{")
-
-
-# ---------------------------------------------------------------------------
-# HTMX: review page
-# ---------------------------------------------------------------------------
 
 
 @wizard_router.get("/{flow_id}/review", response_model=None)
@@ -1638,7 +1471,6 @@ async def _render_review(
     steps = state.get_steps(section_meta)
     user = get_current_user(request)
 
-    # Build per-section summaries
     yaml_data = state.get_merged_data()
     section_summaries = []
     for section in active_sections:
@@ -1671,48 +1503,40 @@ def _extract_section_data(
     editables: list[Any],
     submitted_yaml: dict[str, Any],
 ) -> dict[str, Any]:
-    """Extract section data, keeping only fields owned by this section's editables.
+    """Extract the section data, keeping only the fields this section's editables own.
 
-    For simple top-level keys (e.g. ``components``, ``services``) this copies
-    the entire value - same as before.
+    A simple top-level key copies its whole value. For an indexed path into a shared list, the
+    list items are pruned to the fields this section's editables define, so one section cannot
+    capture, and later overwrite, another section's fields in the shallow merge in
+    ``get_merged_data()``.
 
-    For indexed paths into a shared list (e.g. ``deployments[0]/name`` vs
-    ``deployments[0]/domain-format``), the list items are pruned to only
-    include fields that this section's editables define.  This prevents
-    one section from capturing (and later overwriting) another section's
-    fields during the shallow merge in ``get_merged_data()``.
-
-    When an editable uses ``virtualize``, the data is read from the real
-    top-level key in *submitted_yaml* but stored under the virtual key in
-    the result.  This avoids collisions between e.g. service selection
-    (``services``) and per-service config (``_services-config``).
+    An editable with ``virtualize`` is read from the real top-level key in *submitted_yaml* but
+    stored under the virtual key, which keeps the service selection and the per-service config
+    apart.
     """
     import copy
 
-    # Collect which top-level keys this section uses, and for indexed list
-    # paths, which sub-fields it owns (e.g. deployments -> {name}).
     from opi.forms.editables.service_path import is_service_config_path, parse_service_path
     from opi.services.services import service_entry_name
 
     section_keys: set[str] = set()
-    indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
-    owned_services: dict[str, set[str]] = {}  # top_key -> service names this section configures
-    # De config-velden die deze sectie zelf schrijft, als volledige yaml_paths. Die krijgen
-    # een grafsteen als de inzending ze niet draagt - zie _tombstone_service_config.
+    indexed_fields: dict[str, set[str]] = {}  # top_key -> the owned field names
+    owned_services: dict[str, set[str]] = {}  # top_key -> the services this section configures
+    #: The config fields this section writes itself, as full yaml_paths. They get a tombstone
+    #: when the submission does not carry them; see _tombstone_service_config.
     service_config_leaves: list[str] = []
     # top_key -> field name -> service names, for a service list INSIDE an indexed item
     indexed_services: dict[str, dict[str, set[str]]] = {}
-    # top_key -> plain per-item fields the section renders WHOLE (an editable sits at
-    # ``components[0]/services`` itself, not only at ``services{X}/...``). For such a
-    # field the submission IS the selection, so pruning it to this section's configured
-    # services would throw away what the user just ticked.
+    # top_key -> the plain per-item fields the section renders WHOLE. For such a field the
+    # submission IS the selection, so pruning it to this section's configured services would
+    # throw away what the user just ticked.
     selection_fields: dict[str, set[str]] = {}
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
     def _collect_leaf_paths(vis_list: list[Any]) -> None:
         for vis in vis_list:
-            # Groups are transparent - collect their children's paths
+            # A group is transparent: collect the paths of its children.
             if vis.children and str(vis.widget) == "group":
                 _collect_leaf_paths(vis.children)
                 continue
@@ -1726,16 +1550,15 @@ def _extract_section_data(
             if ed.virtualize:
                 virt_mapping[ed.virtualize[0]] = ed.virtualize[1]
 
-            # Which service's config this section actually writes. Without this a section
+            # Which service's config this section actually writes. Without this, a section
             # that configures ONE service copies the WHOLE services list, other services'
-            # config included, and then overwrites theirs on the merge because it happens
-            # to come later in the section order. Measured: the invite step carried a stale
-            # copy of the keycloak template and won over the keycloak step itself.
+            # config included, and overwrites theirs on the merge because it comes later in
+            # the section order.
             if is_service_config_path(ed.yaml_path):
                 owned_services.setdefault(top_key, set()).add(parse_service_path(ed.yaml_path)[0])
-                # Alleen losse velden. Een SEQUENCE draagt zijn eigen items en beslist
-                # zelf wat leeg betekent; die een grafsteen geven zou een lijst wissen die
-                # deze stap alleen maar niet toonde.
+                # Plain fields only. A SEQUENCE carries its own items and decides for itself
+                # what empty means, so a tombstone there would wipe a list this step merely
+                # did not show.
                 if (
                     parse_service_path(ed.yaml_path)[1] is not None
                     and "[*]" not in ed.yaml_path
@@ -1744,15 +1567,13 @@ def _extract_section_data(
                     service_config_leaves.append(ed.yaml_path)
 
             if "[" in top and len(parts) >= 2:
-                # e.g. deployments[0]/base-domain -> owns "base-domain"
                 field_name = parts[1].split("[")[0].split("{")[0]
                 indexed_fields.setdefault(top_key, set()).add(field_name)
-                # A field addressed through a service filter (deployments[0]/services{X}/...)
-                # is a service LIST inside the item, not a plain field. Recording only
-                # "services" would make the section replace the whole list and take other
-                # services' deployment config (clone state, cross-domain patches) with it,
-                # so remember WHICH service it configures -- the per-item counterpart of
-                # ``owned_services`` (RC-60).
+                # A field addressed through a service filter is a service LIST inside the item
+                # and not a plain field. Recording only the field name would make the section
+                # replace the whole list and take other services' deployment config with it,
+                # so remember WHICH service it configures: the per-item counterpart of
+                # ``owned_services``.
                 if "{" in parts[1]:
                     service = parts[1].split("{", 1)[1].split("}", 1)[0]
                     indexed_services.setdefault(top_key, {}).setdefault(field_name, set()).add(service)
@@ -1770,10 +1591,10 @@ def _extract_section_data(
         store_key = virt_mapping.get(key, key)
 
         if key in indexed_fields and isinstance(value, list):
-            # Prune list items to only owned fields. Owned fields that are
-            # absent (cleared via remove_when_none) get a tombstone so the
-            # additive merge in get_merged_data() deletes the old value
-            # instead of resurrecting it from the template snapshot.
+            # Prune the list items to the owned fields. An owned field that is absent, cleared
+            # through remove_when_none, gets a tombstone, so the additive merge in
+            # get_merged_data() deletes the old value instead of resurrecting it from the
+            # template snapshot.
             owned = indexed_fields[key]
             per_item_services = indexed_services.get(key, {})
             pruned = []
@@ -1782,16 +1603,14 @@ def _extract_section_data(
                     pruned_item = {k: copy.deepcopy(v) for k, v in item.items() if k in owned}
                     for field_name, services in per_item_services.items():
                         # Keep only this section's own service entries, and never tombstone
-                        # the list: an item without them simply says nothing about it.
+                        # the list: an item without them says nothing about it.
                         #
-                        # UNLESS the section renders the whole selection (the component
-                        # form's services checklist): then the submitted list IS the
-                        # user's decision and every ticked name must survive. "The merge
-                        # restores the rest from base" only holds for what already stood
-                        # there -- a newly ticked service exists in no other copy, so
-                        # pruning it here erased the user's add (the send-email bug).
-                        # Foreign config dicts are still demoted to their bare name: the
-                        # selection is this section's, another service's config is not.
+                        # UNLESS the section renders the whole selection, as the component
+                        # form's services checklist does: then the submitted list IS the user's
+                        # decision and every ticked name has to survive, because a newly ticked
+                        # service exists in no other copy. A foreign config dict is still
+                        # demoted to its bare name: the selection is this section's, another
+                        # service's config is not.
                         entries = pruned_item.get(field_name)
                         if isinstance(entries, list):
                             if field_name in selection_fields.get(key, set()):
@@ -1816,10 +1635,9 @@ def _extract_section_data(
                     pruned.append(copy.deepcopy(item))
             result[store_key] = pruned
         elif key in owned_services and isinstance(value, list):
-            # Same reasoning as the indexed pruning above, one level up: keep only the
-            # services this section configures. A bare string entry (a chosen service
-            # without config) stays, because that is the selection and not someone
-            # else's config.
+            # The same reasoning as the indexed pruning above, one level up: keep only the
+            # services this section configures. A bare string entry stays, because that is the
+            # selection and not someone else's config.
             keep = owned_services[key]
             result[store_key] = [
                 copy.deepcopy(entry)
@@ -1839,31 +1657,20 @@ def _tombstone_service_config(
     leaves: list[str],
     virt_mapping: dict[str, str],
 ) -> None:
-    """Markeer config-velden die deze sectie schrijft maar die de inzending niet draagt.
+    """Mark the config fields this section writes that the submission does not carry.
 
-    Dezelfde regel als bij de indexlijsten hierboven, voor de tak die hem miste. De
-    stapfragmenten worden ADDITIEF over de basis gemerget (``get_merged_data``, en voor
-    diensten met ``merge_service_lists`` die de config deep-merget), dus een sleutel die
-    er simpelweg NIET is kan de oude waarde niet verwijderen. Hij komt gewoon terug.
+    The same rule as for the indexed lists above. The step fragments are merged ADDITIVELY over
+    the base, so a key that is simply NOT there cannot delete the old value: it comes back. A
+    tombstone does say what absence means: ``get_merged_data`` removes the key after merging,
+    and ``apply_write_paths`` removes it from the project file at save.
 
-    Dat is de tweede helft van "aanvinken lukt, uitvinken niet": zodra de browser bij het
-    uitvinken niets meer meestuurt (RC-71, static/js/form-associated.js), haalt de
-    verwerker het veld netjes uit zijn resultaat - en daarna zette de merge het uit de
-    basis terug. Een grafsteen zegt wel wat afwezigheid betekent: ``get_merged_data``
-    haalt de sleutel na het mergen weg, en bij het opslaan verwijdert
-    ``apply_write_paths`` hem uit het projectbestand.
+    Only a field the processor REALLY emptied gets one. What it skipped, readonly or hidden by
+    ``show_when``, still stands in ``submitted_yaml``, which is a copy of the project data.
 
-    Alleen velden die de verwerker ECHT heeft leeggemaakt krijgen er een. Wat hij oversloeg
-    (readonly, of verborgen door ``show_when``) staat nog gewoon in ``submitted_yaml``,
-    want dat is een kopie van de projectgegevens - dus daar gebeurt hier niets.
-
-    De grafsteen gaat op het DIEPSTE niveau dat er nog is, niet blind op het veldpad. Een
-    veldpad dat een tussenlaag mist (``restrict-access`` is met zijn laatste sleutel
-    meegeprund, of stond er nooit) zou anders die tussenlaag aanmaken, en dan levert
-    opslaan een leeg ``restrict-access: {}`` in het projectbestand op - een wijziging die
-    de gebruiker niet maakte. Ontbreekt de tussenlaag, dan is DIE de grafsteen: het hele
-    onderdeel is weg, en een sleutel die er nooit was verdwijnt bij het strippen zonder
-    iets achter te laten.
+    The tombstone goes on the DEEPEST level that still exists and not blindly on the field
+    path: a field path that misses an intermediate level would otherwise create that level, and
+    saving would then put an empty block in the project file, a change the user did not make.
+    When the intermediate level is missing, THAT is the tombstone.
     """
     for yaml_path in leaves:
         if smart_get_value(submitted_yaml, yaml_path) is not None:
@@ -1873,52 +1680,52 @@ def _tombstone_service_config(
         entries = result.get(store_key)
         if not isinstance(entries, list):
             continue
-        # Alleen voor een dienst die deze sectie ook echt draagt: een grafsteen mag geen
-        # dienstvermelding aanmaken die er niet was.
+        # Only for a service this section really carries: a tombstone may not create a
+        # service entry that was not there.
         if find_service_in_list(entries, parse_service_path(yaml_path)[0])[0] == -1:
             continue
-        doelpad = _diepste_bestaande_pad(result, store_key + yaml_path[len(top_key) :])
-        if doelpad is not None:
-            smart_set_value(result, doelpad, CLEARED_FIELD)
+        target_path = _deepest_existing_path(result, store_key + yaml_path[len(top_key) :])
+        if target_path is not None:
+            smart_set_value(result, target_path, CLEARED_FIELD)
 
 
-def _diepste_bestaande_pad(result: dict[str, Any], pad: str) -> str | None:
-    """Het pad waarop de grafsteen mag: het eerste stuk dat in *result* ontbreekt.
+def _deepest_existing_path(result: dict[str, Any], path: str) -> str | None:
+    """The path the tombstone may go on: the first piece that is missing from *result*.
 
-    Nooit boven ``<dienst>/config``: dat is de config van de dienst als geheel, en die
-    weggooien is een andere beslissing dan een veld leegmaken. Ontbreekt ``config`` zelf,
-    dan valt er niets te wissen en geeft dit None terug.
+    Never above ``<service>/config``: that is the config of the service as a whole, and
+    throwing that away is a different decision from emptying a field. When ``config`` itself is
+    missing there is nothing to erase, and this returns None.
     """
-    segments = pad.split("/")
+    segments = path.split("/")
     try:
-        eerste = segments.index("config") + 1
+        first = segments.index("config") + 1
     except ValueError:
         return None
-    if smart_get_value(result, "/".join(segments[:eerste])) is None:
+    if smart_get_value(result, "/".join(segments[:first])) is None:
         return None
-    for i in range(eerste, len(segments)):
-        deelpad = "/".join(segments[: i + 1])
-        waarde = smart_get_value(result, deelpad)
-        if waarde == CLEARED_FIELD:
-            # Een veld hoger is al als geheel weggestreept; er dieper in schrijven zou die
-            # grafsteen juist weer overschrijven met een gedeeltelijke.
+    for i in range(first, len(segments)):
+        partial_path = "/".join(segments[: i + 1])
+        value = smart_get_value(result, partial_path)
+        if value == CLEARED_FIELD:
+            # A level above is already struck out whole; writing deeper in would overwrite
+            # that tombstone with a partial one.
             return None
-        if waarde is None:
-            return deelpad
-    return pad
+        if value is None:
+            return partial_path
+    return path
 
 
 def _summary_text(text: Any) -> str:
     """Escape a piece of text that goes into summary HTML.
 
-    The functions below build an HTML string that ``wizard_review.html.j2`` renders
-    with ``| safe``, so nothing here is escaped for us. Every label and value that
-    ends up between the tags goes through this first -- values because they are
-    whatever someone typed into the form, labels because escaping a constant costs
-    nothing and a label that stops being a constant is then already covered.
+    The functions below build an HTML string that ``wizard_review.html.j2`` renders with
+    ``| safe``, so nothing here is escaped for us. Every label and value that ends up between
+    the tags goes through this first: values because they are whatever someone typed into the
+    form, labels because escaping a constant costs nothing and a label that stops being a
+    constant is then already covered.
 
-    Not for the nested fragments (a sequence summary, a joined list of <dt>/<dd>
-    pairs): those are HTML this module built and escaping them would print tags.
+    Not for the nested fragments, a sequence summary or a joined list of pairs: those are HTML
+    this module built, and escaping them would print tags.
     """
     return html.escape(str(text))
 
@@ -1930,15 +1737,15 @@ def _summary_pairs_html(items: list[tuple[str, str]]) -> str:
 
 
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
-    """Build an HTML summary for a section's data.
+    """Build an HTML summary of a section's data.
 
-    Handles all editable types including sequences, select fields (with
-    provider label resolution), checkbox groups, and key-value editors.
+    Handles every editable type: sequences, select fields with provider label resolution,
+    checkbox groups and key-value editors.
     """
     if section.summary_fn:
-        # A summary_fn returns (label, value) pairs, not HTML: the markup and the
-        # escaping are built here, so a section that summarizes itself lands in the
-        # same gate as every other field.
+        # A summary_fn returns (label, value) pairs and not HTML: the markup and the escaping
+        # are built here, so a section that summarizes itself lands in the same gate as every
+        # other field.
         return _summary_pairs_html(section.summary_fn(yaml_data))
 
     from opi.forms.editables.service_path import smart_get_value
@@ -1947,12 +1754,10 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
 
     def _collect_summary(vis_list: list[Any]) -> None:
         for editable in vis_list:
-            # Een VERBORGEN veld heeft de gebruiker nooit ingevuld, dus het hoort nooit in
-            # een samenvatting. Het gaat om dragers: de bijlagensectie draagt bijvoorbeeld
-            # de hele dienstenlijst mee zodat het uploadscherm weet welke diensten aanstaan
-            # (zie AttachmentsService.config_form_section). Die belandde hier als een rauwe
-            # Python-dump in beeld, inclusief de AGE-blokken van het realm-wachtwoord en de
-            # OTP. Versleuteld, maar het hoort niet op het scherm van een samenvatting.
+            # A HIDDEN field was never filled in by the user, so it never belongs in a
+            # summary. These are carriers: the attachments section carries the whole service
+            # list so the upload screen knows which services are on, and that landed here as a
+            # raw Python dump, AGE blocks included.
             if str(editable.widget) == "hidden":
                 continue
             if str(editable.widget) == "group":
@@ -1974,14 +1779,11 @@ def _build_section_fields(
     section: FormSection,
     yaml_data: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Build structured field data for a section (template renders the HTML).
+    """Build structured field data for a section; the template renders the HTML.
 
-    Returns a list of field dicts, each with:
-      - label: display label
-      - value: str or list[str]
-      - is_list: True when value should be rendered as a bullet list
-      - html: pre-rendered HTML (sequences only -- a section's own summary_fn
-        returns (label, value) pairs, which land in the escaped path above)
+    Returns a list of field dicts with ``label``, ``value`` (a string or a list of strings),
+    ``is_list`` for a bullet list, and ``html`` for a pre-rendered sequence. A section's own
+    summary_fn returns (label, value) pairs, which land in the escaped path above.
     """
     from opi.forms.editables.service_path import smart_get_value
 
@@ -1996,8 +1798,8 @@ def _build_section_fields(
             elif str(editable.widget) == "service_cards":
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
                 if editable.editable.summarizer:
-                    # Same gate as every other leaf: a summarizer decides this field's
-                    # summary, including leaving it out. Only the plain case keeps the
+                    # The same gate as every other leaf: a summarizer decides this field's
+                    # summary, leaving it out included. Only the plain case keeps the
                     # bullet-list rendering below, which is what the cards look like.
                     display = _format_value(editable, value, yaml_data)
                     if display is not None:
@@ -2013,7 +1815,7 @@ def _build_section_fields(
                     fields.append({"label": editable.label, "value": display, "is_list": False})
 
     if section.summary_fn:
-        # (label, value) pairs, like any other field -- the template escapes them.
+        # (label, value) pairs, like any other field; the template escapes them.
         fields.extend(
             {"label": label, "value": value, "is_list": False} for label, value in section.summary_fn(yaml_data)
         )
@@ -2050,8 +1852,7 @@ def _build_sequence_summary(
     """Build HTML summary for a sequence editable (components, users, etc.)."""
     from opi.forms.editables.service_path import smart_get_value
 
-    # Resolve the list from yaml_data
-    base_path = editable.editable.yaml_path  # e.g. "components" or "users"
+    base_path = editable.editable.yaml_path
     items = smart_get_value(yaml_data, base_path)
 
     if not items or not isinstance(items, list):
@@ -2065,14 +1866,13 @@ def _build_sequence_summary(
             parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item)}</strong></div>")
             continue
 
-        # Find a display name for the item (first required field or "name" field)
         item_label = _get_item_label(item, children, i)
         item_parts: list[str] = []
 
         for child in children:
             if str(child.widget) == "sequence":
-                # Nested sequence: navigate using full relative path
-                # (handles {filter} syntax like services{persistent-storage}/config)
+                # A nested sequence navigates by its full relative path, which handles the
+                # {filter} syntax.
                 from opi.forms.editables.path import get_value
 
                 relative_path = _child_key(child)
@@ -2086,15 +1886,12 @@ def _build_sequence_summary(
                                 cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
                                 cc_val = ci.get(cc_key)
                                 # Through _format_value like every other leaf, so a
-                                # summarizer holds one level deeper too. Skipping it here
-                                # is what made a hidden field reappear inside a nested
-                                # sequence while it was hidden everywhere else.
+                                # summarizer holds one level deeper too.
                                 cc_display = _format_value(cc, cc_val, yaml_data)
                                 if cc_display is not None:
                                     parts_ci.append(cc_display)
-                            # Nothing left to show for this item: leave it out. The old
-                            # fallback printed the raw dict here, which would dump exactly
-                            # the fields a summarizer just hid.
+                            # Nothing left to show for this item: leave it out, rather than
+                            # printing the raw dict and dumping what a summarizer just hid.
                             if parts_ci:
                                 summaries.append(" - ".join(parts_ci))
                         else:
@@ -2104,11 +1901,9 @@ def _build_sequence_summary(
                         item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(formatted)}</dd>")
                 continue
 
-            # Extract the child key from yaml_path (last segment without [*])
             child_key = _child_key(child)
-            # Use get_value for paths with {filter} syntax (e.g.
-            # services{metrics-scraper}/port) since _nested_get only
-            # handles plain dict keys.
+            # get_value for a path with {filter} syntax, because _nested_get only handles
+            # plain dict keys.
             if "{" in child_key:
                 from opi.forms.editables.path import get_value
 
@@ -2141,11 +1936,10 @@ def _build_sequence_summary(
 
 def _get_item_label(item: dict[str, Any], children: list[Any], index: int) -> str:
     """Derive a display label for a sequence item."""
-    # Try common name fields
     for key in ("name", "display-name", "email", "reference"):
         if item.get(key):
             return str(item[key])
-    # Try the first required child
+    # Fall back to the first required child.
     for child in children:
         if child.editable.required:
             child_key = _child_key(child)
@@ -2161,10 +1955,8 @@ def _child_key(child: Any) -> str:
     E.g. ``components[*]/resources/cpu/request`` → ``resources/cpu/request``
     """
     path = child.editable.yaml_path
-    # Remove everything up to and including the first ]/
     if "[*]/" in path:
         path = path.split("[*]/", 1)[-1]
-    # Remove remaining [*] for nested sequences
     path = path.replace("[*]", "")
     return path
 
@@ -2185,10 +1977,9 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
 
     Returns None if the value is empty/unset and should be omitted.
     """
-    # A summarizer decides everything about this field's summary, including what
-    # happens when it is empty -- hence before the empty check rather than after.
-    # It is the only hook that can say "do not show this at all"; a converter's
-    # view() cannot, because returning None from it lands in str() further down
+    # A summarizer decides everything about this field's summary, what happens when it is
+    # empty included, hence before the empty check. It is the only hook that can say "do not
+    # show this at all": returning None from a converter's view() lands in str() further down
     # and prints the word "None".
     if editable.editable.summarizer:
         return editable.editable.summarizer.summarize(value, context_data=yaml_data) or None
@@ -2196,19 +1987,15 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
     if value is None or value == "" or value == []:
         return None
 
-    # Key-value editors (aliases, eigen omgevingsvariabelen) can contain
-    # secrets; never dump their values in the summary. Kept as a widget-level
-    # backstop next to the per-field summarizer above: a key_value field added
-    # later is covered without having to remember to declare anything.
+    # A key-value editor can hold secrets, so its values never go in the summary. A
+    # widget-level backstop next to the per-field summarizer above, so a key_value field added
+    # later is covered without anyone having to declare it.
     if str(editable.widget) == "key_value":
         return None
 
-    # Apply converter.view() for display if available (e.g. ServiceListConverter
-    # extracts service names from mixed str/dict lists)
     if editable.editable.converter:
         value = editable.editable.converter.view(value, context_data=yaml_data)
 
-    # Resolve option labels for select/radio/checkbox_group/service_cards fields
     if editable.editable.values_provider and str(editable.widget) in (
         "select",
         "radio",
@@ -2222,7 +2009,6 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     if isinstance(value, dict):
-        # Key-value editor or similar
         formatted = ", ".join(f"{k}={v}" for k, v in value.items())
         return formatted or None
 
@@ -2237,7 +2023,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
     try:
         options = resolve_options_for_editable(editable)
     except Exception:
-        # Provider failed - fall back to raw value
+        # The provider failed: fall back to the raw value.
         return str(value) if not isinstance(value, list) else ", ".join(str(v) for v in value)
 
     label_map = {str(opt.get("value", "")): opt.get("label", str(opt.get("value", ""))) for opt in options}
@@ -2247,11 +2033,6 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
         return ", ".join(labels)
 
     return label_map.get(str(value), str(value))
-
-
-# ---------------------------------------------------------------------------
-# HTMX: final submit
-# ---------------------------------------------------------------------------
 
 
 @wizard_router.post("/{flow_id}/submit", response_model=None)
@@ -2276,19 +2057,18 @@ def _section_has_errors(
     section_paths: set[str],
     errors: dict[str, list[str]],
 ) -> bool:
-    """Check whether any error key belongs to this section.
+    """Whether any error key belongs to this section.
 
-    Section editables use wildcard paths (``users[*]/email``) while error
-    keys use concrete indices (``users[0]/email``).  We normalise both
-    sides by replacing ``[<digit>]`` with ``[*]`` before comparing.
+    Section editables use wildcard paths (``users[*]/email``) while error keys use concrete
+    indices, so both sides are normalised by replacing ``[<digit>]`` with ``[*]``.
     """
     import re
 
-    _IDX_RE = re.compile(r"\[\d+\]")
-    normalised_section = {_IDX_RE.sub("[*]", p) for p in section_paths}
+    index_pattern = re.compile(r"\[\d+\]")
+    normalised_section = {index_pattern.sub("[*]", p) for p in section_paths}
 
     for error_path in errors:
-        normalised = _IDX_RE.sub("[*]", error_path)
+        normalised = index_pattern.sub("[*]", error_path)
         if normalised in normalised_section:
             return True
     return False
@@ -2316,10 +2096,9 @@ def _locate_schema_error(
 ) -> tuple[FormSection, str] | None:
     """Find the step and editable path a schema violation belongs to.
 
-    Returns None when no step owns the field -- the violation sits on a block
-    rather than on a field, or on something the wizard does not edit. The caller
-    shows the message at step level then; not being able to place it is no reason
-    to drop it.
+    Returns None when no step owns the field, because the violation sits on a block rather than
+    on a field, or on something the wizard does not edit. The caller then shows the message at
+    step level: not being able to place it is no reason to drop it.
     """
     editable_path = _schema_path_to_editable_path(field_path)
     for section in sections:
@@ -2331,15 +2110,14 @@ def _locate_schema_error(
 def _validation_message_without_values(error: Exception) -> str:
     """Describe a rejection to the user without repeating the rejected value.
 
-    A ``ProjectSchemaError`` message quotes the instance, because jsonschema puts it
-    there. That is fine deep in the write path but not here: the edit flow validates
-    the form data MERGED with the stored project, so the offending value can be a
-    stored secret (``config/api-key``, ``config/age-private-key``, ``user-env-vars``)
-    that this handler would then echo into the browser and into the log. Field path
-    plus reason says the same thing to a user, and is what a developer needs anyway.
+    A ``ProjectSchemaError`` message quotes the instance, because jsonschema puts it there.
+    That is fine deep in the write path but not here: the edit flow validates the form data
+    MERGED with the stored project, so the offending value can be a stored secret that this
+    handler would echo into the browser and into the log. Field path plus reason says the same
+    thing to a user.
 
-    A ``ProjectIntegrityError`` carries no reason and names structure (component and
-    deployment names), not values, so its own message is used as-is.
+    A ``ProjectIntegrityError`` carries no reason and names structure and not values, so its
+    own message is used as is.
     """
     reason = getattr(error, "reason", None)
     if not reason:
@@ -2357,21 +2135,18 @@ SCHEMA_FIELD_MARKER = "Deze waarde is afgekeurd door het projectschema; zie de m
 def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> None:
     """Schema-check a FINISHED project file while the wizard can still show the error.
 
-    Call this at the single point where *data* is the complete file that is about to
-    be handed to the storage layer -- not earlier. Before that point the create flow
-    still adds to it (staged attachments, generated keys, the assembled deployment),
-    so an earlier check would reject a file that was merely not finished yet; after
-    it the wizard is gone and the same rejection surfaces from the git step, where
-    there is nothing left to go back to.
+    Call this at the single point where *data* is the complete file about to be handed to the
+    storage layer, not earlier: before that the create flow still adds to it, so an earlier
+    check would reject a file that was merely unfinished, and after it the wizard is gone and
+    the same rejection surfaces from the git step with nothing left to go back to.
 
-    Validates exactly what the storage layer validates: ``validate_project_schema``
-    on the data as it will be persisted. No migration is applied first, because the
-    write path does not apply one either -- validating a migrated copy would let the
-    wizard approve a file that the store then rejects.
+    Validates exactly what the storage layer validates, with no migration applied first,
+    because the write path applies none either: validating a migrated copy would let the wizard
+    approve a file the store then rejects.
 
-    Reaching this with an invalid file is a bug in the form, not user error: it means
-    a field wrote something the schema forbids without a validator saying so. Hence
-    the WARNING with the field path -- that path is where the missing validation is.
+    Reaching this with an invalid file is a bug in the form and not user error: a field wrote
+    something the schema forbids without a validator saying so, and the field path in the
+    warning is where that missing validation belongs.
 
     Raises:
         ProjectSchemaError: with ``field_path`` set when the violation was locatable.
@@ -2379,10 +2154,9 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
     try:
         validate_project_schema(data)
     except ProjectSchemaError as e:
-        # Log the reason, never the message: the message quotes the rejected value, and
-        # the edit flow validates the file MERGED with the stored project, so that value
-        # can be a secret (config/api-key, age-private-key, user-env-vars). Field path
-        # plus reason is what locates the missing validation anyway.
+        # Log the reason and never the message: the message quotes the rejected value, and
+        # the edit flow validates the file MERGED with the stored project, so that value can
+        # be a secret.
         logger.warning(
             "Wizard built an invalid project file for %s (field=%s): %s -- a form field wrote a "
             "value the schema rejects, so validation is missing on that field",
@@ -2394,7 +2168,7 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
 
 
 class _FlowValidation(NamedTuple):
-    """Uitkomst van een hele-flow-validatie (zie ``_validate_whole_flow``)."""
+    """The outcome of a whole-flow validation; see ``_validate_whole_flow``."""
 
     error_response: Response | None
     final_data: dict[str, Any]
@@ -2406,38 +2180,33 @@ class _FlowValidation(NamedTuple):
 
 
 async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _FlowValidation:
-    """Valideer ALLE actieve secties tegen de samengevoegde wizarddata.
+    """Validate EVERY active section against the merged wizard data.
 
-    Het validatiedeel van de eindinzending, gedeeld met de sprong "Naar
-    samenvatting": die mag een stap overslaan, maar geen verplichte waarde. Bij
-    fouten is ``error_response`` de her-render van de eerste falende sectie
-    (met de fouten gemarkeerd) en is de rest van het resultaat niet bruikbaar;
-    anders draagt het resultaat de gevalideerde ``final_data`` en de context
-    die de eindinzending daarna nodig heeft.
+    The validation half of the final submission, shared with the jump to the summary, which may
+    skip a step but no required value. On errors, ``error_response`` is the re-render of the
+    first failing section and the rest of the result is unusable; otherwise the result carries
+    the validated ``final_data`` and the context the final submission needs.
     """
     flow = get_flow(flow_id)
     active_sections = resolve_active_sections(flow, state.step_data)
 
-    # Collect all editables from active sections
     all_editables = []
     for section in active_sections:
         all_editables.extend(section.editables)
 
-    # Merge all step data and do final validation
     yaml_data = state.get_merged_data()
     processor = EditableFormProcessor()
 
-    # Strip values for fields hidden by depends_on/show_when (e.g. subdomain
-    # when the selected domain-format doesn't use it)
+    # Strip the values of fields hidden by depends_on or show_when.
     processor.clear_hidden_depends_on(all_editables, yaml_data)
 
-    # Compute derived values (e.g. issuer from base-domain)
+    # Compute the derived values.
     processor.apply_dependent_generators(all_editables, yaml_data)
 
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.is_edit}
 
     def _fail(errors: dict[str, list[str]], global_errors: list[str]) -> _FlowValidation:
-        # Find the first section with errors and navigate there
+        # Navigate to the first section that has errors.
         error_section = active_sections[0]
         if errors:
             for section in active_sections:
@@ -2467,9 +2236,9 @@ async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _F
             _step_response(request, context), {}, yaml_data, all_editables, active_sections, enforcer_context, processor
         )
 
-    # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base.
-    # Process WITHOUT stripping transients first — generators may need them.
+    # Validate and build the final YAML in one pass, with the merged yaml_data as both the
+    # submitted values and the base. WITHOUT stripping transients, because the generators may
+    # still need them.
     final_data, errors = await processor.process_json_submission(
         yaml_data,
         all_editables,
@@ -2482,7 +2251,6 @@ async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _F
         logger.warning("Final validation failed: %s", errors)
         return _fail(errors, ["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."])
 
-    # Cross-section enforcement
     enforce_field_errors: dict[str, list[str]] = {}
     global_errors = await processor.enforce_sections(
         yaml_data, active_sections, enforcer_context=enforcer_context, field_errors=enforce_field_errors
@@ -2517,30 +2285,25 @@ async def _do_submit(
     enforcer_context = validation.enforcer_context
     processor = validation.processor
 
-    # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
 
-    # Form context is not project data. The wizard's template layer carries keys that only
-    # exist to feed the form (``_cross_domain_projects``: the peer projects this user may
-    # pick), and the final submission is built from the whole merged view, so without this
-    # they would be written to the project file -- where the schema forbids them outright
-    # (``additionalProperties: false`` at the root). The modal-edit path never hit this
-    # because it writes only the paths its editables declare. One rule, no list to maintain:
-    # a leading underscore at the top level means "for the form", exactly as it does for
-    # transients and for the virtual services root.
+    # Form context is not project data. The template layer carries keys that exist only to
+    # feed the form, and the final submission is built from the whole merged view, so without
+    # this they would be written to the project file, where ``additionalProperties: false`` at
+    # the root forbids them. One rule and no list to maintain: a leading underscore at the top
+    # level means "for the form", as it does for transients and for the virtual services root.
     for key in [key for key in final_data if key.startswith("_")]:
         del final_data[key]
 
     try:
-        # PRE_SAVE hooks: run while transients are still available.
-        # Includes SubdomainRequestHook (creates domains entry from transient checkbox)
-        # and StripTransientsHook (order=999, removes transients last).
+        # The PRE_SAVE hooks run while the transients are still available; StripTransientsHook
+        # has order 999 and removes them last.
         from opi.forms.editables.editable import Editable, FormState, WidgetType
         from opi.forms.editables.hooks import StripTransientsHook
         from opi.forms.editables.lifecycle import run_hooks
         from opi.forms.visualizers.visualizer import EditableVisualizer
 
-        # Register StripTransientsHook as a system-level hook on a virtual editable
+        # StripTransientsHook as a system-level hook on a virtual editable.
         strip_hook_editable = EditableVisualizer(
             editable=Editable(
                 yaml_path="_system/strip-transients",
@@ -2558,40 +2321,38 @@ async def _do_submit(
         if state.project_name:
             return await _save_existing_project(request, state.project_name, final_data)
         else:
-            # Create mode: merge staged attachment uploads into the project-level
-            # attachments catalog before generators run (the combine generator
-            # encrypts them once the AGE keypair exists).
+            # Create mode: the staged uploads go into the project-level attachments catalog
+            # before the generators run, because the combine generator encrypts them once the
+            # AGE keypair exists.
             staged_attachments = state.staged_attachments or {}
             if staged_attachments:
                 merge_staged_attachments(final_data, staged_attachments)
 
-            # Run generators (sets name, AGE keys, resolves staged attachments),
-            # then assemble deployment (needs name for namespace).
+            # The generators set the name, the AGE keys and the staged attachments; the
+            # deployment is assembled after, because it needs the name for the namespace.
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)
             return await _start_project_creation(request, final_data)
     except (ProjectSchemaError, ProjectIntegrityError) as e:
-        # Re-render the wizard with the validation message instead of 500ing
-        # (e.g. pre-existing structural drift surfaced by the full-project check).
+        # Re-render the wizard with the validation message instead of a 500.
         field_path = getattr(e, "field_path", None)
         message = _validation_message_without_values(e)
         logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", message)
         located = _locate_schema_error(active_sections, field_path) if field_path else None
         if located is not None:
             error_section, editable_path = located
-            # Mark the field, but keep the text out of it. Field errors are rendered into
-            # step_html and wizard_step.html.j2 pipes that through process_components,
-            # which renders it a SECOND time as a Jinja template -- so a message carrying
-            # user input there is code execution. The marker is a constant; the message
-            # itself goes in global_errors, which the template renders once, autoescaped.
+            # Mark the field, but keep the text out of it. A field error is rendered into
+            # step_html, and wizard_step.html.j2 pipes that through process_components, which
+            # renders it a SECOND time as a Jinja template, so a message carrying user input
+            # there is code execution. The marker is a constant; the message itself goes in
+            # global_errors, which the template renders once, autoescaped.
             field_errors = {editable_path: [SCHEMA_FIELD_MARKER]}
             global_errors = [message]
         else:
-            # Not placeable (a violation on a whole block, or a field no step owns):
-            # show it on the step the user submitted from, at step level. A
-            # message that cannot be attached to a field is still a message. Falls
-            # back to the last step when current_step names a step that is no longer
-            # active, so the message always has somewhere to land.
+            # Not placeable, a violation on a whole block or on a field no step owns: show it
+            # at step level on the step the user submitted from, falling back to the last step
+            # when current_step names a step that is no longer active, so the message always
+            # has somewhere to land.
             error_section = next(
                 (section for section in active_sections if section.section_id == state.current_step),
                 active_sections[-1],
@@ -2600,17 +2361,10 @@ async def _do_submit(
             global_errors = [message]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
-        # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
-        # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
-        # als naam voor "het project bestaat al".
-        # De GEMENGDE staat en niet final_data: dat laatste is de opslagvorm (transients
-        # gestript, generators toegepast, de _-sleutels eruit) en de stap moet de velden
-        # tonen zoals de gebruiker ze achterliet. Elke andere aanroep van _render_step_html
-        # gebruikt dezelfde bron.
-        #
-        # Hier stond kaal ``yaml_data``, en die naam bestaat in deze functie niet: elke
-        # afkeuring liep op een NameError in plaats van op de melding die deze hele tak juist
-        # moest opleveren. tests/test_wizard_rejects_invalid_project.py stond erop rood.
+        # The MERGED state and not final_data: the latter is the storage form, with the
+        # transients stripped, the generators applied and the underscore keys removed, and the
+        # step has to show the fields as the user left them. Every other call of
+        # _render_step_html uses the same source.
         step_html = _render_step_html(
             request, error_section, yaml_data=state.get_merged_data(), errors=field_errors, edit_mode=state.is_edit
         )
@@ -2635,58 +2389,57 @@ async def _save_existing_project(
     # TOCTOU recheck on the mutating request.
     authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
-    # Read fresh from Git, not the cache, so the form merges onto current state and a
-    # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
-    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
+    # Read fresh from Git and not from the cache, so the form merges onto the current state and
+    # a lagging cache is never committed back over newer Git data. Closed explicitly, so its
+    # temp git clone is cleaned up.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
         stored_data = await project_manager.get_contents()
         environment_before = environment_markings(stored_data)
         existing_data = apply_form_data_to_project(copy.deepcopy(stored_data), data)
 
-        # Form path bypasses set_service_config, so guard platform fields here (RC-286).
+        # The form path bypasses set_service_config, so the platform fields are guarded here.
         ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
 
-        # Hetzelfde voor de ledenlijst, op dezelfde plek als op de modaalweg: het
-        # teamformulier bezit ``users`` als geheel maar rendert alleen de mensen en hun rol.
+        # The same for the member list, in the same place as on the modal path: the team form
+        # owns ``users`` as a whole but renders only the people and their role.
         restore_hidden_members(existing_data, stored_data)
 
         ensure_approval_requests(existing_data)
 
-        # De rolpoort op de leden, op dezelfde grens als de Team-kaart en de rolroute:
-        # deze wizard draagt ``project.edit``, en die heeft een developer sinds RC-392 ook
-        # op een project zonder productie. Zonder deze poort kon hij zichzelf hier admin
-        # maken, want de step-up hieronder toetst alleen de VERSHEID en niet de rol.
+        # The role gate on the members, on the same boundary as the Team card and the role
+        # route: this wizard carries ``project.edit``, which a developer also has on a project
+        # without production, and the step-up below only checks FRESHNESS and not the role.
         if member_list_changed(stored_data, existing_data):
             authorize(request, action=Action.MEMBER_MANAGE, project_name=project_name)
 
-        # Dezelfde poort als op de modaalweg, om dezelfde reden: de step-up hieronder
-        # toetst alleen de VERSHEID, dus zonder deze regel zette een developer hier de
-        # markering op productie met een step-up die hij via env-vars.manage zelf haalt.
+        # The same gate as on the modal path, for the same reason: the step-up below only
+        # checks FRESHNESS, so without this a developer sets the marking to production with a
+        # step-up they fetched themselves.
         if production_marking_change(environment_before, environment_markings(existing_data)):
             authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
 
-        # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de
-        # gedeelde modal van de projectpagina, en de volledige wizard heeft die niet.
+        # A bare 403 and not the step-up dialog: that one hangs on the shared modal of the
+        # project page, which the full-page wizard does not have.
         handeling = save_requires_step_up(stored_data, existing_data)
         if handeling is not None and not has_fresh_step_up(request):
-            tekst = log_step_up_refusal(
+            refusal_text = log_step_up_refusal(
                 handeling,
                 project_name=project_name,
                 actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
             )
             raise HTTPException(
                 status_code=403,
-                detail=f"{tekst} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
+                detail=f"{refusal_text} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
             )
 
-        # The complete file only exists after the merge with the stored project -- the
-        # form itself writes a subset. Same check the store makes, one step earlier, so
-        # a rejection lands in the wizard with the field named instead of in the save.
+        # The complete file only exists after the merge with the stored project, because the
+        # form writes a subset. The same check the store makes, one step earlier, so a
+        # rejection lands in the wizard with the field named instead of in the save.
         _validate_finished_project(existing_data, project_name=project_name)
 
-        # Persist through the single validated path: schema + structural integrity
-        # validation, canonical dumper, commit + push, and cache refresh in one shot.
+        # Persist through the single validated path: schema and structural integrity
+        # validation, canonical dumper, commit, push and cache refresh in one.
         await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
         log_production_downgrades(
             environment_before,
@@ -2700,8 +2453,8 @@ async def _save_existing_project(
     clear_wizard_state(request)
     logger.info("Project %s updated via wizard", project_name)
 
-    # Use HX-Redirect so HTMX does a full-page navigation instead of
-    # swapping the redirect target into the wizard frame.
+    # HX-Redirect, so HTMX does a full-page navigation instead of swapping the redirect
+    # target into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
     response.headers["HX-Redirect"] = f"/projects/{project_name}/details"
     return response
@@ -2711,29 +2464,25 @@ async def _start_project_creation(
     request: Request,
     data: dict[str, Any],
 ) -> HTMLResponse:
-    """Start background project creation via the existing pipeline.
+    """Start the background project creation through the existing pipeline.
 
-    Generates the YAML content from the wizard data and feeds it into
-    ``process_project_background`` - the same pipeline used by the
-    original form.  This handles git commit, ProjectManager deployment,
-    ArgoCD sync, and progress tracking.
+    Generates the YAML content from the wizard data and feeds it into the task worker, which
+    handles the git commit, the deployment, the ArgoCD sync and the progress tracking.
     """
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
 
     # The wizard editables still write component-level service config in the legacy
-    # name-as-key / inline shape ({persistent-storage: {config: ...}}, metrics inline);
-    # normalize to the uniform {reference, config} form so the created file is born in
-    # the current schema and needs no migration on first process. Same normalizer the
-    # v2.3->v2.4 migration uses - one canonical shape, no drift.
+    # name-as-key shape, so it is normalized to the uniform {reference, config} form and the
+    # created file is born in the current schema. The same normalizer the migration uses.
     normalize_service_entries(data)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     apply_literal_scalars(data)
 
-    # Een nieuw project kan al in een stand worden aangemaakt die een goedkeuring vraagt,
-    # dus legt het aanmaken die aanvraag vast, met dezelfde functie als de bewerkwizard.
+    # A new project can be created in a state that already asks for an approval, so creating it
+    # records that request, with the same function as the edit wizard.
     ensure_approval_requests(data)
 
     # The file is complete here: generators ran, the deployment is assembled, staged
@@ -2741,10 +2490,9 @@ async def _start_project_creation(
     # moment the wizard still exists, so it is where the schema is checked.
     _validate_finished_project(data, project_name=project_name)
 
-    # Serialize to YAML string via the single canonical writer
     yaml_content = dump_yaml_to_string(data)
 
-    # Create V2 async task — the task worker handles git commit + processing
+    # The task worker handles the git commit and the processing.
     from opi.http.task_helpers import create_async_task
 
     task = await create_async_task(
@@ -2757,15 +2505,12 @@ async def _start_project_creation(
     task_id = str(task["task_id"])
     logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
 
-    # Only now is the work handed over, so only now may the wizard session go. Clearing
-    # it before this point threw away everything the user typed while the submission
-    # could still fail -- which is why a rejected save left them with no way back into
-    # the wizard. The edit path already waited for its save to return; both paths now
-    # clear their session after the work is accepted, not before.
+    # Only now is the work handed over, so only now may the wizard session go: clearing it
+    # earlier throws away everything the user typed while the submission can still fail.
     clear_wizard_state(request)
 
-    # Use HX-Redirect so HTMX does a full-page navigation instead of
-    # swapping the progress page into the wizard frame.
+    # HX-Redirect, so HTMX does a full-page navigation instead of swapping the progress page
+    # into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
     response.headers["HX-Redirect"] = f"/projects/progress/{task_id}"
     return response

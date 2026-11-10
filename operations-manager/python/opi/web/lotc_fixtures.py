@@ -1,25 +1,18 @@
-"""Voorbeeldprojecten om de schermen te kunnen bekijken zonder te deployen.
+"""Example projects, so the screens can be looked at without deploying.
 
-De rijkste pagina's van de applicatie tonen een project, en zonder project tonen ze
-niets. Daardoor was juist het scherm waar de meeste componenten samenkomen het enige dat
-niet te beoordelen viel. Deze module vult dat gat.
+The richest pages of the application show a project and show nothing without one, which is
+what this module is for. Two rules keep it honest:
 
-Twee dingen die het eerlijk houden:
+1. **It runs through the real code.** The YAML files in ``lotc_fixtures/`` go through the same
+   helpers as a real project file, so the page shows what the application would show and not a
+   hand-built context that happens to resemble it.
 
-1. **Het loopt door de echte code.** De YAML-bestanden in ``lotc_fixtures/`` gaan door
-   dezelfde helpers als een echt projectbestand (``ServiceAdapter``, de
-   bijlagen-extractie). Wat de pagina toont is dus wat de applicatie zou tonen, en niet
-   een met de hand nagebouwde context die er toevallig op lijkt.
+2. **It is visibly made up.** Names like "Voorbeeldproject" are there so a screenshot of this
+   page can never be mistaken for a real project. No encrypted values: the page shows the
+   decrypted form anyway, and this way the preview needs no keys.
 
-2. **Het is zichtbaar verzonnen.** Namen als "Voorbeeldproject" en waarden als
-   "VOORBEELDWAARDE-geen-echt-geheim" zijn er zodat een screenshot van deze pagina nooit
-   voor een echt project kan worden aangezien. Er staan geen versleutelde waarden in: de
-   pagina toont de ontsleutelde vorm, dus voor de weergave maakt het niets uit, en zo
-   heeft de proefopstelling geen sleutels nodig.
-
-Wat hier NIET vandaan komt, komt van de infrastructuur: metrics, ArgoCD-status, backups.
-Die staan op "niet beschikbaar", en dat is geen verzinsel maar een stand die de
-templates zelf kennen en tonen.
+What does NOT come from here comes from the infrastructure: metrics, ArgoCD status, backups.
+Those stand at "not available", which is a state the templates know and show.
 """
 
 from datetime import UTC, datetime
@@ -36,22 +29,22 @@ from opi.services.shared_services import Threshold, UnmeasuredService
 from opi.services.user_otp_service import OtpStatus
 from opi.utils.qr import qr_svg
 from opi.utils.yaml_util import load_yaml_safe
-from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
+from opi.web.router_approvals import APPROVAL_STATUSSEN, group_by_service
 from opi.web.security_policy import security_policy_html
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
 
 def available_projects() -> list[str]:
-    """De namen van de voorbeeldprojecten, uit de bestandsnamen."""
+    """The names of the example projects, from the file names."""
     return sorted(path.stem for path in FIXTURES_DIR.glob("*.yaml"))
 
 
 def load_project_data(name: str) -> dict[str, Any] | None:
-    """Lees een voorbeeldproject; None als het niet bestaat.
+    """Read an example project; None when it does not exist.
 
-    De naam komt uit de URL, dus hij wordt tegen de bestandslijst gehouden in plaats van
-    aan een pad geplakt. Anders zou ``../`` elk YAML-bestand op de schijf kunnen openen.
+    The name comes from the URL, so it is held against the file listing instead of pasted onto
+    a path: a ``../`` would otherwise open any YAML file on disk.
     """
     if name not in available_projects():
         return None
@@ -60,11 +53,10 @@ def load_project_data(name: str) -> dict[str, Any] | None:
 
 
 def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
-    """Bouw de ``project``-context zoals de echte detailpagina hem opbouwt.
+    """Build the ``project`` context the way the real detail page builds it.
 
-    Bewust dezelfde vorm en dezelfde helpers als in ``opi/web/router.py``: wijkt die af,
-    dan toont de proefopstelling iets anders dan de applicatie, en juist dat verschil zou
-    hier onopgemerkt blijven.
+    Keep the same shape and the same helpers as ``opi/web/router.py``: a difference would make
+    the preview show something other than the application.
     """
     service_names = ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
     services_with_info = [
@@ -83,11 +75,11 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
         "source_code": project_data.get("source-code", []),
         "users": project_data.get("users", []),
         "user_roles": ["admin", "ops"],
-        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
-        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        # The gallery has no project file and so no role gate to read; ``can()`` says yes here,
+        # so the buttons are on the example page.
         "can": lambda *_a, **_k: True,
-        # De voorbeeldbeheerder is platformbeheerder, zodat het blok Configuratie & Secrets
-        # ook in de galerij staat.
+        # The example admin is a platform admin, so the Configuratie & Secrets block is in the
+        # gallery as well.
         "is_platform_admin": True,
         "services": services_with_info,
         "clusters": project_data.get("clusters", []),
@@ -109,11 +101,10 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_details_context(name: str) -> dict[str, Any] | None:
-    """De volledige templatecontext voor de detailpagina van een voorbeeldproject.
+    """The full template context for the detail page of an example project.
 
-    De sleutels die van draaiende infrastructuur afhangen staan op hun "niets te melden"-
-    stand. Dat is precies wat een echte instantie ook doorgeeft als Prometheus of ArgoCD
-    niet bereikbaar is, dus de pagina komt niet in een toestand die anders nooit voorkomt.
+    The keys that depend on running infrastructure stand at their "nothing to report" value,
+    which is what a real instance passes when Prometheus or ArgoCD is unreachable.
     """
     project_data = load_project_data(name)
     if project_data is None:
@@ -126,19 +117,17 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "project": build_project_details(project_data),
         "user": {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"},
         "user_roles": ["admin", "ops"],
-        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
-        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        # The gallery has no project file and so no role gate to read; ``can()`` says yes here,
+        # so the buttons are on the example page.
         "can": lambda *_a, **_k: True,
         "ServiceAdapter": ServiceAdapter,
         "service_selection_labels": {},
         "service_config_hint": {},
         "prometheus_available": False,
         "argocd_available": False,
-        # Een dict, want zo levert de echte route hem aan: per deploymentnaam de
-        # goedkeuringen die nog niet verleend zijn. Als lijst gaf dit een 500 op de
-        # proefopstelling zodra het sjabloon .get(deployment.name) deed - de voorbeelddata
-        # moet de VORM van de echte gegevens hebben, anders bewijst de proefopstelling
-        # niets over de echte pagina.
+        # A dict, because that is how the real route supplies it: per deployment name the
+        # approvals not yet granted. The example data has to have the SHAPE of the real data,
+        # or the preview proves nothing about the real page.
         "approval_notices": {},
         "backups_available": False,
         "current_cluster": "odcn-production",
@@ -148,19 +137,17 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
         "deployment_service_actions": {},
         "deployment_service_sections": {},
-        # Het backupsblok van het tabblad Backups (RC-100). Leeg, zoals bij een project dat
-        # geen dienst gebruikt die iets kan backuppen; de proefopstelling heeft geen cluster.
+        # Empty, as for a project that uses no service with anything to back up; the preview
+        # has no cluster.
         "backups_sections": [],
-        # De blokken die de DIENSTEN zelf leveren, uit de echte registry en niet uit een
-        # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
-        # secties niet die het langst met roos-HTML in de LOTC-pagina stonden (RC-64) -
-        # precies het soort gat dat een screenshot niet verraadt.
-        "service_detail_sections": collect_detail_page_sections(project_data, lambda _handeling: True),
+        # The blocks the SERVICES themselves supply, from the real registry and not from a list
+        # here, so a section that is missing shows up on the page.
+        "service_detail_sections": collect_detail_page_sections(project_data, lambda _action: True),
     }
 
 
 def all_projects() -> list[dict[str, Any]]:
-    """Elk voorbeeldproject in de vorm die de overzichtspagina's gebruiken."""
+    """Every example project in the shape the overview pages use."""
     projects: list[dict[str, Any]] = []
     for name in available_projects():
         data = load_project_data(name)
@@ -183,31 +170,28 @@ def all_projects() -> list[dict[str, Any]]:
     return projects
 
 
-#: Een zichtbaar verzonnen seed voor de registratiepagina. Geen echt geheim: de pagina
-#: toont wat de generator ervan maakt, en deze proefopstelling heeft geen tweede factor.
+#: A visibly made-up seed for the registration page. Not a real secret: the page shows what
+#: the generator makes of it, and this preview has no second factor.
 VOORBEELD_BASE32_SEED = "VOORBEELDWAARDEGEENECHTGEHEIM234"
 VOORBEELD_OTPAUTH_URI = f"otpauth://totp/ZAD:voorbeeld@rijksapp.dev?secret={VOORBEELD_BASE32_SEED}&issuer=ZAD"
 
 
 def _voorbeeld_otp_status() -> OtpStatus:
-    """Een bevestigde, niet geblokkeerde tweede factor voor de accountpagina's."""
+    """A confirmed, unblocked second factor for the account pages."""
     return OtpStatus(registered=True, confirmed_at=datetime(2026, 9, 4, 10, 12, tzinfo=UTC))
 
 
 def page_data(slug: str) -> dict[str, Any]:
-    """De gegevens die een herontworpen pagina nodig heeft.
+    """The data a redesigned page needs.
 
-    Een eenvoudige tabel en geen slim mechanisme: elke pagina heeft andere gegevens
-    nodig, en dat expliciet opschrijven leest prettiger dan een laag die het probeert te
-    raden. Een onbekende naam levert een lege context, en dan valt op de pagina zelf te
-    zien wat er ontbreekt.
+    A plain table and no clever mechanism: every page needs other data. An unknown name yields
+    an empty context, and then the page itself shows what is missing.
     """
     projects = all_projects()
 
     if slug == "account":
-        # De accountpagina toont wat er in de sessie staat. In deze proefopstelling is er
-        # geen inlogdienst, dus staat hier een voorbeeldgebruiker - zodat de pagina laat
-        # zien wat hij toont en niet leeg blijft.
+        # The account page shows what is in the session, and this preview has no login
+        # service, so an example user stands here.
         return {
             "account": {
                 "name": "Voorbeeld Gebruiker",
@@ -218,13 +202,13 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "account-otp":
-        # De stand van een bevestigde factor: dat is de rijkste van de twee takken, met de
-        # datum en het formulier dat de factor vervangt.
+        # A confirmed factor: the richer of the two branches, with the date and the form that
+        # replaces the factor.
         return {"status": _voorbeeld_otp_status()}
 
     if slug == "account-otp-registreren":
-        # Een lopende registratie: de QR komt uit de echte generator, met een otpauth-URI
-        # die zichtbaar verzonnen is.
+        # A running registration: the QR comes from the real generator, with a visibly
+        # made-up otpauth URI.
         return {
             "qr_svg": qr_svg(VOORBEELD_OTPAUTH_URI),
             "base32_secret": VOORBEELD_BASE32_SEED,
@@ -233,12 +217,12 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "security":
-        # Het ECHTE beleid, zoals introductie de echte catalogus toont: een verzonnen tekst
-        # zou de proefopstelling laten kloppen terwijl de pagina scheef staat.
+        # The REAL policy, the way the introduction page shows the real catalog: a made-up
+        # text would make the preview look right while the page is wrong.
         return {"security_policy_html": security_policy_html()}
 
     if slug == "invite-landing":
-        # Beide aanmeldkeuzes aan, zodat de pagina de keuze laat zien die hij uitlegt.
+        # Both sign-in options on, so the page shows the choice it explains.
         return {
             "display_name": "Docs en Grist",
             "invite_key": "voorbeeldsleutel-geen-echte-uitnodiging",
@@ -251,16 +235,13 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "introductie":
-        # GEEN voorbeelddiensten. De introductiepagina toont de ECHTE catalogus, en dat is
-        # precies wat er aan die pagina te beoordelen valt: een verzonnen lijst zou de
-        # proefopstelling laten kloppen terwijl de pagina scheef staat. De catalogus heeft
-        # bovendien geen cluster nodig - hij komt uit de code.
-        # Zonder de ``navigation`` die daar ook uit komt: _context() in lotc_router zet die
-        # zelf, met de voorbeeldgebruiker, en ``**extra`` zou hem daar overheen schrijven.
+        # NO example services: the introduction page shows the REAL catalog, which comes from
+        # the code and needs no cluster. Without the ``navigation`` that comes out of it too:
+        # ``_context()`` in lotc_router sets that itself, and ``**extra`` would write over it.
         from opi.http.render.lotc_switch import build_lotc_introductie
 
-        catalogus = build_lotc_introductie(None)
-        return {sleutel: waarde for sleutel, waarde in catalogus.items() if sleutel != "navigation"}
+        catalog = build_lotc_introductie(None)
+        return {key: value for key, value in catalog.items() if key != "navigation"}
 
     if slug == "dashboard":
         return {
@@ -295,9 +276,8 @@ def page_data(slug: str) -> dict[str, Any]:
                 },
             ],
             "projects": projects,
-            # Dezelfde vorm als de echte route levert (opi/http/render/lotc_switch.py). Een
-            # proefopstelling die een ANDERE vorm voedt dan de applicatie zou het
-            # sjabloon laten werken op iets dat in productie nooit voorkomt.
+            # The same shape the real route supplies; another shape would let the template
+            # work on something that never occurs in production.
             "health": [{"label": "Healthy", "count": len(projects)}],
         }
 
@@ -305,23 +285,22 @@ def page_data(slug: str) -> dict[str, Any]:
         return {"projects": projects}
 
     if slug == "services":
-        # Filteren op "kies ik dit zelf of is het er altijd" - dat is de vraag waarmee
-        # iemand deze pagina opent.
-        alle = services_overview(projects)
+        # The filter answers "do I choose this myself or is it always there", which is the
+        # question someone opens this page with.
+        all_services = services_overview(projects)
         return {
             "projects": projects,
-            "services": alle,
+            "services": all_services,
             "service_filters": [
-                ("", "Alle", len(alle)),
-                ("user", "Zelf te kiezen", sum(1 for s in alle if not s["kind_label"])),
-                ("system", "Altijd aan", sum(1 for s in alle if s["kind_label"])),
+                ("", "Alle", len(all_services)),
+                ("user", "Zelf te kiezen", sum(1 for s in all_services if not s["kind_label"])),
+                ("system", "Altijd aan", sum(1 for s in all_services if s["kind_label"])),
             ],
         }
 
     if slug == "wizard":
-        # De velden komen uit dezelfde voorbeeldreeks als /lotc/formulier en worden door
-        # dezelfde adapter gerenderd. Zo toont deze pagina de ECHTE formulierlaag; een
-        # eigen setje velden zou een tweede werkelijkheid zijn die stil kan gaan afwijken.
+        # The fields come from the same example series as /lotc/formulier, through the same
+        # adapter, so this page shows the REAL form layer.
         from opi.forms.widgets.lotc import LOTCWidgetAdapter
         from opi.web.lotc_form_preview import EXAMPLE_FIELDS
 
@@ -331,10 +310,8 @@ def page_data(slug: str) -> dict[str, Any]:
             "flow_title": "Nieuw project",
             "flow_description": "Vul de gegevens in. Je kunt tussentijds terug zonder iets kwijt te raken.",
             "steps": [
-                # "past", niet "complete": de enum van step-bar-item is
-                # past/current/future. "complete" rendert zonder klacht (ook onder
-                # LOTC_STRICT, want dat leest geen :expr-waarde) en levert dan geen
-                # afgeronde stap op. Gevonden met de sweep van stap 8.
+                # "past" and not "complete": the enum of step-bar-item is past/current/future,
+                # and "complete" renders without a complaint but yields no finished step.
                 {"label": "Project", "status": "past"},
                 {"label": "Diensten", "status": "current"},
                 {"label": "Componenten", "status": None},
@@ -347,14 +324,12 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "wizard-start":
-        # De startpagina toont alleen uitleg en een knop; die heeft geen gegevens nodig.
+        # The start page shows only an explanation and a button.
         return {}
 
     if slug == "wizard-page":
-        # De ECHTE wizard, met de echte stappen en de echte velden van de eerste stap.
-        # Niet nagebouwd: dan zou de proefopstelling een vorm tonen die in de applicatie
-        # niet voorkomt, en juist deze pagina is er om de formulierlaag in samenhang te
-        # kunnen bekijken.
+        # The REAL wizard, with the real steps and the real fields of the first step, so the
+        # form layer can be looked at as a whole.
         from starlette.requests import Request
 
         from opi.forms.visualizers.flows import get_flow
@@ -370,10 +345,9 @@ def page_data(slug: str) -> dict[str, Any]:
             current_step=sections[0].section_id,
             active_sections=[section.section_id for section in sections],
         )
-        # Een kaal verzoek: _render_step_html leest er alleen de weergavekeuze uit, en
-        # zonder querystring of koekje is dat de nieuwe vormgeving - precies wat deze
-        # pagina toont. Het csrf-token is hier leeg omdat de proefopstelling niets
-        # verstuurt; in de applicatie zet de CSRF-middleware het.
+        # A bare request: ``_render_step_html`` only reads the design choice from it, and
+        # without a query string or cookie that is the new design. The csrf token is empty
+        # because the preview submits nothing.
         request = Request(
             {"type": "http", "method": "GET", "path": "/lotc/bg/wizard-page", "headers": [], "query_string": b""}
         )
@@ -394,9 +368,9 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "admin-users":
-        # De platformgebruikers zijn de mensen die in de voorbeeldprojecten staan; zo komt
-        # ook deze lijst uit dezelfde bron als de rest en niet uit een tweede verzinsel.
-        leden = {
+        # The platform users are the people in the example projects, so this list comes from
+        # the same source as the rest.
+        members = {
             member["email"]: project["display_name"]
             for project in projects
             for member in project["users"]
@@ -405,20 +379,19 @@ def page_data(slug: str) -> dict[str, Any]:
         return {
             "users": [
                 {
-                    "id": str(nummer),
+                    "id": str(number),
                     "email": email,
                     "full_name": email.split("@")[0].replace(".", " ").title(),
                     "created_at": datetime(2026, 8, 1, tzinfo=UTC),
                 }
-                for nummer, email in enumerate(sorted(leden), start=1)
+                for number, email in enumerate(sorted(members), start=1)
             ],
             "csrf_token": "",
             "success_message": "",
         }
 
     if slug == "admin-user-form":
-        # De velden komen uit dezelfde editables als de echte route, gerenderd door
-        # dezelfde adapter. Een eigen setje velden zou een tweede werkelijkheid zijn.
+        # The fields come from the same editables as the real route, through the same adapter.
         from opi.web.router_user_admin import _render_form_html
 
         return {
@@ -432,18 +405,18 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "admin-usage":
-        # Voorbeeldcijfers, en zichtbaar rond. De proefopstelling heeft geen Grafana, dus
-        # de melding daarover hoort er ook te staan - dat is dezelfde stand die een echte
-        # instantie zonder billing-datasource doorgeeft.
-        maanden = [
-            {"month": nummer, "name": name, "year": 2026, "gib": gib, "cost": round(gib * 27.0, 2)}
-            for nummer, (name, gib) in enumerate([("January", 12.5), ("February", 13.0), ("March", 14.25)], start=1)
+        # Example figures, visibly round. The preview has no Grafana, so the notice about that
+        # belongs on the page as well: the same state a real instance without a billing
+        # datasource passes.
+        months = [
+            {"month": number, "name": name, "year": 2026, "gib": gib, "cost": round(gib * 27.0, 2)}
+            for number, (name, gib) in enumerate([("January", 12.5), ("February", 13.0), ("March", 14.25)], start=1)
         ]
         return {
             "year": 2026,
-            "month_data": maanden,
-            "total_gib": round(sum(maand["gib"] for maand in maanden), 2),
-            "total_cost": round(sum(maand["cost"] for maand in maanden), 2),
+            "month_data": months,
+            "total_gib": round(sum(month["gib"] for month in months), 2),
+            "total_cost": round(sum(month["cost"] for month in months), 2),
             "selected_namespace": "all",
             "namespace_options": [{"value": "all", "label": "Alle namespaces"}]
             + [{"value": f"rig-{project['name']}", "label": f"rig-{project['name']}"} for project in projects],
@@ -452,35 +425,27 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "router":
-        # DE ECHTE NAAM EN DE ECHTE ADRESSEN, uit dns_config. De pagina wijst een bezoeker
-        # aan welk DNS-record hij in zijn eigen zone zet; die waarden zijn publiek en staan
-        # in de code, dus de proefopstelling toont wat de pagina op rijksapp.nl toont.
-        # Zonder deze context stond er "Dat is  , de ingang van dit cluster" en waren de
-        # kolommen van de recordtabel leeg - een schermafdruk die niets bewijst.
+        # THE REAL NAME AND THE REAL ADDRESSES, from dns_config. The page tells a visitor
+        # which DNS record to put in their own zone, and those values are public and stand in
+        # the code, so the preview shows what the real page shows.
         router_host = DEFAULT_ROUTER_HOSTNAME
-        adressen = router_addresses_for(router_host)
+        addresses = router_addresses_for(router_host)
         return {
             "router_host": router_host,
-            "router_ipv4": adressen[0] if adressen else "",
-            "router_ipv6": adressen[1] if adressen else "",
+            "router_ipv4": addresses[0] if addresses else "",
+            "router_ipv6": addresses[1] if addresses else "",
         }
 
     if slug == "admin-gedeelde-diensten":
-        # ZICHTBAAR VERZONNEN drempels en ongemeten diensten, net als elke andere
-        # beheerderstak hier. De ECHTE THRESHOLDS en UNMEASURED_SERVICES horen hier NIET:
-        # /lotc/bg/<naam> vraagt geen sessie en geen rol, terwijl /admin/diensten achter
-        # require_platform_admin zit. Wie zijn eigen grenswaarden en de lijst van welke
-        # platformdiensten helemaal niet gemeten worden publiek zet, vertelt een
-        # buitenstaander precies waar niemand naar kijkt.
+        # VISIBLY MADE-UP thresholds and unmeasured services. The real "THRESHOLDS" and
+        # "UNMEASURED_SERVICES" do NOT belong here: /lotc/bg/<name> asks for no session and no
+        # role, while the admin page sits behind require_platform_admin, and publishing your
+        # own thresholds and the list of what goes unmeasured tells an outsider exactly where
+        # nobody is looking.
         #
-        # De VORM is wel de echte: dezelfde dataclasses als de route gebruikt, dus een
-        # veld dat daar bijkomt valt hier meteen op. Wat er te beoordelen valt is de
-        # opbouw - een drempeltabel met vijf kolommen, waarvan een met een getal dat
-        # groepering nodig heeft, en een blok "niet in beeld" met meer dan een item.
-        #
-        # De drie blokken erboven blijven op "wordt opgehaald..." staan: die worden lui
-        # opgehaald achter require_platform_admin en hebben een metriekbron nodig, en die
-        # heeft deze pagina allebei niet.
+        # The SHAPE is the real one, the same dataclasses the route uses, so a field added
+        # there shows up here at once. The three blocks above stay at "wordt opgehaald...":
+        # they are fetched lazily behind require_platform_admin and need a metrics source.
         return {
             "drempels": [
                 Threshold(
@@ -520,12 +485,10 @@ def page_data(slug: str) -> dict[str, Any]:
         }
 
     if slug == "admin-approvals":
-        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan, en
-        # TWEE diensten, want de pagina groepeert per dienst. Elk item draagt dezelfde
-        # sleutels als collect_approval_items() ze aflevert (``service``, ``label``,
-        # ``subject``), anders toont de proefopstelling een vorm die de echte pagina niet
-        # heeft.
-        aanvragen = [
+        # One request per state, so the three labels stand next to each other, and TWO
+        # services, because the page groups per service. Every item carries the same keys
+        # ``collect_approval_items()`` delivers.
+        requests = [
             {
                 "service": "publish-on-web",
                 "type": "subdomain",
@@ -557,21 +520,19 @@ def page_data(slug: str) -> dict[str, Any]:
                 "history": [{"date": datetime(2026, 8, 12, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
             },
         ]
-        # De groepen komen uit DEZELFDE functie als op de echte pagina. Ze hier met de hand
-        # opschrijven zou een tweede waarheid zijn, en dan toont de proefopstelling iets
-        # anders dan /admin/approvals zodra de groepering verandert. Het sjabloon leest
-        # alleen ``approval_groups``; ``approval_items`` blijft ernaast staan omdat de
-        # teller AANVRAGEN telt en geen groepen.
+        # The groups come from the SAME function as on the real page. The template reads only
+        # ``approval_groups``; ``approval_items`` stays next to it because the counter counts
+        # REQUESTS and not groups.
         return {
             "projects_data": [
                 {
                     "project_name": projects[0]["name"],
-                    "approval_items": aanvragen,
-                    "approval_groups": groepeer_per_dienst(aanvragen),
+                    "approval_items": requests,
+                    "approval_groups": group_by_service(requests),
                 }
             ],
-            "approvals_totaal": len(aanvragen),
-            "approvals_getoond": len(aanvragen),
+            "approvals_totaal": len(requests),
+            "approvals_getoond": len(requests),
             "approval_status": "",
             "approval_statussen": APPROVAL_STATUSSEN,
             "success_message": "",
@@ -579,25 +540,22 @@ def page_data(slug: str) -> dict[str, Any]:
 
     if slug in ("project-details", "project-tabs", "project-context"):
         context = build_details_context(available_projects()[-1]) or {}
-        # De tabbladen komen uit PROJECT_TABS, dezelfde lijst die de echte pagina gebruikt.
-        # Hier stond een eigen kopie met vier tabbladen; die liep achter (Componenten en
-        # Services ontbraken) en dat is precies wat een tweede lijst doet. De proefopstelling
-        # hoort dezelfde pagina te tonen, alleen met andere gegevens.
-        context["tabs"] = {sleutel: dict(tab) for sleutel, tab in PROJECT_TABS.items()}
-        # De proefopstelling heeft geen cluster, dus geen metingen. Dat is dezelfde stand
-        # die een echte instantie doorgeeft als Prometheus niet bereikbaar is.
+        # The tabs come from PROJECT_TABS, the same list the real page uses: a copy of its own
+        # here fell behind, which is what a second list does.
+        context["tabs"] = {key: dict(tab) for key, tab in PROJECT_TABS.items()}
+        # The preview has no cluster, so no measurements: the same state a real instance passes
+        # when Prometheus is unreachable.
         context["usage"] = None
         context["usage_error"] = "Prometheus is niet verbonden in de proefopstelling."
-        # Het audittabblad leest zijn rijen uit de database; de proefopstelling heeft er
-        # geen, dus staan ze hier als twee voorbeelden in dezelfde vorm.
-        context["audit_rijen"] = _audit_voorbeelden()
+        # The audit tab reads its rows from the database, which the preview has not.
+        context["audit_rijen"] = _audit_examples()
         return context
 
     return {}
 
 
-def _audit_voorbeelden() -> list[dict[str, Any]]:
-    """Twee auditrijen in de vorm die ``build_lotc_audit`` oplevert: een actie en een weigering."""
+def _audit_examples() -> list[dict[str, Any]]:
+    """Two audit rows in the shape ``build_lotc_audit`` yields: an action and a refusal."""
     return [
         {
             "time": datetime(2026, 10, 28, 9, 14, tzinfo=UTC),
@@ -623,10 +581,10 @@ def _audit_voorbeelden() -> list[dict[str, Any]]:
 
 
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Alle zichtbare diensten uit de ECHTE registry, met wie ze afneemt.
+    """Every visible service from the REAL registry, with who uses it.
 
-    Bewust de registry en geen eigen lijst: een tweede lijst ernaast gaat vroeg of laat
-    afwijken van wat de applicatie werkelijk aanbiedt.
+    The registry and not a list of its own: a second list next to it drifts away from what the
+    application actually offers.
     """
     from opi.http.render.navigation_lotc import to_nldd_icon
     from opi.services.services import ServiceAdapter
@@ -649,13 +607,12 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "name": service_type.value,
                 "label": definition.name,
                 "summary": definition.description,
-                # Door dezelfde vertaaltabel als de navigatie: onze iconen dragen
-                # Nederlandse ROOS-namen en NLDD kent alleen zijn eigen woordenschat.
-                # Zonder deze stap blijft het icoon leeg, en dat gebeurt STIL.
+                # Through the same translation table as the navigation: our icons carry Dutch
+                # ROOS names, and an unknown name leaves the icon empty SILENTLY.
                 "icon": to_nldd_icon(definition.icon),
                 "color": definition.color,
-                # Alleen een label waar het iets zegt. Een dienst die je zelf kiest heeft
-                # geen label nodig; dat is de normale situatie.
+                # A label only where it says something; a service you pick yourself is the
+                # normal case and needs none.
                 "kind_label": "altijd aan" if is_platform else "",
                 "kind_type": "info",
                 "help": definition.description,

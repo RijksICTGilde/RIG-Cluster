@@ -1,8 +1,8 @@
-"""The unified Taken table on the project-details page.
+"""The unified "Taken" table on the project-details page.
 
-Runs (database console, job) and background tasks (upserts, refreshes, backups) are
-shown together as one history, so this stays generic: the labels are a translation of
-whatever task types and run kinds exist, not a per-service branch.
+Runs (database console, job) and background tasks (upserts, refreshes, backups) are shown
+together as one history, so the labels are a translation of whatever task types and run kinds
+exist, not a branch per service.
 """
 
 from __future__ import annotations
@@ -15,15 +15,13 @@ from fastapi.responses import HTMLResponse
 from opi.core.authz.actions import Action, action
 from opi.http.auth.auth_decorators import requires_sso
 from opi.services.runs_service import get_runs_service
-from opi.web.stap_labels import stap_label
+from opi.web.step_labels import step_label
 
 logger = logging.getLogger(__name__)
 
 tasks_router = APIRouter(prefix="/projects", tags=["tasks"])
 
 
-# Human labels for the unified Taken table. Runs (console/job) + background
-# tasks (upserts, refreshes, ...) are shown together as one history.
 _RUN_LABELS = {"db-console": "Databaseconsole", "job": "Job"}
 _TASK_LABELS = {
     "create_project": "Project aanmaken",
@@ -47,8 +45,8 @@ _TASK_LABELS = {
 }
 
 
-# Dutch labels for the raw status values of both sources (the rest of the UI is
-# Dutch). succeeded/completed both read as "Voltooid".
+# The Dutch labels for the raw status values of both sources; succeeded and completed both
+# read as "Voltooid".
 _STATUS_LABELS = {
     "pending": "In wachtrij",
     "claimed": "Gereserveerd",
@@ -62,8 +60,7 @@ _STATUS_LABELS = {
     "cancelled": "Geannuleerd",
 }
 
-# Statuses that mean "still going" per source (used to show a live step + to
-# decide whether the "Beëindigd" column applies). Checked on the raw status.
+# Statuses that mean "still going", per source. Checked on the RAW status, not on the label.
 _RUN_ACTIVE = {"starting", "running"}
 _TASK_ACTIVE = {"pending", "claimed", "running"}
 
@@ -73,10 +70,9 @@ def _normalize_run(run: dict) -> dict:
     status = run.get("status") or ""
     return {
         "soort": _RUN_LABELS.get(kind, kind),
-        # Een run is geen achtergrondtaak en heeft dus geen voortgangspagina. Expliciet
-        # None en niet weglaten: de tabel beslist hierop of de cel een link wordt, en een
-        # ontbrekende sleutel zou daar als lege string uitkomen en naar
-        # /projects/progress/ wijzen.
+        # A run has no progress page. Explicitly None and not left out: the table decides on
+        # this whether the cell becomes a link, and a missing key would come out there as an
+        # empty string pointing at /projects/progress/.
         "task_id": None,
         "deployment": run.get("deployment"),
         "status": _STATUS_LABELS.get(status, status),
@@ -94,12 +90,8 @@ def _normalize_task(task: dict) -> dict:
     status = task.get("status") or ""
     return {
         "soort": _TASK_LABELS.get(task_type, task_type.replace("_", " ").capitalize()),
-        # Het id gaat mee zodat de tabel naar de voortgangspagina kan wijzen. Die pagina
-        # (/projects/progress/<id>) bestond al met de balk, de huidige stap, de subtaken en
-        # de fouten per component, maar was alleen bereikbaar in het scherm direct na het
-        # aanmaken van een project: de takenlijst had het id in handen en gooide het hier
-        # weg. Ook bij een AFGERONDE taak, want juist bij een mislukking wil je die pagina
-        # in -- daar staat wat er misging.
+        # The id travels along so the table can point at /projects/progress/<id>, for a
+        # FINISHED task as well: a failure is exactly when that page is worth opening.
         "task_id": task.get("task_id"),
         "deployment": task.get("deployment_name"),
         "status": _STATUS_LABELS.get(status, status),
@@ -107,7 +99,7 @@ def _normalize_task(task: dict) -> dict:
         # RC-282 keeps a finished task for 90 days but clears its details after an hour;
         # until then the progress page still has something to show.
         "has_details": not task.get("details_purged_at"),
-        "step": stap_label(task.get("current_step")),
+        "step": step_label(task.get("current_step")),
         "progress": task.get("progress_percent"),
         "door": task.get("created_by"),
         "gestart": task.get("created_at"),
@@ -119,7 +111,7 @@ def _normalize_task(task: dict) -> dict:
 @action(Action.TASK_READ)
 @requires_sso
 async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
-    """Unified Taken table: console/job runs + background tasks (upserts, refreshes)."""
+    """The unified "Taken" table: console and job runs plus background tasks."""
     items: list[dict] = []
 
     try:
@@ -140,8 +132,6 @@ async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
     items.sort(key=lambda i: i.get("gestart") or "", reverse=True)
     items = items[:100]
 
-    # Het fragment volgt dezelfde keuze als de pagina eromheen; anders verschijnt er na
-    # de eerste poll roos-markup in een NLDD-pagina.
     from opi.http.render.lotc_switch import render
 
     return render(

@@ -25,43 +25,30 @@ usage_router = APIRouter(prefix="/admin/usage", tags=["usage"])
 
 DEFAULT_PRICE_PER_GIB = 27.0
 
-# Cheap query over the hourly recording rule (PrometheusRule
-# operations-manager-billing in de odcn-production bootstrap-overlay).
+# Cheap query over the hourly recording rule, the PrometheusRule operations-manager-billing
+# in the odcn-production bootstrap overlay.
 #
-# WAT ER UIT KOMT. sum_over_time telt de uurlijkse samples van een maand op; delen door
-# het aantal UREN IN DIE MAAND geeft het aantal GiB dat er gemiddeld gehouden is. Dat is
-# geen tussenstap maar de grootheid waarop gefactureerd wordt: de prijs is euro per GiB
-# per MAAND, dus een namespace die de halve maand 10 GiB hield telt voor 5. Namespaces
-# die maar een deel van de maand bestonden tellen zo vanzelf naar rato mee, en de
-# maandbedragen zijn optelbaar tot een jaarbedrag.
+# ``sum_over_time`` adds up the hourly samples of a month, and dividing by the HOURS IN THAT
+# MONTH gives the GiB held on average. That is the quantity billed, because the price is euro
+# per GiB per MONTH: a namespace that held 10 GiB for half the month counts for 5, and a
+# namespace that existed for part of the month counts pro rata on its own.
 #
-# HET VENSTER IS NIET HETZELFDE ALS DE NOEMER, en dat was de bug. Hier stond een vast
-# venster van {days}d dat op het moment van bevragen eindigde. Voor een afgesloten maand
-# klopt dat, want daar wordt op de laatste dag van de maand geevalueerd. Voor de LOPENDE
-# maand werd op "nu" geevalueerd, en dan reikte een venster van 31 dagen terug tot in de
-# vorige maand: op 28 augustus 2026 stonden er vier dagen juli in de augustusrij en
-# ontbraken de laatste drie dagen van augustus. Het venster loopt daarom vanaf de EERSTE
-# van de maand ({venster}), terwijl de noemer de hele maand blijft ({noemer_uren}).
-#
-# De lopende maand toont daarmee wat er tot nu toe is opgebouwd en niet een voorspelling
-# van de hele maand. Dat is dezelfde rekensom als bij een afgesloten maand en hetzelfde
-# als op een rekening: het getal groeit door tot het einde van de maand. Het sjabloon
-# merkt die rij daarom aan als lopend, anders leest een halve maand als een daling.
+# THE WINDOW IS NOT THE DENOMINATOR. The window runs from the FIRST of the month
+# (``{venster}``) while the denominator stays the whole month (``{noemer_uren}``), so the
+# current month shows what has been built up so far and not a prediction of the whole month.
+# The template marks that row as running, or half a month reads as a drop.
 RECORDED_USAGE_QUERY = """round(
   sum(
     sum_over_time(rig:namespace_memory_billed_bytes{{namespace=~"{namespace_filter}"}}[{venster}])
   ) / {noemer_uren} / 1024^3
 , 0.01) or on() vector(0)"""
 
-# Zware fallback die hetzelfde berekent uit de ruwe metrics. Alleen nodig
-# voor maanden van voor de recording rule (uitgerold juni 2026); kan weg
-# zodra er een vol jaar aan recorded data bestaat.
+# Heavy fallback that computes the same from the raw metrics, needed only for months from
+# before the recording rule existed.
 #
-# Zelfde venster en zelfde noemer als hierboven, want de twee wegen horen hetzelfde
-# getal op te leveren. De subquery levert met stap 1h dezelfde uurlijkse samples als de
-# recording rule, dus delen door het aantal uren is genoeg; hier stond eerst een
-# omweg langs byte-seconden (* 3600 gedeeld door {days} * 86400) die op precies
-# hetzelfde neerkwam.
+# Same window and same denominator as above, because the two routes have to yield the same
+# number. The subquery with step 1h gives the same hourly samples as the recording rule, so
+# dividing by the number of hours is enough.
 MEMORY_USAGE_QUERY = """round(
   sum((
     sum_over_time(
@@ -96,7 +83,7 @@ MEMORY_USAGE_QUERY = """round(
 
 
 def _get_months_for_year(year: int) -> list[dict[str, Any]]:
-    """Get month info for each month up to the current month."""
+    """One entry per month up to the current month."""
     now = datetime.now(UTC)
     months = []
     for month in range(1, 13):
@@ -123,7 +110,7 @@ def _get_namespace_filter(namespace: str | None, cluster_name: str) -> str:
 
 
 def _get_available_namespaces(cluster_name: str) -> list[str]:
-    """Get available project namespaces from the project service."""
+    """The project namespaces on this cluster, with the OPI namespace first."""
     prefix = get_namespace_prefix(cluster_name)
     projects = get_project_store().get_all()
     namespaces = sorted({f"{prefix}{project.name}" for project in projects})
@@ -133,42 +120,37 @@ def _get_available_namespaces(cluster_name: str) -> list[str]:
     return namespaces
 
 
-def _is_lopende_maand(year: int, month: int) -> bool:
-    """Loopt deze maand nog, of is hij afgesloten?"""
+def _is_current_month(year: int, month: int) -> bool:
+    """Is this month still running, or is it closed?"""
     now = datetime.now(UTC)
     return year == now.year and month == now.month
 
 
 def _get_month_end(year: int, month: int, days: int) -> datetime:
-    """Get the evaluation time for a month query (end of month, or now if current month)."""
-    if _is_lopende_maand(year, month):
+    """The evaluation time for a month query: end of month, or now for the current month."""
+    if _is_current_month(year, month):
         return datetime.now(UTC)
     return datetime(year, month, days, 23, 59, 59, tzinfo=UTC)
 
 
-def _venster_en_noemer(year: int, month: int, days: int) -> tuple[str, int]:
-    """Het terugkijkvenster en het aantal uren waardoor gedeeld wordt.
+def _window_and_divisor(year: int, month: int, days: int) -> tuple[str, int]:
+    """The look-back window as a PromQL duration, and the hours to divide by.
 
-    De twee lopen ALLEEN in de lopende maand uiteen, en dat is precies waar het eerder
-    misging. Het venster wordt vanaf "nu" teruggerekend, dus voor een lopende maand moet
-    het tot de eerste van die maand reiken en niet een volle maand terug - anders schuift
-    het de vorige maand in. De noemer blijft de hele maand, zodat een lopende en een
-    afgesloten maand dezelfde grootheid opleveren: GiB gehouden over die maand.
-
-    Returns:
-        Het venster als PromQL-duur (bijvoorbeeld ``"672h"``) en de noemer in uren.
+    The two differ ONLY in the current month. The window is counted back from "now", so for a
+    running month it has to reach the first of that month and not a whole month back, or it
+    slides into the previous one. The denominator stays the whole month, so a running and a
+    closed month yield the same quantity: GiB held over that month.
     """
-    uren_in_maand = days * 24
-    if not _is_lopende_maand(year, month):
-        return f"{uren_in_maand}h", uren_in_maand
+    hours_in_month = days * 24
+    if not _is_current_month(year, month):
+        return f"{hours_in_month}h", hours_in_month
 
     now = datetime.now(UTC)
-    begin = datetime(year, month, 1, tzinfo=UTC)
-    # Naar boven afgerond, zodat het venster het eerste uur van de maand omvat; en
-    # minstens een uur, want vlak na middernacht op de eerste is een venster van 0h geen
-    # geldige PromQL-duur.
-    verstreken_uren = max(1, ceil((now - begin).total_seconds() / 3600))
-    return f"{verstreken_uren}h", uren_in_maand
+    start = datetime(year, month, 1, tzinfo=UTC)
+    # Rounded up, so the window covers the first hour of the month, and at least one hour:
+    # just after midnight on the first, a window of 0h is not a valid PromQL duration.
+    elapsed_hours = max(1, ceil((now - start).total_seconds() / 3600))
+    return f"{elapsed_hours}h", hours_in_month
 
 
 async def _query_month_usage(
@@ -182,7 +164,7 @@ async def _query_month_usage(
     connector = GrafanaPrometheusConnector()
 
     eval_time = _get_month_end(month_info["year"], month_info["month"], month_info["days"])
-    venster, noemer_uren = _venster_en_noemer(month_info["year"], month_info["month"], month_info["days"])
+    venster, noemer_uren = _window_and_divisor(month_info["year"], month_info["month"], month_info["days"])
 
     async def run(query_template: str) -> float:
         query = query_template.format(
@@ -196,8 +178,7 @@ async def _query_month_usage(
     try:
         value = await run(RECORDED_USAGE_QUERY)
         if value == 0.0:
-            # Maanden van voor de recording rule hebben geen recorded data;
-            # val terug op de zware raw query
+            # Months from before the recording rule have no recorded data.
             value = await run(MEMORY_USAGE_QUERY)
     except Exception:
         logger.exception("Failed to query billing data for %s %d", month_info["name"], month_info["year"])
@@ -206,9 +187,8 @@ async def _query_month_usage(
     return {
         **month_info,
         "gib": value,
-        # Een lopende maand is nog niet vol. Zonder deze vlag leest een rij die halverwege
-        # de maand op de helft staat als een daling, terwijl er alleen nog minder maand is.
-        "loopt_nog": _is_lopende_maand(month_info["year"], month_info["month"]),
+        # Without this flag a row halfway through the month reads as a drop.
+        "loopt_nog": _is_current_month(month_info["year"], month_info["month"]),
     }
 
 
@@ -230,7 +210,6 @@ async def usage_overview(request: Request) -> Response:
     available_namespaces = _get_available_namespaces(cluster_name)
     namespace_filter = _get_namespace_filter(namespace, cluster_name)
 
-    # Query each month
     month_data: list[dict[str, Any]] = []
     if datasource_uid:
         for month_info in months:
@@ -243,7 +222,7 @@ async def usage_overview(request: Request) -> Response:
                 **month_info,
                 "gib": 0.0,
                 "cost": 0.0,
-                "loopt_nog": _is_lopende_maand(month_info["year"], month_info["month"]),
+                "loopt_nog": _is_current_month(month_info["year"], month_info["month"]),
             }
             for month_info in months
         )
@@ -251,7 +230,6 @@ async def usage_overview(request: Request) -> Response:
     total_gib = round(sum(m["gib"] for m in month_data), 2)
     total_cost = round(sum(m["cost"] for m in month_data), 2)
 
-    # Dezelfde gegevens, twee weergaven; zie opi/http/render/lotc_switch.py.
     from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(

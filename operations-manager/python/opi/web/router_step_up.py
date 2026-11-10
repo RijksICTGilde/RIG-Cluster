@@ -1,10 +1,9 @@
-"""De verse step-up in het portaal (RC-332).
+"""The step-up in the portal: a fresh OTP code before an action that touches production.
 
-Een handeling die productie raakt wisselt zichzelf in voor een dialoog met een OTP-veld.
-Die dialoog post hier; bij een geldige code staat de step-up in de sessie en voert de
-dialoog de oorspronkelijke handeling alsnog uit.
+The action swaps itself for a dialog with an OTP field, that dialog posts here, and on a valid
+code the step-up is recorded in the session and the dialog carries out the original action.
 
-De route valt onder de centrale CSRF-bescherming: hij staat niet onder ``/api/``.
+These routes fall under the central CSRF protection, because they do not sit under ``/api/``.
 """
 
 from __future__ import annotations
@@ -30,8 +29,8 @@ logger = logging.getLogger(__name__)
 step_up_router = APIRouter(tags=["step-up"])
 
 
-def _code_error(uitkomst: OtpVerification) -> str:
-    if uitkomst is OtpVerification.LOCKED:
+def _code_error(outcome: OtpVerification) -> str:
+    if outcome is OtpVerification.LOCKED:
         return "Je factor is tijdelijk geblokkeerd na te veel mislukte pogingen. Probeer het later opnieuw."
     return "Die code klopt niet. Vul de code in die je app nu toont."
 
@@ -61,10 +60,10 @@ async def _elevate_content(request: Request, terug: str, code_fout: str = "") ->
 @requires_sso
 async def elevate_form(request: Request, terug: str = "/") -> Response:
     """The popup content; a plain visit lands on the page that opens the popup."""
-    bestemming = local_redirect_path(terug)
+    destination = local_redirect_path(terug)
     if not request.headers.get("HX-Request"):
-        return RedirectResponse(url=elevate_url(bestemming), status_code=303)
-    return await _elevate_content(request, bestemming)
+        return RedirectResponse(url=elevate_url(destination), status_code=303)
+    return await _elevate_content(request, destination)
 
 
 @step_up_router.post(ELEVATE_PATH, response_model=None)
@@ -76,11 +75,11 @@ async def elevate(request: Request) -> Response:
     terug = local_redirect_path(str(form.get("terug", "/")))
     email = str((get_current_user(request) or {}).get("email", "")).lower()
 
-    uitkomst = await UserOtpService().verify(email, str(form.get("otp", "")).strip())
-    if uitkomst is not OtpVerification.OK:
-        logger.warning("Verhoogde rechten geweigerd voor %s: uitkomst %s", email, uitkomst)
-        await record_step_up_attempt(email, allowed=False, cause=uitkomst.value, origin=client_ip(request))
-        return await _elevate_content(request, terug, code_fout=_code_error(uitkomst))
+    outcome = await UserOtpService().verify(email, str(form.get("otp", "")).strip())
+    if outcome is not OtpVerification.OK:
+        logger.warning("Verhoogde rechten geweigerd voor %s: uitkomst %s", email, outcome)
+        await record_step_up_attempt(email, allowed=False, cause=outcome.value, origin=client_ip(request))
+        return await _elevate_content(request, terug, code_fout=_code_error(outcome))
 
     record_step_up(request)
     logger.info("Verhoogde rechten geactiveerd door %s", email)
@@ -102,34 +101,34 @@ async def end_elevation(request: Request) -> Response:
 @action(Action.STEP_UP_VERIFY)
 @requires_sso
 async def step_up(request: Request) -> HTMLResponse:
-    """Toets de code en voer daarna de handeling uit die erom vroeg.
+    """Check the code, then carry out the action that asked for it.
 
-    Alleen een code uit de app: de factor uit RC-329 kent geen herstelcodes, en wie zijn
-    app kwijt is laat een beheerder de factor resetten.
+    Only a code from the app: the factor has no recovery codes, so someone who lost their app
+    has an admin reset the factor.
     """
     form = await request.form()
     vervolg = str(form.get("vervolg", ""))
-    # De handeling komt uit het formulier en gaat naar de log: een regeleinde erin zou
-    # een eigen logregel maken en zo een geslaagde step-up van een ander kunnen forgen.
+    # The action comes from the form and goes into the log, where a line break in it would
+    # make a log line of its own and could forge someone else's successful step-up.
     handeling = sanitize_for_log(str(form.get("handeling", "deze handeling uit te voeren")))
     vervolg_token = str(form.get("vervolg_token", "")) or None
     vervolg_velden = lees_vervolg_velden(str(form.get("vervolg_velden", "")))
-    # Alleen GET en POST kent de herhaling; alles anders leest als de gewone POST.
+    # The repeat knows GET and POST only; anything else reads as the plain POST.
     vervolg_methode = "GET" if str(form.get("vervolg_methode", "")).upper() == "GET" else "POST"
     code = str(form.get("otp", "")).strip()
     email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     service = UserOtpService()
-    uitkomst = await service.verify(email, code)
-    if uitkomst is not OtpVerification.OK:
-        logger.warning("Step-up geweigerd voor %s, om %s: uitkomst %s", email, handeling, uitkomst)
-        await record_step_up_attempt(email, allowed=False, cause=uitkomst.value, origin=client_ip(request))
+    outcome = await service.verify(email, code)
+    if outcome is not OtpVerification.OK:
+        logger.warning("Step-up geweigerd voor %s, om %s: uitkomst %s", email, handeling, outcome)
+        await record_step_up_attempt(email, allowed=False, cause=outcome.value, origin=client_ip(request))
         return HTMLResponse(
             content=await render_step_up_dialog(
                 request,
                 vervolg=vervolg,
                 handeling=handeling,
-                code_fout=_code_error(uitkomst),
+                code_fout=_code_error(outcome),
                 vervolg_token=vervolg_token,
                 vervolg_velden=vervolg_velden,
                 methode=vervolg_methode,

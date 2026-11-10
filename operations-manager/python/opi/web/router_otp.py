@@ -1,25 +1,20 @@
-"""Webroutes waarmee een gebruiker zijn eigen 2-factor inricht (RC-329).
+"""Web routes with which a user sets up their own second factor.
 
-Zelfbediening: deze pagina's raken alleen de factor van de INGELOGDE gebruiker. De
-factor van een ander resetten is beheer en staat in ``router_user_admin.py``.
+Self-service: these pages only touch the factor of the SIGNED-IN user. Resetting someone
+else's factor is administration and lives in ``router_user_admin.py``.
 
-Een nog niet bevestigde registratie staat niet in de database als factor: de oude factor
-verdwijnt pas als de gebruiker een geldige code van de nieuwe heeft ingevoerd. De seed
-reist AGE-versleuteld mee in een verborgen veld van het formulier; dat die registratie
-loopt, staat met de vingerafdruk van die seed in de tabel ``otp_pending_registrations``.
+A registration that has not been confirmed is not a factor in the database: the old factor goes
+only once the user has entered a valid code from the new one. The seed travels AGE-encrypted in
+a hidden form field, and that the registration is running is recorded by the fingerprint of
+that seed in the table ``otp_pending_registrations``. The session does not carry the
+registration at all: whoever did no ``/start`` has no row, the row expires after ten minutes,
+and the cleanup loop clears it.
 
-Server-side, zoals AMT/TAD hetzelfde probleem oploste: tot 27-10-2026 ontving de
-sessiecookie die vingerafdruk, en op de sandbox liep zo'n cookie (hij draagt al een
-id_token) daarmee over de ~4 KB die een browser geruisloos laat vallen. /bevestigen kwam
-dan aan zonder merk, de gebruiker zag geen enkele foutmelding, en de registratie
-verdween. De sessie raakt de registratie hier helemaal niet meer; wie geen /start heeft
-gedaan, heeft geen rij; de rij verloopt na tien minuten en de cleanup-lus ruimt op.
-
-Een 2-factor inrichten of vervangen vraagt eerst een herlogin bij Keycloak (``/herlogin``):
-anders richt iedereen met een open sessie op een ontgrendelde computer een eigen 2-factor in
-onder de naam van een ander. De poort staat op ``/start``; ``/bevestigen`` wordt beschermd
-door de rij die ``/start`` zet, en zou een registratie vernietigen die al gescand is als het
-venster van de herlogin tijdens het scannen verliep.
+Setting up or replacing a factor asks for a re-login at Keycloak first, or anyone with an open
+session on an unlocked computer sets up a factor in someone else's name. That gate sits on
+``/start`` only: ``/bevestigen`` is protected by the row ``/start`` writes, and gating it too
+would destroy a registration that has already been scanned when the re-login window ran out
+during the scanning.
 """
 
 from __future__ import annotations
@@ -47,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 otp_router = APIRouter(prefix="/account/otp", tags=["account-otp"])
 
-#: Het verborgen veld dat de versleutelde seed draagt.
+#: The hidden field that carries the encrypted seed.
 PENDING_FIELD = "pending"
 
-#: PENDING_TTL van de service bepaalt hoe lang een /start zijn bevestiging accepteert.
+#: ``PENDING_TTL`` of the service decides how long a /start accepts its confirmation.
 
 _PATH = "/account/otp"
 
@@ -82,7 +77,7 @@ def _fingerprint(encrypted_secret: str) -> str:
 
 
 def _page(request: Request, template: str, context: dict) -> Response:
-    """Een pagina van deze reeks, met de schil en de navigatie eromheen."""
+    """One page of this series, with the shell and the navigation around it."""
     user = get_current_user(request)
     return render(
         request,
@@ -102,17 +97,19 @@ async def _status_page(request: Request, context: dict) -> Response:
     return _page(request, "bg/account-otp.html.j2", {"herlogin_vers": herlogin_vers, **context})
 
 
-def _registration_page(request: Request, registratie: OtpRegistration, fout: str = "", code_fout: str = "") -> Response:
+def _registration_page(
+    request: Request, registration: OtpRegistration, error: str = "", code_error: str = ""
+) -> Response:
     return _page(
         request,
         "bg/account-otp-registreren.html.j2",
         {
-            "qr_svg": qr_svg(registratie.otpauth_uri),
-            "base32_secret": registratie.base32_secret,
-            "pending": registratie.encrypted_secret,
+            "qr_svg": qr_svg(registration.otpauth_uri),
+            "base32_secret": registration.base32_secret,
+            "pending": registration.encrypted_secret,
             "pending_field": PENDING_FIELD,
-            "fout": fout,
-            "code_fout": code_fout,
+            "fout": error,
+            "code_fout": code_error,
         },
     )
 
@@ -121,7 +118,7 @@ def _registration_page(request: Request, registratie: OtpRegistration, fout: str
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_status_pagina(request: Request) -> Response:
-    """Of je een 2-factor hebt, en de weg om hem in te richten of te vervangen."""
+    """Whether you have a second factor, and the way to set one up or replace it."""
     status = await _get_otp_service().status(_email(request))
     return await _status_page(request, {"status": status})
 
@@ -130,11 +127,11 @@ async def otp_status_pagina(request: Request) -> Response:
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_start(request: Request) -> Response:
-    """Maak een seed en toon de QR. Schrijft nog niets in de database.
+    """Make a seed and show the QR; writes nothing in the database yet.
 
-    Een BESTAANDE, bevestigde factor vervangen vraagt eerst een code van die factor:
-    anders neemt wie een sessie overneemt ook de factor over. Wie die code niet heeft,
-    vraagt een platformbeheerder om een reset.
+    Replacing an EXISTING, confirmed factor asks for a code from that factor first, or whoever
+    takes over a session takes over the factor as well. Without that code, a platform admin
+    resets the factor.
     """
     email = _email(request)
     if not await _get_herlogin_service().is_fresh(email, _login_at(request)):
@@ -145,8 +142,8 @@ async def otp_start(request: Request) -> Response:
 
     if status.registered:
         form = await request.form()
-        uitkomst = await service.verify(email, str(form.get("otp", "")))
-        if uitkomst is not OtpVerification.OK:
+        outcome = await service.verify(email, str(form.get("otp", "")))
+        if outcome is not OtpVerification.OK:
             return await _status_page(
                 request,
                 {
@@ -154,26 +151,25 @@ async def otp_start(request: Request) -> Response:
                     "code_fout": (
                         "Je factor is tijdelijk geblokkeerd na te veel mislukte pogingen. Probeer het later "
                         "opnieuw, of vraag een platformbeheerder om je factor te resetten."
-                        if uitkomst is OtpVerification.LOCKED
+                        if outcome is OtpVerification.LOCKED
                         else "Die code klopt niet. Vul een code uit je huidige app in."
                     ),
                 },
             )
 
-    registratie = await service.start_registration(email)
-    await service.note_pending_registration(email, _fingerprint(registratie.encrypted_secret))
-    return _registration_page(request, registratie)
+    registration = await service.start_registration(email)
+    await service.note_pending_registration(email, _fingerprint(registration.encrypted_secret))
+    return _registration_page(request, registration)
 
 
 @otp_router.get("/herlogin", response_model=None)
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_herlogin(request: Request) -> Response:
-    """Stuur naar Keycloak voor een verse login, voordat een 2-factor ingericht wordt.
+    """Send to Keycloak for a fresh login, before a second factor is set up.
 
-    ``prompt=login`` en ``max_age=0`` dwingen een nieuwe authenticatie af, ook als Keycloak
-    nog een sessie van deze browser kent. De state staat server-side (zie
-    ``opi/services/persistence/otp_herlogin.py``).
+    ``prompt=login`` and ``max_age=0`` force a new authentication even when Keycloak still
+    knows a session of this browser. The state is kept server-side.
     """
     login_at = _login_at(request)
     if login_at is None:
@@ -181,7 +177,7 @@ async def otp_herlogin(request: Request) -> Response:
 
     herlogin = await _get_herlogin_service().begin(_email(request), login_at)
     keycloak = request.app.state.oauth.keycloak
-    aanvraag = await keycloak.create_authorization_url(
+    authorization = await keycloak.create_authorization_url(
         _herlogin_url(request),
         state=herlogin.state,
         nonce=herlogin.nonce,
@@ -189,14 +185,14 @@ async def otp_herlogin(request: Request) -> Response:
         prompt="login",
         max_age=0,
     )
-    return RedirectResponse(url=aanvraag["url"], status_code=302)
+    return RedirectResponse(url=authorization["url"], status_code=302)
 
 
 @otp_router.get("/herlogin/terug", response_model=None, name="otp_herlogin_terug")
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_herlogin_terug(request: Request) -> Response:
-    """Keycloak komt hier terug. Een geslaagde herlogin opent het venster voor ``/start``."""
+    """Keycloak comes back here; a successful re-login opens the window for ``/start``."""
     email = _email(request)
     login_at = _login_at(request)
     code = request.query_params.get("code", "")
@@ -234,10 +230,10 @@ async def otp_herlogin_terug(request: Request) -> Response:
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_bevestigen(request: Request) -> Response:
-    """Bevestig de lopende registratie. Pas hier gaat de nieuwe 2-factor in."""
+    """Confirm the running registration; only here does the new factor take effect."""
     form = await request.form()
-    # Een formulier-POST maakt CRLF van de LF's in het AGE-pantser (form-encoding);
-    # de afdruk en de ontsleuteling horen de kanonieke vorm te zien.
+    # A form POST turns the LFs in the AGE armour into CRLFs, and both the fingerprint and
+    # the decryption have to see the canonical form.
     encrypted = str(form.get(PENDING_FIELD, "")).replace("\r\n", "\n")
     email = _email(request)
     if not encrypted or not await _get_otp_service().consume_pending_registration(email, _fingerprint(encrypted)):
@@ -247,7 +243,7 @@ async def otp_bevestigen(request: Request) -> Response:
             return _registration_page(
                 request,
                 await service.resume_registration(email, encrypted),
-                fout=(
+                error=(
                     "De registratie was verlopen. Probeer het nogmaals: scan de QR niet opnieuw, "
                     "maar vul een nieuwe code uit je app in."
                 ),
@@ -262,16 +258,16 @@ async def otp_bevestigen(request: Request) -> Response:
 
     user = get_current_user(request) or {}
     service = _get_otp_service()
-    bevestigd = await service.confirm_registration(
+    confirmed = await service.confirm_registration(
         email,
         str(form.get("otp", "")),
         encrypted,
         full_name=str(user.get("name") or user.get("display_name") or ""),
     )
-    if not bevestigd:
-        registratie = await service.resume_registration(email, encrypted)
+    if not confirmed:
+        registration = await service.resume_registration(email, encrypted)
         return _registration_page(
-            request, registratie, code_fout="Die code klopt niet. Probeer de volgende code uit je app."
+            request, registration, code_error="Die code klopt niet. Probeer de volgende code uit je app."
         )
 
     return RedirectResponse(url=_PATH, status_code=303)
@@ -281,6 +277,6 @@ async def otp_bevestigen(request: Request) -> Response:
 @action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_afbreken(request: Request) -> Response:
-    """Vergeet de lopende registratie. De bestaande factor blijft zoals hij was."""
+    """Forget the running registration; the existing factor stays as it was."""
     await _get_otp_service().discard_pending_registration(_email(request))
     return RedirectResponse(url=_PATH, status_code=303)

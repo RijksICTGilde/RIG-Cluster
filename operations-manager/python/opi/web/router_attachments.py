@@ -26,13 +26,9 @@ attachments_router = APIRouter(prefix="/projects", tags=["attachments"])
 async def delete_attachment(request: Request, project_name: str, attachment_id: str) -> HTMLResponse:
     """Remove an attachment from the catalog, as a task the confirmation can follow.
 
-    The removal (and its refusal while the attachment is still coupled) lives in the
-    task; this endpoint only authorizes and answers with the shared progress fragment,
-    like every other confirmed action on the project-details page.
-
-    The id is checked against the project's own catalog first: an id this project does
-    not have is a 404 here rather than a task that fails a moment later, and it keeps
-    a made-up id out of the task text the progress fragment renders.
+    The removal, and its refusal while the attachment is still coupled, lives in the task.
+    An id this project does not have is a 404 here rather than a task that fails a moment
+    later, which also keeps a made-up id out of the task text the fragment renders.
     """
     project = authorized_project(request)
 

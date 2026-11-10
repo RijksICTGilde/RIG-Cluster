@@ -1,19 +1,16 @@
-"""Leden en tokens beheren vanuit het portaal.
+"""Managing members and tokens from the portal.
 
-Dezelfde regels als de API: ze staan in :mod:`opi.services.api_token_service` en niet hier,
-zodat het formulier en de API hetzelfde logicapad lopen.
+The rules live in :mod:`opi.services.api_token_service` and not here, so the form and the API
+run the same logic path.
 
-De uitgegeven waarde komt EEN keer terug en wordt bij het tonen meteen weggegooid. Een
-token dat je op de pagina kunt terugvinden is geen token dat niemand meer kan lezen.
+The issued value comes back ONCE and is thrown away as it is shown. It stays server-side while
+it waits: Starlette's cookie session is signed and not encrypted, so a token in the session
+would sit base64-readable on the browser's disk until the next GET. ``router_otp`` makes the
+same choice and puts a fingerprint in the session rather than the secret.
 
-De waarde zelf blijft daarbij server-side: de sessie draagt alleen een verwijzing. De
-cookie-sessie van Starlette is ondertekend en niet versleuteld, dus het token zou tot de
-volgende GET base64-leesbaar op de schijf van de browser staan. Zelfde keuze als
-``router_otp``, dat ook een vingerafdruk in de sessie zet en niet het geheim.
-
-Elke handeling hier vraagt een verse step-up (RC-387), met het venster uit
-``opi.services.step_up``. De dialoog neemt de plaats van het formulier in, dus de velden van de
-handeling gaan mee in de herhaling: ``velden`` op de decorator somt ze per route op.
+Every action here asks for a fresh step-up, with the window from ``opi.services.step_up``. The
+dialog takes the place of the form, so the fields of the action travel along in the repeat:
+``fields`` on the decorator lists them per route.
 """
 
 from __future__ import annotations
@@ -49,57 +46,55 @@ logger = logging.getLogger(__name__)
 
 token_web_router = APIRouter(prefix="/projects", tags=["tokens-web"])
 
-#: Waar de verwijzing naar het nieuwe token en een eventuele weigering tussen de POST en
-#: de volgende GET staan.
-NIEUW_TOKEN_SLEUTEL = "nieuw_token"  # noqa: S105 -- sessiesleutel, geen secret
-TOKENFOUT_SLEUTEL = "tokenfout"
+#: Where the reference to the new token and a refusal sit between the POST and the next GET.
+NEW_TOKEN_SESSION_KEY = "nieuw_token"  # noqa: S105  # a session key, not a secret
+TOKEN_ERROR_SESSION_KEY = "tokenfout"  # noqa: S105  # a session key, not a secret
 
-#: Hoe lang een uitgegeven waarde op zijn eenmalige weergave wacht. Het normale pad is de
-#: 303 die er meteen naartoe gaat; wie het tabblad niet opent laat hem hier verlopen.
-_WEERGAVE_SECONDEN = 300
+#: How long an issued value waits for its one-time display. The normal path is the 303 that
+#: goes straight there; whoever does not open the tab lets it expire here.
+_DISPLAY_SECONDS = 300
 
-#: De uitgegeven waarden die nog op hun eenmalige weergave wachten, per verwijzing. OPI
-#: draait als een enkele replica, dus dit hoeft niet gedeeld te zijn; een herstart tussen
-#: de POST en de GET kost de weergave, en dan is het token te roteren.
-_wachtend: dict[str, tuple[float, dict[str, str]]] = {}
-
-
-def _leg_klaar(details: dict[str, str]) -> str:
-    """Bewaar een uitgegeven waarde server-side en geef de verwijzing terug."""
-    nu = time.monotonic()
-    for verwijzing, (vervalt, _) in list(_wachtend.items()):
-        if vervalt <= nu:
-            del _wachtend[verwijzing]
-    verwijzing = secrets.token_urlsafe(16)
-    _wachtend[verwijzing] = (nu + _WEERGAVE_SECONDEN, details)
-    return verwijzing
+#: The issued values still waiting for their one-time display, per reference. OPI runs as a
+#: single replica, so this does not have to be shared; a restart between the POST and the GET
+#: costs the display, and then the token can be rotated.
+_pending: dict[str, tuple[float, dict[str, str]]] = {}
 
 
-def _haal_op(verwijzing: str | None) -> dict[str, str] | None:
-    """De waarde achter deze verwijzing, een keer. Daarna is hij weg."""
-    if not verwijzing:
+def _hold_for_display(details: dict[str, str]) -> str:
+    """Keep an issued value server-side and return the reference to it."""
+    now = time.monotonic()
+    for reference, (expires_at, _) in list(_pending.items()):
+        if expires_at <= now:
+            del _pending[reference]
+    reference = secrets.token_urlsafe(16)
+    _pending[reference] = (now + _DISPLAY_SECONDS, details)
+    return reference
+
+
+def _take_once(reference: str | None) -> dict[str, str] | None:
+    """The value behind this reference, once; after that it is gone."""
+    if not reference:
         return None
-    wachtend = _wachtend.pop(verwijzing, None)
-    if wachtend is None:
+    held = _pending.pop(reference, None)
+    if held is None:
         return None
-    vervalt, details = wachtend
-    return details if vervalt > time.monotonic() else None
+    expires_at, details = held
+    return details if expires_at > time.monotonic() else None
 
 
 def _email(request: Request) -> str:
-    gebruiker = get_current_user(request) or {}
-    email = str(gebruiker.get("email", "")).lower()
+    user = get_current_user(request) or {}
+    email = str(user.get("email", "")).lower()
     if not email:
         raise HTTPException(status_code=403, detail="Geen aangemelde gebruiker")
     return email
 
 
-def _terug(request: Request, project_name: str) -> Response:
-    """Terug naar het tabblad Team, en onder htmx als volledige navigatie.
+def _back_to_team(request: Request, project_name: str) -> Response:
+    """Back to the Team tab, as a full navigation under htmx.
 
-    De formulieren posten met htmx omdat de step-up een dialoog in de plaats van het
-    formulier zet. Een 303 zou htmx de hele pagina in die dialoog laten hangen, dus gaat
-    de verversing als HX-Redirect; zie bg/_tokens.html.j2.
+    The forms post with htmx because the step-up puts a dialog in the place of the form. A 303
+    would leave htmx hanging the whole page in that dialog, so the refresh goes as HX-Redirect.
     """
     url = project_tab_url(project_name, "team")
     if request.headers.get("HX-Request"):
@@ -107,32 +102,32 @@ def _terug(request: Request, project_name: str) -> Response:
     return RedirectResponse(url=url, status_code=303)
 
 
-async def _velden(request: Request) -> dict[str, str]:
-    """Het formulier als vlakke dict; een meerkeuze wordt een kommalijst.
+async def _form_fields(request: Request) -> dict[str, str]:
+    """The form as a flat dict; a multi-select becomes a comma-separated list.
 
-    Dezelfde vorm als de step-up-herhaling teruggeeft (``fields_from_form`` in audit_trail),
-    zodat een route niet hoeft te weten of hij het formulier of de herhaling leest.
+    The same shape ``fields_from_form`` in audit_trail returns for the step-up repeat, so a
+    route need not know whether it is reading the form or the repeat.
     """
-    formulier = await request.form()
-    getlist = getattr(formulier, "getlist", None)
+    form = await request.form()
+    getlist = getattr(form, "getlist", None)
     if getlist is None:
-        # Een test die een gewone dict als formulier levert.
-        return {sleutel: str(waarde) for sleutel, waarde in formulier.items()}
-    return {sleutel: ",".join(str(waarde) for waarde in getlist(sleutel)) for sleutel in formulier}
+        # A test that supplies a plain dict as the form.
+        return {key: str(value) for key, value in form.items()}
+    return {key: ",".join(str(value) for value in getlist(key)) for key in form}
 
 
-def _rollen_uit(velden: dict[str, str]) -> list[str]:
-    """De gekozen rollen uit het formulier.
+def _roles_from(fields: dict[str, str]) -> list[str]:
+    """The roles chosen in the form.
 
-    De meerkeuze stuurt ``roles`` meerdere keren; ``fields_from_form`` heeft die dan al tot een
-    kommalijst samengevoegd, en de step-up-herhaling stuurt diezelfde vorm terug.
+    The multi-select sends ``roles`` several times; ``fields_from_form`` has already joined
+    those into a comma-separated list, and the step-up repeat sends that same shape back.
     """
-    return [deel.strip() for deel in velden.get("roles", "").split(",") if deel.strip()]
+    return [part.strip() for part in fields.get("roles", "").split(",") if part.strip()]
 
 
-def _dagen(velden: dict[str, str]) -> int:
+def _days(fields: dict[str, str]) -> int:
     try:
-        return int(velden.get("dagen") or "0")
+        return int(fields.get("dagen") or "0")
     except ValueError as exc:
         raise TokenRequestRefusedError("Vul een aantal dagen in.") from exc
 
@@ -142,18 +137,18 @@ def _dagen(velden: dict[str, str]) -> int:
 @requires_sso
 @requires_step_up(action=StepUpAction.SERVICE_ACCOUNT_ADD, fields=("naam", "roles"))
 async def voeg_service_account_toe_web(request: Request, project_name: str) -> Response:
-    """Zet een service account in de leden van dit project."""
-    velden = await _velden(request)
+    """Put a service account in the members of this project."""
+    fields = await _form_fields(request)
     try:
         await add_service_account(
             project_name=project_name,
-            name=velden.get("naam", ""),
-            roles=_rollen_uit(velden) or list(DEFAULT_ROLES),
+            name=fields.get("naam", ""),
+            roles=_roles_from(fields) or list(DEFAULT_ROLES),
             by=_email(request),
         )
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+    return _back_to_team(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/verwijderen")
@@ -161,12 +156,12 @@ async def voeg_service_account_toe_web(request: Request, project_name: str) -> R
 @requires_sso
 @requires_step_up(action=StepUpAction.SERVICE_ACCOUNT_REMOVE)
 async def verwijder_service_account_web(request: Request, project_name: str, naam: str) -> Response:
-    """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
+    """Take a service account out of the members; its tokens go in the same commit."""
     try:
         await remove_service_account(project_name=project_name, name=naam, by=_email(request))
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+    return _back_to_team(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/rol")
@@ -174,13 +169,13 @@ async def verwijder_service_account_web(request: Request, project_name: str, naa
 @requires_sso
 @requires_step_up(action=StepUpAction.ROLE_CHANGE, fields=("roles",))
 async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Response:
-    """Geef een lid andere rollen. Zijn bestaande tokens volgen die rollen meteen."""
-    velden = await _velden(request)
+    """Give a member other roles; its existing tokens follow those roles at once."""
+    fields = await _form_fields(request)
     try:
-        await set_member_roles(project_name=project_name, name=naam, roles=_rollen_uit(velden), by=_email(request))
+        await set_member_roles(project_name=project_name, name=naam, roles=_roles_from(fields), by=_email(request))
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+    return _back_to_team(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens")
@@ -188,22 +183,22 @@ async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Resp
 @requires_sso
 @requires_step_up(action=StepUpAction.TOKEN_ISSUE, fields=("tokennaam", "dagen"))
 async def maak_token_web(request: Request, project_name: str, naam: str) -> Response:
-    """Geef een token uit aan dit lid. De waarde is daarna een keer te zien."""
-    velden = await _velden(request)
+    """Issue a token to this member; the value can be seen once afterwards."""
+    fields = await _form_fields(request)
     try:
-        waarde = await issue_token(
+        value = await issue_token(
             project_name=project_name,
             name=naam,
-            token_name=velden.get("tokennaam", ""),
-            days=_dagen(velden),
+            token_name=fields.get("tokennaam", ""),
+            days=_days(fields),
             by=_email(request),
         )
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-        return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+        return _back_to_team(request, project_name)
 
-    request.session[NIEUW_TOKEN_SLEUTEL] = _leg_klaar({"token": waarde, "eigenaar": naam})
-    return _terug(request, project_name)
+    request.session[NEW_TOKEN_SESSION_KEY] = _hold_for_display({"token": value, "eigenaar": naam})
+    return _back_to_team(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren")
@@ -211,22 +206,22 @@ async def maak_token_web(request: Request, project_name: str, naam: str) -> Resp
 @requires_sso
 @requires_step_up(action=StepUpAction.TOKEN_ROTATE, fields=("dagen",))
 async def roteer_token_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
-    """Trek dit token in en geef er een nieuw uit onder dezelfde naam."""
-    velden = await _velden(request)
+    """Revoke this token and issue a new one under the same name."""
+    fields = await _form_fields(request)
     try:
-        waarde = await rotate_token(
+        value = await rotate_token(
             project_name=project_name,
             name=naam,
             token_name=tokennaam,
-            days=_dagen(velden),
+            days=_days(fields),
             by=_email(request),
         )
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-        return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+        return _back_to_team(request, project_name)
 
-    request.session[NIEUW_TOKEN_SLEUTEL] = _leg_klaar({"token": waarde, "eigenaar": naam})
-    return _terug(request, project_name)
+    request.session[NEW_TOKEN_SESSION_KEY] = _hold_for_display({"token": value, "eigenaar": naam})
+    return _back_to_team(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken")
@@ -234,43 +229,44 @@ async def roteer_token_web(request: Request, project_name: str, naam: str, token
 @requires_sso
 @requires_step_up(action=StepUpAction.TOKEN_REVOKE)
 async def trek_token_in_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
-    """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
+    """Revoke a token. That is a commit, so it stands in the history of the project."""
     try:
         await revoke_token(project_name=project_name, name=naam, token_name=tokennaam, by=_email(request))
     except TokenRequestRefusedError as exc:
-        request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(request, project_name)
+        request.session[TOKEN_ERROR_SESSION_KEY] = str(exc)
+    return _back_to_team(request, project_name)
 
 
-def tokencontext(request: Request, project_name: str, user_email: str, is_beheerder: bool) -> dict[str, Any]:
-    """Wat het tabblad Team over leden en tokens moet tonen.
+def tokencontext(request: Request, project_name: str, user_email: str, is_admin: bool) -> dict[str, Any]:
+    """What the Team tab has to show about members and tokens.
 
-    Leest alleen uit het projectbestand, dus er is geen database bij en geen tak voor een
-    database die niet meebeweegt.
+    Reads from the project file only, so no database is involved.
     """
-    leden = members_overview(project_name)
-    for lid in leden:
-        lid["is_service_account"] = lid["soort"] == MemberKind.SERVICE_ACCOUNT.value
-        lid["is_current_user"] = lid["naam"].lower() == user_email
-        # Een beheerder beheert de tokens van elk lid; een mens die van zichzelf. Uitgeven
-        # voor een ander mens kan niemand: dat zou een bewijsmiddel zijn dat iemand draagt
-        # zonder te weten dat het bestaat.
-        lid["mag_uitgeven"] = (lid["is_service_account"] and is_beheerder) or lid["is_current_user"]
-        lid["mag_intrekken"] = is_beheerder or lid["is_current_user"]
+    members = members_overview(project_name)
+    for member in members:
+        member["is_service_account"] = member["soort"] == MemberKind.SERVICE_ACCOUNT.value
+        member["is_current_user"] = member["naam"].lower() == user_email
+        # An admin manages the tokens of every member, a human only their own. Issuing for
+        # another human is nobody's right: that would be a credential someone carries without
+        # knowing it exists.
+        member["mag_uitgeven"] = (member["is_service_account"] and is_admin) or member["is_current_user"]
+        member["mag_intrekken"] = is_admin or member["is_current_user"]
 
     # The caller's own card goes first; the stable sort keeps the project file order for
     # the rest, and a caller without membership moves nothing.
-    leden.sort(key=lambda lid: not lid["is_current_user"])
+    members.sort(key=lambda member: not member["is_current_user"])
 
     return {
-        "leden": leden,
-        # Label en omschrijving uit het register (B13): een andere naam op het scherm
-        # is dan een wijziging op een plek, en geen migratie van projectbestanden.
-        "rollen": [{"sleutel": rol.value, "label": role_label(rol), "uitleg": ROLE_DESCRIPTIONS[rol]} for rol in Role],
+        "leden": members,
+        # Label and description from the register, so another name on screen is a change in one
+        # place and not a migration of project files.
+        "rollen": [
+            {"sleutel": role.value, "label": role_label(role), "uitleg": ROLE_DESCRIPTIONS[role]} for role in Role
+        ],
         "standaard_rollen": list(DEFAULT_ROLES),
-        "is_project_beheerder": is_beheerder,
+        "is_project_beheerder": is_admin,
         "token_max_dagen_persoonlijk": settings.TOKEN_MAX_DAGEN_PERSOONLIJK,
         "token_max_dagen_service_account": settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT,
-        "nieuw_token": _haal_op(request.session.pop(NIEUW_TOKEN_SLEUTEL, None)),
-        "tokenfout": request.session.pop(TOKENFOUT_SLEUTEL, None),
+        "nieuw_token": _take_once(request.session.pop(NEW_TOKEN_SESSION_KEY, None)),
+        "tokenfout": request.session.pop(TOKEN_ERROR_SESSION_KEY, None),
     }

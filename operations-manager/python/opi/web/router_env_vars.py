@@ -1,13 +1,10 @@
-"""De omgevingsvariabelen van een component bekijken en wijzigen (RC-388).
+"""Viewing and changing the environment variables of a component.
 
-Ze staan niet meer op de weergavepagina: de detailpagina toont alleen hun namen en hun
-aantal. Wie de waarden wil zien of wijzigen opent dit venster, en dat vraagt altijd een
-verse step-up, ongeacht de OTAP-markering van de deployment. Binnen het venster van vijf
-minuten leest en schrijft het formulier de echte waarden.
+The detail page shows only their names and their number; this window shows and writes the real
+values, and it always asks for a fresh step-up, whatever the OTAP marking of the deployment is.
 
-De generieke bewerkwizard en de componentmodals doen ``user-env-vars`` niet meer: geen
-formulierhaak van de dienst grijpt het veld nog, dus een opslag langs die wegen laat de
-opgeslagen waarde ongemoeid. De API-routes (values-endpoints) veranderen hier niet.
+The generic edit wizard and the component modals do NOT touch ``user-env-vars``: no form hook
+of the service grabs the field, so saving along those routes leaves the stored value alone.
 """
 
 from __future__ import annotations
@@ -38,13 +35,13 @@ logger = logging.getLogger(__name__)
 
 env_vars_web_router = APIRouter(prefix="/projects", tags=["env-vars-web"])
 
-#: Dezelfde converter en validator als de editable van de dienst: een lezer per veld.
+#: The same converter and validator as the service's editable: one reader per field.
 _CONVERTER = KeyValueConverter(fmt="env", write_as="string")
 _VALIDATOR = KeyValueValidator()
 
 
 def _scope_holder(project_data: dict[str, Any], component_name: str, deployment_name: str | None) -> dict[str, Any]:
-    """Het dict in het projectbestand dat de ``user-env-vars`` draagt, of een 404."""
+    """The dict in the project file that carries the ``user-env-vars``, or a 404."""
     project = Project(project_data)
     if deployment_name is None:
         component = project.find("components", name=component_name)
@@ -67,7 +64,7 @@ def _window_url(project_name: str, component_name: str, deployment_name: str | N
 
 
 def _scope_label(component_name: str, deployment_name: str | None) -> str:
-    """Voor log, commit en voortgang: de scope zonder de waarden."""
+    """For the log, the commit and the progress line: the scope without the values."""
     if deployment_name is None:
         return f"component '{component_name}'"
     return f"component '{component_name}' in deployment '{deployment_name}'"
@@ -80,20 +77,20 @@ async def _render_window(
     deployment_name: str | None,
     *,
     vars_text: str,
-    fout: str = "",
+    error: str = "",
 ) -> str:
     return render_fragment(
         request,
         template="bg/_env-vars-venster.html.j2",
         context={
-            # request expliciet, net als in step_up_dialog: render_fragment voegt hem niet
-            # zelf toe, en de template leest request.state.csrf_token voor het formulier.
+            # ``request`` explicitly: ``render_fragment`` does not add it, and the template
+            # reads ``request.state.csrf_token`` for the form.
             "request": request,
             "project_name": project_name,
             "component_name": component_name,
             "deployment_name": deployment_name,
             "vars_text": vars_text,
-            "fout": fout,
+            "fout": error,
             "post_url": _window_url(project_name, component_name, deployment_name),
         },
     )
@@ -114,7 +111,7 @@ async def _render_window(
 async def show_env_vars_window(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> HTMLResponse:
-    """Het bewerkvenster met de echte waarden. Alleen na een verse step-up."""
+    """The edit window with the real values; only after a fresh step-up."""
     project = authorized_project(request)
     project_data = project.data or {}
     holder = _scope_holder(project_data, component_name, deployment_name)
@@ -129,15 +126,15 @@ async def show_env_vars_window(
 
     if parsed is None:
         vars_text = ""
-        fout = "De opgeslagen variabelen zijn niet te lezen. Opslaan vervangt ze door wat je hier invult."
+        error = "De opgeslagen variabelen zijn niet te lezen. Opslaan vervangt ze door wat je hier invult."
     else:
-        # De converter formattereert de mapping naar KEY=value-regels; hij ontsleutelt
-        # niets meer, want `parsed` is al ontsleuteld.
+        # The converter formats the mapping into KEY=value lines; ``parsed`` is already
+        # decrypted, so nothing is decrypted here.
         vars_text = _CONVERTER.read(parsed)
-        fout = ""
+        error = ""
     return HTMLResponse(
         content=await _render_window(
-            request, project_name, component_name, deployment_name, vars_text=vars_text, fout=fout
+            request, project_name, component_name, deployment_name, vars_text=vars_text, error=error
         )
     )
 
@@ -157,10 +154,10 @@ async def show_env_vars_window(
 async def save_env_vars(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> Response:
-    """Schrijf de variabelen van deze scope en verwerk het project opnieuw.
+    """Write the variables of this scope and process the project again.
 
-    De step-up wordt hier opnieuw getoetst (de decorator), dus ook na het vijfminuten-
-    venster volgt de OTP-vraag in plaats van een opslag.
+    The decorator checks the step-up again, so once the window has run out the OTP question
+    follows instead of a save.
     """
     text = str((await request.form()).get("vars", ""))
 
@@ -168,7 +165,7 @@ async def save_env_vars(
     if errors:
         return HTMLResponse(
             content=await _render_window(
-                request, project_name, component_name, deployment_name, vars_text=text, fout="; ".join(errors)
+                request, project_name, component_name, deployment_name, vars_text=text, error="; ".join(errors)
             )
         )
 
@@ -177,8 +174,8 @@ async def save_env_vars(
         project_data = await project_manager.get_contents()
         holder = _scope_holder(project_data, component_name, deployment_name)
 
-        # ``write`` versleutelt met de projectsleutel uit de context; leeg betekent
-        # "de sleutel gaat weg" (remove_when_none, zoals de editable dat verklaart).
+        # ``write`` encrypts with the project key from the context; empty means the key is
+        # removed, the same ``remove_when_none`` the editable declares.
         new_block = _CONVERTER.write(text, project_data)
         existing_block = holder.get("user-env-vars")
         if isinstance(new_block, str) and isinstance(existing_block, str):
@@ -203,14 +200,14 @@ async def save_env_vars(
             logger.warning("Opslag van omgevingsvariabelen geweigerd voor %s: %s", project_name, exc)
             return HTMLResponse(
                 content=await _render_window(
-                    request, project_name, component_name, deployment_name, vars_text=text, fout=str(exc)
+                    request, project_name, component_name, deployment_name, vars_text=text, error=str(exc)
                 )
             )
     finally:
         await project_manager.close()
 
-    # Dezelfde payload als de modal na zijn opslag (project_file_already_saved): het
-    # bestand is al weggeschreven, de taak verwerkt alleen.
+    # The same payload as the modal after its save: the file is already written, so the task
+    # only processes.
     return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
@@ -227,7 +224,7 @@ async def save_env_vars(
 
 
 def _unchanged_response(request: Request, project_name: str) -> Response:
-    """Niets veranderd: terug naar de componenten-pagina, onder htmx als volledige navigatie."""
+    """Nothing changed: back to the components page, as a full navigation under htmx."""
     url = f"/projects/{project_name}/componenten"
     if request.headers.get("HX-Request"):
         return HTMLResponse(content="", headers={"HX-Redirect": url})

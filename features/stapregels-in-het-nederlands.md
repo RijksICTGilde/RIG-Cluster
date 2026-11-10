@@ -7,7 +7,7 @@ De voortgang van een achtergrondtaak toont een stapregel: "Realm aanmaken - prod
 ervan werd in het Engels weggeschreven en verscheen zo ook op het scherm, terwijl de rest
 van de interface Nederlands is.
 
-`opi/web/stap_labels.py` vertaalt die vaste regels op het moment van tonen.
+`opi/web/step_labels.py` vertaalt die vaste regels op het moment van tonen.
 
 | Opgeslagen | Op het scherm |
 |---|---|

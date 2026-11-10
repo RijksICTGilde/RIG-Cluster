@@ -1,8 +1,7 @@
-"""Wat een formulier wel en niet in het projectbestand mag schrijven.
+"""What a form may and may not write into the project file.
 
-De rolpoort is hier weg: die loopt sinds RC-392 via ``decide()``, in
-:mod:`opi.http.auth.authz`. Wat hier blijft is de merge van ingediende formuliergegevens op het
-opgeslagen project, met de velden die geen formulier mag zetten.
+Merging submitted form data onto the stored project, with the fields no form may set. The role
+gate is not here: it runs through ``decide()`` in :mod:`opi.http.auth.authz`.
 """
 
 from __future__ import annotations
@@ -20,18 +19,12 @@ def apply_form_data_to_project(
     existing_data: dict[str, Any],
     submitted_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Merge submitted form data into the stored project data. Returns a new dict.
+    """Merge submitted form data onto the stored project data; returns a new dict.
 
-    Raises HTTPException 400 if the submission tries to CHANGE any
-    ``IMMUTABLE_PROJECT_FIELDS``. That is a structural-integrity violation:
-    no form may set these, so receiving a different value means either a
-    form bug or a tampered submission. Fail loud rather than silently
-    dropping the value.
-
-    Een veld dat GEMERGDE data meedraagt (de bewerkwizard levert ZIJN hele project -
-    de sessie is uit de opgeslagen stand gezaaid) is geen schending: gelijk aan wat er
-    al staat is "niet gewijzigd", en de wizard kan daardoor opslaan. Een WIJZIGING blijft
-    een weigering.
+    Raises ``HTTPException`` 400 when the submission CHANGES an ``IMMUTABLE_PROJECT_FIELDS``
+    entry. A submission that carries such a field unchanged is allowed: the edit wizard submits
+    its whole project, seeded from the stored state, so equal to what is already there counts
+    as "not changed".
     """
     offending = [
         field

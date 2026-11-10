@@ -61,17 +61,18 @@ wizard_attachments_router = APIRouter(prefix="/forms/wizard", tags=["wizard-atta
 #: merged data) and outside every editable's write set, so it never reaches the project.
 REPLACE_TARGET_KEY = "_replace_attachment"
 
-#: What the form says it is doing. Anything else is an add -- the default, and the value
-#: an unmodified add form does not send at all.
+#: What the form says it is doing. Anything else is an add, the default, and the value an
+#: unmodified add form does not send at all.
 REPLACE_MODE = "replace"
 
 
 def _resolve_state(
     request: Request, wizard_token: str | None, flow_id: str
 ) -> tuple[Any, Callable[[Any], None] | None]:
-    """Resolve the wizard state from session cookie (if it matches the flow) or modal token (for this user).
+    """The wizard state from the session cookie when it matches the flow, else from the modal
+    token of this user.
 
-    Returns (state, save_fn) or (None, None) if no active wizard session.
+    Returns ``(state, save_fn)``, or ``(None, None)`` when there is no active wizard session.
     """
     state = get_wizard_state(request)
     if state is not None and state.flow_id == flow_id:
@@ -83,11 +84,11 @@ def _resolve_state(
 
 
 def _staged(state: Any) -> dict[str, dict[str, Any]]:
-    """Return the staged-attachments map (id -> {filename, content}) from session state.
+    """The staged-attachments map (id -> {filename, content}) from the session state.
 
-    Stored on the dedicated ``staged_attachments`` field, NOT in ``step_data``: the
-    latter is keyed by section_id and ``stash_inactive_sections`` would discard a
-    stray non-section key on the next step navigation.
+    Stored on the dedicated ``staged_attachments`` field and NOT in ``step_data``: the latter
+    is keyed by section_id, and ``stash_inactive_sections`` would discard a stray non-section
+    key on the next step navigation.
     """
     return state.staged_attachments
 
@@ -99,12 +100,11 @@ def _attachments_list_response(
     error: str | None = None,
     reset: bool = False,
 ):
-    """Render the unified attachments list (existing catalog + files staged this session).
+    """The unified attachments list: the existing catalog plus the files staged this session.
 
-    htmx does not swap non-2xx responses and an HTTPException renders as JSON, so upload
-    errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-list.
-    ``reset`` adds out-of-band swaps that clear the inputs and flash a success tick after a
-    successful upload so the form is ready for the next one.
+    htmx does not swap a non-2xx response and an ``HTTPException`` renders as JSON, so an
+    upload error comes back as this 200 HTML fragment instead. ``reset`` adds the out-of-band
+    swaps that clear the inputs after a successful upload.
     """
     staged = _staged(state) if state else {}
     staged_items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
@@ -123,7 +123,7 @@ def _attachments_list_response(
 
 
 def _id_field_response(request: Request, error: str | None, attachment_id: str):
-    """Re-render the identifier field with the standard field-error state (invalid + errorText)."""
+    """Re-render the identifier field with the standard field-error state."""
     return templates_lotc.TemplateResponse(
         request,
         "wizard/partials/attachments_id_field.html.j2",
@@ -134,8 +134,8 @@ def _id_field_response(request: Request, error: str | None, attachment_id: str):
 def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str]:
     """Validate an attachment id against the shared editable, with this session's ids.
 
-    Returns the error messages (empty when valid). The uniqueness half of the rule needs
-    to know which ids are taken, which is per-session knowledge the editable cannot carry.
+    Returns the error messages, empty when valid. The uniqueness half of the rule needs to know
+    which ids are in use, which is per-session knowledge the editable cannot carry.
     """
     return validate_field(ATTACHMENT_ID_EDITABLE, attachment_id, {"existing_attachment_ids": existing})
 
@@ -143,12 +143,9 @@ def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str
 def _replace_target(state: Any) -> str:
     """The attachment this session was opened to replace, or "" when it is an add.
 
-    Set once, when the modal is opened from the Vervangen button
-    (``router_detail_edit.modal_wizard_init``), and read here rather than taken from the
-    request. The form shows the id fixed, and a form that fixes a value is a convenience,
-    not a check: the id a replacement writes over has to be decided by the session that
-    was opened for it, or a hand-made POST could point the upload at somebody else's
-    certificate.
+    Set once, when the modal is opened from the Vervangen button, and read here rather than
+    from the request: a form that fixes a value is a convenience and not a check, so a
+    hand-made POST could otherwise point the upload at somebody else's certificate.
     """
     if state is None:
         return ""
@@ -158,9 +155,8 @@ def _replace_target(state: Any) -> str:
 def _check_replace(state: Any, attachment_id: str) -> str | None:
     """Refuse a replacement that is not the one this session was opened for.
 
-    Three ways it is wrong, and all three are the same answer to the caller: this session
-    is not replacing anything, it is replacing a different attachment, or the id is not in
-    the catalog at all -- a replacement of something that is not there.
+    Three ways it is wrong: this session is not replacing anything, it is replacing a different
+    attachment, or the id is not in the catalog at all.
     """
     target = _replace_target(state)
     if not target:
@@ -214,11 +210,10 @@ async def stage_attachment(
 ):
     """Stage an uploaded file and record a reference in the wizard session.
 
-    With ``mode=replace`` the file is new content for an attachment that is already in the
-    catalog: the id has to be the one this session was opened for, and it has to exist.
-    The staged entry carries that fact through to the save, where the catalog entry is
-    written over instead of a second one being added -- which is what keeps every
-    component that couples to that id pointing at it.
+    With ``mode=replace`` the file is new content for an attachment already in the catalog: the
+    id has to be the one this session was opened for, and it has to exist. The staged entry
+    carries that through to the save, which writes over the catalog entry instead of adding a
+    second one, so every component coupled to that id keeps pointing at it.
     """
     state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
@@ -227,12 +222,10 @@ async def stage_attachment(
     staged = _staged(state)
     replacing = mode == REPLACE_MODE
     attachment_id = attachment_id.strip()
-    # One rule per field: the shared ATTACHMENT_ID_EDITABLE is what the API upload
-    # validates against too, so an id the wizard accepts is an id the API accepts.
-    # Emptiness rides on the editable's ``required``; uniqueness needs the ids this
-    # session already knows about, which is why the context is passed here and not there.
-    # A replacement is the one case where a taken id is the point, so uniqueness is not
-    # asked -- existence is, and the session decides which id that may be.
+    # One rule per field: the API upload validates against the same ATTACHMENT_ID_EDITABLE.
+    # Uniqueness needs the ids this session already knows, hence the context here. For a
+    # replacement uniqueness is not asked at all: existence is, and the session decides which
+    # id that may be.
     errors = _validate_attachment_id(attachment_id, [] if replacing else list(staged.keys()) + _catalog_ids(state))
     if errors:
         return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
@@ -241,9 +234,9 @@ async def stage_attachment(
         if replace_error:
             return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
-    # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES): a
-    # limit only one road honours just moves the problem to the other one. The slot caps
-    # how many uploads read at once, over all three upload routes together.
+    # The same ceiling the API upload enforces; a limit only one road honours moves the
+    # problem to the other one. The slot caps how many uploads read at once, over all three
+    # upload routes together.
     async with upload_slot():
         raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
     if raw is None:
@@ -254,8 +247,7 @@ async def stage_attachment(
         return _attachments_list_response(request, state, wizard_token, error=str(exc))
 
     # The new file's own name is kept, also when replacing: the id is what every coupling
-    # hangs on, the filename is the label next to it, and a label that still says
-    # ``oud-cert.pem`` over new content is the more confusing of the two.
+    # hangs on, and a label that still names the old file over new content misleads.
     staged[attachment_id] = {
         "filename": file.filename or attachment_id,
         "content": f"staging:{token}",
@@ -278,15 +270,13 @@ async def validate_attachment_id(
     wizard_token: str | None = Form(None, alias="_wizard_token"),
     mode: str = Form(""),
 ):
-    """Validate the identifier on change so the error surfaces before the file upload.
+    """Validate the identifier on change, so the error surfaces before the file upload.
 
-    Returns an inline HTML alert (or empty to clear it). An empty field is not an error
-    (the user has not finished typing yet).
+    Returns an inline HTML alert, or empty to clear it; an empty field is not an error.
 
-    Which id is good depends on what is being done, and the two are each other's opposite:
-    adding wants an id nobody has yet, replacing wants exactly the one that is there. A
-    check that accepts both would let a typo in a new id land on an existing attachment
-    and overwrite it, which is the accident this endpoint exists to prevent.
+    Which id is good is the opposite per mode: adding wants an id nobody has yet, replacing
+    wants exactly the one that is there. A check that accepts both would let a typo in a new id
+    land on an existing attachment and overwrite it.
     """
     state, _ = _resolve_state(request, wizard_token, flow_id)
     staged = _staged(state) if state else {}

@@ -478,7 +478,7 @@ async def test_user_env_vars_stored_as_a_yaml_mapping_are_extracted(
 
 class TestHelmValuesTextVariantKeepsItsSourceForm:
     """The four helm-values lookups share a text-variant branch for a value stored as a
-    plain YAML string without an AGE block (the form web/router.py::ontsleutel_helm_values
+    plain YAML string without an AGE block (the form web/router.py::decrypt_helm_values
     also accepts; see test_helm_values_weergave.py). The result is written back out by a
     project_manager.py writer, so a numeric scalar must keep the form it was typed in.
     """

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.web.router import _heeft_metingen
+from opi.web.router import _has_measurements
 
 WORTEL = Path(__file__).resolve().parent.parent
 TABS = WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2"
@@ -173,13 +173,13 @@ def test_met_metingen_staat_er_geen_melding() -> None:
         ("lege-pvc", {}, {"dep1-web-data": {"values": []}}, False),
     ],
 )
-def test_heeft_metingen(naam: str, metrics: dict[str, Any], pvc: dict[str, Any], verwacht: bool) -> None:
+def test_has_measurements(naam: str, metrics: dict[str, Any], pvc: dict[str, Any], verwacht: bool) -> None:
     """Een limiet is geen meting: die komt uit de deploymentdefinitie.
 
     Telde hij mee, dan zou een deployment met limieten en zonder waarden er als "er is
     gemeten" uitzien en de melding nooit krijgen.
     """
-    assert _heeft_metingen(metrics, pvc) is verwacht, naam
+    assert _has_measurements(metrics, pvc) is verwacht, naam
 
 
 def test_het_resourcegebruik_zegt_wat_de_balk_toont() -> None:

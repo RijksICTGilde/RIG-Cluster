@@ -19,7 +19,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.web.router import ontsleutel_helm_values
+from opi.web.router import decrypt_helm_values
 
 AGE_BLOK = "-----BEGIN AGE ENCRYPTED FILE-----\naGVsbXZhbHVlcw==\n-----END AGE ENCRYPTED FILE-----\n"
 PRIVATE_KEY = "AGE-SECRET-KEY-TEST"
@@ -32,7 +32,7 @@ async def test_een_platte_boom_blijft_staan() -> None:
     items = [{"name": "mb-docs", "helm-values": boom}]
 
     with patch("opi.web.router.decrypt_age_content", new=AsyncMock()) as ontsleutel:
-        await ontsleutel_helm_values(items, "name", "helmfile", PRIVATE_KEY)
+        await decrypt_helm_values(items, "name", "helmfile", PRIVATE_KEY)
 
     assert items[0]["helm-values"] == boom
     ontsleutel.assert_not_awaited()
@@ -47,7 +47,7 @@ async def test_een_age_blok_wordt_ontsleuteld_en_geparsed() -> None:
         "opi.web.router.decrypt_age_content",
         new=AsyncMock(return_value="application:\n  docs:\n    enabled: true\n"),
     ) as ontsleutel:
-        await ontsleutel_helm_values(items, "reference", "deployment 'production' helmfile", PRIVATE_KEY)
+        await decrypt_helm_values(items, "reference", "deployment 'production' helmfile", PRIVATE_KEY)
 
     ontsleutel.assert_awaited_once_with(AGE_BLOK, PRIVATE_KEY)
     assert items[0]["helm-values"] == {"application": {"docs": {"enabled": True}}}
@@ -59,7 +59,7 @@ async def test_een_onleesbaar_blok_wordt_leeg_en_niet_getoond() -> None:
     items = [{"reference": "mb-docs", "helm-values": AGE_BLOK}]
 
     with patch("opi.web.router.decrypt_age_content", new=AsyncMock(side_effect=ValueError("kapot"))):
-        await ontsleutel_helm_values(items, "reference", "deployment 'production' helmfile", PRIVATE_KEY)
+        await decrypt_helm_values(items, "reference", "deployment 'production' helmfile", PRIVATE_KEY)
 
     assert items[0]["helm-values"] is None
 
@@ -70,7 +70,7 @@ async def test_yaml_in_platte_tekst_wordt_alsnog_een_boom() -> None:
     items = [{"name": "mb-docs", "helm-values": "grafana:\n  enabled: true\n"}]
 
     with patch("opi.web.router.decrypt_age_content", new=AsyncMock()) as ontsleutel:
-        await ontsleutel_helm_values(items, "name", "helmfile", PRIVATE_KEY)
+        await decrypt_helm_values(items, "name", "helmfile", PRIVATE_KEY)
 
     assert items[0]["helm-values"] == {"grafana": {"enabled": True}}
     ontsleutel.assert_not_awaited()
@@ -81,7 +81,7 @@ async def test_zonder_helm_values_gebeurt_er_niets() -> None:
     """Een item zonder waarden mag geen lege sleutel krijgen."""
     items: list[dict[str, Any]] = [{"name": "mb-docs"}, {"name": "leeg", "helm-values": {}}]
 
-    await ontsleutel_helm_values(items, "name", "helmfile", PRIVATE_KEY)
+    await decrypt_helm_values(items, "name", "helmfile", PRIVATE_KEY)
 
     assert "helm-values" not in items[0]
     assert items[1]["helm-values"] == {}

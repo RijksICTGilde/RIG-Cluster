@@ -25,9 +25,9 @@ from opi.web.router_usage import (
     MEMORY_USAGE_QUERY,
     RECORDED_USAGE_QUERY,
     _get_month_end,
-    _is_lopende_maand,
+    _is_current_month,
     _query_month_usage,
-    _venster_en_noemer,
+    _window_and_divisor,
 )
 
 #: Halverwege de middag op 28 augustus 2026, het moment waarop de fout gemeten is.
@@ -37,7 +37,7 @@ NU = "2026-08-28 13:45:00"
 class TestAfgeslotenMaand:
     @freeze_time(NU)
     def test_het_venster_is_de_hele_maand(self) -> None:
-        assert _venster_en_noemer(2026, 7, 31) == ("744h", 744)
+        assert _window_and_divisor(2026, 7, 31) == ("744h", 744)
 
     @freeze_time(NU)
     def test_er_wordt_op_het_einde_van_de_maand_geevalueerd(self) -> None:
@@ -46,7 +46,7 @@ class TestAfgeslotenMaand:
     @freeze_time(NU)
     def test_een_kortere_maand_krijgt_een_kortere_noemer(self) -> None:
         """Februari telt 28 dagen; een vaste noemer van 31 dagen zou hem te laag zetten."""
-        assert _venster_en_noemer(2026, 2, 28) == ("672h", 672)
+        assert _window_and_divisor(2026, 2, 28) == ("672h", 672)
 
 
 class TestLopendeMaand:
@@ -57,7 +57,7 @@ class TestLopendeMaand:
         Een venster van 744h (de oude berekening) zou vanaf hetzelfde moment tot 28 JULI
         teruglopen, en dat is de fout die deze test vastlegt.
         """
-        venster, noemer = _venster_en_noemer(2026, 8, 31)
+        venster, noemer = _window_and_divisor(2026, 8, 31)
 
         assert venster == "662h"
         assert noemer == 744, "de noemer blijft de hele maand, anders is het geen maandhoeveelheid"
@@ -65,15 +65,15 @@ class TestLopendeMaand:
     @freeze_time("2026-08-01 00:30:00")
     def test_vlak_na_middernacht_op_de_eerste_is_het_venster_geldig(self) -> None:
         """Een venster van 0h is geen geldige PromQL-duur en zou een lege pagina opleveren."""
-        venster, _ = _venster_en_noemer(2026, 8, 31)
+        venster, _ = _window_and_divisor(2026, 8, 31)
 
         assert venster == "1h"
 
     @freeze_time(NU)
     def test_de_lopende_maand_wordt_als_lopend_herkend(self) -> None:
-        assert _is_lopende_maand(2026, 8) is True
-        assert _is_lopende_maand(2026, 7) is False
-        assert _is_lopende_maand(2025, 8) is False
+        assert _is_current_month(2026, 8) is True
+        assert _is_current_month(2026, 7) is False
+        assert _is_current_month(2025, 8) is False
 
 
 class TestDeTweeQueries:
@@ -84,7 +84,7 @@ class TestDeTweeQueries:
     dat is precies het soort verschil dat niemand opmerkt.
     """
 
-    def test_beide_queries_vragen_om_venster_en_noemer(self) -> None:
+    def test_beide_queries_vragen_om_window_and_divisor(self) -> None:
         for query in (RECORDED_USAGE_QUERY, MEMORY_USAGE_QUERY):
             assert "{venster}" in query
             assert "{noemer_uren}" in query

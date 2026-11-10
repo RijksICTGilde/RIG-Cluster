@@ -21,7 +21,7 @@ icoon uit de `ServiceDefinition` in de registry — "Publiceren op het web" met 
 De kolom **Soort** bestaat alleen waar hij iets toevoegt: als het opschrift van de spec
 verschilt van de naam van de dienst. Bij publiceren op het web scheidt hij domein van
 subdomein; bij een dienst met één soort aanvraag zou hij de groepskop herhalen, en dan valt
-de kolom weg. Dat is een generieke regel (`groepeer_per_dienst` in
+de kolom weg. Dat is een generieke regel (`group_by_service` in
 `opi/web/router_approvals.py`) en geen lijstje diensten in het sjabloon.
 
 ## `subject`: wat er wordt gevraagd
@@ -48,7 +48,7 @@ De knop **Status** filtert server-side op `?status=`, zodat het zonder JavaScrip
 een gefilterde lijst een deelbare URL is. Onder de knop staat "x van y aanvragen".
 
 Beide getallen gaan over **items**, niet over groepen: er wordt eerst gefilterd op items
-(`filter_op_status`) en daarna pas gegroepeerd, zodat er geen groepskop boven een lege
+(`filter_by_status`) en daarna pas gegroepeerd, zodat er geen groepskop boven een lege
 tabel komt te staan en de teller met de lijst blijft kloppen.
 
 ## Wat een oordeel opnieuw uitrolt
@@ -75,7 +75,7 @@ een deployment hangt, kijk dan ook naar `_redeploy_scope` hierboven.
 `/lotc/bg/admin-approvals` toont dezelfde pagina met verzonnen gegevens, uit
 `opi/web/lotc_fixtures.py`. Dat is de **tweede schrijver** van deze context, en die twee
 horen niet uiteen te lopen: de fixture bouwt haar groepen met dezelfde
-`groepeer_per_dienst()` als de route, en haar items dragen dezelfde sleutels als
+`group_by_service()` als de route, en haar items dragen dezelfde sleutels als
 `collect_approval_items()` ze aflevert (`service`, `label`, `subject`). Een sleutel die de
 route wel schrijft en de fixture niet levert daar geen fout op maar een LEGE lus, dus
 `tests/test_aanvragen_per_dienst.py` (`TestDeProefopstelling`) en de browsertoets
@@ -87,7 +87,7 @@ rijen op staan.
 | Bestand | Wat |
 |---|---|
 | `opi/templates_lotc/bg/admin-approvals.html.j2` | de pagina en het beoordelingsvenster |
-| `opi/web/router_approvals.py` | de route, `filter_op_status`, `groepeer_per_dienst` |
+| `opi/web/router_approvals.py` | de route, `filter_by_status`, `group_by_service` |
 | `opi/web/lotc_fixtures.py` | de gegevens van de proefopstelling op `/lotc/bg/admin-approvals` |
 | `opi/services/approvals.py` | de catalogusloop: items verzamelen, oordelen toepassen |
 | `opi/services/catalog/approval.py` | `ApprovalSpec`, `ApprovalItem`, `service_use_approval()` |

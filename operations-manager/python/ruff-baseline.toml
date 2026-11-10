@@ -274,7 +274,7 @@
 "opi/web/router_approvals.py" = ["ANN401"]
 "opi/web/router_detail_edit.py" = ["ANN001", "ANN202", "ANN401", "BLE001", "C901", "PLR0912", "PLR0915"]
 "opi/web/router_self_service.py" = ["C901"]
-"opi/web/router_wizard.py" = ["ANN001", "ANN401", "BLE001", "C901", "ERA001", "N806", "PLR0912", "PLR0915"]
+"opi/web/router_wizard.py" = ["ANN001", "ANN401", "BLE001", "C901", "PLR0912", "PLR0915"]
 "opi/web/router_wizard_attachments.py" = ["ANN201", "ANN202", "ANN401"]
 "opi/web/services_router.py" = ["ANN001", "ANN201"]
 "scripts/argo_diagnostics.py" = ["C901", "PLR0912"]

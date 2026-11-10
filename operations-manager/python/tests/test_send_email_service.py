@@ -1351,7 +1351,7 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
     )
     def test_beide_schermen_noemen_de_aanvraag_bij_naam(self, sjabloon: str) -> None:
         from opi.http.render.templates_lotc import templates_lotc
-        from opi.web.router_approvals import groepeer_per_dienst
+        from opi.web.router_approvals import group_by_service
 
         item = self._item()
         html = templates_lotc.env.get_template(sjabloon).render(
@@ -1362,7 +1362,7 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
                 {
                     "project_name": "myproject",
                     "approval_items": [item],
-                    "approval_groups": groepeer_per_dienst([item]),
+                    "approval_groups": group_by_service([item]),
                 }
             ],
             _approval_items=[item],

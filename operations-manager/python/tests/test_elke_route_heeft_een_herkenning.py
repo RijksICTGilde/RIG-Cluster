@@ -65,7 +65,7 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/lotc/pagina/{slug:path}"): "proefopstelling van de componentbibliotheek, verzonnen waarden",
     # Blinde doorverwijzingen van oude adressen. Ze zoeken niets op en geven dus niets prijs:
     # het antwoord is voor elke naam hetzelfde, ook voor een project dat niet bestaat. De
-    # pagina achter het nieuwe adres doet de autorisatie. Zie project_tab_oude_vorm.
+    # pagina achter het nieuwe adres doet de autorisatie. Zie project_tab_old_shape.
     ("GET", "/projects/new"): "blinde doorverwijzing naar de wizard, zoekt niets op",
     ("GET", "/projects/details/{project_name}"): "blinde doorverwijzing naar het nieuwe adres",
     ("GET", "/projects/team/{project_name}"): "blinde doorverwijzing naar het nieuwe adres",

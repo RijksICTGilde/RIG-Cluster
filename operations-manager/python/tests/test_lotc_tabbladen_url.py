@@ -198,7 +198,7 @@ def test_het_oude_adres_verwijst_door_naar_het_nieuwe(client: TestClient, oud: s
 def test_elke_geregistreerde_oude_vorm_verwijst_ook_echt_door(client: TestClient) -> None:
     """De routes en de vertaaltabel worden met de HAND naast elkaar gehouden, en dat liep
     uit de pas: ``/projects/team/<naam>`` stond wel als route geregistreerd maar niet in
-    OUDE_TABBLADPADEN, dus die zoekopdracht wierp een KeyError en het adres gaf een 500 in
+    OLD_TAB_PATHS, dus die zoekopdracht wierp een KeyError en het adres gaf een 500 in
     plaats van een doorverwijzing (gevonden en gerepareerd in RC-101).
 
     Daarom worden de routes hier ZELF afgelopen: elke oude vorm die geregistreerd staat
@@ -208,7 +208,7 @@ def test_elke_geregistreerde_oude_vorm_verwijst_ook_echt_door(client: TestClient
         route.path
         for route in web_router.routes
         if getattr(route, "endpoint", None) is not None
-        and route.endpoint.__name__ == "project_tab_oude_vorm"
+        and route.endpoint.__name__ == "project_tab_old_shape"
         and "{deployment_name}" not in route.path
     )
 

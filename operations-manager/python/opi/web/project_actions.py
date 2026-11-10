@@ -1,14 +1,9 @@
 """The dangerous project actions, addressed by key instead of by endpoint.
 
-The project-details page confirms deleting and reprocessing in the same shared modal
-as a service-contributed ``DeploymentAction``, and for the same reason: the page must
-never say where a confirmation posts. It names the action by key; this module turns
-that key plus the project's own data into the POST target, or into nothing at all.
-
-That is the whole point of the indirection. An endpoint carried in the request would
-be an open POST target, and one of these six endpoints deletes an entire project.
-A target that is not a real deployment, component or attachment of this project never
-produces an action.
+The page names the action by key, and this module turns that key plus the project's own data
+into the POST target, or into nothing at all. An endpoint carried in the request would be an
+open POST target, and one of these six endpoints deletes an entire project. A target that is
+not a real deployment, component or attachment of this project never produces an action.
 """
 
 from __future__ import annotations
@@ -34,15 +29,14 @@ _REFRESH_BUTTON = {"label": "Herverwerken", "icon": "refresh", "kind": "primary"
 class ProjectAction:
     """A confirmed action on a project, its deployment, component or attachment.
 
-    Shaped like ``DeploymentAction`` so both render through the same confirmation
-    fragment: what a confirmation needs is a message, a button and an endpoint.
+    Keep the shape of ``DeploymentAction``: both render through the same confirmation fragment.
     """
 
     key: str
     label: str
     icon: str
     kind: str
-    #: Web-route path the confirmation POSTs to; built here, never taken from the request.
+    #: Web-route path the confirmation POSTs to; built here, never read from the request.
     endpoint: str
     message: str
     #: Set when the action cannot be performed at all; the dialog then explains instead
@@ -50,9 +44,7 @@ class ProjectAction:
     blocked_reason: str | None = None
 
     def __post_init__(self) -> None:
-        # ``kind`` wordt in het bevestigingsfragment een ``type`` op een <c-button>, en
-        # het component slaat een variant die het niet kent stil over: de knop staat er
-        # dan kaal bij. Zie opi/forms/buttons.py.
+        # An unknown ``kind`` is skipped silently by the button component, leaving it bare.
         check_button_variant(self.kind, f"ProjectAction '{self.key}'")
 
 
@@ -136,10 +128,8 @@ def build_project_action(
             return None
         sites = component_usage_sites(project_data).get(target, [])
         web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
-        # A component a deployment's web address is built around is refused by the delete
-        # guard itself; say so here rather than offering a button that is going to be
-        # refused. Other uses are removed along with it, which the message names, because
-        # confirming a deletion means having seen what goes with it.
+        # The delete guard itself refuses a component a deployment's web address is built
+        # around; say so here rather than offering a button that is going to be refused.
         blocked = (
             f"Dit component bepaalt het webadres van: {', '.join(site.label for site in web_addresses)}. "
             "Wijzig eerst het webadres daar; zolang dat zo staat kan dit component niet verwijderd worden."

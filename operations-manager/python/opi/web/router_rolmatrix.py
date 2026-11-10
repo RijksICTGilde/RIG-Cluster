@@ -1,11 +1,8 @@
-"""De rolmatrix (/rollen): wie mag wat, uit het regelregister.
+"""The role matrix: who may do what, straight from :mod:`opi.core.authz.rules`.
 
-De pagina rekent niets uit en houdt geen eigen lijst bij: hij toont wat
-:mod:`opi.core.authz.rules` declareert. Een regel die daar bijkomt staat hier meteen, en
-een rij die hier mist betekent dat de regel ontbreekt, niet dat de pagina achterloopt.
-
-Voor iedereen die ingelogd is, zoals /platform: wie een rol krijgt of uitdeelt, moet kunnen
-lezen wat die rol opent. De matrix toont regels, geen gegevens van een project.
+The page keeps no list of its own, so a missing row means the rule is missing, not that the
+page lags behind. It is open to everyone who is signed in: it shows rules, no data of any
+project.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ rolmatrix_router = APIRouter(prefix="/rollen", tags=["rolmatrix"])
 @action(Action.PORTAL_READ)
 @requires_sso
 async def rolmatrix(request: Request) -> Response:
-    """De matrix, met een kolom per rol en een rij per regel en scope."""
+    """The matrix: a column per role, a row per rule and scope."""
     user = get_current_user(request)
 
     return render(

@@ -1,6 +1,4 @@
-"""
-Services web route for displaying service information.
-"""
+"""The services overview page (/services)."""
 
 import logging
 
@@ -20,13 +18,7 @@ services_router = APIRouter()
 
 
 def replacement_marker(service_type) -> str | None:
-    """The successor's display name when this service is replaced on this cluster, else None.
-
-    Choosing a replaced service is already refused in the picker and at save time
-    (RC-382); this overview is read-only, so what it owes the reader is the marker that
-    says why new projects should not pick it. The service's own help page tells the
-    full story.
-    """
+    """The successor's display name when this service is replaced on this cluster, else None."""
     # The import stays inside: the registry loads the service packages and some of those
     # import back into the web layer.
     from opi.services.registry import get_service
@@ -41,19 +33,10 @@ def replacement_marker(service_type) -> str | None:
 @action(Action.PORTAL_READ)
 @requires_sso
 async def services_overview(request: Request):
-    """
-    Serve the services overview page showing all available services and their variables.
-
-    This page displays cards for each service with their descriptions, icons, and the
-    variables they provide (either through secrets or direct env vars).
-
-    Returns:
-        HTML response with service cards showing variable information
-    """
+    """A card per service, with its description, icon and the variables it provides."""
     try:
         user = get_current_user(request)
 
-        # Get all services and their variable information
         all_services = ServiceAdapter.get_all_services()
         services_info = []
 
@@ -73,9 +56,6 @@ async def services_overview(request: Request):
                 }
             )
 
-        # Dezelfde gegevens, twee weergaven. Met ?ui=lotc rendert deze route de
-        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/http/render/lotc_switch.py
-        # voor waarom dat een schakelaar is en geen omzetting ineens.
         from opi.http.render.lotc_switch import build_lotc_services, render
 
         return render(

@@ -196,94 +196,20 @@
     "opi/tools/zad_map_platform.py": {
       "dutch-comments": 16
     },
-    "opi/web/lotc_fixtures.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 113
-    },
-    "opi/web/lotc_form_preview.py": {
-      "dutch-comments": 6
-    },
-    "opi/web/lotc_router.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 26
-    },
-    "opi/web/metrics_explorer_router.py": {
-      "dutch-comments": 4
-    },
-    "opi/web/project_actions.py": {
-      "dutch-comments": 4,
-      "comment-heavy-functions": 1
-    },
-    "opi/web/project_edit_security.py": {
-      "dutch-comments": 2
-    },
     "opi/web/router.py": {
-      "dutch-identifiers": 21,
-      "dutch-comments": 271
-    },
-    "opi/web/router_approvals.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 37
-    },
-    "opi/web/router_detail_edit.py": {
-      "dutch-comments": 87
-    },
-    "opi/web/router_env_vars.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 15
+      "dutch-identifiers": 7
     },
     "opi/web/router_otp.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 12
-    },
-    "opi/web/router_rolmatrix.py": {
-      "dutch-comments": 2
-    },
-    "opi/web/router_self_service.py": {
-      "dutch-comments": 2
+      "dutch-identifiers": 2
     },
     "opi/web/router_shared_services.py": {
-      "dutch-identifiers": 9,
-      "dutch-comments": 6
+      "dutch-identifiers": 5
     },
     "opi/web/router_step_up.py": {
-      "dutch-identifiers": 8,
-      "dutch-comments": 5
-    },
-    "opi/web/router_tasks.py": {
-      "dutch-comments": 14
+      "dutch-identifiers": 5
     },
     "opi/web/router_tokens.py": {
-      "dutch-identifiers": 29,
-      "dutch-comments": 27
-    },
-    "opi/web/router_usage.py": {
-      "dutch-comments": 32
-    },
-    "opi/web/router_user_admin.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 10
-    },
-    "opi/web/router_wizard.py": {
-      "dutch-identifiers": 7,
-      "dutch-comments": 101,
-      "comment-heavy-functions": 1
-    },
-    "opi/web/router_wizard_attachments.py": {
-      "dutch-comments": 3
-    },
-    "opi/web/security_policy.py": {
-      "dutch-comments": 8
-    },
-    "opi/web/services_router.py": {
-      "dutch-comments": 3
-    },
-    "opi/web/stap_labels.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 5
-    },
-    "opi/web/task_progress.py": {
-      "dutch-comments": 1
+      "dutch-identifiers": 8
     },
     "opi/worker_main.py": {
       "dutch-comments": 2

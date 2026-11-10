@@ -152,7 +152,7 @@
                            De soortkolom bestaat alleen als hij iets toevoegt: bij publiceren op
                            het web scheidt hij domein van subdomein, bij een dienst met een enkele
                            soort zou hij de groepskop herhalen. Dat is een generieke regel en geen
-                           lijstje diensten - zie groepeer_per_dienst() in router_approvals.py. #}
+                           lijstje diensten - zie group_by_service() in router_approvals.py. #}
                         <c-table columns="{{ '1fr 3fr 1.5fr 2fr' if groep.toon_soort else '3fr 1.5fr 2fr' }}">
                             <c-table-head>
                                 {% if groep.toon_soort %}<c-th>Soort</c-th>{% endif %}

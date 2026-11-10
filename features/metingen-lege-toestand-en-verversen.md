@@ -22,9 +22,9 @@ De route (`GET /projects/details/{project}/metrics/{deployment}`) geeft het sjab
 daarvoor twee vlaggen mee:
 
 - `prometheus_bereikbaar` - `prom.is_connected`, en `False` zodra een bevraging faalt;
-- `metingen_leeg` - `not _heeft_metingen(metrics, pvc_storage)`.
+- `metingen_leeg` - `not _has_measurements(metrics, pvc_storage)`.
 
-`_heeft_metingen()` telt alleen echte REEKSEN (`cpu`, `memory`, `network_in`,
+`_has_measurements()` telt alleen echte REEKSEN (`cpu`, `memory`, `network_in`,
 `network_out`, `disk_read`, `disk_write`, en de PVC-waarden). Een limiet telt niet mee:
 die komt uit de deploymentdefinitie, niet uit een meting.
 
@@ -131,6 +131,6 @@ bevragingen, allebei voor de zichtbare deployment.
 | `opi/templates_lotc/bg/_resource-formats.html.j2` | de schrijfwijze van cores en GiB, gedeeld door beide kaarten |
 | `opi/templates_lotc/bg/_dashboard-usage.html.j2` | Network Traffic en Gebruik per project |
 | `opi/templates_lotc/bg/project-tabs.html.j2` | de plaats van de kaart, en de minuutklok |
-| `opi/web/router.py` | `_heeft_metingen()`, de twee vlaggen en `collect_dashboard_metrics()` |
+| `opi/web/router.py` | `_has_measurements()`, de twee vlaggen en `collect_dashboard_metrics()` |
 | `tests/test_lotc_metingen.py` | de poorten op de sjablonen |
 | `tests/test_dashboard_per_project_usage.py` | de poorten op de meting per project |

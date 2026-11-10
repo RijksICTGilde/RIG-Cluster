@@ -1,7 +1,7 @@
-"""``SECURITY.md`` uit de root van de repo als HTML, voor de pagina ``/security``.
+"""``SECURITY.md`` from the root of the repo as HTML, for the ``/security`` page.
 
-Eén bron: het bestand dat GitHub toont is het bestand dat de pagina toont. Het wordt bij
-de eerste aanvraag een keer omgezet en daarna uit het geheugen geserveerd.
+One source: the file GitHub shows is the file the page shows. It is converted once, on the
+first request, and served from memory after that.
 """
 
 import re
@@ -14,14 +14,14 @@ from markdown_it import MarkdownIt
 if TYPE_CHECKING:
     from markdown_it.token import Token
 
-#: Waar de relatieve links in ``SECURITY.md`` naar wijzen: paden in de repo, die in de
-#: app een 404 zouden geven.
+#: Where the relative links in ``SECURITY.md`` point: paths in the repo, which would be a 404
+#: in the app.
 REPO_BLOB_URL = "https://github.com/RijksICTGilde/RIG-Cluster/blob/main/"
 
 _OPI_DIR = Path(__file__).resolve().parent.parent
 
-#: In de image staat het bestand naast ``opi/`` (de Dockerfile kopieert het naar
-#: ``/app``); in een checkout staat het twee mappen hoger, in de root van de repo.
+#: In the image the file sits next to ``opi/`` (the Dockerfile copies it into ``/app``); in a
+#: checkout it sits two directories up, in the root of the repo.
 _CANDIDATES = (
     _OPI_DIR.parent / "SECURITY.md",
     _OPI_DIR.parent.parent.parent / "SECURITY.md",
@@ -31,7 +31,7 @@ _ABSOLUTE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#|/)", re.IGNORECASE)
 
 
 def _slug(text: str) -> str:
-    """Het anker dat GitHub voor een kop maakt, zodat ``#de-toeleverketen-...`` hier ook werkt."""
+    """The anchor GitHub makes for a heading, so a link to one works here as well."""
     text = re.sub(r"[^\w\- ]", "", text.strip().lower())
     return text.replace(" ", "-")
 
@@ -48,7 +48,7 @@ def _rewrite(tokens: list[Token]) -> None:
 
 
 def render_security_policy(markdown: str) -> str:
-    """Zet de markdown om naar HTML, zonder ruwe HTML uit de bron door te laten."""
+    """Convert the markdown to HTML, letting no raw HTML from the source through."""
     md = MarkdownIt("commonmark", {"html": False}).enable("table")
     tokens = md.parse(markdown)
     _rewrite(tokens)
@@ -57,10 +57,10 @@ def render_security_policy(markdown: str) -> str:
 
 @cache
 def security_policy_html() -> str:
-    """``SECURITY.md`` als HTML.
+    """``SECURITY.md`` as HTML.
 
     Raises:
-        FileNotFoundError: Als het bestand op geen van beide plekken staat.
+        FileNotFoundError: when the file sits in neither place.
     """
     for path in _CANDIDATES:
         if path.is_file():

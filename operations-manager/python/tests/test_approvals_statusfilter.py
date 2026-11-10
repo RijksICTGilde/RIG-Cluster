@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from opi.http.render.templates_lotc import templates_lotc
-from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_op_status
+from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_by_status
 
 
 def _project(naam: str, *statussen: str) -> dict[str, Any]:
@@ -36,14 +36,14 @@ PROJECTEN = [
 
 class TestHetFilteren:
     def test_alleen_de_gevraagde_status_blijft_over(self) -> None:
-        resultaat = filter_op_status(PROJECTEN, "requested")
+        resultaat = filter_by_status(PROJECTEN, "requested")
 
         assert [p["project_name"] for p in resultaat] == ["een", "drie"]
         assert [len(p["approval_items"]) for p in resultaat] == [1, 2]
 
     def test_een_project_zonder_treffers_valt_weg(self) -> None:
         """Een projectpaneel met een lege tabel leest als 'dit project heeft niets'."""
-        resultaat = filter_op_status(PROJECTEN, "denied")
+        resultaat = filter_by_status(PROJECTEN, "denied")
 
         assert [p["project_name"] for p in resultaat] == ["drie"]
 
@@ -51,12 +51,12 @@ class TestHetFilteren:
     def test_leeg_of_onbekend_filtert_niet(self, status: str) -> None:
         """Onbekend is bewust hetzelfde als leeg: ?status=onzin in een gedeelde link
         hoort de lijst te tonen, niet een lege pagina die als een storing leest."""
-        assert filter_op_status(PROJECTEN, status) == PROJECTEN
+        assert filter_by_status(PROJECTEN, status) == PROJECTEN
 
     def test_de_bron_blijft_ongemoeid(self) -> None:
         """Er wordt een nieuwe lijst gemaakt; het origineel draagt de telling van de
         ongefilterde aanvragen, en die mag niet meekrimpen."""
-        filter_op_status(PROJECTEN, "requested")
+        filter_by_status(PROJECTEN, "requested")
 
         assert [len(p["approval_items"]) for p in PROJECTEN] == [2, 1, 3]
 

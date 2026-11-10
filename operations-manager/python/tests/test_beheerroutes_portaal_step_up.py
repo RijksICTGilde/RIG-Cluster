@@ -30,7 +30,7 @@ import pytest
 from fastapi import HTTPException
 from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 from opi.web import router_user_admin
-from opi.web.router_user_admin import _FORMULIERVELDEN
+from opi.web.router_user_admin import _FORM_FIELDS
 
 SJABLONEN = Path(router_user_admin.__file__).parent.parent / "templates_lotc"
 
@@ -148,7 +148,7 @@ async def test_de_dialoog_herhaalt_de_ingevulde_velden(route: str) -> None:
 
     assert antwoord.status_code == 200
     velden = dialoog.await_args.kwargs["vervolg_velden"]
-    assert set(velden) == set(_FORMULIERVELDEN)
+    assert set(velden) == set(_FORM_FIELDS)
     assert velden["email"] == ANDER
 
 

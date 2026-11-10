@@ -1,9 +1,8 @@
 """Answering a UI action with a task the page can follow.
 
-Every confirmed action on the project-details page -- reprocessing, sleeping, deleting --
-creates an async task and answers with the shared progress fragment, so the dialog shows
-what is happening instead of leaving the browser on an open POST. Kept out of the routers
-so any of them can use it without importing the big one.
+Every confirmed action on the project-details page, from reprocessing to deleting, creates an
+async task and answers with the shared progress fragment, so the dialog shows what is happening
+instead of leaving the browser on an open POST.
 """
 
 from __future__ import annotations
@@ -41,12 +40,7 @@ async def create_task_and_render_progress(
     success_message: str,
     deployment_name: str | None = None,
 ) -> HTMLResponse:
-    """Create a V2 async task and return a rendered progress fragment.
-
-    Shared helper for all web UI endpoints that trigger async processing.
-    Creates the task via the V2 task service and returns an HTML fragment
-    with HTMX polling for progress updates.
-    """
+    """Create a V2 async task and return the progress fragment that polls it over HTMX."""
     task = await create_async_task(
         request=request,
         task_type=task_type,
@@ -74,19 +68,15 @@ async def create_task_and_render_progress(
 def render_progress_fragment(request: Request, context: dict) -> str:
     """Render the shared progress fragment once, and only once.
 
-    Do not put the ``process_components`` filter back on the result. The fragment is a
-    template file, so the component extension already replaced its ``<c-...>`` tags at
-    compile time; running the filter over the rendered HTML would parse that HTML as a
-    Jinja template a second time. Autoescape escapes ``< > & " '`` but not ``{{``, so a
-    step name or a subtask name carrying ``{{ ... }}`` would then be executed instead of
-    shown -- template injection with code execution in the OPI pod, from any text that
-    reaches this context.
+    Do not put the ``process_components`` filter back on the result. The fragment is a template
+    file, so the component extension already replaced its ``<c-...>`` tags at compile time, and
+    running the filter over the rendered HTML would parse that HTML as a Jinja template a second
+    time. Autoescape escapes ``< > & " '`` but not ``{{``, so a step name or a subtask name
+    carrying ``{{ ... }}`` would then be executed instead of shown: template injection with code
+    execution in the OPI pod, from any text that reaches this context.
 
-    Het fragment volgt de vormgeving van de pagina die het toont, net als de zesendertig
-    andere plekken die door ``lotc_switch`` gaan. Zonder dat renderde deze altijd uit de
-    roos-omgeving en kwam er roos-HTML in een LOTC-dialoog te staan: een knop met
-    rvo-klassen die op een LOTC-pagina door geen enkel stijlblad opgemaakt wordt, want
-    ``lotc_rvo`` staat niet in ``DESIGN_SYSTEMS``.
+    It renders through ``lotc_switch``, so the fragment follows the design system of the page
+    that shows it.
     """
     return render_fragment(
         request,
