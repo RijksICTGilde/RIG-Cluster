@@ -120,8 +120,8 @@ def test_the_registry_answering_absent_is_recognised() -> None:
 def test_a_tag_that_looks_like_a_status_code_is_still_absent() -> None:
     # The tag is part of the same message. Matching a bare "500" would have read a
     # normal PR tag as a registry outage; the allowlist never looks at numbers.
-    # (``_is_image_pull_auth_error`` DOES match bare 401/403, which is why the deploy
-    # path asks it only about a message the registry answered. See project_manager.)
+    # (``is_image_pull_auth_error`` DOES match bare 401/403, which is why the deploy
+    # path asks it only about a message the registry answered. See project/rollout.py.)
     assert image_is_confirmed_absent(
         "ErrImagePull: reading manifest pr-500-abc1234 in rcr.rijksapps.nl/ghcr-rig/minbzk/app: manifest unknown"
     )

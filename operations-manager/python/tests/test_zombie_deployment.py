@@ -90,7 +90,7 @@ def _manager(
 
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(return_value=open_deletes)
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
 
     pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
     pm.has_deployments_for_current_cluster = AsyncMock(return_value=True)  # type: ignore[method-assign]
@@ -177,7 +177,7 @@ async def test_een_onbereikbare_takentabel_laat_de_ronde_doorgaan(monkeypatch: p
     pm, provisioner = _manager(monkeypatch, {})
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(side_effect=OperationalError("select", {}, Exception("down")))
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
 
     assert await pm.process_project() is True
 
@@ -218,7 +218,7 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
     # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
     # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
     argo.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo)
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: argo)
     # ApplicationGone is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
     # de wacht stopt daar, zodat deze test de wacht meet en niet de hele uitrol erna.
     monkeypatch.setattr(
@@ -230,7 +230,7 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
 
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(return_value=open_deletes)
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
     return pm
 
 

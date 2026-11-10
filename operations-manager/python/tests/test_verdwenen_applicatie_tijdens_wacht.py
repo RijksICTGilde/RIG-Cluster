@@ -79,7 +79,7 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, wacht_fout: BaseExcepti
     # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
     # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
     argo_connector.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo_connector)
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: argo_connector)
 
     monkeypatch.setattr(
         manager._argo_manager, "wait_for_application_synced", AsyncMock(side_effect=wacht_fout), raising=False

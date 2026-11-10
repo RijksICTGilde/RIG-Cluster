@@ -36,6 +36,7 @@ from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
 from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project.manifests.repository import RepositoryManifests
+from opi.manager.project.rollout import DeploymentRollout
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.tasks.persistent_task_progress import TaskStatus
 from opi.services.argocd_operation import (
@@ -639,12 +640,11 @@ class TestItRunsBeforeThePush:
         assert deployment["error"] == "time-out na 300s"
 
     def test_opis_own_time_out_terminates_the_operation_it_waited_on(self) -> None:
-        """De time-out-tak zit in een closure binnen een methode van 500 regels, dus hij is
-        niet los aan te roepen. Daarom op de AST: de aanroep moet IN de
-        ``except TimeoutError``-handler van ``_refresh_and_wait`` staan. Eromheen, bijvoorbeeld
-        in het succespad, zou deze toets groen laten terwijl de blokkade blijft staan."""
-        source = inspect.getsource(ProjectManager.process_project_from_git)
-        tree = ast.parse(Path(inspect.getsourcefile(ProjectManager) or "").read_text())
+        """Op de AST: de aanroep moet IN de ``except TimeoutError``-handler van
+        ``_refresh_and_wait`` staan. Eromheen, bijvoorbeeld in het succespad, zou deze
+        toets groen laten terwijl de blokkade blijft staan."""
+        source = inspect.getsource(DeploymentRollout._refresh_and_wait)
+        tree = ast.parse(Path(inspect.getsourcefile(DeploymentRollout) or "").read_text())
 
         handlers: list[ast.ExceptHandler] = []
         for node in ast.walk(tree):

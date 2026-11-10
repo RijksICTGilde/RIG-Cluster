@@ -20,7 +20,7 @@
     {
      "name": "kubectl",
      "file": "opi/connectors/kubectl.py",
-     "uses": 38
+     "uses": 39
     }
    ],
    "services": [
@@ -70,7 +70,7 @@
     {
      "name": "argo",
      "file": "opi/connectors/argo.py",
-     "uses": 17
+     "uses": 18
     }
    ],
    "services": [],

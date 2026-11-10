@@ -81,7 +81,7 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, process_ok: bool | None
     monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[]))
     monkeypatch.setattr(manager, "get_name", AsyncMock(return_value="test-project"))
     monkeypatch.setattr(manager, "get_contents", AsyncMock(return_value=current_yaml))
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: MagicMock())
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: MagicMock())
     monkeypatch.setattr(manager, "close", AsyncMock(return_value=None))
     return manager
 

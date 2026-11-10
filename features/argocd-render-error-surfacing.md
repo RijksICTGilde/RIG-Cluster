@@ -89,7 +89,7 @@ verwerking van dat project herstelt het; wie en wanneer staat in
 |------|---------|
 | `opi/manager/argo_manager.py` | `terminal_condition_message`; conditions read in the wait loops |
 | `opi/connectors/argo.py` | `get_application_manifests`; render-error WARNING on refresh |
-| `opi/manager/project_manager.py` | Active render fetch after push; `_looks_like_render_failure` |
+| `opi/manager/project/rollout.py` | Active render fetch after push; `looks_like_render_failure` |
 | `opi/services/deployment_diagnostics.py` | `conditions_to_errors` (cheap, always-run) |
 | `opi/services/event_interpreter.py` | Readable `ComparisonError` heading |
 | `opi/web/router.py` | Conditions read unconditionally in the status card |
