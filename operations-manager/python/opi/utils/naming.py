@@ -477,6 +477,19 @@ def generate_schema_variable_name(postfix: str) -> str:
     return f"DATABASE_SCHEMA_{_sanitize_for_identifier(postfix).upper()}"
 
 
+def default_service_reference(deployment_name: str, service_name: str) -> str:
+    """The reference a deployment's service carries when no component names one.
+
+    The service name up to its first dash, so ``postgresql-database`` becomes
+    ``{deployment}-postgresql``. Derived here and nowhere else: the backup writes under this
+    name and the restore accepts it, so the two cannot drift apart.
+
+    Example:
+        default_service_reference("staging", "minio-storage") -> "staging-minio"
+    """
+    return f"{deployment_name}-{service_name.split('-')[0]}"
+
+
 def generate_database_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
     """
     Generate a consistent database name with optional generation suffix.

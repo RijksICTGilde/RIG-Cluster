@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
+from opi.manager.backup import BackupResult, BucketBackupResult, DatabaseBackupResult
 from opi.runtime.backup.backup_scheduler import BackupScheduler, parse_rrule
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.tasks.async_task_service import TaskType
@@ -505,19 +506,20 @@ class TestHandleBackupExecution:
     def backup_mocks(self):
         """Patch all external dependencies of handle_backup.
 
-        Patches target the consumer module (task_handlers_backup) where the
-        names are bound at import time.
+        The resolve and the run id are bound in the handler; the steps themselves live in
+        the use case (opi/manager/backup/run.py), so their connectors are patched there.
         """
         _thb = "opi.runtime.backup.task_handlers_backup"
+        _run = "opi.manager.backup.run"
         with (
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_thb}.create_backup_manager") as mock_bm,
-            patch(f"{_thb}.create_database_backup_manager") as mock_dbm,
-            patch(f"{_thb}.create_bucket_backup_manager") as mock_bbm,
-            patch(f"{_thb}.create_kubectl_connector") as mock_kubectl,
-            patch(f"{_thb}.create_project_file_handler") as mock_pfh,
-            patch(f"{_thb}.DatabaseSecret") as mock_db_secret,
-            patch(f"{_thb}.get_object_storage_secret", new_callable=AsyncMock) as mock_get_object_storage_secret,
+            patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
+            patch(f"{_run}.create_backup_manager") as mock_bm,
+            patch(f"{_run}.create_database_backup_manager") as mock_dbm,
+            patch(f"{_run}.create_bucket_backup_manager") as mock_bbm,
+            patch(f"{_run}.create_kubectl_connector") as mock_kubectl,
+            patch(f"{_run}.create_project_file_handler") as mock_pfh,
+            patch(f"{_run}.DatabaseSecret") as mock_db_secret,
+            patch(f"{_run}.get_object_storage_secret", new_callable=AsyncMock) as mock_get_object_storage_secret,
             patch(f"{_thb}.generate_backup_run_id", return_value="20260325020000"),
         ):
             # Set up resolve to return a valid project/deployment
@@ -531,7 +533,7 @@ class TestHandleBackupExecution:
             )
 
             # PVC backup returns success
-            pvc_result = MagicMock(success=True)
+            pvc_result = BackupResult(namespace="rig-test-project", pvc_name="prod-web-data-v1", success=True)
             mock_bm.return_value.backup_project_deployment = AsyncMock(return_value=[pvc_result])
 
             # Database: deployment uses database service
@@ -544,7 +546,9 @@ class TestHandleBackupExecution:
 
             db_secret = MagicMock(host="db", port="5432", database="app", username="u", password="p")
             mock_db_secret.get_data = AsyncMock(return_value=db_secret)
-            db_result = MagicMock(success=True)
+            db_result = DatabaseBackupResult(
+                namespace="rig-test-project", pvc_name="postgres", success=True, reference_name="postgres"
+            )
             mock_dbm.return_value.backup_database = AsyncMock(return_value=db_result)
 
             # MinIO
@@ -554,7 +558,9 @@ class TestHandleBackupExecution:
             mock_pfh.return_value.get_components_using_service.return_value = [
                 {"component_name": "web-app", "reference_name": "minio-storage"}
             ]
-            bucket_result = MagicMock(success=True)
+            bucket_result = BucketBackupResult(
+                namespace="rig-test-project", pvc_name="minio-storage", success=True, reference_name="minio-storage"
+            )
             mock_bbm.return_value.backup_bucket = AsyncMock(return_value=bucket_result)
 
             yield {
@@ -630,7 +636,9 @@ class TestHandleBackupExecution:
         """If PVC backup fails, result is partial failure but other types still run."""
         from opi.runtime.backup.task_handlers_backup import handle_backup
 
-        failed_pvc = MagicMock(success=False)
+        failed_pvc = BackupResult(
+            namespace="rig-test-project", pvc_name="prod-web-data-v1", success=False, error="pod mislukt"
+        )
         backup_mocks["backup_manager"].return_value.backup_project_deployment = AsyncMock(return_value=[failed_pvc])
         payload = {
             "project_name": "test-project",
@@ -661,8 +669,71 @@ class TestHandleBackupExecution:
         backup_mocks["backup_manager"].return_value.backup_project_deployment.assert_awaited_once()
         backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_awaited_once()
 
-    def test_no_db_secret_skips_database(self, backup_mocks) -> None:
-        """If no database secret exists, database backup is skipped gracefully."""
+    def test_database_result_failure_marks_partial(self, backup_mocks) -> None:
+        """A database step that answers success=False (no exception) also fails the run."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        failed_db = DatabaseBackupResult(
+            namespace="rig-test-project",
+            pvc_name="postgres",
+            success=False,
+            error="pg_dump mislukt",
+            reference_name="postgres",
+        )
+        backup_mocks["database_backup_manager"].return_value.backup_database = AsyncMock(return_value=failed_db)
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_awaited_once()
+
+    def test_bucket_exception_marks_partial(self, backup_mocks) -> None:
+        """If the object-storage backup throws, it's caught and marked as partial failure."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket = AsyncMock(
+            side_effect=RuntimeError("mirror mislukt")
+        )
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+        # PVC and database should still have run
+        backup_mocks["backup_manager"].return_value.backup_project_deployment.assert_awaited_once()
+        backup_mocks["database_backup_manager"].return_value.backup_database.assert_awaited_once()
+
+    def test_bucket_result_failure_marks_partial(self, backup_mocks) -> None:
+        """A bucket step that answers success=False (no exception) also fails the run."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        failed_bucket = BucketBackupResult(
+            namespace="rig-test-project",
+            pvc_name="minio-storage",
+            success=False,
+            error="mirror mislukt",
+            reference_name="minio-storage",
+        )
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket = AsyncMock(return_value=failed_bucket)
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+
+    def test_no_db_secret_skips_database_and_says_so(self, backup_mocks) -> None:
+        """Without a database secret the step is skipped, with the reason in the result (B3).
+
+        This used to record silent success: the subtask went green and the answer said
+        nothing about the database it passed over.
+        """
         from opi.runtime.backup.task_handlers_backup import handle_backup
 
         backup_mocks["db_secret"].get_data = AsyncMock(return_value=None)
@@ -673,7 +744,66 @@ class TestHandleBackupExecution:
         }
         result = _run(handle_backup(payload, _make_progress()))
         assert result["success"] is True
+        assert result["skipped"] == [
+            {"resource_type": "database", "reason": "Overgeslagen: het secret van deze deployment is er niet"}
+        ]
         backup_mocks["database_backup_manager"].return_value.backup_database.assert_not_awaited()
+
+    def test_no_object_storage_secret_skips_the_bucket_and_says_so(self, backup_mocks) -> None:
+        """The same for the object storage (B3)."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["minio_secret"].return_value = None
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        assert [skip["resource_type"] for skip in result["skipped"]] == ["minio"]
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_not_awaited()
+
+    def test_a_database_without_a_component_is_backed_up_under_the_default_reference(self, backup_mocks) -> None:
+        """A deployment of helm-charts only still gets a database backup (B4).
+
+        It used to be skipped with a green subtask while the wizard did offer "database",
+        so the backup silently was not there.
+        """
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["project_file_handler"].return_value.get_components_using_service.return_value = []
+        backup_mocks["project_file_handler"].return_value.deployment_service_types.return_value = [
+            "postgresql-database"
+        ]
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["database"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        call = backup_mocks["database_backup_manager"].return_value.backup_database.await_args
+        assert call.kwargs["reference_name"] == "prod-postgresql"
+        assert call.kwargs["component_name"] is None
+        assert call.kwargs["generation"] == 1
+
+    def test_a_bucket_without_a_component_is_backed_up_under_the_default_reference(self, backup_mocks) -> None:
+        """The same for the object storage (B4)."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["project_file_handler"].return_value.get_components_using_service.return_value = []
+        backup_mocks["project_file_handler"].return_value.deployment_service_types.return_value = ["minio-storage"]
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        call = backup_mocks["bucket_backup_manager"].return_value.backup_bucket.await_args
+        assert call.kwargs["reference_name"] == "prod-minio"
+        assert call.kwargs["component_name"] is None
 
     def test_progress_tracking(self, backup_mocks) -> None:
         """Handler reports progress through the progress manager."""
@@ -864,7 +994,7 @@ class TestHandleRestoreExistingDeployment:
         _thb = "opi.runtime.backup.task_handlers_backup"
         _bt = "opi.runtime.backup.backup_tasks"
         with (
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
+            patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
             patch(f"{_bt}._restore_single_resource") as mock_restore_single,
             patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
         ):
@@ -1036,7 +1166,7 @@ class TestHandleRestoreNewDeployment:
             patch(f"{_thb}._create_deployment_from_source") as mock_create,
             patch(f"{_thb}._pre_restore_pvcs") as mock_pre_restore,
             patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
+            patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
             patch(f"{_bt}._restore_single_resource") as mock_restore_single,
         ):
             mock_create.return_value = None
@@ -1383,3 +1513,65 @@ class TestCreateDeploymentFromSourceYAML:
 
         with pytest.raises(ValueError, match="niet gevonden"):
             _run(_create_deployment_from_source("test-project", "staging", "nonexistent"))
+
+
+class TestAHeldLockIsMarkedOnTheRun:
+    """A step that gave up waiting for the backup lock is recognizable by its type.
+
+    The answer carries ``lock_error`` so an entry point can give a 409 for it instead of
+    calling the whole run broken, without matching on the message.
+    """
+
+    def test_the_run_reports_the_lock_that_stayed_held(self) -> None:
+        from opi.manager.backup.base import BackupLockBusyError
+        from opi.manager.backup.run import BackupRunRequest, backup_deployment, backup_run_answer
+
+        with patch("opi.manager.backup.run.create_backup_manager") as pvc_manager:
+            pvc_manager.return_value.backup_project_deployment = AsyncMock(
+                side_effect=BackupLockBusyError("Could not acquire backup lock - another backup is running")
+            )
+            result = _run(
+                backup_deployment(
+                    BackupRunRequest(
+                        project_name="test-project",
+                        deployment_name="prod",
+                        project_data={"name": "test-project"},
+                        app_namespace="rig-test-project",
+                        cluster="local",
+                        resource_types=["pvc"],
+                        trigger="manual",
+                        backup_run_id="20260325020000",
+                    ),
+                    progress=_make_progress(),
+                    parent_task_id="task-1",
+                )
+            )
+
+        assert result.success is False
+        assert result.lock_error == "Could not acquire backup lock - another backup is running"
+        assert backup_run_answer(result)["lock_error"] == result.lock_error
+
+    def test_another_runtime_error_is_no_lock(self) -> None:
+        from opi.manager.backup.run import BackupRunRequest, backup_deployment
+
+        with patch("opi.manager.backup.run.create_backup_manager") as pvc_manager:
+            pvc_manager.return_value.backup_project_deployment = AsyncMock(side_effect=RuntimeError("pod weggevallen"))
+            result = _run(
+                backup_deployment(
+                    BackupRunRequest(
+                        project_name="test-project",
+                        deployment_name="prod",
+                        project_data={"name": "test-project"},
+                        app_namespace="rig-test-project",
+                        cluster="local",
+                        resource_types=["pvc"],
+                        trigger="manual",
+                        backup_run_id="20260325020000",
+                    ),
+                    progress=_make_progress(),
+                    parent_task_id="task-1",
+                )
+            )
+
+        assert result.success is False
+        assert result.lock_error is None

@@ -29,6 +29,7 @@ from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.http.auth.authz import authorize
 from opi.services.project_service import ProjectService, ProjectUser
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, apply_form_data_to_project
 from opi.web.router_wizard import _save_existing_project
@@ -499,17 +500,20 @@ async def test_modal_do_submit_invokes_role_gate_for_project_edit(project_servic
 
 @pytest.mark.asyncio
 async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_service: ProjectService) -> None:
-    """Een back-upstroom vraagt backup.create, niet het bredere project.edit."""
+    """Een back-upstroom vraagt backup.create, niet het bredere project.edit.
+
+    Since RC-475 it weighs that on a deployment, so the gate of the flow is
+    ``require_on_any_deployment`` and not the project-wide ``authorize``.
+    """
     from opi.web.router_detail_edit import _modal_do_submit
 
-    def _geen_edit_gate(_request: Any, *, action: Action, project_name: str) -> tuple[Any, str]:
-        assert action is Action.BACKUP_CREATE, "een back-upstroom hoort geen project.edit te vragen"
-        return SimpleNamespace(name=project_name), MEMBER_EMAIL
-
     with (
-        patch("opi.web.router_detail_edit.authorize", side_effect=_geen_edit_gate),
+        patch("opi.web.router_detail_edit.require_on_any_deployment") as gate,
+        patch(
+            "opi.web.router_detail_edit.authorize",
+            side_effect=AssertionError("a backup flow must not ask a project-wide gate"),
+        ),
         # State lookup returns None -> raises 400 before any data mutation.
-        # We only care that the edit-gate was NOT called.
         patch("opi.web.router_detail_edit.load_modal_state_for", return_value=None),
         pytest.raises(HTTPException) as exc,
     ):
@@ -521,6 +525,7 @@ async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_se
         )
     # Confirm the expected pass-through error rather than an AssertionError leaking.
     assert exc.value.status_code == 400
+    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.BACKUP_CREATE, PROJECT_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -709,10 +714,11 @@ async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
 
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
-    # ``require_action`` en niet ``authorize``: het formulier herrenderen is geen
-    # back-up, en de audit hoort er geen rij over te krijgen (RC-398).
+    # ``require_on_any_deployment`` and not ``authorize``: re-rendering the form is not a
+    # backup, so the audit gets no row about it (RC-398). On any deployment, because this
+    # step is where the user picks one (RC-475).
     with (
-        patch("opi.web.router_detail_edit.require_action", side_effect=_TE_SMALLE_ROL) as gate,
+        patch("opi.web.router_detail_edit.require_on_any_deployment", side_effect=_TE_SMALLE_ROL) as gate,
         patch("opi.web.router_detail_edit.authorize", side_effect=AssertionError("geen rij hierover")),
         pytest.raises(HTTPException) as exc,
     ):
@@ -720,6 +726,45 @@ async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
 
     assert exc.value.status_code == 403
     gate.assert_called_once_with(request, Action.BACKUP_CREATE, PROJECT_NAME)
+
+
+@pytest.mark.asyncio
+async def test_backup_select_deployment_weighs_a_single_deployment(
+    project_service: ProjectService,
+) -> None:
+    """A developer who may open the wizard may also switch the deployment.
+
+    This step weighs on any deployment, not on the project's highest marking: otherwise
+    the wizard opens and this step answers 403 (RC-475).
+    """
+    from opi.web.router_detail_edit import backup_select_deployment
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(user={"email": DEVELOPER_EMAIL}),
+        session={},
+        query_params={"deployment_name": "test"},
+    )
+    project = get_project_store().get(PROJECT_NAME)
+    assert project is not None
+    project.data = {
+        "deployments": [
+            {"name": "live", "environment": "productie"},
+            {"name": "test", "environment": "test"},
+        ]
+    }
+
+    # No session state, so the step falls on 400 once it is past the gate.
+    with (
+        patch("opi.web.router_detail_edit.load_modal_state_for", return_value=None),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await backup_select_deployment(request=request, project_name=PROJECT_NAME)
+    assert exc.value.status_code == 400
+
+    project.data = {"deployments": [{"name": "live", "environment": "productie"}]}
+    with pytest.raises(HTTPException) as exc:
+        await backup_select_deployment(request=request, project_name=PROJECT_NAME)
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -782,38 +827,82 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
     gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.RESTORE_RUN, PROJECT_NAME, deployment="")
 
 
+def _backup_submit_state(resource_types: list[str] | None = None):
+    from unittest.mock import MagicMock
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {
+        "deployment_name": "dep1",
+        "resource_types": resource_types if resource_types is not None else ["database"],
+    }
+    return state
+
+
 @pytest.mark.asyncio
-async def test_handle_backup_restore_submit_skips_gate_for_backup() -> None:
-    """A backup makes no change that needs the operate-role guard; member-level
-    access (already checked at init/step time) is enough.
+async def test_handle_backup_restore_submit_weighs_the_chosen_deployment() -> None:
+    """The backup weighs on the deployment it names (RC-475, decision B7).
+
+    It used to weigh against the project's highest marking, and not at all on the submit:
+    a developer who could not open the wizard in a project with production could back up a
+    non-production deployment through the API all the same.
     """
     from unittest.mock import AsyncMock, MagicMock
 
     from opi.web.router_detail_edit import _handle_backup_restore_submit
-
-    state = MagicMock()
-    state.get_merged_data.return_value = {"deployment_name": "dep1", "resource_types": ["postgres"]}
 
     task_service = MagicMock()
     task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
 
     with (
         patch("opi.http.task_helpers.get_task_service", return_value=task_service),
-        patch(
-            "opi.web.router_detail_edit.authorize",
-            side_effect=AssertionError("operate-gate must not run for a backup"),
-        ),
+        patch("opi.web.router_detail_edit.authorize") as gate,
         patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
         patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
     ):
         response = await _handle_backup_restore_submit(
-            request=_request_for(MEMBER_EMAIL),
+            request=_request_for(DEVELOPER_EMAIL),
             wizard_token="tok",
             project_name=PROJECT_NAME,
             flow_id="modal-backup",
             action="trigger_backup",
-            state=state,
+            state=_backup_submit_state(),
         )
 
     assert response.status_code == 200
     task_service.create_task.assert_called_once()
+    assert gate.call_args.kwargs["action"] is Action.BACKUP_CREATE
+    assert gate.call_args.kwargs["deployment"] == "dep1"
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_refuses_an_unknown_resource_type() -> None:
+    """An unknown resource_type out of the session answers 422 (RC-475, decision B6).
+
+    It used to be passed through raw and ignored by the run, so the backup that was asked
+    for did not happen and nobody got to see that.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
+
+    task_service = MagicMock()
+    task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
+
+    with (
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.web.router_detail_edit.authorize"),
+        patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
+        patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await _handle_backup_restore_submit(
+            request=_request_for(DEVELOPER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-backup",
+            action="trigger_backup",
+            state=_backup_submit_state(["geen-type"]),
+        )
+
+    assert exc.value.status_code == 422
+    task_service.create_task.assert_not_called()

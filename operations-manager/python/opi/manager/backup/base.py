@@ -130,6 +130,14 @@ class RestoreResult:
     target_unusable: bool = False
 
 
+class BackupLockBusyError(RuntimeError):
+    """The cluster-wide backup lock stayed held until the wait ran out.
+
+    A ``RuntimeError`` so every caller that already catches one keeps working; an entry
+    point that answers 409 for a held lock matches on this type instead of on the message.
+    """
+
+
 class BackupLock:
     """
     Distributed lock using Kubernetes ConfigMap.
@@ -355,7 +363,7 @@ data:
 
     async def __aenter__(self) -> BackupLock:
         if not await self.acquire():
-            raise RuntimeError("Could not acquire backup lock - another backup is running")
+            raise BackupLockBusyError("Could not acquire backup lock - another backup is running")
         return self
 
     async def __aexit__(

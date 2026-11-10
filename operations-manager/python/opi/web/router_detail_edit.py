@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.authz.actions import Action, action
-from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
+from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES, validated_backup_resource_types
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.i18n import get_default_nl_translator
@@ -246,13 +246,13 @@ def _check_flow_access(request: Request, project_name: str, flow_id: str) -> Non
     Opening, loading, submitting or skipping a step is not an action, so it gets no row; a
     refusal is recorded by ``require_action``.
 
-    The restore is the exception: ``restore.run`` weighs on the source and on the target, and
-    those are only in the session state (``_authorize_restore``). Without a deployment it would
-    weigh against the highest marking of the project, and a developer could then not even open
-    the wizard while they may restore between two non-production deployments.
+    Backup and restore are the exception: they weigh on the deployment they name, and that
+    one is only in the session state. Without a deployment an action weighs against the
+    project's highest marking, and a developer could then not even open the wizard while a
+    non-production deployment was open to them (RC-417, RC-475).
     """
-    if flow_id == "modal-restore":
-        require_on_any_deployment(request, Action.RESTORE_RUN, project_name)
+    if _is_backup_restore_flow(flow_id):
+        require_on_any_deployment(request, _flow_action(flow_id), project_name)
         return
     require_action(request, _flow_action(flow_id), project_name)
 
@@ -260,10 +260,12 @@ def _check_flow_access(request: Request, project_name: str, flow_id: str) -> Non
 def _authorize_flow(request: Request, project_name: str, flow_id: str) -> tuple[ProjectSummary, str]:
     """The gate for the FINISHED flow, the only one that records the decision.
 
-    Returns ``(project, user_email)``. Except for the restore, which records its decision on
-    the source and the target it really names; see :func:`_check_flow_access`.
+    Returns (project, user_email).
+
+    Backup and restore are the exception: they record their decision on the deployment they
+    really name, see :func:`_check_flow_access`.
     """
-    if flow_id == "modal-restore":
+    if _is_backup_restore_flow(flow_id):
         _check_flow_access(request, project_name, flow_id)
         project = get_project_store().get(project_name)
         if project is None:
@@ -1237,7 +1239,7 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
 @requires_sso
 async def backup_select_deployment(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the backup step partial when deployment changes."""
-    require_action(request, Action.BACKUP_CREATE, project_name)
+    require_on_any_deployment(request, Action.BACKUP_CREATE, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1731,6 +1733,14 @@ async def _handle_backup_restore_submit(
         resource_types = merged_data.get("resource_types", DEFAULT_BACKUP_RESOURCE_TYPES)
         if isinstance(resource_types, str):
             resource_types = [resource_types]
+        try:
+            resource_types = validated_backup_resource_types(list(resource_types))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+        # BACKUP_CREATE weighs on the chosen deployment, not on the project's highest
+        # marking: the same rule the restore follows, see _check_flow_access (RC-417).
+        authorize(request, action=Action.BACKUP_CREATE, project_name=project_name, deployment=deployment_name)
 
         task = await task_service.create_task(
             task_type=TaskType.BACKUP,

@@ -398,19 +398,23 @@ class AsyncTaskService:
         logger.debug("Heartbeat sent for task %s", task_id)
 
     async def complete_task(self, task_id: str, result: dict | None = None) -> None:
-        """Mark a task as completed."""
+        """Mark a task as completed.
+
+        Without a ``result`` the stored one stays, the same way :meth:`fail_task` keeps it: a
+        completed task is written twice (the progress manager marks it done without an answer,
+        the worker adds the handler's answer), and clearing on the second write lost the
+        answer of every reader that wanted it.
+        """
+        values: dict[str, Any] = {
+            "status": "completed",
+            "completed_at": func.now(),
+            "progress_percent": 100,
+            "current_step": "Done",
+        }
+        if result is not None:
+            values["result"] = result
         async with session_scope() as session:
-            await session.execute(
-                update(AsyncTask)
-                .where(AsyncTask.id == uuid.UUID(task_id))
-                .values(
-                    status="completed",
-                    result=result,
-                    completed_at=func.now(),
-                    progress_percent=100,
-                    current_step="Done",
-                )
-            )
+            await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
         logger.info("Completed task %s", task_id)
 
     async def fail_task(

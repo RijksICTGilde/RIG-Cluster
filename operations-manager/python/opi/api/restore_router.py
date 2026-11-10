@@ -49,6 +49,7 @@ from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from opi.utils.naming import (
+    default_service_reference,
     generate_pvc_name,
     generate_unique_name,
 )
@@ -1522,12 +1523,10 @@ def _find_deployment_for_reference(
 def _fallback_reference_names(deployment_name: str, service_types: list[str], default_suffix: str) -> list[str]:
     """The names a backup CAN carry when no component carries the service.
 
-    These follow the rule of the WRITER, which derives the name as ``{deployment}-{service
-    name up to the first dash}`` (see ``ProjectFileHandler.get_components_using_service``), so
-    ``postgresql-database`` becomes ``{deployment}-postgresql``. The old suffix stays in the
-    list: a backup written away under the old name has to stay restorable.
+    These follow the rule of the WRITER, ``default_service_reference``. The old suffix stays
+    in the list: a backup written away under the old name has to stay restorable.
     """
-    names = [f"{deployment_name}-{service_type.split('-')[0]}" for service_type in service_types]
+    names = [default_service_reference(deployment_name, service_type) for service_type in service_types]
     names.append(f"{deployment_name}-{default_suffix}")
     return list(dict.fromkeys(names))
 

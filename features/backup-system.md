@@ -339,23 +339,62 @@ optional body to restrict to specific resource types:
 { "resource_types": ["pvc", "database", "minio"] }
 ```
 
-Omitting the body backs up all three types.
+Omitting the body backs up all three types. A type outside those three is refused with
+`422`; it used to be dropped without a word, so the backup that was asked for silently did
+not happen.
+
+### One path, and a synchronous answer
+
+The call queues a backup task and waits for it, so it goes through the same queue as the
+wizard and the scheduler: `BACKUP_MAX_CONCURRENT`, the deduplication and the ordering per
+deployment apply to it, and a backup no longer runs next to a deploy or a restore of the
+same deployment. The answer is still synchronous. Two things follow from the wait:
+
+- a second identical call joins the task that is already running instead of starting one;
+- `504` when the backup outlasts what the request can wait for. Nothing is lost, the task
+  keeps running, and `GET /api/tasks/{id}` says how it ended.
+
+The steps themselves live in one place, `opi/manager/backup/run.py`.
 
 ### Backup response
 
 ```json
 {
   "status": "success",
-  "message": "Backed up 3 resources for my-project/production",
-  "backup_run_id": "20260520020000",
-  "total_results": 3,
-  "results": [
-    {"namespace": "rig-my-project", "pvc_name": "production-frontend-data-pvc", "success": true, "duration_seconds": 45.3},
-    {"namespace": "rig-my-project", "reference_name": "frontend-database", "success": true, "duration_seconds": 12.1},
-    {"namespace": "rig-my-project", "reference_name": "frontend-uploads", "success": true, "duration_seconds": 8.7}
-  ]
+  "message": "Backed up 1 PVC(s), 1 database(s), 1 bucket(s) in deployment production",
+  "pvc_results": [
+    {"namespace": "rig-my-project", "pvc_name": "production-frontend-data-pvc", "success": true, "duration_seconds": 45.3}
+  ],
+  "database_results": [
+    {"namespace": "rig-my-project", "reference_name": "frontend-postgresql", "success": true, "duration_seconds": 12.1}
+  ],
+  "bucket_results": [
+    {"namespace": "rig-my-project", "reference_name": "frontend-minio", "success": true, "duration_seconds": 8.7}
+  ],
+  "skipped": []
 }
 ```
+
+| Outcome | `status` | HTTP |
+|---|---|---|
+| Every resource backed up, or nothing to back up | `success` | `200` |
+| Some resources backed up, others failed | `partial` | `207` |
+| Nothing backed up | `failed` | `500` |
+| A step gave up waiting for the cluster-wide backup lock | - | `409` |
+| The wait for the task ran out | - | `504` |
+
+A step that breaks counts as a failure. It used to be logged as a warning and left out of
+the answer, so a database or bucket backup that did not happen still reported `200`
+`"success"`.
+
+`skipped` names a resource type the run left alone and why, for instance a deployment whose
+secret is not there. A skip is no failure, so the status stays what it was; it is simply no
+longer invisible.
+
+A deployment that uses a database or object storage through helm-charts or helmfiles only,
+without a component naming the service, is backed up under the reference a component would
+have carried (`{deployment}-postgresql`, `{deployment}-minio`). The wizard and the scheduler
+used to pass it over with a green step.
 
 All snapshots in one run share `backup_run_id` and are tagged with `project`,
 `deployment`, `component`, `resource_type`, `generation`, and `trigger`

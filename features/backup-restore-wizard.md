@@ -91,13 +91,23 @@ The wizard itself opens as soon as restoring is allowed on at least one deployme
 project (`require_on_any_deployment`); the real decision falls at the confirmation, and that
 is the one the audit records.
 
+## Who may back up
+
+Since RC-475 `backup.create` follows the same rule: the wizard opens as soon as backing up
+is allowed on at least one deployment, and the decision that lands in the audit is weighed
+on the deployment the user picked. It used to be weighed against the highest marking in the
+project, so a developer in a project that has production could not open the wizard at all
+while the API did let them back up a non-production deployment.
+
 ## Architecture
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `opi/runtime/backup/backup_tasks.py` | Background task wrappers (`run_backup_task`, `run_restore_task`) with `PersistentTaskProgressManager` |
+| `opi/manager/backup/run.py` | `backup_deployment`: the one path every entry point runs, and `resolve_deployment_target` |
+| `opi/runtime/backup/task_handlers_backup.py` | The task handlers; `handle_backup` only translates between the payload and the use case |
+| `opi/runtime/backup/backup_tasks.py` | The helpers the restore handler shares with the clone-from flow |
 | `opi/forms/visualizers/wizard_sections.py` (`BACKUP_SELECT_SECTION`) | Deployment + resource type selection |
 | `opi/templates/wizard/partials/restore_select_backup.html.j2` | Backup run selection |
 | `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection (mode toggle) |
@@ -107,7 +117,7 @@ is the one the audit records.
 ### Key Design Decisions
 
 - **No project file changes**: Backup/restore flows skip the YAML save step - they trigger operations directly (except when creating a new deployment, which modifies the project file)
-- **Member-level auth**: Any project member can create backups. Restore is weighed on the source and the target deployment, see "Who may restore"
+- **Per-deployment auth**: Backup and restore are both weighed on the deployment the user picks, see "Who may restore" and "Who may back up"
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization

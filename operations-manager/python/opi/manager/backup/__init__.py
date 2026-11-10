@@ -14,6 +14,7 @@ so existing imports continue to work.
 from opi.manager.backup.base import (
     BackupConfig,
     BackupLock,
+    BackupLockBusyError,
     BackupResult,
     BackupStatus,
     BaseBackupManager,
@@ -50,6 +51,7 @@ from opi.manager.backup.runs import (
 __all__ = [
     "BackupConfig",
     "BackupLock",
+    "BackupLockBusyError",
     "BackupManager",
     "BackupResult",
     "BackupStatus",

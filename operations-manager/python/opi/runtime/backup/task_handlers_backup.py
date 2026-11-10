@@ -9,24 +9,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
-from opi.manager.backup import (
-    create_backup_manager,
-    create_bucket_backup_manager,
-    create_database_backup_manager,
+from opi.manager.backup.run import (
+    BackupRunRequest,
+    backup_deployment,
+    backup_run_answer,
+    resolve_deployment_target,
 )
 from opi.runtime.backup.backup_tasks import (
     _create_deployment_from_source,
     _pre_restore_pvcs,
     _provision_deployment_infrastructure,
-    _resolve_deployment_info,
     restore_items_with_progress,
 )
-from opi.services import ServiceType
-from opi.services.postgres_scope import project_uses_dedicated_postgres
-from opi.services.project_file_handler import create_project_file_handler
-from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from opi.services.tasks import progress_steps as steps
 from opi.utils.naming import generate_backup_run_id
 
@@ -42,7 +37,8 @@ async def handle_backup(
 ) -> dict:
     """Execute a deployment backup via the async task queue.
 
-    Uses PersistentTaskProgressManager for database-backed progress tracking.
+    Translates the payload into a :class:`BackupRunRequest`, runs the use case and reports
+    its outcome on the task; the steps themselves live in ``opi/manager/backup/run.py``.
     """
     project_name = payload["project_name"]
     deployment_name = payload["deployment_name"]
@@ -50,10 +46,9 @@ async def handle_backup(
     # Default to scheduled for legacy tasks that predate the trigger field.
     trigger = payload.get("trigger", "scheduled")
 
-    # Task 1: Resolve project and deployment info
     resolve_task = progress.add_task(steps.PROJECT_DEPLOYMENT_LOOKUP)
     try:
-        _project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
+        _project, project_data, app_namespace, current_cluster = await resolve_deployment_target(
             project_name, deployment_name
         )
     except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
@@ -62,171 +57,35 @@ async def handle_backup(
         return {"success": False, "error": str(e)}
     progress.complete_task(resolve_task)
 
-    # Task 2: Run backups
     backup_task = progress.add_task(steps.BACKUP_RUN)
+    result = await backup_deployment(
+        BackupRunRequest(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            project_data=project_data,
+            app_namespace=app_namespace,
+            cluster=current_cluster,
+            resource_types=resource_types,
+            trigger=trigger,
+            backup_run_id=generate_backup_run_id(),
+        ),
+        progress=progress,
+        parent_task_id=backup_task,
+    )
 
-    backup_run_id = generate_backup_run_id()
-    project_file_handler = create_project_file_handler()
-    all_success = True
-    total_results = 0
-
-    # PVC backup
-    if "pvc" in resource_types:
-        pvc_subtask = progress.add_subtask(backup_task, steps.PVC_BACKUP)
-        try:
-            backup_manager = create_backup_manager()
-            app_results = await backup_manager.backup_project_deployment(
-                project_name=project_name,
-                project_data=project_data,
-                deployment_name=deployment_name,
-                namespace=app_namespace,
-                cluster=current_cluster,
-                backup_run_id=backup_run_id,
-                trigger=trigger,
-            )
-            total_results += len(app_results)
-            failed = [r for r in app_results if not r.success]
-            if failed:
-                all_success = False
-                progress.fail_subtask(pvc_subtask, f"{len(failed)} PVC backup(s) mislukt")
-            else:
-                progress.complete_subtask(pvc_subtask)
-        except (ValueError, RuntimeError, OSError, ConnectionError) as e:
-            all_success = False
-            progress.fail_subtask(pvc_subtask, str(e))
-            logger.exception("PVC backup failed for %s/%s", project_name, deployment_name)
-
-    # Database backup
-    database_service_types = [
-        ServiceType.POSTGRESQL_DATABASE.value,
-        ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
-    ]
-    if "database" in resource_types and project_file_handler.deployment_uses_service(
-        project_data, deployment_name, database_service_types
-    ):
-        db_subtask = progress.add_subtask(backup_task, steps.DATABASE_BACKUP)
-        try:
-            kubectl = create_kubectl_connector()
-            db_components = project_file_handler.get_components_using_service(
-                project_data, deployment_name, database_service_types
-            )
-            db_secret = await DatabaseSecret.get_data(
-                kubectl_connector=kubectl,
-                namespace=app_namespace,
-                prefix=deployment_name,
-            )
-            if db_secret and db_components:
-                database_backup_manager = create_database_backup_manager()
-                component_info = db_components[0]
-                component_name = component_info["component_name"]
-                reference_name = component_info["reference_name"]
-                # One database per deployment, so the generation is read per deployment.
-                generation = project_file_handler.get_database_generation(project_data, deployment_name)
-                # Dedicated placement (a project-owned cluster) is a project-wide
-                # decision: namespace-postgresql-database or postgresql-database with
-                # scope: project (RC-17).
-                uses_namespace_db = project_uses_dedicated_postgres(project_data)
-                source_type = "namespace" if uses_namespace_db else "shared"
-
-                db_result = await database_backup_manager.backup_database(
-                    namespace=app_namespace,
-                    database_host=db_secret.host,
-                    database_port=db_secret.port,
-                    database_name=db_secret.database,
-                    database_user=db_secret.username,
-                    database_password=db_secret.password,
-                    reference_name=reference_name,
-                    source_type=source_type,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    component_name=component_name,
-                    generation=generation,
-                    cluster=current_cluster,
-                    backup_run_id=backup_run_id,
-                    trigger=trigger,
-                )
-                total_results += 1
-                if not db_result.success:
-                    all_success = False
-                    progress.fail_subtask(db_subtask, "Database backup mislukt")
-                else:
-                    progress.complete_subtask(db_subtask)
-            else:
-                progress.complete_subtask(db_subtask)
-        except (ValueError, RuntimeError, OSError, ConnectionError) as e:
-            all_success = False
-            progress.fail_subtask(db_subtask, str(e))
-            logger.exception("Database backup failed for %s/%s", project_name, deployment_name)
-
-    # Object storage: minio-storage or seaweedfs-storage. Both carry the backup_label
-    # "minio", have the same secret and go through the same bucket backup.
-    minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
-    if "minio" in resource_types and project_file_handler.deployment_uses_service(
-        project_data, deployment_name, minio_service_types
-    ):
-        minio_subtask = progress.add_subtask(backup_task, steps.OBJECT_STORAGE_BACKUP)
-        try:
-            kubectl = create_kubectl_connector()
-            minio_components = project_file_handler.get_components_using_service(
-                project_data, deployment_name, minio_service_types
-            )
-            minio_secret = await get_object_storage_secret(
-                kubectl_connector=kubectl,
-                namespace=app_namespace,
-                prefix=deployment_name,
-            )
-            if minio_secret and minio_components:
-                bucket_backup_manager = create_bucket_backup_manager()
-                component_info = minio_components[0]
-                component_name = component_info["component_name"]
-                reference_name = component_info["reference_name"]
-                # One bucket per deployment, so the generation is read per deployment.
-                generation = project_file_handler.get_bucket_generation(project_data, deployment_name)
-
-                bucket_result = await bucket_backup_manager.backup_bucket(
-                    namespace=app_namespace,
-                    source_minio_endpoint=minio_secret.endpoint_url,
-                    source_bucket_name=minio_secret.bucket_name,
-                    source_access_key=minio_secret.access_key,
-                    source_secret_key=minio_secret.secret_key,
-                    reference_name=reference_name,
-                    source_type="shared",
-                    use_kopia=True,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    component_name=component_name,
-                    generation=generation,
-                    cluster=current_cluster,
-                    backup_run_id=backup_run_id,
-                    trigger=trigger,
-                )
-                total_results += 1
-                if not bucket_result.success:
-                    all_success = False
-                    progress.fail_subtask(minio_subtask, "Backup van de objectopslag mislukt")
-                else:
-                    progress.complete_subtask(minio_subtask)
-            else:
-                progress.complete_subtask(minio_subtask)
-        except (ValueError, RuntimeError, OSError, ConnectionError) as e:
-            all_success = False
-            progress.fail_subtask(minio_subtask, str(e))
-            logger.exception("Backup van de objectopslag mislukte voor %s/%s", project_name, deployment_name)
-
-    if all_success:
+    if result.success:
         progress.complete_task(backup_task)
         progress.complete_project()
         logger.info(
             "Backup completed: %d resources backed up for %s/%s",
-            total_results,
+            result.total_items,
             project_name,
             deployment_name,
         )
-        return {"success": True, "total_results": total_results}
     else:
         progress.fail_task(backup_task, "Een of meer backups zijn mislukt")
         progress.fail_project("Backup gedeeltelijk mislukt")
-        return {"success": False, "error": "Backup gedeeltelijk mislukt"}
+    return backup_run_answer(result)
 
 
 async def handle_restore(
@@ -314,7 +173,7 @@ async def handle_restore(
             # Existing deployment restore
             resolve_task = progress.add_task(steps.PROJECT_DEPLOYMENT_LOOKUP)
             try:
-                project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
+                project, project_data, app_namespace, current_cluster = await resolve_deployment_target(
                     project_name, target_deployment
                 )
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:

@@ -396,6 +396,33 @@ class TestDeploymentUsesServiceForBackup:
                 found_labels.append(bl["label"])
         assert found_labels == []
 
+    def test_service_types_names_the_match_in_declared_order(self, handler) -> None:
+        """deployment_service_types names WHICH service matched, not just that one did.
+
+        _fallback_reference (manager/backup/run.py, decision B4) takes the first entry to
+        build the reference a backup without a component lands under, so the order here is
+        not cosmetic.
+        """
+        project = self._make_project(component_services=["minio-storage", "postgresql-database"])
+        assert handler.deployment_service_types(project, "production", ["postgresql-database", "minio-storage"]) == [
+            "minio-storage",
+            "postgresql-database",
+        ]
+
+    def test_service_types_has_no_duplicate_when_both_component_and_helm_chart_declare_it(self, handler) -> None:
+        """The same service declared by a component and by a helm-chart counts once."""
+        project = self._make_project(component_services=["postgresql-database"])
+        project["helm-charts"] = [{"name": "chart", "services": ["postgresql-database"]}]
+        project["deployments"][0]["helm-charts"] = [{"reference": "chart"}]
+
+        assert handler.deployment_service_types(project, "production", ["postgresql-database"]) == [
+            "postgresql-database"
+        ]
+
+    def test_service_types_empty_when_nothing_matches(self, handler) -> None:
+        project = self._make_project(component_services=["publish-on-web"])
+        assert handler.deployment_service_types(project, "production", ["postgresql-database"]) == []
+
 
 # ---------------------------------------------------------------------------
 # CloneFromType enum tests

@@ -27,7 +27,7 @@ from opi.services.schema_migration import migrate_to_latest
 from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
-from opi.utils.naming import generate_storage_name
+from opi.utils.naming import default_service_reference, generate_storage_name
 from opi.utils.url_paths import sanitize_path_value
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, load_yaml_round_trip
 
@@ -3153,10 +3153,6 @@ class ProjectFileHandler:
         """
         Check if a deployment uses any of the specified services.
 
-        This checks both:
-        1. Components referenced by the deployment and their services
-        2. Helm-charts referenced by the deployment and their services
-
         Args:
             project_data: The parsed project data
             deployment_name: Name of the deployment to check
@@ -3165,36 +3161,47 @@ class ProjectFileHandler:
         Returns:
             True if deployment uses any of the specified services, False otherwise
         """
-        # Check components
+        return bool(self.deployment_service_types(project_data, deployment_name, service_types))
+
+    def deployment_service_types(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        service_types: list[str],
+    ) -> list[str]:
+        """Which of ``service_types`` this deployment uses, in the order they are declared.
+
+        Looks at the components, the helm-charts and the helmfiles the deployment references.
+        A caller that only wants to know whether there is one takes
+        :meth:`deployment_uses_service`; a caller that has to NAME the service (a backup
+        reference, for instance) needs the matches themselves.
+        """
+        found: list[str] = []
+
+        def add(names: list[str]) -> None:
+            found.extend(name for name in names if name in service_types and name not in found)
+
         component_refs = self.extract_deployment_components(project_data, deployment_name)
         for component_ref in component_refs:
             ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
             if ref_name:
                 component = self._find_component(project_data, ref_name)
                 if component:
-                    service_names = extract_service_names_from_component(component)
-                    if any(s in service_types for s in service_names):
-                        return True
+                    add(extract_service_names_from_component(component))
 
-        # Check helm-charts
         helm_chart_refs = self.extract_deployment_helm_charts(project_data, deployment_name)
         for helm_chart_ref in helm_chart_refs:
             ref_name = helm_chart_ref.get("reference") if isinstance(helm_chart_ref, dict) else helm_chart_ref
             if ref_name:
-                service_names = self.extract_helm_chart_uses_services(project_data, ref_name)
-                if any(s in service_types for s in service_names):
-                    return True
+                add(self.extract_helm_chart_uses_services(project_data, ref_name))
 
-        # Check helmfiles
         helmfile_refs = self.extract_deployment_helmfiles(project_data, deployment_name)
         for helmfile_ref in helmfile_refs:
             ref_name = helmfile_ref.get("reference") if isinstance(helmfile_ref, dict) else helmfile_ref
             if ref_name:
-                service_names = self.extract_helmfile_uses_services(project_data, ref_name)
-                if any(s in service_types for s in service_names):
-                    return True
+                add(self.extract_helmfile_uses_services(project_data, ref_name))
 
-        return False
+        return found
 
     def project_declares_service(
         self,
@@ -3299,7 +3306,7 @@ class ProjectFileHandler:
                 service_name = service_entry_name(service)
                 if service_name is None:
                     continue
-                default_ref = f"{deployment_name}-{service_name.split('-')[0]}"
+                default_ref = default_service_reference(deployment_name, service_name)
                 service_ref = default_ref
                 # Only a legacy single-key body ({svc: {reference: ...}}) carries an
                 # explicit generation reference; the uniform record does not.

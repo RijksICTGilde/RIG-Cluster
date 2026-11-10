@@ -173,6 +173,20 @@ async def test_complete_sets_result_and_done(orm_db):
     assert task["completed_at"]
 
 
+async def test_complete_without_a_result_keeps_the_one_already_stored(orm_db):
+    """A task reaches ``completed`` twice: the progress manager stamps it done with no
+    result, then the worker adds the handler's answer. The second write used to pass
+    ``result=None`` unconditionally, so whichever write landed last decided whether the
+    answer survived (RC-475: a finished backup read back as a failure on the sandbox)."""
+    svc = _svc()
+    created = await _create(svc)
+    await svc.complete_task(created["task_id"], result={"backup_run_id": "1"})
+    await svc.complete_task(created["task_id"])
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "completed"
+    assert task["result"] == {"backup_run_id": "1"}
+
+
 async def test_fail_retry_requeues(orm_db):
     svc = _svc()
     created = await _create(svc)

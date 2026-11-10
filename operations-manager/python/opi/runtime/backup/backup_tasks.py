@@ -297,42 +297,6 @@ async def _provision_deployment_infrastructure(
     )
 
 
-async def _resolve_deployment_info(
-    project_name: str,
-    deployment_name: str,
-) -> tuple[Any, dict[str, Any], str, str]:
-    """The project, its data, the app namespace and the current cluster of a deployment.
-
-    Raises ``ValueError`` when the project or deployment is not found, or sits on another
-    cluster.
-    """
-    project = get_project_store().get(project_name)
-    if not project or not project.data:
-        msg = f"Project '{project_name}' niet gevonden"
-        raise ValueError(msg)
-
-    project_data = project.data
-    project_file_handler = create_project_file_handler()
-
-    raw_namespace = project_file_handler.extract_deployment_namespace(project_data, deployment_name)
-    deployment_cluster = project_file_handler.extract_deployment_cluster(project_data, deployment_name)
-
-    if not raw_namespace or not deployment_cluster:
-        msg = f"Deployment '{deployment_name}' niet gevonden in project '{project_name}'"
-        raise ValueError(msg)
-
-    current_cluster = settings.CLUSTER_MANAGER
-    if deployment_cluster != current_cluster:
-        msg = (
-            f"Deployment '{deployment_name}' is op cluster '{deployment_cluster}', "
-            f"maar deze operations-manager draait op '{current_cluster}'"
-        )
-        raise ValueError(msg)
-
-    app_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
-    return project, project_data, app_namespace, current_cluster
-
-
 async def _restore_single_resource(
     project_name: str,
     deployment_name: str,
