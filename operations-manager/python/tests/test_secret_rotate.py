@@ -737,6 +737,34 @@ def test_de_externe_rijen_voor_het_envsecret_tonen_check_extern_en_verify(
         )
 
 
+def test_the_platform_pat_env_step_also_writes_the_two_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OPI reads its own three repos with the same token: without the copy names in the env
+    step, the envsecret keeps the old token for the git server while PROJECT_REPO_PASSWORD
+    does rotate. That happened on 2026-09-28."""
+    component = rotate.BY_KEY["platform-repo-pat"]
+    cluster = _cluster()
+    path = tmp_path / ".env.odcn-production.secrets"
+    path.write_text("PROJECT_REPO_PASSWORD=old\nGIT_PROJECTS_SERVER_PASSWORD=old\nGIT_ARGO_APPLICATIONS_PASSWORD=old\n")
+    monkeypatch.setattr(rotate, "env_file_for", lambda _name: path)
+
+    step = rotate.env_step(component, cluster)
+    assert sorted(step.dry_text) == sorted(
+        f"{name}=<NIEUW> in {path.name}"
+        for name in ("PROJECT_REPO_PASSWORD", "GIT_PROJECTS_SERVER_PASSWORD", "GIT_ARGO_APPLICATIONS_PASSWORD")
+    )
+
+    ctx = rotate.Ctx(
+        cluster=cluster, kube=None, current={}, new={"PROJECT_REPO_PASSWORD": "ghp_new"}, apply_changes=True
+    )  # type: ignore[arg-type]
+    assert step.run is not None
+    step.run(ctx)
+
+    written = rotate.read_env_file(path)
+    assert written["PROJECT_REPO_PASSWORD"] == "ghp_new"
+    assert written["GIT_PROJECTS_SERVER_PASSWORD"] == "ghp_new"
+    assert written["GIT_ARGO_APPLICATIONS_PASSWORD"] == "ghp_new"
+
+
 class _ExecKube:
     """Een Kube die elke exec beantwoordt met een vast antwoord en de argumenten onthoudt."""
 

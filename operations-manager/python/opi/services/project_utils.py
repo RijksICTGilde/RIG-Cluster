@@ -19,11 +19,9 @@ from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLES
 from opi.utils.age import (
-    decrypt_password_smart_sync,
     encrypt_age_content,
-    encrypt_to_base64_age_sync,
+    ensure_base64_age_sync,
     generate_age_key_pair,
-    parse_password_with_prefix,
     wrap_project_key,
 )
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
@@ -415,11 +413,7 @@ def encrypted_repository_password() -> str:
             status_code=500,
             detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
         )
-    form, _ = parse_password_with_prefix(stored)
-    if form == "base64+age":
-        return stored
-    plain_password = decrypt_password_smart_sync(stored, settings.SOPS_AGE_PRIVATE_KEY)
-    return encrypt_to_base64_age_sync(plain_password, settings.SOPS_AGE_PUBLIC_KEY)
+    return ensure_base64_age_sync(stored, settings.SOPS_AGE_PRIVATE_KEY, settings.SOPS_AGE_PUBLIC_KEY)
 
 
 async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:

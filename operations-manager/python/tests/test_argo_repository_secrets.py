@@ -1274,3 +1274,27 @@ async def test_a_secret_whose_project_has_a_plain_password_is_held_to_the_token_
     # The token half adds nothing to the count: the tree walk that opens these as SOPS files
     # counted them already, and counting them again would put the total out by one per secret.
     assert check.counted == 0
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_the_pat_round_replaces_the_token_in_a_secret_whose_project_has_a_plain_password(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """The final check already holds such a secret to the token; the round has to replace it too.
+
+    Otherwise a project born with a plain password keeps the withdrawn token in ArgoCD, and the
+    dry run, which reads the project files before they are written, does not even name it.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, secret = await a_pair(
+        tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
+    )
+    project_file = projects / "een.yaml"
+    project_file.write_text(project_file.read_text().replace(BASE64_AGE_PREFIX, "plain:", 1))
+
+    plan = await argo_rotation.plan_argo_round(
+        clone, projects, platform_private, platform_private, current_pat=OLD_TOKEN, new_pat=NEW_TOKEN
+    )
+
+    assert [(s.path, password) for s, _r, password in plan.todo] == [(secret, NEW_TOKEN)]

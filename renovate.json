@@ -8,6 +8,7 @@
   "prConcurrentLimit": 10,
   "prHourlyLimit": 3,
   "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "flexible",
   "ignorePaths": [
     "**/node_modules/**",
     "**/.venv/**",

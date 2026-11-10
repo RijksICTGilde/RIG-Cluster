@@ -332,6 +332,7 @@ async def login(client: httpx.AsyncClient, gebruiker: str, wachtwoord: str, pad:
     """
     antwoord = await client.get(f"{proxy_url()}/oauth2/start", params={"rd": pad})
     for _ in range(12):
+        _send_secure_cookies_to_loopback(client)
         if antwoord.is_redirect:
             doel = naar_host(urljoin(str(antwoord.request.url), antwoord.headers["location"]))
             antwoord = await client.get(doel)
@@ -344,6 +345,18 @@ async def login(client: httpx.AsyncClient, gebruiker: str, wachtwoord: str, pad:
             data={"username": gebruiker, "password": wachtwoord, "credentialId": ""},
         )
     raise AuthwallHarnessError("de inlogflow bleef rondlopen zonder ergens uit te komen")
+
+
+def _send_secure_cookies_to_loopback(client: httpx.AsyncClient) -> None:
+    """Let the Secure cookies of 127.0.0.1 go over http, as a browser does.
+
+    Keycloak 26 marks its session cookies Secure. A browser treats a loopback address as a
+    secure context and sends them anyway; httpx does not, and Keycloak then answers the login
+    form with 400 "Restart login cookie not found".
+    """
+    for cookie in client.cookies.jar:
+        if cookie.domain == "127.0.0.1":
+            cookie.secure = False
 
 
 def _inlogformulier_actie(html: str) -> str | None:

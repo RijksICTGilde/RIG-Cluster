@@ -337,6 +337,12 @@ async def plan_argo_round(
             plan.todo.append((secret, repository, new_pat))
         elif secret.password != new_pat:
             plan.kept.append((secret, repository, "its password is not the current PAT"))
+    if current_pat is not None and new_pat is not None:
+        # A project file holding its password plain has no ciphertext to pair on, but the PAT
+        # decision is about the secret's own password, so its secret is judged all the same.
+        for secret, repository in pairing.without_platform_password:
+            if secret.password == current_pat:
+                plan.todo.append((secret, repository, new_pat))
     return plan
 
 

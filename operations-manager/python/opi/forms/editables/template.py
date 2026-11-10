@@ -44,6 +44,9 @@ def load_project_template() -> dict[str, Any]:
     data = load_yaml_safe(_TEMPLATE_PATH.read_text(encoding="utf-8"))
     resolved = _resolve_placeholders(data or {})
     resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
+    # The placeholder resolves to the raw setting, and a project file may never carry it plain.
+    for repo in resolved.get("repositories") or []:
+        repo["password"] = encrypted_repository_password()
     return resolved
 
 
@@ -53,9 +56,6 @@ def build_new_project_base_data() -> dict[str, Any]:
     Its own AGE key pair, because the wizard keeps its state in a file on disk: without a
     public key from the start the converters have nothing to encrypt the first secret the
     user types with, and it would sit in that file as plain text until submit.
-
-    The repository password likewise, through the same function the creation API uses: the
-    setting may be ``plain:``, a project file may not.
     """
     base_data = load_project_template()
     private_key, public_key = generate_age_key_pair()
@@ -63,6 +63,4 @@ def build_new_project_base_data() -> dict[str, Any]:
         "age-public-key": public_key,
         "age-private-key": wrap_project_key_sync(private_key),
     }
-    for repository in base_data.get("repositories") or []:
-        repository["password"] = encrypted_repository_password()
     return base_data

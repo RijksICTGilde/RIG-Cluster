@@ -474,3 +474,15 @@ def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_f
     except AgeDecryptionError as e:
         logger.log(logging.ERROR if log_failure else logging.DEBUG, str(e))
         raise
+
+
+def ensure_base64_age_sync(value: str, private_key: str | None, public_key: str | None) -> str:
+    """``value`` as ``base64+age:`` with ``public_key``. A value already in that form stays exactly as it is.
+
+    For a secret from the environment that ends up in a file: whoever filled it in may have
+    written it ``plain:`` or bare, and a file never knows where it goes next.
+    """
+    form, _ = parse_password_with_prefix(value)
+    if form == "base64+age":
+        return value
+    return encrypt_to_base64_age_sync(decrypt_password_smart_sync(value, private_key), public_key)

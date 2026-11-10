@@ -28,6 +28,9 @@ OVERLAYS = KUSTOMIZE_ROOT / "overlays"
 #: Het UID uit de SCC-annotatie van de namespace, per cluster.
 UIDS = {"odcn-production": 1001620000, "odcn-staging": 1003110000}
 
+#: The CPU limit per sidecar, per cluster: staging's tenant quota has no room for two.
+CPU_LIMITS = {"odcn-production": "2", "odcn-staging": "1"}
+
 #: De registry die ODCN wel kan bereiken. De admission-herschrijving van ODCN zet elk ander
 #: pad hierheen, dus zonder dit pad in git blijft de app voor altijd OutOfSync.
 RCR = "rcr.rijksapps.nl/ghcr-rig/"
@@ -85,6 +88,7 @@ def _zonder_uid(repo: dict[str, Any]) -> dict[str, Any]:
     kaal = copy.deepcopy(repo)
     for sidecar in kaal["sidecarContainers"]:
         sidecar["securityContext"]["runAsUser"] = "<UID per namespace>"
+        sidecar["resources"]["limits"]["cpu"] = "<CPU limit per cluster>"
     return kaal
 
 
@@ -93,7 +97,7 @@ class TestDeTweeOdcnClustersRenderenGelijk:
         """Een lege lijst zou elke toets hieronder over niets laten slagen."""
         assert ODCN == ["odcn-production", "odcn-staging"]
 
-    def test_de_repo_spec_is_gelijk_op_het_uid_na(self, repo_specs: dict[str, dict[str, Any]]) -> None:
+    def test_de_repo_spec_is_gelijk_op_het_uid_en_de_cpu_limiet_na(self, repo_specs: dict[str, dict[str, Any]]) -> None:
         """Het verschil dat deze taak wegnam: staging stond op een overschrijfbare tag.
 
         De namespace valt buiten deze vergelijking omdat hij niet in ``spec.repo`` staat,
@@ -102,6 +106,14 @@ class TestDeTweeOdcnClustersRenderenGelijk:
         kaal = {overlay: _zonder_uid(repo) for overlay, repo in repo_specs.items()}
 
         assert kaal["odcn-staging"] == kaal["odcn-production"]
+
+    @pytest.mark.parametrize("overlay", ODCN)
+    def test_both_sidecars_have_the_cpu_limit_of_their_cluster(
+        self, overlay: str, repo_specs: dict[str, dict[str, Any]]
+    ) -> None:
+        limits = {c["name"]: c["resources"]["limits"]["cpu"] for c in repo_specs[overlay]["sidecarContainers"]}
+
+        assert limits == {"cmp-server": CPU_LIMITS[overlay], "cmp-platform": CPU_LIMITS[overlay]}
 
     @pytest.mark.parametrize("overlay", ODCN)
     def test_beide_sidecars_draaien_op_het_uid_van_de_eigen_namespace(

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tests.image_pins import REPO_ROOT, pinned_image, pinned_images
+from tests.image_pins import REPO_ROOT, base_image_from_dockerfile, pinned_image, pinned_images
 
 TESTS_ROOT = Path(__file__).resolve().parent
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -195,4 +195,21 @@ def test_the_kind_node_image_of_every_test_cluster_follows_the_sandbox_pin() -> 
     assert str(taskfile_version) == version, (
         f"Taskfile.yaml vars.KIND_VERSION is {taskfile_version} en de pin is {version}. "
         "tests/netpol/kind-config.yaml krijgt zijn node-image uit die var."
+    )
+
+
+def test_the_cmp_sidecar_runs_the_argocd_of_the_platform() -> None:
+    """The CMP sidecar and argocd-rig are built on the same upstream Argo CD.
+
+    Argo CD is pinned in two places, and Renovate tracks only one: argocd-rig needs its
+    patches rebased, so its BASE_TAG moves by hand. The sidecar stayed on v2.14.21, with its
+    critical CVEs, while the platform went to v3.5.6.
+    """
+    rig_vars = yaml.safe_load((REPO_ROOT / "images/argocd-rig/Taskfile.yaml").read_text())["vars"]
+    rig_version = re.search(r'default "(v[\d.]+)"', rig_vars["BASE_TAG"])
+    assert rig_version, f"images/argocd-rig/Taskfile.yaml BASE_TAG has no default version: {rig_vars['BASE_TAG']}"
+
+    sidecar_base = base_image_from_dockerfile("images/cmp-kustomize-sops/Dockerfile")
+    assert sidecar_base == f"quay.io/argoproj/argocd:{rig_version.group(1)}", (
+        f"The CMP sidecar is built on {sidecar_base}, argocd-rig on Argo CD {rig_version.group(1)}. Move both together."
     )

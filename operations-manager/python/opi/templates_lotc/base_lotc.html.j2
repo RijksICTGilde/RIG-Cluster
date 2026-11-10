@@ -217,6 +217,9 @@
 </nldd-split-view-pane>
 </nldd-bar-split-view>
 </nldd-shell>
+{# Our own position:fixed dialogs go here, not in the content block. Inside an NLDD section
+   (container-type: inline-size) Safari painted them below the sidebar and the header. #}
+{% block outside_shell %}{% endblock %}
 {% if kan_verhogen %}{% include "bg/_verhoogde-rechten-dialoog.html.j2" %}{% endif %}
 
     {% block additional_styles %}{% endblock %}

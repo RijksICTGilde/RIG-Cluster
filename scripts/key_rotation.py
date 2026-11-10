@@ -72,6 +72,7 @@ from opi.services.project_schema import (  # noqa: E402  (after the sys.path boo
 from opi.manager.project_validation import validate_project_structure  # noqa: E402
 from opi.utils.age import (  # noqa: E402
     BASE64_AGE_PREFIX,
+    ensure_base64_age_sync,
     is_age_encrypted,
     parse_password_with_prefix,
 )
@@ -87,7 +88,7 @@ from opi.utils.key_rotation import (  # noqa: E402
     decrypt_field,
     form_of,
     opens_with,
-    sha256_of,  # noqa: F401
+    sha256_of,
     to_age_block,
 )
 from opi.utils.sops import decrypt_sops_with_key  # noqa: E402
@@ -543,9 +544,8 @@ def _de_indent(block: str) -> str:
 def loose_values(path: str | Path) -> list[LooseValue]:
     """Every encrypted value in a text file that can be converted line by line.
 
-    Works on text and not on YAML, the two ``configmap.yaml`` included: there the env
-    content sits in a literal block scalar, and a YAML round trip would re-emit that whole
-    block.
+    Works on text and not on YAML: an env file holds its values line by line, and in a
+    configmap they sit in a literal block scalar that a YAML round trip would re-emit whole.
 
     Two shapes come out. A ``base64+age:`` value is base64 and therefore always a single
     line, so a line-scoped replacement touches exactly that one field -- wherever on the line
@@ -623,13 +623,14 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 #: carries a copy of that same value. Both open with the platform key.
 #:
 #: ``projects/age-secret-github.txt`` stood here too, a whole file that was one armored block.
-#: It was removed from the tree: nothing read it and the token in it was withdrawn.
+#: It was removed from the tree: nothing read it and the token in it was withdrawn. The
+#: ``odcn-production`` configmap stood here for its two ``GIT_*_PASSWORD`` values; those moved to
+#: the envsecret, which is a SOPS file, so ``sops rotate`` reaches them without this list.
 #:
 #: It lives here and not in ``sops_rotation`` because BOTH rounds walk it. The key round
 #: re-encrypts every value on the list; the PAT round replaces the ones that hold the shared
 #: GitHub token, and skips the git-server passwords next to them -- see ``is_github_token``.
 LOOSE_VALUE_FILES = (
-    "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "operations-manager/python/.env",
     "operations-manager/python/scripts/migrate_project_to_production.py",
 )
@@ -653,13 +654,12 @@ def all_loose_values(paths: list[Path]) -> list[LooseValue]:
 def is_github_token(plaintext: str) -> bool:
     """Whether a decrypted value is a GitHub token, by the shapes the secret scanner knows.
 
-    This is what tells the PAT carriers from the other loose values next to them. The
-    ``odcn-production`` configmap and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
-    ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the platform's OWN git-server credentials on
-    the same platform key; writing a GitHub PAT over those would take OPI's access to its three
-    repositories away. Measured on the plaintext rather than settled by a list of file names,
-    because a list is what has to be kept right by hand and the shapes are already written down
-    once, in ``secret_scan.RULES``.
+    This is what tells the PAT carriers from the other loose values next to them. ``.env``
+    holds ``GIT_PROJECTS_SERVER_PASSWORD`` and ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the
+    platform's OWN git-server credentials on the same platform key; writing a GitHub PAT over
+    those would take OPI's access to its three repositories away. Measured on the plaintext
+    rather than settled by a list of file names, because a list is what has to be kept right by
+    hand and the shapes are already written down once, in ``secret_scan.RULES``.
     """
     return any(pattern.search(plaintext) for pattern in GITHUB_TOKEN_RULES)
 
@@ -923,10 +923,16 @@ async def rotate_project_file(
     fields = project_fields(data)
     if only_private_key:
         fields = [(name, value) for name, value in fields if name == PROJECT_FIELD_PRIVATE_KEY]
-    if not fields:
+    # A password stored plain is no ciphertext, so ``project_fields()`` passes it by; in the PAT
+    # round it is a carrier like any other, and it leaves this file encrypted.
+    plain_passwords = [] if new_pat is None or only_private_key else project_plain_passwords(data)
+    if not fields and not plain_passwords:
         round_report.skipped = "no encrypted platform fields in this file"
         return round_report
 
+    # The same key on both sides is a round over the token alone: nothing moves to another key,
+    # so a field is only rewritten where its token is replaced.
+    key_moves = public_key_of(old_private_key) != new_public_key
     todo: list[tuple[str, str, str, str | None]] = []
     on_new_key = 0
     passwords = 0
@@ -957,10 +963,20 @@ async def rotate_project_file(
                 round_report.kept.append(
                     f"{path}#{field_name}: the plaintext is not the current PAT, so it was left as it is"
                 )
-        if replacement is not None or on_old_key:
+        if replacement is not None or (on_old_key and key_moves):
             todo.append((field_name, value, old_private_key if on_old_key else new_private_key, replacement))
 
-    if not todo:
+    plain_todo: list[tuple[str, str, str]] = []
+    for field_name, plaintext in plain_passwords:
+        passwords += 1
+        if new_pat is not None and plaintext in (current_pat, new_pat):
+            plain_todo.append((field_name, plaintext, new_pat))
+        else:
+            round_report.kept.append(
+                f"{path}#{field_name}: the plaintext is not the current PAT, so it was left as it is"
+            )
+
+    if not todo and not plain_todo:
         round_report.skipped = nothing_to_do(
             len(fields), on_new_key, passwords, new_pat=new_pat, kept=len(round_report.kept)
         )
@@ -981,6 +997,15 @@ async def rotate_project_file(
             round_report.replaced.append(key)
         round_report.fields.append(field_name)
         set_project_field(data, field_name, conversion.new_value)
+
+    for field_name, plaintext, replacement in plain_todo:
+        key = f"{path}#{field_name}"
+        round_report.fingerprint_before.set(key, sha256_of(plaintext))
+        round_report.fingerprint_after.set(key, sha256_of(replacement))
+        if plaintext != replacement:
+            round_report.replaced.append(key)
+        round_report.fields.append(field_name)
+        set_project_field(data, field_name, ensure_base64_age_sync(f"plain:{replacement}", None, new_public_key))
 
     leaked = plaintext_secrets(data)
     if leaked:

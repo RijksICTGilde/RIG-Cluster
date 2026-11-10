@@ -1216,8 +1216,10 @@
     {% endif %}
 
     </c-stack>
+{% endblock %}
 
-    {# De gedeelde dialoog hoort onderaan de pagina, buiten de tabs: hij wordt vanuit elke
-       tab geopend en mag niet met de inhoud meeverdwijnen. #}
+{# De gedeelde dialoog hoort buiten de tabs: hij wordt vanuit elke tab geopend en mag niet
+   met de inhoud meeverdwijnen. #}
+{% block outside_shell %}
     {% include "bg/_modals.html.j2" %}
 {% endblock %}
