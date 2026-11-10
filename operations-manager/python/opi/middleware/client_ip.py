@@ -1,9 +1,9 @@
-"""Bewaart het onaangetaste peer-adres van de verbinding in de scope.
+"""Keeps the connection's untouched peer address in the scope.
 
-Moet BUITEN ``ProxyHeadersMiddleware`` staan: die overschrijft ``scope["client"]`` met een
-waarde uit ``X-Forwarded-For``, en met ``trusted_hosts=["*"]`` is dat de linkse waarde, dus
-die van de aanroeper zelf. Zonder deze middleware is het peer-adres daarna niet meer te
-lezen en zou ook ``TRUSTED_PROXY_HOPS=0`` nog op een gekozen adres tellen.
+Must sit OUTSIDE ``ProxyHeadersMiddleware``: that one overwrites ``scope["client"]`` with a
+value from ``X-Forwarded-For``, and with ``trusted_hosts=["*"]`` that is the leftmost value,
+so the caller's own. Without this middleware the peer address can no longer be read
+afterwards, and even ``TRUSTED_PROXY_HOPS=0`` would still count on a chosen address.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class PeerAddressMiddleware:
-    """Zet het peer-adres in de scope voordat een andere middleware het kan overschrijven."""
+    """Puts the peer address in the scope before another middleware can overwrite it."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

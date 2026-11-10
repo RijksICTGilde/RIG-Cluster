@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from opi.core.config import settings
-from opi.generation.manifests import ManifestGenerator, _gecompileerd, _omgeving, render_template
+from opi.generation.manifests import ManifestGenerator, _compiled, _environment, render_template
 
 _SJABLOON = "namespace.yaml.jinja"
 _WAARDEN = {"namespace": "rig-demo", "project_name": "demo", "deployment_name": "productie"}
@@ -23,9 +23,9 @@ _WAARDEN = {"namespace": "rig-demo", "project_name": "demo", "deployment_name": 
 
 @pytest.fixture(autouse=True)
 def _lege_cache():
-    _gecompileerd.cache_clear()
+    _compiled.cache_clear()
     yield
-    _gecompileerd.cache_clear()
+    _compiled.cache_clear()
 
 
 def _bron() -> str:
@@ -34,11 +34,11 @@ def _bron() -> str:
 
 def test_twee_renders_kosten_een_compilatie() -> None:
     bron = _bron()
-    omgeving = _omgeving()
+    omgeving = _environment()
 
     with patch.object(omgeving, "from_string", wraps=omgeving.from_string) as compileer:
-        eerste = _gecompileerd(bron).render(**_WAARDEN)
-        tweede = _gecompileerd(bron).render(**_WAARDEN)
+        eerste = _compiled(bron).render(**_WAARDEN)
+        tweede = _compiled(bron).render(**_WAARDEN)
 
     assert compileer.call_count == 1
     assert eerste == tweede
@@ -49,7 +49,7 @@ def test_de_uitvoer_is_gelijk_aan_een_verse_compilatie() -> None:
     bron = _bron()
 
     via_cache = render_template(_SJABLOON, _WAARDEN)
-    vers = _omgeving().from_string(bron).render(**_WAARDEN)
+    vers = _environment().from_string(bron).render(**_WAARDEN)
 
     assert via_cache == vers
 
@@ -57,7 +57,7 @@ def test_de_uitvoer_is_gelijk_aan_een_verse_compilatie() -> None:
 def test_render_template_en_template_manifest_delen_de_compilatie() -> None:
     """Beide paden hadden een eigen Environment; dat zijn er nu geen twee meer."""
     bron = _bron()
-    omgeving = _omgeving()
+    omgeving = _environment()
 
     with patch.object(omgeving, "from_string", wraps=omgeving.from_string) as compileer:
         via_pad = render_template(_SJABLOON, _WAARDEN)

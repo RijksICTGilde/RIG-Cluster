@@ -21,8 +21,7 @@ async def main() -> None:
     from opi.runtime.tasks.task_worker import TaskWorker
     from opi.services.tasks.async_task_service import AsyncTaskService
 
-    # Initialize database pool. De app-rol, net als de hoofdpool van de frontend: de
-    # worker raakt alleen OPI's eigen tabellen (RC-410).
+    # The app role, like the frontend's main pool: the worker only touches OPI's own tables.
     pool = DatabasePool(
         host=settings.DATABASE_HOST,
         user=settings.DATABASE_APP_USER,
@@ -32,17 +31,14 @@ async def main() -> None:
     )
     await pool.initialize()
 
-    # Create service and worker
     task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
     worker = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
-    # Register handlers
     from opi.runtime.tasks.handler_registry import standalone_worker_handlers
 
     for task_type, handler in standalone_worker_handlers().items():
         worker.register_handler(task_type, handler)
 
-    # Handle graceful shutdown
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(worker.stop()))

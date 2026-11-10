@@ -1,19 +1,13 @@
-"""De hook die van elke rechtenbeslissing een auditrij maakt.
+"""Turns every authorization decision on a request into an audit row.
 
-Eén middleware in plaats van code per route: de poort heeft bij elke beslissing de
-action, de resource, de uitkomst en de step-up op het verzoek gezet (``record_decision``,
-ontwerp 8.3), en hier komen de twee dingen erbij die alleen na het verzoek bekend zijn:
-de statuscode en wat het verzoek onderweg achterliet (``opi/core/audit_trail.py``).
+One row per DECISION, not per request: an upsert with ``cloneFrom`` weighs the target and
+then the source, and both belong in the audit. An allowed READ action gets no row; a
+refused read does.
 
-Een rij per BESLISSING, niet per verzoek: een upsert met ``cloneFrom`` weegt eerst het
-doel en daarna de bron, en beide horen in de audit. Wat niet in een rij komt is een
-toegestane LEESactie; een geweigerde leesactie wel.
-
-Waarom dit een kale ASGI-middleware is en geen ``BaseHTTPMiddleware``: die laatste draait
-de rest van de applicatie in een eigen taak, en een contextvar die daarbinnen wordt gezet
-komt dan niet meer terug. De commit-SHA's en de taak-id reizen juist als contextvar, dus
-deze middleware hoort ook als BINNENSTE om de router te staan (``opi/server.py``), en
-opent het spoor zelf.
+Must stay a plain ASGI middleware and the INNERMOST one around the router
+(``opi/server.py``): ``BaseHTTPMiddleware`` runs the rest of the application in its own
+task, so the contextvars this depends on (the commit SHAs and the task id) would not come
+back out.
 """
 
 from __future__ import annotations
@@ -38,34 +32,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De achtergrondtaken die nog schrijven. Zonder verwijzing mag de vuilnisophaler een
-#: taak die nog niet aan de beurt is geweest opruimen.
-_schrijvers: set[asyncio.Task[None]] = set()
+#: The background tasks still writing. Without a reference the garbage collector may
+#: collect a task that has not had its turn yet.
+_writers: set[asyncio.Task[None]] = set()
 
 
-def _hoort_in_de_audit(genomen: RecordedDecision) -> bool:
-    """Of deze beslissing een rij krijgt: elke weigering, en elke niet-leesactie.
+def _is_auditable(recorded: RecordedDecision) -> bool:
+    """Whether this decision gets a row: every refusal, and every non-read action.
 
-    Een action zonder regel is een fout in het register en geen weigering van deze
-    aanroep; de opstartcontrole hoort hem te vinden. Hier valt hij als "wel vastleggen",
-    want een handeling waarvan we niet weten of ze leest is geen leesactie.
+    An action without a rule is a fault in the register and not a refusal of this call;
+    the startup check is meant to find it. It counts as auditable here, because an action
+    we cannot tell is a read is not a read.
     """
-    if not genomen.decision.allowed:
+    if not recorded.decision.allowed:
         return True
     try:
-        return not rule_for(genomen.action).read
+        return not rule_for(recorded.action).read
     except RuleError:
         return True
 
 
-def _rijen_van(request: Request) -> list[RecordedDecision]:
-    """De beslissingen van dit verzoek die een rij krijgen."""
-    genomen: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-    return [beslissing for beslissing in genomen if _hoort_in_de_audit(beslissing)]
+def _auditable_decisions(request: Request) -> list[RecordedDecision]:
+    recorded: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
+    return [decision_record for decision_record in recorded if _is_auditable(decision_record)]
 
 
 class AuditMiddleware:
-    """Schrijft na het antwoord een auditrij per beslissing van dit verzoek."""
+    """Writes one audit row per decision of this request, after the response."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -75,66 +68,64 @@ class AuditMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Het spoor hoort bij DIT verzoek: hier geopend, zodat een schrijver buiten een
-        # verzoek (de nachtelijke tuner) niets in een context achterlaat die niemand leest.
+        # Opened here so that a writer outside a request (the nightly tuner) leaves
+        # nothing behind in a context nobody reads.
         begin_trail()
         status: int | None = None
 
-        async def onderschep(message: Message) -> None:
+        async def intercept(message: Message) -> None:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = int(message["status"])
             await send(message)
 
         try:
-            await self.app(scope, receive, onderschep)
+            await self.app(scope, receive, intercept)
         finally:
-            # Ook na een uitzondering: de beslissing is dan genomen en de weigering of de
-            # schrijfactie die eraan voorafging hoort in de audit, met de statuscode die
-            # het antwoord had als het er al een was.
-            self._schrijf(scope, status)
+            # Also after an exception: the decision is already made by then, and the
+            # refusal or the write that preceded it belongs in the audit.
+            self._write(scope, status)
 
-    def _schrijf(self, scope: Scope, status: int | None) -> None:
-        """Zet de rijen van dit verzoek in de wachtrij, zonder het antwoord op te houden."""
-        zet_rijen_in_de_wachtrij(Request(scope), status)
+    def _write(self, scope: Scope, status: int | None) -> None:
+        queue_audit_rows(Request(scope), status)
 
 
-def zet_rijen_in_de_wachtrij(request: Request, status_code: int | None) -> None:
-    """Zet de rijen van dit verzoek in de wachtrij, zonder het antwoord op te houden.
+def queue_audit_rows(request: Request, status_code: int | None) -> None:
+    """Queue the rows of this request without holding up the response.
 
-    Ook de weg die deze hook niet bereikt gaat hierdoor: ``opi/middleware/body_limit.py``
-    weigert een image-push op de rol voordat de tarball binnen is, en staat daarmee buiten
-    de router waar deze hook om staat. Elke weigering hoort een rij te krijgen (BIO2
-    8.15.01), maar niet door het verzoek op de INSERT te laten wachten: dan houdt elke
-    weigering een verbinding uit de ORM-pool van de pod bezet.
+    Also used by the path that never reaches this hook: ``opi/middleware/body_limit.py``
+    refuses an image push before the tarball is in, and so sits outside the router this
+    hook wraps. Every refusal needs a row (BIO2 8.15.01), but not by making the request
+    wait on the INSERT: that would tie up a connection from the pod's ORM pool per
+    refusal.
     """
-    te_schrijven = _rijen_van(request)
-    if not te_schrijven:
+    auditable = _auditable_decisions(request)
+    if not auditable:
         return
 
-    taak = asyncio.create_task(
-        _schrijf_rijen(
-            te_schrijven,
+    task = asyncio.create_task(
+        _write_rows(
+            auditable,
             actor=get_actor(),
             status_code=status_code,
             origin=client_ip(request),
-            spoor=trail(),
+            audit_trail=trail(),
         )
     )
-    _schrijvers.add(taak)
-    taak.add_done_callback(_schrijvers.discard)
+    _writers.add(task)
+    task.add_done_callback(_writers.discard)
 
 
-async def _schrijf_rijen(
-    genomen: list[RecordedDecision], *, actor: Actor, status_code: int | None, origin: str, spoor: Trail
+async def _write_rows(
+    recorded: list[RecordedDecision], *, actor: Actor, status_code: int | None, origin: str, audit_trail: Trail
 ) -> None:
-    """De rijen van dit verzoek, elk met zijn eigen databasesessie in ``record_action``."""
-    for beslissing in genomen:
-        resource = beslissing.resource
-        decision = beslissing.decision
+    """Write the rows of this request, each with its own database session in ``record_action``."""
+    for decision_record in recorded:
+        resource = decision_record.resource
+        decision = decision_record.decision
         await record_action(
             actor=actor,
-            action=str(beslissing.action),
+            action=str(decision_record.action),
             resource_path=resource.path,
             project=resource.project,
             deployment=resource.deployment,
@@ -142,10 +133,10 @@ async def _schrijf_rijen(
             allowed=decision.allowed,
             cause=decision.cause.value if decision.cause else None,
             grant=str(decision.grant) if decision.grant else None,
-            step_up=beslissing.step_up,
+            step_up=decision_record.step_up,
             status_code=status_code,
-            commit_shas=spoor.commit_shas,
-            task_id=spoor.task_id,
+            commit_shas=audit_trail.commit_shas,
+            task_id=audit_trail.task_id,
             origin=origin,
-            fields=spoor.fields or None,
+            fields=audit_trail.fields or None,
         )

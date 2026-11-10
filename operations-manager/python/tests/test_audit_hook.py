@@ -34,7 +34,7 @@ from opi.core.authz.engine import (
 from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.authz import enforce_route_action
 from opi.http.auth.endpoint_util import handhaaf
-from opi.middleware.audit import AuditMiddleware, _schrijvers
+from opi.middleware.audit import AuditMiddleware, _writers
 from opi.server import app
 from opi.services.members import MemberKind
 from opi.services.project_members import expiry_date, hash_of
@@ -92,7 +92,7 @@ async def _afgeschreven() -> None:
     De rij wordt met opzet NA het antwoord geschreven, dus zonder deze wacht meet een
     toets de wachtrij in plaats van de rij.
     """
-    await asyncio.gather(*list(_schrijvers), return_exceptions=True)
+    await asyncio.gather(*list(_writers), return_exceptions=True)
 
 
 async def _draai(

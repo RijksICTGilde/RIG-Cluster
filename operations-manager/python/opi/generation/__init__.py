@@ -1,3 +1,1 @@
-"""
-Generation package for manifest creation utilities.
-"""
+"""Generation package for manifest creation utilities."""

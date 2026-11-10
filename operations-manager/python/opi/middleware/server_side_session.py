@@ -1,17 +1,17 @@
-"""Server-side sessies achter een kleine cookie (RC-390).
+"""Server-side sessions behind a small cookie.
 
-De cookie draagt alleen een ondertekend sessie-id (itsdangerous); de inhoud woont in de
-tabel ``sessions`` via :class:`~opi.services.session_store.SessionStore`, met de
-hot-cache ervoor.
+The cookie carries only a signed session id (itsdangerous); the content lives in the
+``sessions`` table via :class:`~opi.services.session_store.SessionStore`, with the hot
+cache in front of it.
 
-``request.session`` gedraagt zich als bij Starlette's SessionMiddleware: een dict. Twee
-verschillen, beide bewust:
+``request.session`` behaves like Starlette's SessionMiddleware: a dict. Two differences,
+both deliberate:
 
-- een mutatie wordt direct weggeschreven (write-through), zodat een volgende lezer de
-  wijziging halverwege het request al ziet; de middleware wacht de lopende schrijfacties
-  af voordat het antwoord vertrekt;
-- statische paden en probes lezen de sessie helemaal niet (dezelfde uitsluitlijst als de
-  autorisatie-middleware): geen database- of cacheverkeer voor /health en /static.
+- a mutation is written out at once (write-through), so a later reader sees the change
+  halfway through the request; the middleware waits for the pending writes before the
+  response leaves;
+- static paths and probes do not read the session at all (the same exclusion list as the
+  authorization middleware): no database or cache traffic for /health and /static.
 """
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 class SessionBackend(Protocol):
-    """Wat de middleware van de sessie-opslag gebruikt.
+    """What the middleware uses from the session storage.
 
-    Los van ``SessionStore`` zelf, zodat de unit-tests en het lokale e2e-harnas een
-    in-memory stand-in kunnen inpluggen zonder aan de klasse te erven.
+    Apart from ``SessionStore`` itself, so the unit tests and the local e2e harness can plug
+    in an in-memory stand-in without inheriting from the class.
     """
 
     async def get(self, session_id: str) -> dict[str, Any] | None: ...
@@ -53,12 +53,12 @@ class SessionBackend(Protocol):
 
 
 class ServerSideSession(MutableMapping[str, Any]):
-    """De request-sessie als dict, met write-through naar de store.
+    """The request session as a dict, with write-through to the store.
 
-    Leest uit de bij de aanvang geladen data; elke mutatie werkt die data bij én plant
-    direct een ``store.set`` (de volledige dict, dus de rij volgt de laatste mutatie).
-    De schrijfacties draaien op de loop van de applicatie, ook vanuit een sync route die
-    op een threadpool draait. ``flush`` bij het verzenden van het antwoord wacht ze af.
+    Reads from the data loaded at the start; every mutation updates that data and schedules a
+    ``store.set`` at once (the full dict, so the row follows the last mutation). The writes run
+    on the application loop, also from a sync route on a threadpool. ``flush`` on sending the
+    response waits for them.
     """
 
     def __init__(
@@ -102,7 +102,7 @@ class ServerSideSession(MutableMapping[str, Any]):
         return len(self._data)
 
     def _write_through(self) -> None:
-        """Plan de persist van de huidige stand, zonder de aanroeper te laten wachten."""
+        """Schedule the persist of the current state without making the caller wait."""
         snapshot = deepcopy(self._data)
         session_id = self.session_id
         previous = self._last_write
@@ -131,15 +131,15 @@ class ServerSideSession(MutableMapping[str, Any]):
         future.add_done_callback(self._pending.discard)
 
     async def flush(self) -> None:
-        """Wacht de lopende schrijfacties af; fouten zijn al gelogd door de callback."""
+        """Wait for the pending writes; failures are already logged by the callback."""
         while self._pending:
             futures = [asyncio.wrap_future(f) for f in self._pending]
             with contextlib.suppress(Exception):
                 await asyncio.gather(*futures)
 
     async def regenerate(self) -> None:
-        """Nieuw sessie-id op een privilegescharnier: de rij en de cache-entry achter het
-        oude id vallen weg, en de mutatie laat het antwoord de cookie op het nieuwe id zetten."""
+        """New session id on a privilege hinge: the row and the cache entry behind the old id
+        fall away, and the mutation makes the response set the cookie to the new id."""
         await self.flush()
         await self._store.delete(self.session_id)
         self.session_id = secrets.token_urlsafe(32)
@@ -148,15 +148,14 @@ class ServerSideSession(MutableMapping[str, Any]):
 
 
 class ServerSideSessionMiddleware:
-    """Vervanger voor Starlette's SessionMiddleware: inhoud server-side, id in de cookie.
+    """Replaces Starlette's SessionMiddleware: content server-side, id in the cookie.
 
-    Dezelfde afspraken als bij Starlette: ``Vary: Cookie`` zodra de sessie gelezen is,
-    een verse cookie-ondertekening bij elke mutatie, en een expliciet vervallen van de
-    cookie als een gevulde sessie leeggemaakt wordt. Verschil: de cookie draagt geen data
-    maar het signede id, en de levensloop van de inhoud hoort bij de store
-    (uitloggen en intrekken verwijderen de rij en geven zo een harde weigering op de
-    volgende request). Het verloop van de rij schuift mee met activiteit via ``touch``,
-    dus het inactiviteitsvenster treft geen actieve gebruiker.
+    The same conventions as Starlette: ``Vary: Cookie`` once the session has been read, a fresh
+    cookie signature on every mutation, and an explicit expiry of the cookie when a filled
+    session is emptied. The difference: the cookie carries no data but the signed id, and the
+    lifetime of the content belongs to the store (a logout or a revocation deletes the row and
+    so gives a hard refusal on the next request). The row's expiry moves along with activity
+    via ``touch``, so the idle window does not hit an active user.
     """
 
     def __init__(
@@ -181,7 +180,7 @@ class ServerSideSessionMiddleware:
         self._store = store
 
     def _session_store(self) -> SessionBackend:
-        """Per request opgelost, zodat tests en het e2e-harnas de store kunnen patchen."""
+        """Resolved per request, so tests and the e2e harness can patch the store."""
         return self._store or get_session_store()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -194,9 +193,9 @@ class ServerSideSessionMiddleware:
 
         session_id: str | None = None
         if self._skip_session_read(scope):
-            # Statische paden en probes (AMT/TAD): geen store-verkeer, geen cookie-acties.
-            # Een schrijver hier schrijft in een wegwerp-dict - dezelfde stille leegstand
-            # als bij AMT, en bewust: er is op deze paden niets dat een sessie bevat.
+            # Static paths and probes (AMT/TAD): no store traffic, no cookie actions. A writer
+            # here writes into a throwaway dict, deliberately: nothing on these paths holds a
+            # session.
             scope["session"] = {}
             await self.app(scope, receive, send)
             return
@@ -214,7 +213,7 @@ class ServerSideSessionMiddleware:
         if session_id:
             data = await store.get(session_id) or {}
             if data and scope["type"] == "http":
-                # Het schuivende venster van de rij schuift mee met activiteit.
+                # The sliding window of the row moves along with activity.
                 await store.touch(session_id)
 
         session = ServerSideSession(store, session_id or secrets.token_urlsafe(32), data, loop)
@@ -222,8 +221,8 @@ class ServerSideSessionMiddleware:
         had_data = bool(data)
 
         if scope["type"] == "websocket":
-            # Een handshake kan geen cookie zetten of verversen; de sessie is hier
-            # alleen leesmateriaal voor de endpoint zelf.
+            # A handshake cannot set or refresh a cookie; the session is read-only material
+            # for the endpoint itself here.
             await self.app(scope, receive, send)
             return
 
@@ -234,8 +233,7 @@ class ServerSideSessionMiddleware:
                 if session.accessed:
                     headers.add_vary_header("Cookie")
                 if session.modified and len(session):
-                    # Alleen bij mutatie een verse ondertekening: de cookie staat dan weer
-                    # op "nu".
+                    # A fresh signature only on a mutation: the cookie is then back on "now".
                     signed = self.signer.sign(session.session_id.encode("utf-8"))
                     # No Max-Age: a session cookie, gone when the browser closes.
                     header_value = "{session_cookie}={data}; path={path}; {security_flags}".format(
@@ -246,7 +244,7 @@ class ServerSideSessionMiddleware:
                     )
                     headers.append("Set-Cookie", header_value)
                 elif session.modified and had_data:
-                    # De sessie is leeggemaakt: rij weg en de cookie in de browser ook.
+                    # The session was emptied: the row goes, and so does the browser cookie.
                     await store.delete(session.session_id)
                     header_value = "{session_cookie}={data}; path={path}; {expires}{security_flags}".format(
                         session_cookie=self.session_cookie,
@@ -262,10 +260,10 @@ class ServerSideSessionMiddleware:
 
     @staticmethod
     def _skip_session_read(scope: Scope) -> bool:
-        """Statische paden en probes lezen de sessie niet: geen store-verkeer.
+        """Static paths and probes do not read the session: no store traffic.
 
-        Dezelfde uitsluiting als de autorisatie-middleware: wat daar geen gebruikerscontext
-        heeft, heeft hier geen sessie-inhoud nodig.
+        The same exclusion as the authorization middleware: what has no user context there
+        needs no session content here.
         """
         path: str = scope.get("path", "")
         return path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES)

@@ -25,7 +25,7 @@ from opi.core.audit_trail import begin_trail, record_task, trail
 from opi.core.authz.actions import Action
 from opi.forms.wizard import session
 from opi.http.auth.authz import enforce_route_action
-from opi.middleware.audit import _hoort_in_de_audit
+from opi.middleware.audit import _is_auditable
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web import router_detail_edit
@@ -98,7 +98,7 @@ def _request(
 def _rows(request: Request) -> list[RecordedDecision]:
     """The decisions of this request that ``AuditMiddleware`` turns into a row."""
     genomen: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-    return [beslissing for beslissing in genomen if _hoort_in_de_audit(beslissing)]
+    return [beslissing for beslissing in genomen if _is_auditable(beslissing)]
 
 
 async def _call(request: Request, endpoint: Any, *args: Any) -> Any:

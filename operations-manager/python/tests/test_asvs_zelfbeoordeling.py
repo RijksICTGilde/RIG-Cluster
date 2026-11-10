@@ -14,12 +14,12 @@ from opi.tools.asvs_render import (
     EISEN,
     Oordeel,
     Status,
-    laad_beoordeling,
-    laad_eisen,
+    find_problems,
+    load_beoordeling,
+    load_eisen,
     main,
-    meldingen,
+    referenced_test_exists,
     render,
-    toets_bestaat,
 )
 
 if TYPE_CHECKING:
@@ -27,15 +27,15 @@ if TYPE_CHECKING:
 
 
 def test_elke_eis_heeft_een_oordeel_en_elke_genoemde_toets_bestaat() -> None:
-    eisen = laad_eisen()
-    _, oordelen = laad_beoordeling()
-    assert not meldingen(eisen, oordelen)
+    eisen = load_eisen()
+    _, oordelen = load_beoordeling()
+    assert not find_problems(eisen, oordelen)
 
 
 def test_de_afvinklijst_loopt_niet_achter() -> None:
     """Het document is gegenereerd; achterlopen betekent dat iemand het met de hand bewerkte."""
-    eisen = laad_eisen()
-    niveau, oordelen = laad_beoordeling()
+    eisen = load_eisen()
+    niveau, oordelen = load_beoordeling()
     assert AFVINKLIJST.read_text(encoding="utf-8") == render(eisen, niveau, oordelen), (
         "docs/security/asvs-zelfbeoordeling.md loopt achter, genereer opnieuw met `task asvs-afvinklijst`"
     )
@@ -49,7 +49,7 @@ def test_de_eisen_komen_uit_de_standaard_en_dekken_l1_en_l2() -> None:
 
 
 def test_het_gekozen_niveau_staat_in_de_beoordeling() -> None:
-    niveau, _ = laad_beoordeling()
+    niveau, _ = load_beoordeling()
     assert niveau == "L2"
 
 
@@ -67,33 +67,33 @@ def test_het_gekozen_niveau_staat_in_de_beoordeling() -> None:
     ],
 )
 def test_een_oordeel_zonder_onderbouwing_is_een_gat(oordeel: Oordeel, verwacht: str) -> None:
-    eisen = [eis for eis in laad_eisen() if eis.id == "V1.1.1"]
-    gevonden = meldingen(eisen, [oordeel])
+    eisen = [eis for eis in load_eisen() if eis.id == "V1.1.1"]
+    gevonden = find_problems(eisen, [oordeel])
     assert any(verwacht in melding for melding in gevonden), gevonden
 
 
 def test_een_eis_zonder_oordeel_en_een_oordeel_zonder_eis_vallen_op() -> None:
-    eisen = [eis for eis in laad_eisen() if eis.id in ("V1.1.1", "V1.1.2")]
-    gevonden = meldingen(eisen, [Oordeel(id="V9.9.9", status=Status.NVT, toelichting="verzonnen")])
+    eisen = [eis for eis in load_eisen() if eis.id in ("V1.1.1", "V1.1.2")]
+    gevonden = find_problems(eisen, [Oordeel(id="V9.9.9", status=Status.NVT, toelichting="verzonnen")])
     assert any("V1.1.1: geen oordeel" in m for m in gevonden), gevonden
     assert any("V9.9.9" in m and "niet op dit niveau" in m for m in gevonden), gevonden
 
 
 def test_twee_oordelen_over_dezelfde_eis_vallen_op() -> None:
-    eisen = [eis for eis in laad_eisen() if eis.id == "V1.1.1"]
+    eisen = [eis for eis in load_eisen() if eis.id == "V1.1.1"]
     twee = [
         Oordeel(id="V1.1.1", status=Status.NVT, toelichting="een"),
         Oordeel(id="V1.1.1", status=Status.NVT, toelichting="twee"),
     ]
-    assert any("2 oordelen" in m for m in meldingen(eisen, twee))
+    assert any("2 oordelen" in m for m in find_problems(eisen, twee))
 
 
 def test_een_verwijzing_naar_een_job_toetst_ook_de_job(tmp_path: Path) -> None:
     workflow = tmp_path / "wf.yml"
     workflow.write_text(yaml.safe_dump({"jobs": {"bestaat": {}}}), encoding="utf-8")
-    assert toets_bestaat("wf.yml#bestaat", tmp_path)
-    assert not toets_bestaat("wf.yml#bestaat-niet", tmp_path)
-    assert not toets_bestaat("ander.yml", tmp_path)
+    assert referenced_test_exists("wf.yml#bestaat", tmp_path)
+    assert not referenced_test_exists("wf.yml#bestaat-niet", tmp_path)
+    assert not referenced_test_exists("ander.yml", tmp_path)
 
 
 def _schrijf_bronnen(bronmap: Path, oordelen: list[dict[str, str]]) -> None:

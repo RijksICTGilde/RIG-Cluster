@@ -257,7 +257,6 @@
 "opi/services/tasks/task_supersede.py" = ["ANN001", "ANN201", "BLE001"]
 "opi/services/user_service.py" = ["ANN204"]
 "opi/services/zad_map/project.py" = ["ANN401", "C901", "PLR0913"]
-"opi/tools/aanvalsproef.py" = ["N818"]
 "opi/utils/age.py" = ["ANN401", "BLE001", "C901"]
 "opi/utils/env_vars.py" = ["B904", "C901"]
 "opi/utils/forbidden_characters.py" = ["ANN401"]

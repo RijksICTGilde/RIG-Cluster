@@ -1,12 +1,12 @@
-"""Een grove bovengrens op het aantal verzoeken per client, op de API en de authroutes.
+"""A coarse upper bound on the number of requests per client, on the API and the auth routes.
 
-Vlakt de piek af: een stortvloed van goed gevormde verzoeken wordt geweigerd voordat
-sessie, autorisatie en de route zelf er werk aan hebben. De grens staat ruim, zodat
-normaal gebruik hem niet raakt, en de weigering is meteen (429 met ``Retry-After``),
-nooit een vertraging: een opengehouden verzoek is juist wat OPI onderuit haalt.
+Flattens the peak: a flood of well-formed requests is refused before session, authorization
+and the route itself have work to do. The limit is wide, so normal use does not touch it,
+and the refusal is immediate (429 with ``Retry-After``), never a delay: a request held open
+is exactly what takes OPI down.
 
-De loginpaden krijgen hier geen eigen rem bovenop. Het raden van een wachtwoord wordt al
-bij de bron afgeknepen, door ``bruteForceProtected`` op de Keycloak-realms.
+The login paths get no extra brake of their own here. Password guessing is already throttled
+at the source, by ``bruteForceProtected`` on the Keycloak realms.
 """
 
 from __future__ import annotations
@@ -26,13 +26,13 @@ from opi.http.rate_limiter import (
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
-#: Waar de grens geldt. De machine-API en de authroutes komen van buiten; de rest van het
-#: portaal zit achter een sessie en wordt door de ingress afgedekt.
+#: Where the limit applies. The machine API and the auth routes come from outside; the rest
+#: of the portal sits behind a session and is covered by the ingress.
 LIMITED_PREFIXES = ("/api/", "/auth/")
 
 
 class RateLimitMiddleware:
-    """Weigert een verzoek met 429 zodra de client over zijn grove grens is."""
+    """Refuses a request with 429 as soon as the client is over its coarse limit."""
 
     def __init__(self, app: ASGIApp, limiter: IPRateLimiter = API_FLOOD_LIMITER) -> None:
         self.app = app
@@ -43,8 +43,8 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Een middleware buiten deze heeft het verzoek al afgeteld (de voorcontrole van de
-        # image-push, die vóór de body weegt en dus buiten deze middleware staat).
+        # A middleware outside this one already counted the request (the image push
+        # pre-check, which weighs before the body and so sits outside this middleware).
         if scope.get(FLOOD_COUNTED_IN_SCOPE):
             await self.app(scope, receive, send)
             return
