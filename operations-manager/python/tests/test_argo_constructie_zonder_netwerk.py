@@ -77,7 +77,7 @@ async def test_een_tweede_connector_neemt_de_token_over_zonder_login() -> None:
 
 def test_de_ssl_context_wordt_een_keer_gemaakt() -> None:
     """``ssl.create_default_context`` las de CA-bundel van schijf, per request."""
-    argo_module._ssl_context_voor.cache_clear()
+    argo_module._ssl_context_for.cache_clear()
 
     with patch("ssl.create_default_context", wraps=ssl.create_default_context) as maak:
         eerste = ArgoConnector(verify_ssl=True)._ssl_context()
@@ -127,7 +127,7 @@ def test_tls_met_controle_zonder_bundel_weigert() -> None:
 
 def test_een_ontbrekende_bundel_noemt_het_pad(tmp_path: Path) -> None:
     """De mount is optional, dus een cluster zonder ConfigMap levert geen bestand."""
-    argo_module._ssl_context_voor.cache_clear()
+    argo_module._ssl_context_for.cache_clear()
     ontbreekt = str(tmp_path / "service-ca.crt")
 
     with pytest.raises(ArgoTLSConfigurationError, match=ontbreekt):
@@ -136,7 +136,7 @@ def test_een_ontbrekende_bundel_noemt_het_pad(tmp_path: Path) -> None:
 
 def test_een_lege_bundel_noemt_het_pad(tmp_path: Path) -> None:
     """De ConfigMap bestaat, maar de service-CA heeft service-ca.crt nog niet gevuld."""
-    argo_module._ssl_context_voor.cache_clear()
+    argo_module._ssl_context_for.cache_clear()
     leeg = tmp_path / "service-ca.crt"
     leeg.write_text("")
 
@@ -146,7 +146,7 @@ def test_een_lege_bundel_noemt_het_pad(tmp_path: Path) -> None:
 
 def test_zonder_bundel_valt_de_connector_niet_terug_op_plain_http(tmp_path: Path) -> None:
     """De basis-URL blijft https: het protocol is een instelling en geen gok."""
-    argo_module._ssl_context_voor.cache_clear()
+    argo_module._ssl_context_for.cache_clear()
     connector = ArgoConnector(use_tls=True, verify_ssl=True, ca_bundle=str(tmp_path / "service-ca.crt"))
 
     assert connector.base_url.startswith("https://")

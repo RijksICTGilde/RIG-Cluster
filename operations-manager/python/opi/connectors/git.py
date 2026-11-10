@@ -1,6 +1,4 @@
-"""
-Git connector for polling repository changes using GitPython.
-"""
+"""The one place this process spawns git: commands, credentials, commits and pushes."""
 
 import asyncio
 import base64
@@ -36,14 +34,13 @@ _push_locks: dict[str, asyncio.Lock] = {}
 _project_write_locks: dict[str, asyncio.Lock] = {}
 
 
-#: De default branch per repo, zoals ``ls-remote --symref`` hem eenmaal meldde. Die vraag
-#: ging voor elke kloon opnieuw over het netwerk en het antwoord verandert niet binnen een
-#: procesleven.
+#: The default branch per repo, as ``ls-remote --symref`` reported it once. The answer does
+#: not change within one process's life, and asking costs a network round trip.
 _remote_default_branches: dict[str, str] = {}
 
 
 def repo_lock_key(repo_url: str) -> str:
-    """De repo-URL zonder credentials: de identiteit van een remote, voor locks en caches."""
+    """The repo URL without credentials: a remote's identity, for locks and caches."""
     sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
     return re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
 
@@ -54,7 +51,7 @@ def push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
 
 
 def project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock:
-    """De lock die schrijfacties op de projectmap van deze repo serialiseert."""
+    """The lock that serialises writes to this repo's project directory."""
     return _project_write_locks.setdefault(f"{repo_lock_key(repo_url)}#{project_name or ''}", asyncio.Lock())
 
 
@@ -78,24 +75,24 @@ GIT_CLONE_TIMEOUT_SECONDS = 300
 GIT_RETRY_BUDGET_SECONDS = 15
 
 COMMIT_ACTOR_TRAILER = "Actor"
-"""Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
-het kan uitlezen (``git log --format=%(trailers:key=Actor,valueonly)``).
+"""Git trailer naming who started the commit. Author and committer stay OPI; a trailer so
+git can read it out (``git log --format=%(trailers:key=Actor,valueonly)``).
 """
 
 _TRAILER_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*: ")
 
 
 def _with_actor_trailer(message: str, actor: Actor | None = None) -> str:
-    """Vul een commitbericht aan met de actor. Zonder ``actor`` die van de context."""
+    """Add the actor trailer to a commit message; without ``actor`` the one from the context."""
     body = message.rstrip("\n")
-    # Een nieuwe regel in de waarde zou er een tweede trailer van maken. Van buiten komt
-    # alleen het adres dat een federatie-peer meestuurt, en dat blijft hiermee één regel.
+    # A newline in the value would make it a second trailer. From outside only the address a
+    # federation peer sends along arrives here, and this keeps that on one line.
     trailer = f"{COMMIT_ACTOR_TRAILER}: {' '.join(str(actor or get_actor()).split())}"
     if any(line.startswith(f"{COMMIT_ACTOR_TRAILER}: ") for line in body.splitlines()):
         return body
 
-    # Een trailer hoort in de laatste alinea, en de onderwerpregel is geen alinea om aan
-    # te vullen: alleen onder een bestaand trailerblok komt de regel er direct bij.
+    # A trailer belongs in the last paragraph, and the subject line is not a paragraph to
+    # add to: only under an existing trailer block does the line join directly.
     paragraphs = body.split("\n\n")
     last = paragraphs[-1].splitlines()
     if len(paragraphs) > 1 and last and all(_TRAILER_LINE.match(line) for line in last):
@@ -103,39 +100,38 @@ def _with_actor_trailer(message: str, actor: Actor | None = None) -> str:
     return f"{body}\n\n{trailer}"
 
 
-#: Vast pad, zodat de hostsleutel die de eerste SSH-verbinding vastlegt de volgende
-#: verbindingen overleeft en een wijziging ertussen opvalt.
+#: A fixed path, so the host key the first SSH connection records survives the next ones and
+#: a change in between stands out.
 SSH_KNOWN_HOSTS_PATH = os.path.join(settings.TEMP_DIR, "git-known-hosts")
 
 
-#: userinfo in een http(s)-URL: user:wachtwoord@host, en de vorm met alleen een token.
-#: De tweede sluit ":" uit zodat hij niet alsnog over het resultaat van de eerste heen gaat.
+#: userinfo in an http(s) URL: user:password@host, and the token-only form. The second
+#: excludes ":" so it cannot run over the first one's result.
 _URL_USERINFO_PATTERN = re.compile(r"(https?://)([^:/@\s]+):[^@\s]+@")
 _URL_TOKEN_PATTERN = re.compile(r"(https?://)[^:/@\s]+@")
 
 
 def _obfuscate_git_command(cmd_str: str) -> str:
-    """Maskeer credentials in een git-commando voor de log.
+    """Mask credentials in a git command for the log.
 
-    Tweede laag: sinds credentials via de omgeving gaan (zie _credential_env) hoort er
-    geen userinfo meer in een URL te staan, maar een URL uit een projectbestand kan hem
-    nog bevatten.
+    A second layer: credentials go through the environment (see ``credential_env``), so a URL
+    should hold no userinfo, but a URL out of a project file can still carry it.
     """
     obfuscated = _URL_USERINFO_PATTERN.sub(r"\1\2:***@", cmd_str)
     return _URL_TOKEN_PATTERN.sub(r"\1***@", obfuscated)
 
 
 def _authority(parsed: ParseResult) -> str:
-    """Host en poort van een geparste URL, zonder userinfo.
+    """Host and port of a parsed URL, without userinfo.
 
-    Uit netloc en niet uit parsed.hostname, want die haalt de blokhaken van een
-    IPv6-literal af en maakt er een onbruikbaar adres van (::1:3000).
+    Out of netloc and not out of parsed.hostname, because that strips the brackets off an
+    IPv6 literal and turns it into an unusable address (::1:3000).
     """
     return parsed.netloc.rsplit("@", 1)[-1]
 
 
 def strip_url_credentials(url: str) -> str:
-    """Geef een http(s)-URL terug zonder userinfo. Andere vormen blijven ongewijzigd."""
+    """An http(s) URL without its userinfo. Any other form comes back unchanged."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return url
@@ -145,16 +141,16 @@ def strip_url_credentials(url: str) -> str:
 
 
 def _cmp_env_paths_added_or_modified(status_output: str) -> list[str]:
-    """Paden uit ``git status --porcelain`` waar een plain-text ``.cmp-env`` opduikt of wijzigt.
+    """Paths from ``git status --porcelain`` where a plain-text ``.cmp-env`` appears or changes.
 
-    Een verwijdering is juist de bedoeling: zo verdwijnen de bestanden die er nog staan.
+    A deletion is exactly what is wanted: that is how the files still there disappear.
     """
     touched: list[str] = []
     for line in status_output.splitlines():
         if len(line) < 4:
             continue
         codes, path = line[:2], line[3:]
-        # Een rename noemt eerst de oude en dan de nieuwe naam; die laatste komt in de commit.
+        # A rename names the old name first and then the new one; the latter lands in the commit.
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
         path = path.strip('"')
@@ -167,12 +163,12 @@ def _cmp_env_paths_added_or_modified(status_output: str) -> list[str]:
 
 
 def credential_env(repo_url: str, username: str | None, password: str | None) -> dict[str, str]:
-    """Git-config in de omgeving die de Basic-auth-header aan één basis-URL bindt.
+    """Git config in the environment that binds the Basic auth header to one base URL.
 
-    Via de omgeving in plaats van via de URL, zodat het wachtwoord niet in een
-    procesargument, in .git/config of in een logregel belandt (BIO2 5.17, 8.12). De
-    sleutel noemt scheme, host en poort van de repo-URL, dus git stuurt de header alleen
-    daarheen en niet mee na een redirect naar een andere host.
+    Through the environment instead of through the URL, so the password lands in neither a
+    process argument, nor .git/config, nor a log line (BIO2 5.17, 8.12). The key names scheme,
+    host and port of the repo URL, so git sends the header only there and not along after a
+    redirect to another host.
     """
     parsed = urlparse(repo_url)
     if parsed.scheme not in ("http", "https"):
@@ -237,13 +233,12 @@ async def _spawn_git(
     logger.debug(f"Running Git command: {_obfuscate_git_command(' '.join(cmd))} in {cwd}")
 
     cmd_env = child_env()
-    # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
-    # falen, niet wachten op een terminal die er niet is.
+    # No interactive password prompt: a missing credential has to fail, not wait for a
+    # terminal that is not there.
     cmd_env["GIT_TERMINAL_PROMPT"] = "0"
     signing = get_git_signing_identity()
     if signing:
-        # git geeft zijn eigen omgeving door aan gpg, dus hiermee vindt gpg de
-        # geimporteerde sleutel. Een wrapper via gpg.program is daarvoor niet nodig.
+        # git hands its own environment to gpg, so this is how gpg finds the imported key.
         cmd_env["GNUPGHOME"] = signing.gnupg_home
     if env:
         cmd_env.update(env)
@@ -269,8 +264,8 @@ async def _spawn_git(
     return stdout, stderr.decode("utf-8").strip(), process.returncode or 0
 
 
-#: De drie bestandsmodi die een tree kan bevatten. Een gewoon bestand, een uitvoerbaar
-#: bestand en een symlink (waarvan de "inhoud" het doelpad is).
+#: The three file modes a tree can hold: a plain file, an executable file and a symlink,
+#: whose "content" is its target path.
 FILE_MODE = "100644"
 EXEC_MODE = "100755"
 SYMLINK_MODE = "120000"
@@ -278,21 +273,20 @@ SYMLINK_MODE = "120000"
 
 @dataclass(frozen=True)
 class FileChange:
-    """De nieuwe stand van een pad in een commit: inhoud en modus."""
+    """The new state of a path in a commit: content and mode."""
 
     content: bytes
     mode: str = FILE_MODE
 
 
 def _reject_unrepresentable_paths(changes: dict[str, FileChange | None]) -> None:
-    """Weiger een pad dat de ``--index-info``-stroom van :func:`build_tree_commit` zou splitsen.
+    """Refuse a path that would split the ``--index-info`` stream of :func:`build_tree_commit`.
 
-    Die stroom is een regel per pad, dus een nieuwe regel IN een pad maakt er een tweede
-    index-regel van, en die noemt zijn eigen modus, blob en pad. Een aanroeper die alleen
-    binnen zijn eigen scope mag schrijven (``GitRepo.write_dir``) zou daarmee toch een pad
-    daarbuiten kunnen zetten: de scope-controle kijkt naar de sleutel, git naar de regels.
-    Zulke namen komen niet uit de generatie maar uit een gekopieerde helm- of
-    helmfile-boom, en die is van de gebruiker.
+    That stream is one line per path, so a newline IN a path makes it a second index line,
+    naming its own mode, blob and path. A caller that may only write inside its own scope
+    (``GitRepo.write_dir``) could put a path outside it that way: the scope check looks at the
+    key, git at the lines. Such a name does not come out of generation but out of a copied
+    helm or helmfile tree, which belongs to the user.
     """
     broken = sorted(path for path in changes if "\n" in path or "\r" in path)
     if broken:
@@ -309,22 +303,16 @@ async def build_tree_commit(
     actor: Actor | None = None,
     env: dict[str, str] | None = None,
 ) -> str | None:
-    """Bouw een commit uit git-objecten, met een eigen index en zonder werkboom.
+    """Build a commit out of git objects, with an index of its own and without a worktree.
 
-    Elke aanroep krijgt zijn EIGEN index (``GIT_INDEX_FILE``), dus twee gelijktijdige
-    schrijvers zien elkaars staging nooit en een fout laat niets achter. De commit kan per
-    constructie geen pad bevatten dat de aanroeper niet noemde, anders dan bij ``add -A``.
+    Every call gets its OWN index (``GIT_INDEX_FILE``), so two concurrent writers never see
+    each other's staging and a failure leaves nothing behind. By construction the commit
+    cannot hold a path the caller did not name, unlike an ``add -A``.
 
-    Args:
-        cwd: de repository (een werkboom of een bare repo)
-        changes: pad in de repo -> nieuwe stand, of None om het pad te verwijderen
-        message: commitbericht
-        parent: de ouder; None maakt een root-commit
-        actor: de handelende partij, die als trailer in de commit komt
-        env: extra omgeving voor de git-commando's
+    ``cwd`` is the repository, a worktree or a bare one. ``changes`` maps a path in the repo
+    to its new state, or to None to delete it. ``parent`` None makes a root commit.
 
-    Returns:
-        De nieuwe commit-sha, of None als de tree gelijk is aan die van de ouder.
+    Returns the new commit sha, or None when the tree equals the parent's.
     """
     index_fd, index_path = tempfile.mkstemp(prefix="git-index-", dir=settings.TEMP_DIR)
     os.close(index_fd)
@@ -340,9 +328,9 @@ async def build_tree_commit(
             _, stderr, code = await run_git(["read-tree", parent], cwd=cwd, env=command_env)
             check(code, stderr, f"read-tree {parent}")
 
-        # Alle paden in EEN update-index: --index-info werkt ook in een bare repo, waar
-        # --force-remove weigert ("must be run in a work tree"), en het is een subproces
-        # in plaats van een per pad.
+        # Every path in ONE update-index: --index-info also works in a bare repo, where
+        # --force-remove refuses ("must be run in a work tree"), and it is one subprocess
+        # instead of one per path.
         _reject_unrepresentable_paths(changes)
         index_lines: list[str] = []
         for file_path, change in changes.items():
@@ -498,18 +486,11 @@ class GitConnector:
         name: str | None = None,
         full_history: bool = False,
     ):
-        """
-        Initialize the Git connector.
+        """``repo_url`` takes git://, ssh://, https:// and the git@host:path shorthand.
 
-        Args:
-            repo_url: URL for the Git repository (git://, ssh://, https://, git@host:path)
-            repo_path: Path within the repository (e.g., "/subdir/project")
-            working_dir: Optional working directory for the local clone
-            branch: Branch name to monitor (without refs/heads/ prefix)
-            ssh_key_path: Optional path to SSH private key for authentication
-            password: Optional password for authentication (HTTPS, may be encrypted)
-            username: Optional username for authentication (HTTPS)
-            project_name: Optional project name for better error context reporting
+        ``repo_path`` is the path WITHIN the repository, ``branch`` a name without the
+        refs/heads/ prefix, and ``password`` may be AGE-encrypted. ``project_name`` only
+        enriches the error messages.
         """
         logger.debug(f"Initializing GitConnector {name} for project {project_name} from url {repo_url}")
 
@@ -584,27 +565,17 @@ class GitConnector:
 
     @property
     def repo_url_with_path(self) -> str:
-        """De repo-URL zonder credentials, zoals hij als argument aan git gaat.
+        """The repo URL without credentials, as it goes to git as an argument.
 
-        Authenticatie gaat via de omgeving, zie _credential_env.
+        Authentication goes through the environment; see ``_credential_env``.
         """
         return self._clean_repo_url
 
     def _parse_git_url(self, url: str) -> dict[str, Any]:
-        """
-        Parse a Git URL and return connection details.
+        """The connection details of a git URL as {scheme, host, port, user, path, needs_auth}.
 
-        Supports:
-        - git://host:port/path (Git daemon, no auth)
-        - ssh://user@host:port/path (SSH with auth)
-        - git@host:path (SSH shorthand)
-        - https://host/path (HTTPS)
-
-        Args:
-            url: Git URL to parse
-
-        Returns:
-            Dict with keys: scheme, host, port, user, path, needs_auth
+        Supports git://host:port/path (the git daemon, no auth), ssh://user@host:port/path,
+        the git@host:path shorthand and https://host/path.
         """
         parsed = urlparse(url)
 
@@ -651,15 +622,7 @@ class GitConnector:
             raise ValueError(f"Unsupported Git URL format: {url}")
 
     def _normalize_repo_path(self, repo_path: str | None) -> str:
-        """
-        Normalize repository path to handle different configurations.
-
-        Args:
-            repo_path: Raw repository path from configuration
-
-        Returns:
-            Normalized repository path
-        """
+        """A repository path from the configuration as a clean, repo-relative path."""
         if not repo_path:
             # None or empty string means root directory
             return "/"
@@ -683,7 +646,7 @@ class GitConnector:
         return repo_path
 
     def _credential_env(self) -> dict[str, str]:
-        """De git-config in de omgeving die deze connector aan zijn remote authenticeert."""
+        """The git config in the environment that authenticates this connector to its remote."""
         return credential_env(self.repo_url, self.username, self._decrypted_password)
 
     @property
@@ -717,8 +680,8 @@ class GitConnector:
 
         signing = get_git_signing_identity()
         if signing:
-            # commit.gpgsign dekt ook de commits die een rebase na een push-conflict
-            # opnieuw maakt. commit-tree leest het niet, die krijgt -S in build_commit.
+            # commit.gpgsign also covers the commits a rebase after a push conflict makes
+            # again. commit-tree does not read it; that one gets -S in build_commit.
             for config_key, config_value in (
                 ("gpg.format", GIT_SIGNING_FORMAT),
                 ("user.signingkey", signing.fingerprint),
@@ -743,19 +706,12 @@ class GitConnector:
     ) -> tuple[str, str, int]:
         """Run a git command in this connector's working directory, with its credentials.
 
-        Args:
-            args: List of Git command arguments
-            env: Optional environment variables, applied last
-            cwd: Optional working directory
-            stdin: Optional text piped to the command's stdin (used by ``hash-object --stdin``)
-            timeout: Optional limit in seconds for a command that goes out over the network.
-                Without it the command waits indefinitely, as every caller did before.
-
-        Returns:
-            Tuple of (stdout, stderr, return_code)
+        Returns (stdout, stderr, exit code). ``env`` is applied last, ``stdin`` is piped to
+        the command (``hash-object --stdin`` uses it), and without ``timeout`` the command
+        waits indefinitely.
 
         Raises:
-            GitCommandTimeoutError: When ``timeout`` passes before the command finishes.
+            GitCommandTimeoutError: ``timeout`` passed before the command finished.
         """
         working_dir = cwd or self.__working_dir
         cmd_env = {**self._credential_env(), **self._ssh_env(), **(env or {})}
@@ -796,23 +752,13 @@ class GitConnector:
         port = self.url_config.get("port", 22)
         if port != 22:
             ssh_cmd += f" -p {port}"
-        # accept-new vertrouwt een onbekende host eenmalig en legt hem vast, zodat een
-        # gewijzigde hostsleutel daarna een fout geeft in plaats van stil door te gaan.
+        # accept-new trusts an unknown host once and records it, so a changed host key gives
+        # an error afterwards instead of silently going on.
         ssh_cmd += f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={SSH_KNOWN_HOSTS_PATH}"
         return {"GIT_SSH_COMMAND": ssh_cmd}
 
     def _check_git_command_result(self, code: int, stderr: str, operation: str) -> None:
-        """
-        Check git command result and raise RuntimeError if failed.
-
-        Args:
-            code: Return code from git command
-            stderr: Standard error output
-            operation: Description of the operation (e.g., "stage all changes")
-
-        Raises:
-            RuntimeError: If git command failed
-        """
+        """Raise a ``RuntimeError`` naming ``operation`` when the command failed."""
         if code != 0:
             server_info = self._get_server_context()
             error_msg = f"Failed to {operation} on {server_info}: {stderr}"
@@ -820,12 +766,7 @@ class GitConnector:
             raise RuntimeError(error_msg)
 
     def _get_server_context(self) -> str:
-        """
-        Get contextual information about the git server for error reporting.
-
-        Returns:
-            String describing the git server context (host, repository, user, project)
-        """
+        """Host, repository, user and project of this remote, as one line for an error."""
         try:
             context_parts = []
 
@@ -867,12 +808,7 @@ class GitConnector:
     _ref_cache: ClassVar[dict[str, dict[str, str]]] = {}
 
     async def get_remote_refs(self) -> dict[str, str]:
-        """
-        Get all remote references from the Git repository.
-
-        Returns:
-            Dictionary mapping reference names to commit hashes
-        """
+        """Every remote reference, as name -> commit hash."""
         logger.debug(f"Fetching remote refs from: {_obfuscate_git_command(self.repo_url_with_path)}")
 
         # Use git ls-remote to get all references
@@ -903,12 +839,7 @@ class GitConnector:
         return refs
 
     async def get_latest_commit_hash(self) -> str:
-        """
-        Get the latest commit hash for the branch.
-
-        Returns:
-            Latest commit hash
-        """
+        """The branch's latest commit hash on the remote."""
         logger.debug(f"Getting latest commit hash for branch: {self.branch}")
 
         # Get all remote refs
@@ -948,12 +879,7 @@ class GitConnector:
         raise RuntimeError(error_msg)
 
     async def get_local_commit_hash(self) -> str:
-        """
-        Get the current commit hash from the local clone.
-
-        Returns:
-            Current local commit hash
-        """
+        """The commit hash the local clone is on."""
         logger.debug("Getting local commit hash")
 
         # Use git rev-parse HEAD to get the current commit hash
@@ -1224,27 +1150,19 @@ class GitConnector:
             raise
 
     async def _rebase_on_remote(self, branch: str | None = None) -> bool:
-        """
-        Rebase local commits on top of remote branch.
+        """Rebase the local commits onto the remote branch; False on a conflict.
 
-        This is used to handle non-fast-forward push rejections by rebasing
-        local commits on top of any new remote commits.
-
-        Args:
-            branch: Branch to rebase on (defaults to configured branch)
-
-        Returns:
-            True if rebase succeeded, False if there were conflicts
+        The way out of a non-fast-forward push rejection.
 
         Raises:
-            RuntimeError: If rebase fails for reasons other than conflicts
+            RuntimeError: the rebase failed for any reason other than a conflict.
         """
         target_branch = branch or self.branch
         logger.info(f"Rebasing local commits on origin/{target_branch}")
 
         try:
-            # De commits die de rebase opnieuw maakt moeten ook ondertekend zijn, en die
-            # identiteit staat in de git-config van deze werkmap.
+            # The commits the rebase makes again have to be signed too, and that identity
+            # lives in this working directory's git config.
             await self._configure_git_user()
 
             # First fetch the latest from remote
@@ -1303,17 +1221,7 @@ class GitConnector:
         logger.info(f"Reset working tree to origin/{target_branch}")
 
     async def file_changed_between_commits(self, file_path: str, old_commit: str, new_commit: str) -> bool:
-        """
-        Check if a specific file was changed between commits using git diff.
-
-        Args:
-            file_path: Path to the file to check
-            old_commit: Old commit hash
-            new_commit: New commit hash
-
-        Returns:
-            True if the file changed, False otherwise
-        """
+        """Whether one file changed between two commits, through ``git diff``."""
         logger.debug(f"Checking if {file_path} changed between {old_commit} and {new_commit}")
 
         # Combine repo path and file path
@@ -1358,28 +1266,12 @@ class GitConnector:
             return f"{self.repo_path}/{file_path}"
 
     def get_absolute_file_path(self, file_path: str) -> str:
-        """
-        Get the absolute path to a file in the local repository.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-
-        Returns:
-            Absolute path to the file
-        """
+        """The absolute path of a repo-relative path in the local clone."""
         relative_path = self._get_full_path(file_path)
         return os.path.join(self.__working_dir, relative_path)
 
     async def read_file_content(self, file_path: str) -> str:
-        """
-        Read content of a file directly from the local repository.
-
-        Args:
-            file_path: Path to the file in the repository
-
-        Returns:
-            Content of the file as a string
-        """
+        """The content of a file in the local clone, as text."""
         logger.debug(f"Reading file content for {file_path}")
 
         # Ensure the repository is cloned
@@ -1400,15 +1292,7 @@ class GitConnector:
             raise
 
     async def parse_yaml_content(self, content: str) -> dict:
-        """
-        Parse YAML content into a Python dictionary.
-
-        Args:
-            content: YAML content as a string
-
-        Returns:
-            Parsed YAML as a dictionary
-        """
+        """Parse YAML text into a dictionary."""
         logger.debug(f"Parsing YAML content of length {len(content)}")
         try:
             result = load_yaml_safe(content)
@@ -1432,14 +1316,7 @@ class GitConnector:
         return self.__working_dir
 
     async def add_file(self, file_path: str, content: str, overwrite: bool = True) -> None:
-        """
-        Add a file to the git staging area with specified content.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-            content: Content to write to the file
-            overwrite: If True, overwrite existing file; if False, fail if file exists
-        """
+        """Write a repo-relative path and stage it; without ``overwrite`` an existing file fails."""
         logger.debug(f"Adding file to staging: {file_path} (overwrite={overwrite})")
 
         # Ensure the repository is cloned
@@ -1473,12 +1350,7 @@ class GitConnector:
         logger.debug(f"Successfully added file {file_path} to staging area")
 
     async def delete_file(self, file_path: str) -> None:
-        """
-        Delete a file and stage the deletion.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-        """
+        """Delete a repo-relative path and stage the deletion."""
         logger.debug(f"Deleting file: {file_path}")
 
         # Ensure the repository is cloned
@@ -1493,15 +1365,7 @@ class GitConnector:
         logger.debug(f"Successfully deleted and staged file {file_path}")
 
     async def read_file(self, file_path: str) -> str:
-        """
-        Read a file from the repository.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-
-        Returns:
-            Content of the file as a string
-        """
+        """The content of a repo-relative path, as text."""
         logger.debug(f"Reading file: {file_path}")
 
         # Ensure the repository is cloned
@@ -1543,8 +1407,8 @@ class GitConnector:
         working_dir = self.__working_dir
         leftover: list[str] = []
         for root, dirs, files in os.walk(working_dir):
-            # Snoeien, niet overslaan: zonder dit daalde os.walk af in .git en las het
-            # elke objectmap uit, op de event loop, voor elke commit.
+            # Prune, do not skip: without this os.walk descends into .git and reads out
+            # every object directory, on the event loop, for every commit.
             dirs[:] = [d for d in dirs if d != ".git"]
             leftover.extend(
                 os.path.relpath(os.path.join(root, name), working_dir)
@@ -1566,8 +1430,8 @@ class GitConnector:
 
     async def _abort_if_cmp_env_touched(self) -> None:
         """Refuse when this commit would add or change a plain-text ``.cmp-env``."""
-        # --untracked-files=all: zonder dit noemt git alleen de nieuwe MAP, en een
-        # .cmp-env in een nieuwe deploymentmap komt er zo onder vandaan.
+        # --untracked-files=all: without this git names only the new DIRECTORY, and a
+        # .cmp-env in a new deployment directory slips out from under it.
         status_cmd = ["status", "--porcelain", "--untracked-files=all"]
         stdout, stderr, code = await self._run_git_command(status_cmd, cwd=self.__working_dir)
         if code != 0:
@@ -1588,13 +1452,9 @@ class GitConnector:
             )
 
     async def commit_and_push(self, message: str) -> None:
-        """
-        Commit all changes in the working directory and push to remote repository.
-        This stages all changes (including new files, modifications, and deletions) before committing.
-        This is always done at the end when no other git operations are needed.
+        """Stage everything in the working directory, commit it and push.
 
-        Args:
-            message: Commit message
+        The last git step of a round: it stages new, changed AND deleted files.
         """
         logger.debug(f"Committing and pushing all changes: {message}")
 
@@ -1616,15 +1476,9 @@ class GitConnector:
         logger.info(f"Successfully committed and pushed all changes: {message}")
 
     async def write_file_without_commit(self, file_path: str, content: str) -> None:
-        """
-        Create or update a file in the Git repository without committing changes.
+        """Write a repo-relative path without staging or committing it.
 
-        DEPRECATED: Use add_file() for atomic operations instead.
-        This method is kept for backward compatibility.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-            content: Content to write to the file
+        DEPRECATED: use ``add_file`` instead, which stages in the same step.
         """
         logger.debug(f"Writing file without commit: {file_path} (DEPRECATED - use add_file)")
 
@@ -1652,14 +1506,7 @@ class GitConnector:
     async def create_or_update_file(
         self, file_path: str, content: str, do_commit_and_push: bool, commit_message: str | None = None
     ) -> None:
-        """
-        Create or update a file in the Git repository and optionally commit and push the changes.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-            content: Content to write to the file
-            commit_message: Optional commit message
-        """
+        """Write a repo-relative path, and commit and push it when ``commit_message`` is given."""
         logger.debug(f"Creating or updating file: {file_path}")
 
         # Ensure the repository is cloned
@@ -1703,26 +1550,13 @@ class GitConnector:
             logger.info(f"Successfully created/updated file {file_path} and pushed to remote")
 
     async def file_exists(self, file_path: str) -> bool:
-        """
-        Check if a file exists in the Git repository.
-
-        Args:
-            file_path: Path to the file relative to the repository root
-
-        Returns:
-            True if file exists, False otherwise
-        """
+        """Whether a repo-relative path exists in the local clone."""
         await self.ensure_repo_cloned()
         abs_path = self.get_absolute_file_path(file_path)
         return os.path.exists(abs_path)
 
     async def has_changes(self) -> bool:
-        """
-        Check if there are any uncommitted changes in the repository.
-
-        Returns:
-            True if there are changes to commit, False otherwise
-        """
+        """Whether the working directory holds anything uncommitted."""
         await self.ensure_repo_cloned()
 
         # Use git status --porcelain to check for changes
@@ -1738,15 +1572,7 @@ class GitConnector:
         return has_changes
 
     async def add_files(self, files_or_paths: list[str]) -> bool:
-        """
-        Add files to the git staging area.
-
-        Args:
-            files_or_paths: List of file paths or directories to add
-
-        Returns:
-            True if files were added successfully, False otherwise
-        """
+        """Stage these files and directories; False when one of them could not be added."""
         await self.ensure_repo_cloned()
 
         for file_path in files_or_paths:
@@ -1761,15 +1587,15 @@ class GitConnector:
         return True
 
     async def path_unchanged_since(self, revision: str, path: str) -> bool:
-        """Of ``path`` bij ``revision`` byte-voor-byte gelijk is aan wat er nu in HEAD staat.
+        """Whether ``path`` at ``revision`` is byte for byte what it is in HEAD now.
 
-        Zo is te bewijzen dat een ander (ArgoCD) precies deze bestanden al heeft toegepast,
-        ook als zijn revisie ouder is dan de onze: op een repo die meerdere projecten delen
-        loopt de tip altijd voor op de laatste vergelijking van EEN applicatie, en dan zegt
-        "is onze commit een voorouder" niets over onze eigen map.
+        This proves that someone else (ArgoCD) already applied exactly these files, even when
+        their revision is older than ours: on a repo several projects share, the tip always
+        runs ahead of the last comparison of ONE application, and then "is our commit an
+        ancestor" says nothing about our own directory.
 
-        Een revisie die we lokaal niet hebben, of wat er ook mis gaat, geeft False: dan is
-        er niets bewezen en doet de aanroeper zijn volle werk.
+        A revision we do not have locally, and anything else that goes wrong, gives False:
+        nothing is proven then and the caller does its full work.
         """
         if not revision or not path:
             return False
@@ -1779,35 +1605,28 @@ class GitConnector:
         return code == 0
 
     async def _has_commits_to_push(self, target_branch: str) -> bool:
-        """Of er lokaal iets staat dat de remote-tracking ref nog niet heeft.
+        """Whether anything local is missing from the remote-tracking ref.
 
-        Een push die niets meebrengt kost een volledige verbinding en een onderhandeling,
-        en een verwerkingstaak deed er drie per ronde zonder dat er iets veranderd was.
-        Alleen een LEEG antwoord is bewijs: staat de remote verder dan wij, dan telt deze
-        lijst onze eigen commits nog steeds en pushen we zoals altijd.
+        A push that brings nothing still costs a full connection and a negotiation. Only an
+        EMPTY answer is proof: when the remote is ahead of us, this list still counts our own
+        commits and we push as always.
         """
         stdout, _, code = await self._run_git_command(
             ["rev-list", "--count", f"refs/remotes/origin/{target_branch}..HEAD"], cwd=self.__working_dir
         )
         if code != 0:
-            # Geen remote-tracking ref (een nieuwe branch): dan valt er niets te bewijzen.
+            # No remote-tracking ref (a new branch), so there is nothing to prove.
             return True
         return stdout.strip() != "0"
 
     async def commit_changes(self, message: str) -> bool:
-        """
-        Commit all changes in the working directory.
+        """Commit everything in the working directory; False when there was nothing to commit.
 
-        Args:
-            message: Commit message
-
-        Returns:
-            True when a commit was created, False when there was nothing to commit. Een
-            aanroeper die weet dat hij niets veranderde kan werk overslaan dat alleen voor
-            een wijziging nodig is (zie wait_for_project_level_application).
+        A caller that knows it changed nothing can skip work only a change needs (see
+        ``wait_for_project_level_application``).
 
         Raises:
-            RuntimeError: If staging or commit fails
+            RuntimeError: staging or the commit itself failed.
         """
         await self.ensure_repo_cloned()
 
@@ -1838,29 +1657,17 @@ class GitConnector:
         return True
 
     async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
-        """
-        Push committed changes to remote repository.
+        """Push the committed changes, fetching and rebasing once a push is non-fast-forward.
 
-        If the push fails due to non-fast-forward (remote has newer commits),
-        this method will automatically fetch, rebase, and retry the push.
-
-        Args:
-            branch: Branch to push to (defaults to configured branch)
-            max_retries: Maximum number of push attempts after rebase (default: 5)
-            allow_rebase: When False, a non-fast-forward push raises GitPushConflictError
-                immediately instead of rebasing and retrying.
+        ``allow_rebase=False`` raises GitPushConflictError on a non-fast-forward instead:
+        the internal rebase text-merges the remote's version with ours and pushes the
+        *merged* result, which nobody validated, and two edits that are each valid can merge
+        into an invalid project file. It also makes the caller's post-push state diverge from
+        git, because the caller still holds its pre-merge version. ProjectStore therefore
+        pushes with allow_rebase=False, re-reads, re-applies and re-validates.
 
         Raises:
-            RuntimeError: If push fails after all retries or if rebase has conflicts
-
-        Note on ``allow_rebase=False``:
-            The internal rebase silently text-merges the remote's version with ours and
-            pushes the *merged* result, which was never validated -- two edits that are each
-            valid can merge into an invalid project file (e.g. a duplicated component). It
-            also makes the caller's post-push state diverge from git, because the caller
-            still holds its pre-merge version. ProjectStore therefore pushes with
-            allow_rebase=False so divergence surfaces as GitPushConflictError, and it
-            re-reads, re-applies and re-validates before pushing again.
+            RuntimeError: the push failed after every retry, or the rebase hit a conflict.
         """
         await self.ensure_repo_cloned()
 
@@ -1878,12 +1685,12 @@ class GitConnector:
                 await self._push_attempts(target_branch, max_retries, allow_rebase)
 
     async def _push_attempts(self, target_branch: str, max_retries: int, allow_rebase: bool) -> None:
-        """De pogingen zelf; zie :meth:`push_changes`. Loopt onder de push-lock."""
+        """The attempts themselves; see :meth:`push_changes`. Runs under the push lock."""
         for attempt in range(max_retries):
             push_cmd = ["push", "origin", target_branch]
             # A timeout is not a non-fast-forward, so GitCommandTimeoutError leaves this
-            # loop at once: no rebase, no retry, and the push lock stays taken for at most
-            # one timeout.
+            # loop at once: no rebase, no retry, and the push lock is held for at most one
+            # timeout.
             stdout, stderr, code = await self._run_git_command(
                 push_cmd, cwd=self.__working_dir, timeout=GIT_PUSH_TIMEOUT_SECONDS
             )
@@ -1955,12 +1762,8 @@ class GitConnector:
         generation would be robuster; tracked in #161. This git-diff path stays while
         changes still arrive via raw git.
 
-        Args:
-            file_path: Path to the file within the repository
-            commits_back: How many file-touching commits back (default 1 = the previous version)
-
-        Returns:
-            File content as string, or None if there is no such previous version
+        ``commits_back`` counts file-touching commits, so 1 is the previous version. None
+        when there is no such previous version.
         """
         try:
             await self.ensure_repo_cloned()
@@ -2138,17 +1941,14 @@ class GitConnector:
         This deliberately replaces the ``write file`` + ``git add -A`` + ``commit`` path for
         project files. ``git add -A`` stages *everything* in the working tree, which on a
         shared warm copy means one writer's commit can carry another writer's half-written
-        file -- or a pending deletion -- to the remote.
+        file, or a pending deletion, to the remote.
 
-        Args:
-            changes: repo-relative path -> new content, or None to delete that path
-            message: commit message
-            parent: parent commit (defaults to current HEAD; None-and-no-HEAD makes a root commit)
-            actor: de handelende partij voor de trailer; zonder deze die van de context
+        ``changes`` maps a repo-relative path to its new content, or to None to delete it.
+        ``parent`` defaults to the current HEAD, and None without a HEAD makes a root commit.
+        ``actor`` goes into the trailer; without it the one from the context.
 
-        Returns:
-            The new commit sha, or None when the resulting tree is identical to the parent's
-            (nothing to commit). The branch ref is NOT moved -- call ``set_branch_ref``.
+        Returns the new commit sha, or None when the resulting tree is identical to the
+        parent's. The branch ref is NOT moved: call ``set_branch_ref``.
         """
         await self.ensure_repo_cloned()
 
@@ -2238,7 +2038,7 @@ class GitConnector:
             return
         self._closed = True
         # The working directory always goes at close, even when should_cleanup is False.
-        # has_changes() kloont opnieuw en zou de clone-fout over de task-fout heen gooien.
+        # has_changes() clones again and would throw its clone error over the task's error.
         if self._repo_cloned and await self.has_changes():
             logger.warning(
                 f"Repository {self.name} for project {self.project_name} has uncommitted changes but is being closed."
@@ -2257,16 +2057,9 @@ async def poll_for_changes(
     callback: Callable[[str, dict], Coroutine[Any, Any, None]] | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> None:
-    """
-    Poll the Git repository for changes to a specific file.
+    """Poll one file in the repository until ``stop_event`` is set.
 
-    Args:
-        connector: GitConnector instance
-        file_path: Path to the file to monitor
-        interval: Polling interval in seconds
-        callback: Optional async callback function to call when changes are detected
-            Callback signature: async fn(file_path, current_content)
-        stop_event: Optional asyncio Event to signal stopping the polling
+    ``callback`` is called as ``async fn(file_path, current_content)`` on every change.
     """
     logger.info(f"Starting to poll for changes to {file_path} every {interval} seconds")
     logger.debug(
@@ -2374,22 +2167,7 @@ async def start_file_monitoring(
     password: str | None = None,
     username: str | None = None,
 ) -> None:
-    """
-    Start monitoring a YAML file for changes.
-
-    Args:
-        repo_url: URL for the Git repository (git://, ssh://, https://, git@host:path)
-        file_path: Path to the YAML file to monitor
-        branch: Branch to monitor
-        interval: Polling interval in seconds
-        repo_path: Path within the repository (e.g., "/subdir/project")
-        working_dir: Optional working directory for the local clone
-        callback: Optional async callback function called when changes are detected
-        stop_event: Optional asyncio Event to signal stopping the polling
-        ssh_key_path: Optional path to SSH private key for authentication
-        password: Optional password for authentication (may be encrypted)
-        username: Optional username for authentication
-    """
+    """Monitor one YAML file for changes, with a connector built from these parameters."""
     logger.debug(f"Starting file monitoring for {file_path} in {repo_url} (branch: {branch})")
     logger.debug(f"Repository path: {repo_path}, Poll interval: {interval}s")
 
@@ -2412,24 +2190,7 @@ async def start_monitoring_task(
     password: str | None = None,
     username: str | None = None,
 ) -> asyncio.Task:
-    """
-    Create and start a monitoring task that can be used with FastAPI.
-
-    Args:
-        repo_url: URL for the Git repository (git://, ssh://, https://, git@host:path)
-        file_path: Path to the YAML file to monitor
-        branch: Branch to monitor
-        interval: Polling interval in seconds
-        repo_path: Path within the repository (e.g., "/subdir/project")
-        working_dir: Optional working directory for the local clone
-        callback: Optional async callback function called when changes are detected
-        ssh_key_path: Optional path to SSH private key for authentication
-        password: Optional password for authentication
-        username: Optional username for authentication
-
-    Returns:
-        asyncio.Task that can be stored and cancelled later
-    """
+    """The monitoring of :func:`start_file_monitoring` as a task, to store and cancel later."""
     logger.debug(f"Creating monitoring task for {file_path} in {repo_url}")
     stop_event = asyncio.Event()
 

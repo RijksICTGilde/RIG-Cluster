@@ -94,7 +94,7 @@ def age_keypair(make_age_keypair: Callable[[], tuple[str, str]]) -> tuple[str, s
 @pytest.fixture
 def mock_kubectl_connected() -> Any:
     """Mock KubectlConnector to appear connected without actual cluster."""
-    with patch("opi.connectors.kubectl.KubectlConnector.isConnected", True):
+    with patch("opi.connectors.kubectl.KubectlConnector.is_connected", True):
         yield
 
 

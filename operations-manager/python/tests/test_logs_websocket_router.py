@@ -388,7 +388,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", True):
+        with patch.object(KubectlConnector, "is_connected", True):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
@@ -446,7 +446,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", True):
+        with patch.object(KubectlConnector, "is_connected", True):
             await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
@@ -470,7 +470,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", False):
+        with patch.object(KubectlConnector, "is_connected", False):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",

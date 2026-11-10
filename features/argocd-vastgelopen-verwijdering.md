@@ -145,7 +145,7 @@ finalizer draagt.
 
    Een `kubectl` die GOOIT is net zo'n mislukte meting en niet een mislukte wacht. Dat is
    geen theorie: `_run_kubectl_command` gooit `KubectlConnectionError` zodra de
-   verbindingstest `isConnected` omzet, precies op het control plane onder druk waar deze
+   verbindingstest `is_connected` omzet, precies op het control plane onder druk waar deze
    meting voor is. Zou de fout uit de wacht komen, dan vangt de aanroeper hem met zijn eigen
    `except` en slaat hij de force-route over, en bij `force=True` zet die `except` de
    Application op verwijderd: dan verdwijnt de deployment uit de project file terwijl hij op

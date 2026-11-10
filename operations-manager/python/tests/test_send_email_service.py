@@ -2679,7 +2679,7 @@ class TestEenPodwisselKostGeenUitrol:
             os_error=OSError("Connection refused"),
         )
         pogingen = AsyncMock(side_effect=[fout, {"data": {"id": 1, "name": "project-demo"}}])
-        monkeypatch.setattr(MailConnector, "_eenmalig_verzoek", pogingen)
+        monkeypatch.setattr(MailConnector, "_single_request", pogingen)
         monkeypatch.setattr("opi.utils.connect_retry.asyncio.sleep", AsyncMock())
 
         resultaat = await connector.get_principal("project-demo")
@@ -3172,7 +3172,7 @@ class TestDeWeergavenaamWordtGetoetst:
         """De laatste laag is de connector, die de naam in een gegenereerd sieve-script zet.
 
         Deze toets bestaat omdat de twee lijsten UIT ELKAAR kunnen lopen, en dat gebeurde:
-        ``$`` stond wel in ``_NAAM_VERBODEN`` en niet in ``FROM_NAME_PATTERN``, dus een naam
+        ``$`` stond wel in ``_NAME_FORBIDDEN`` en niet in ``FROM_NAME_PATTERN``, dus een naam
         met een dollarteken kwam door het formulier en door het model heen en viel pas om in
         ``ensure_account`` -- midden in het verwerken van een project, waar niets die fout
         vangt. Een naam die hierboven mag, moet hier ook mogen, en andersom.

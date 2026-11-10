@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.connectors.minio_mc import MinioConnector, MinioExecutionError
 from opi.connectors.seaweedfs_shell import (
-    JWT_SLEUTEL_ENV,
+    JWT_KEY_ENV,
     S3_ALIAS,
     SeaweedfsConfigurationError,
     SeaweedfsConnector,
@@ -146,23 +146,23 @@ class TestVorm:
     ) -> None:
         # RC-279: met os.environ.copy() stond elk beheerwachtwoord in /proc van weed.
         monkeypatch.setenv("DATABASE_ADMIN_PASSWORD", "geheim")
-        monkeypatch.setenv(JWT_SLEUTEL_ENV, "de-bearer")
+        monkeypatch.setenv(JWT_KEY_ENV, "de-bearer")
 
         await SeaweedfsConnector().list_buckets()
 
         env = shell[0]["env"]
         assert "DATABASE_ADMIN_PASSWORD" not in env
         # weed shell leest de admin-Bearer zelf uit zijn omgeving, dus die ene gaat expliciet mee.
-        assert env[JWT_SLEUTEL_ENV] == "de-bearer"
+        assert env[JWT_KEY_ENV] == "de-bearer"
 
     async def test_zonder_de_bearer_gaat_er_niets_extra_mee(
         self, shell: Shell, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv(JWT_SLEUTEL_ENV, raising=False)
+        monkeypatch.delenv(JWT_KEY_ENV, raising=False)
 
         await SeaweedfsConnector().list_buckets()
 
-        assert JWT_SLEUTEL_ENV not in shell[0]["env"]
+        assert JWT_KEY_ENV not in shell[0]["env"]
 
 
 class TestFouten:

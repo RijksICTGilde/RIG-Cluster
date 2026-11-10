@@ -1,9 +1,4 @@
-"""
-Chisel Tunnel Connector
-
-Provides transparent port forwarding to remote services via Chisel tunnels.
-This infrastructure layer handles tunnel lifecycle, authentication, and port management.
-"""
+"""Port forwarding to a remote service over a Chisel tunnel."""
 
 import logging
 import socket
@@ -18,33 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 class TunnelEndpoint(TypedDict):
-    """The local side of a chisel tunnel.
-
-    A ``dict[str, str | int]`` made every caller's ``endpoint["host"]`` a ``str | int``,
-    so passing it to anything typed lost the distinction the dict has always had.
-    """
+    """The local side of a chisel tunnel."""
 
     host: str
     port: int
 
 
 class ChiselConnector:
-    """
-    Manages Chisel tunnel lifecycle.
-
-    Provides transparent port forwarding to remote services through HTTP/HTTPS tunnels.
-    The tunnel is managed as a subprocess, allowing on-demand activation.
-
-    Example:
-        connector = ChiselConnector(
-            server_url="https://chisel.example.com",
-            username="admin",
-            password="secret"
-        )
-        local_port = connector.start_tunnel("postgres.svc", 5432)
-        # Now connect to localhost:{local_port}
-        connector.stop_tunnel()
-    """
+    """One tunnel, run as a chisel subprocess that is started on demand."""
 
     def __init__(
         self,
@@ -53,15 +29,7 @@ class ChiselConnector:
         password: str,
         timeout: int = 30,
     ):
-        """
-        Initialize Chisel connector.
-
-        Args:
-            server_url: Chisel server URL (e.g., https://chisel.example.com)
-            username: Authentication username
-            password: Authentication password
-            timeout: Seconds to wait for tunnel to be ready (default: 30)
-        """
+        """``timeout`` is in seconds and bounds how long ``start_tunnel`` waits for the port."""
         self.server_url = server_url
         self.auth = f"{username}:{password}"
         self.timeout = timeout
@@ -74,27 +42,16 @@ class ChiselConnector:
         remote_port: int,
         local_port: int | None = None,
     ) -> int:
-        """
-        Start a tunnel to a remote service.
+        """Open the tunnel and return the local port that forwards to the remote service.
 
-        Creates a local TCP listener that forwards all traffic through the Chisel
-        tunnel to the remote service. The tunnel runs as a subprocess.
-
-        Args:
-            remote_host: Remote service hostname (e.g., "postgres.namespace.svc.cluster.local")
-            remote_port: Remote service port (e.g., 5432)
-            local_port: Local port to bind (auto-allocate if None)
-
-        Returns:
-            Local port number that forwards to remote service
+        ``local_port`` is allocated when it is None.
 
         Raises:
-            RuntimeError: If tunnel is already running or fails to start
+            RuntimeError: when a tunnel is already running, or the port stays closed.
         """
         if self.process:
             raise RuntimeError("Tunnel already running. Stop it first.")
 
-        # Auto-allocate port if not specified
         if local_port is None:
             local_port = self._get_free_port()
 
@@ -113,9 +70,9 @@ class ChiselConnector:
             f"local=localhost:{local_port} -> remote={remote_host}:{remote_port}"
         )
 
-        # AUTH in plaats van --auth: een commandoregel is leesbaar voor elk proces in
-        # de container via /proc/<pid>/cmdline.
-        self.process = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+        # AUTH rather than --auth: a command line is readable by every process in the
+        # container through /proc/<pid>/cmdline.
+        self.process = subprocess.Popen(  # noqa: S603  # no shell; the variable parts are separate argv elements
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -123,9 +80,8 @@ class ChiselConnector:
             env=child_env({"AUTH": self.auth}),
         )
 
-        # Wait for tunnel to be ready
         if not self._wait_for_port(local_port):
-            # Collect error output before stopping
+            # Collect before stopping: stop_tunnel drops the process and with it its pipes.
             error_details = self._collect_process_output()
             self.stop_tunnel()
             raise RuntimeError(
@@ -146,13 +102,12 @@ class ChiselConnector:
 
         output_lines = []
 
-        # Read stderr if available (chisel logs to stderr)
+        # chisel logs to stderr
         if self.process.stderr:
             stderr_content = self._read_available_output(self.process.stderr)
             if stderr_content:
                 output_lines.extend(stderr_content)
 
-        # Read stdout if available
         if self.process.stdout:
             stdout_content = self._read_available_output(self.process.stdout)
             if stdout_content:
@@ -176,12 +131,7 @@ class ChiselConnector:
         return lines
 
     def stop_tunnel(self):
-        """
-        Stop the active tunnel.
-
-        Terminates the chisel subprocess gracefully. If it doesn't terminate
-        within 5 seconds, forces termination.
-        """
+        """Terminate the tunnel subprocess; a warning and no error when there is none."""
         if not self.process:
             logger.warning("No active tunnel to stop")
             return
@@ -201,15 +151,7 @@ class ChiselConnector:
         self.local_port = None
 
     def get_local_endpoint(self) -> TunnelEndpoint:
-        """
-        Get the local endpoint for the tunneled service.
-
-        Returns:
-            Dict with 'host' and 'port' keys
-
-        Raises:
-            RuntimeError: If no active tunnel exists
-        """
+        """Raises ``RuntimeError`` when no tunnel is running."""
         if not self.process or not self.local_port:
             raise RuntimeError("No active tunnel")
 
@@ -220,12 +162,6 @@ class ChiselConnector:
 
     @staticmethod
     def _get_free_port() -> int:
-        """
-        Find an available local port.
-
-        Returns:
-            Available port number
-        """
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("", 0))
         port = sock.getsockname()[1]
@@ -233,24 +169,13 @@ class ChiselConnector:
         return port
 
     def _wait_for_port(self, port: int) -> bool:
-        """
-        Wait for port to be listening.
-
-        Polls the port until it accepts connections or timeout is reached.
-
-        Args:
-            port: Port number to check
-
-        Returns:
-            True if port is listening, False if timeout or process died
-        """
+        """Poll until the port accepts connections; False on timeout or a dead process."""
         start_time = time.time()
         check_count = 0
 
         while time.time() - start_time < self.timeout:
             check_count += 1
 
-            # Check if process died
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
                 stderr = self.process.stderr.read() if self.process.stderr else ""
@@ -260,12 +185,10 @@ class ChiselConnector:
                 )
                 return False
 
-            # Check if port is listening
             if self._is_port_open("localhost", port):
                 logger.debug(f"Chisel tunnel port {port} is now listening (after {check_count} checks)")
                 return True
 
-            # Log progress every 10 checks (5 seconds)
             if check_count % 10 == 0:
                 elapsed = time.time() - start_time
                 logger.debug(
@@ -281,16 +204,6 @@ class ChiselConnector:
 
     @staticmethod
     def _is_port_open(host: str, port: int) -> bool:
-        """
-        Check if a port is listening.
-
-        Args:
-            host: Hostname to check
-            port: Port number to check
-
-        Returns:
-            True if port accepts connections, False otherwise
-        """
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
@@ -301,11 +214,10 @@ class ChiselConnector:
             return False
 
     def __enter__(self):
-        """Context manager entry - must call start_tunnel() separately."""
+        """Does not open the tunnel: call ``start_tunnel`` yourself."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - ensures tunnel is stopped."""
         self.stop_tunnel()
 
 
@@ -318,33 +230,7 @@ def chisel_tunnel(
     remote_port: int,
     local_port: int | None = None,
 ):
-    """
-    Context manager for easy tunnel usage.
-
-    Automatically starts and stops a Chisel tunnel within a context.
-
-    Args:
-        server_url: Chisel server URL (e.g., https://chisel.example.com)
-        username: Authentication username
-        password: Authentication password
-        remote_host: Remote service hostname
-        remote_port: Remote service port
-        local_port: Local port to bind (auto-allocate if None)
-
-    Yields:
-        ChiselConnector instance with active tunnel
-
-    Example:
-        with chisel_tunnel(
-            server_url="https://chisel.example.com",
-            username="admin",
-            password="secret",
-            remote_host="postgres.namespace.svc",
-            remote_port=5432
-        ) as tunnel:
-            endpoint = tunnel.get_local_endpoint()
-            # Connect to endpoint['host']:endpoint['port']
-    """
+    """Open a tunnel for the duration of the block and stop it afterwards."""
     connector = ChiselConnector(server_url, username, password)
     try:
         connector.start_tunnel(remote_host, remote_port, local_port)

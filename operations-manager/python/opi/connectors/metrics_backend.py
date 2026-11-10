@@ -1,9 +1,8 @@
 """The contract the two metrics backends share.
 
-``get_metrics_connector()`` returns ``PrometheusConnector`` or
-``GrafanaPrometheusConnector`` depending on ``METRICS_BACKEND``, so a caller catches the
-exceptions from here rather than a pair per backend, and types a connector as
-``MetricsBackend`` rather than per class.
+``get_metrics_connector()`` returns ``PrometheusConnector`` or ``GrafanaPrometheusConnector``
+depending on ``METRICS_BACKEND``. Type a connector as ``MetricsBackend`` and catch the
+exceptions from here, not the ones of either backend.
 """
 
 from datetime import UTC, datetime
@@ -23,11 +22,7 @@ class MetricsQueryError(Exception):
 
 
 def parse_query_time(value: str | int | float) -> datetime:
-    """Parse a range-query time bound as Unix-epoch seconds or an ISO-8601 string.
-
-    Both backends document the same contract ("RFC3339 or Unix timestamp") so they stay
-    interchangeable behind ``get_metrics_connector()``. Callers pass epoch seconds.
-    """
+    """Parse a range-query time bound as Unix-epoch seconds or an ISO-8601 string."""
     if isinstance(value, int | float):
         return datetime.fromtimestamp(value, tz=UTC)
     text = str(value).strip()

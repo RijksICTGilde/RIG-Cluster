@@ -1,9 +1,8 @@
-"""
-PostgreSQL connector for managing database users, schemas, and operations.
+"""Users, databases, schemas and schema clones on a PostgreSQL server.
 
-This module provides functionality to interact with PostgreSQL databases for user management,
-schema operations, and database cloning operations following the connector pattern with comprehensive
-security measures to prevent SQL injection and ensure safe database operations.
+Every identifier that lands in DDL goes through ``_validate_identifier`` and
+``_quote_identifier`` first: these statements are composed as text, so nothing else keeps
+SQL injection out.
 """
 
 import asyncio
@@ -21,17 +20,17 @@ from opi.utils.patterns import POSTGRES_CLONEABLE_SCHEMA, POSTGRES_IDENTIFIER
 
 logger = logging.getLogger(__name__)
 
-# Tokens zonder aanhalingsteken, dollar of ander scheidingsteken: een SQL-literal is altijd
-# gequoteerd, dus zo'n token kan geen wachtwoord zijn.
+# Tokens without a quote, dollar or other delimiter: a SQL literal is always quoted, so such
+# a token cannot be a password.
 _SQL_PLAIN_TOKEN = re.compile(r"^[A-Za-z0-9_.]+$")
 
 
 def _summarize_sql_statement(sql: str) -> str:
     """Secret-free summary of a SQL statement for logging: the statement kind and its target.
 
-    Houdt de eerste drie ongequoteerde tokens over, dus "CREATE ROLE app_user" voor een
-    CREATE ROLE met een PASSWORD erachter. Het wachtwoord in zo'n statement mag niet in de
-    log staan, en de SQL komt uit het projectbestand, dus elke vorm kan voorkomen.
+    Keeps the first three unquoted tokens, so "CREATE ROLE app_user" for a CREATE ROLE with a
+    PASSWORD behind it. The password in such a statement may not reach the log, and the SQL
+    comes out of the project file, so any shape can turn up.
     """
     tokens: list[str] = []
     for token in sql.split():
@@ -57,11 +56,11 @@ class SchemaInventory:
 
 
 class PostgresExecutionError(Exception):
-    """Exception raised when PostgreSQL operation execution fails."""
+    """A statement or a clone against PostgreSQL failed."""
 
 
 class PostgresValidationError(Exception):
-    """Exception raised when input validation fails."""
+    """An identifier, privilege, password, host or port does not meet the rules."""
 
 
 class PostgresConnector:
@@ -73,20 +72,7 @@ class PostgresConnector:
     """
 
     def __init__(self, host: str, admin_username: str, admin_password: str) -> None:
-        """Initialize the PostgreSQL connector bound to one database server.
-
-        Args:
-            host: Database host (e.g., 'localhost', 'postgres-service.namespace.svc.cluster.local')
-            admin_username: Admin username for database operations
-            admin_password: Admin password for database operations
-
-        Example:
-            # For shared database
-            connector = PostgresConnector("postgres.shared.svc", "postgres", "secret")
-
-            # For namespace-specific database
-            connector = PostgresConnector("myproject-db-rw.infra.svc", "postgres", "secret")
-        """
+        """``host`` is a service name or FQDN; the credentials are the server's admin."""
         self._host = host
         self._admin_username = admin_username
         self._admin_password = admin_password
@@ -94,25 +80,16 @@ class PostgresConnector:
         self._current_database: str | None = None
 
     async def _get_or_create_connection(self, database: str = "postgres") -> asyncpg.Connection:
-        """Get existing connection or create a new one to the specified database.
+        """The managed connection to ``database``, reused when it already points there.
 
-        Reuses the connection if targeting the same database. Switches databases
-        if needed by closing old connection and creating new one.
-
-        Args:
-            database: Database name to connect to (defaults to 'postgres')
-
-        Returns:
-            Active database connection
+        Another database closes the old connection and opens a new one; a broken one is
+        replaced.
         """
-        # Need new connection if connecting to different database or no connection exists
         if self._conn is None or self._current_database != database:
-            # Close old connection if exists
             if self._conn:
                 with contextlib.suppress(OSError):
                     await self._conn.close()
 
-            # Create new connection
             self._conn = await asyncpg.connect(
                 host=self._host,
                 user=self._admin_username,
@@ -124,7 +101,6 @@ class PostgresConnector:
             self._current_database = database
             logger.debug(f"Created connection to {self._host}/{database}")
         else:
-            # Test existing connection health
             try:
                 await self._conn.fetchval("SELECT 1")
             except Exception:
@@ -155,40 +131,28 @@ class PostgresConnector:
                 self._conn = None
                 self._current_database = None
 
-    # Security validation methods
-
     @staticmethod
     def _validate_identifier(identifier: str, identifier_type: str = "identifier") -> str:
-        """Validate and sanitize SQL identifiers (usernames, schema names, etc.).
+        """Validate a SQL identifier (a username, a schema name).
 
-        Args:
-            identifier: The identifier to validate
-            identifier_type: Type of identifier for error messages
-
-        Returns:
-            Validated identifier
+        ``identifier_type`` only names the thing in the error message.
 
         Raises:
-            PostgresValidationError: If identifier is invalid
+            PostgresValidationError: empty, over PostgreSQL's 63 characters, not starting
+                with a letter or underscore, or a reserved word.
         """
         if not identifier:
             raise PostgresValidationError(f"{identifier_type} cannot be empty")
 
-        # Check length limits (PostgreSQL limit is 63 characters)
         if len(identifier) > 63:
             raise PostgresValidationError(f"{identifier_type} cannot exceed 63 characters")
 
-        # PostgreSQL identifier rules:
-        # - Must start with a letter (a-z, A-Z) or underscore
-        # - Can contain letters, digits, underscores, and dollar signs
-        # - Cannot be a PostgreSQL reserved word
         if not re.match(POSTGRES_IDENTIFIER, identifier):
             raise PostgresValidationError(
                 f"{identifier_type} '{identifier}' contains invalid characters. "
                 "Must start with letter/underscore and contain only letters, digits, underscores, and dollar signs."
             )
 
-        # Check against PostgreSQL reserved words (common ones)
         reserved_words = {
             "select",
             "insert",
@@ -285,21 +249,14 @@ class PostgresConnector:
 
     @staticmethod
     def _validate_privilege(privilege: str) -> str:
-        """Validate database privilege against allowlist.
-
-        Args:
-            privilege: The privilege to validate
-
-        Returns:
-            Validated privilege in uppercase
+        """Validate a role privilege against the allowlist and return it in uppercase.
 
         Raises:
-            PostgresValidationError: If privilege is invalid
+            PostgresValidationError: the privilege is not on the allowlist.
         """
         if not privilege:
             raise PostgresValidationError("Privilege cannot be empty")
 
-        # Allowlist of valid PostgreSQL privileges
         valid_privileges = {
             "CREATEDB",
             "NOCREATEDB",
@@ -320,9 +277,8 @@ class PostgresConnector:
 
         privilege_upper = privilege.upper().strip()
 
-        # Handle CONNECTION LIMIT specially (it has a numeric value)
+        # CONNECTION LIMIT carries a number, so it is not a plain allowlist hit.
         if privilege_upper.startswith("CONNECTION LIMIT"):
-            # Validate CONNECTION LIMIT format
             if not re.match(r"^CONNECTION LIMIT \d+$", privilege_upper):
                 raise PostgresValidationError(
                     "CONNECTION LIMIT must be followed by a number (e.g., 'CONNECTION LIMIT 10')"
@@ -338,21 +294,14 @@ class PostgresConnector:
 
     @staticmethod
     def _validate_schema_privilege(privilege: str) -> str:
-        """Validate schema privilege against allowlist.
-
-        Args:
-            privilege: The privilege to validate
-
-        Returns:
-            Validated privilege in uppercase
+        """Validate a schema privilege against the allowlist and return it in uppercase.
 
         Raises:
-            PostgresValidationError: If privilege is invalid
+            PostgresValidationError: the privilege is not on the allowlist.
         """
         if not privilege:
             raise PostgresValidationError("Schema privilege cannot be empty")
 
-        # Allowlist of valid schema privileges
         valid_schema_privileges = {"USAGE", "CREATE", "ALL", "ALL PRIVILEGES"}
 
         privilege_upper = privilege.upper().strip()
@@ -365,30 +314,16 @@ class PostgresConnector:
 
     @staticmethod
     def _quote_identifier(identifier: str) -> str:
-        """Safely quote SQL identifier to prevent injection.
-
-        Args:
-            identifier: Pre-validated identifier to quote
-
-        Returns:
-            Properly quoted identifier
-        """
-        # Double any existing quotes and wrap in quotes
+        """Quote a pre-validated identifier for use in DDL."""
         escaped = identifier.replace('"', '""')
         return f'"{escaped}"'
 
     @staticmethod
     def _validate_password(password: str) -> str:
-        """Validate password meets minimum security requirements.
-
-        Args:
-            password: The password to validate
-
-        Returns:
-            Validated password
+        """Validate a password against the minimum requirements.
 
         Raises:
-            PostgresValidationError: If password is invalid
+            PostgresValidationError: empty, shorter than 8, longer than 128, or without a digit.
         """
         if not password:
             raise PostgresValidationError("Password cannot be empty")
@@ -408,23 +343,8 @@ class PostgresConnector:
 
         return password
 
-    # In-cluster PostgreSQL host validation. Used at the subprocess boundary
-    # in _execute_pgdump_clone to guarantee that even if a future refactor
-    # leaks attacker-controlled values, the clone pipeline can only ever
-    # reach our own in-cluster PostgreSQL services -- not an external host
-    # that could exfiltrate data when used as the source of a streaming clone.
-    #
-    # Accepted forms:
-    #   * single DNS label (e.g. ``rig-db-rw``) -- bare K8s service name
-    #     resolved by cluster DNS, K8s DNS-1123 label rules
-    #   * FQDN ending in ``.svc.cluster.local`` (e.g.
-    #     ``rig-db-rw.rig-system.svc.cluster.local``)
-    #
-    # Rejected: external domains (``db.example.com``), IPv4 / IPv6 literals,
-    # anything with shell-special characters, NUL bytes, or control chars.
-
-    # K8s DNS-1123 label: lowercase letter/digit, optionally hyphen+chars,
-    # max 63 chars total.
+    # K8s DNS-1123 label: a lowercase letter or digit, optionally hyphen plus more, at most
+    # 63 characters. See _validate_in_cluster_host for what the pattern is for.
     _K8S_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
     _IN_CLUSTER_HOST_RE = re.compile(
         rf"^{_K8S_LABEL}"  # service name
@@ -435,17 +355,18 @@ class PostgresConnector:
     def _validate_in_cluster_host(host: str, field_name: str = "host") -> str:
         """Validate that a host points at an in-cluster K8s service.
 
-        Accepts only a bare K8s service name (``rig-db-rw``) or a full
-        cluster-DNS FQDN (``svc.namespace.svc.cluster.local``). Anything
-        else -- external domains, IP literals, anything with shell-special
-        or control characters -- is rejected.
+        Only a bare K8s service name (``rig-db-rw``) or a full cluster-DNS FQDN
+        (``svc.namespace.svc.cluster.local``) is accepted; an external domain, an IP literal
+        and anything with a shell-special or control character is refused. This is the
+        boundary ``_execute_pgdump_clone`` leans on: it keeps the streaming clone from ever
+        reaching a host outside the cluster that could receive our data.
         """
         if not host:
             raise PostgresValidationError(f"{field_name} cannot be empty")
         if len(host) > 253:
             raise PostgresValidationError(f"{field_name} '{host}' exceeds 253 characters")
-        # ipaddress.ip_address() is the canonical way to detect a literal
-        # IPv4 / IPv6 address; rejecting them blocks routing-by-IP entirely.
+        # ipaddress.ip_address() detects an IPv4 or IPv6 literal; refusing those blocks
+        # routing by IP entirely.
         try:
             import ipaddress
 
@@ -477,11 +398,8 @@ class PostgresConnector:
             raise PostgresValidationError(f"{field_name} contains NUL or newline characters")
         return password
 
-    # Explicit allow-list of TCP ports the clone pipeline may connect to.
-    # PostgreSQL's default is 5432; if a legitimate use case ever needs a
-    # different one (port-forward, NodePort, etc.) it is added here as a
-    # deliberate review-able change instead of hidden behind an unbounded
-    # int parameter.
+    # The TCP ports the clone pipeline may connect to. A new one is added here as a
+    # reviewable change rather than passed in as an unbounded int.
     _ALLOWED_PG_PORTS: frozenset[int] = frozenset({5432})
 
     @classmethod
@@ -495,14 +413,7 @@ class PostgresConnector:
         return port
 
     async def test_connection(self, database: str = "postgres") -> bool:
-        """Test database connection with the bound credentials.
-
-        Args:
-            database: Database name to connect to (defaults to 'postgres')
-
-        Returns:
-            True if connection successful, False otherwise
-        """
+        """Whether the bound credentials can connect to ``database``."""
         try:
             await self._get_or_create_connection(database)
             logger.info(f"Connection test successful for {self._admin_username}@{self._host}/{database}")
@@ -510,8 +421,6 @@ class PostgresConnector:
         except Exception as e:
             logger.debug(f"Connection test failed for {self._admin_username}@{self._host}/{database}: {e}")
             return False
-
-    # User Management Operations
 
     async def create_user(
         self,
@@ -521,20 +430,13 @@ class PostgresConnector:
         *,
         connection_limit: int,
     ) -> dict[str, Any]:
-        """Create a new database user using the bound admin credentials.
+        """Create a role; status "created" or "exists".
 
-        Args:
-            username: New username to create
-            password: Password for new user
-            database_privileges: List of database privileges to grant (e.g., ['CREATEDB', 'CREATEROLE'])
-            connection_limit: CONNECTION LIMIT of the role; the service decides the value
-
-        Returns:
-            Dictionary with operation status and details
+        ``connection_limit`` is the role's CONNECTION LIMIT, whose value the service decides.
 
         Raises:
-            PostgresExecutionError: If user creation fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the CREATE ROLE failed.
+            PostgresValidationError: a name, the password or a privilege does not hold up.
         """
         try:
             # Validate inputs
@@ -584,13 +486,12 @@ class PostgresConnector:
     async def set_connection_limit(self, username: str, connection_limit: int) -> dict[str, Any]:
         """Bring a role's CONNECTION LIMIT to ``connection_limit``, altering only on a difference.
 
-        Returns:
-            ``{"status": "unchanged" | "updated" | "not_found", "previous": int | None,
-            "connection_limit": int}``
+        Returns ``{"status": "unchanged" | "updated" | "not_found", "previous": int | None,
+        "connection_limit": int}``.
 
         Raises:
-            PostgresExecutionError: If reading or altering the role fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: reading or altering the role failed.
+            PostgresValidationError: the name or the limit does not hold up.
         """
         validated_username = self._validate_identifier(username, "username")
         validated_limit = self._validate_connection_limit(connection_limit)
@@ -612,17 +513,11 @@ class PostgresConnector:
         return {"status": "updated", "previous": previous, "connection_limit": validated_limit}
 
     async def delete_user(self, username: str) -> dict[str, Any]:
-        """Delete a database user using the bound admin credentials.
-
-        Args:
-            username: Username to delete
-
-        Returns:
-            Dictionary with operation status and details
+        """Delete a role; status "deleted" or "not_found".
 
         Raises:
-            PostgresExecutionError: If user deletion fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the DROP ROLE failed.
+            PostgresValidationError: the name does not hold up.
         """
         try:
             # Validate inputs
@@ -657,13 +552,10 @@ class PostgresConnector:
             raise PostgresExecutionError(f"User deletion failed: {e}") from e
 
     async def list_users(self) -> list[dict[str, Any]]:
-        """List all database users using the bound admin credentials.
-
-        Returns:
-            List of user dictionaries with details
+        """Every role on this server.
 
         Raises:
-            PostgresExecutionError: If listing users fails
+            PostgresExecutionError: the query failed.
         """
         try:
             # Get connection to postgres database
@@ -688,18 +580,11 @@ class PostgresConnector:
             raise PostgresExecutionError(f"User listing failed: {e}") from e
 
     async def update_user_password(self, username: str, new_password: str) -> dict[str, Any]:
-        """Update user password using the bound admin credentials.
-
-        Args:
-            username: Username to update
-            new_password: New password
-
-        Returns:
-            Dictionary with operation status and details
+        """Set a role's password; status "updated".
 
         Raises:
-            PostgresExecutionError: If password update fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the ALTER ROLE failed.
+            PostgresValidationError: the name or the password does not hold up.
         """
         try:
             # Validate inputs
@@ -730,22 +615,11 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Password update failed: {e}") from e
 
     async def update_user_privileges(self, username: str, database_privileges: list[str]) -> dict[str, Any]:
-        """Update user privileges using the bound admin credentials.
-
-        This method ensures the user has the specified privileges. It applies
-        each privilege via ALTER USER, making it idempotent (safe to call
-        multiple times with the same privileges).
-
-        Args:
-            username: Username to update
-            database_privileges: List of privileges to apply (e.g., ["SUPERUSER", "CREATEDB"])
-
-        Returns:
-            Dictionary with operation status and details
+        """Apply ``database_privileges`` to a role, one ALTER USER each, so it is idempotent.
 
         Raises:
-            PostgresExecutionError: If privilege update fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: an ALTER USER failed.
+            PostgresValidationError: the name or a privilege does not hold up.
         """
         try:
             # Validate inputs
@@ -785,21 +659,12 @@ class PostgresConnector:
             logger.exception(f"Failed to update privileges for user {username} on {self._host}")
             raise PostgresExecutionError(f"Privilege update failed: {e}") from e
 
-    # Database Management Operations
-
     async def create_database(self, database_name: str, owner: str | None = None) -> dict[str, Any]:
-        """Create a new database using the bound admin credentials.
-
-        Args:
-            database_name: Name of database to create
-            owner: Owner username for the database
-
-        Returns:
-            Dictionary with operation status and details
+        """Create a database owned by ``owner``; status "created" or "exists".
 
         Raises:
-            PostgresExecutionError: If database creation fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the CREATE DATABASE failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             # Validate inputs
@@ -840,27 +705,22 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Database creation failed: {e}") from e
 
     async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, Any]:
-        """Sluit een database af voor ``PUBLIC`` en geef alleen ``roles`` CONNECT.
+        """Close a database off for ``PUBLIC`` and give only ``roles`` CONNECT.
 
-        PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan ``PUBLIC``, dus zonder
-        deze REVOKE kan elke rol op de server met elke database verbinden en de catalogus
-        lezen. De eigenaar houdt zijn rechten los van de GRANT-lijst, want een REVOKE van
-        ``PUBLIC`` raakt hem niet.
+        PostgreSQL grants a new database CONNECT and TEMPORARY to ``PUBLIC``, so without this
+        REVOKE every role on the server can connect to every database and read its catalog.
+        The owner keeps its rights independently of the GRANT list, because a REVOKE from
+        ``PUBLIC`` does not touch the owner.
 
-        Herhaalbaar: REVOKE en GRANT zijn in PostgreSQL idempotent, dus elke verwerking mag
-        dit opnieuw doen. Welke standen er zijn en waarom ``dry-run`` de standaard is staat
-        bij ``DATABASE_RESTRICT_PUBLIC_CONNECT`` in ``opi/core/config.py``.
+        Repeatable: REVOKE and GRANT are idempotent in PostgreSQL, so every processing round
+        may do this again. The modes, and why ``dry-run`` is the default, are documented at
+        ``DATABASE_RESTRICT_PUBLIC_CONNECT`` in ``opi/core/config.py``.
 
-        Args:
-            database: Database die wordt afgesloten
-            roles: Rollen die expliciet CONNECT krijgen
-
-        Returns:
-            Dictionary met de stand, de statements en bij ``dry-run`` wie er verbonden is
+        Returns the mode, the statements, and on ``dry-run`` who is connected.
 
         Raises:
-            PostgresExecutionError: If revoking or granting fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the REVOKE or a GRANT failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             validated_database = self._validate_identifier(database, "database")
@@ -896,13 +756,13 @@ class PostgresConnector:
                         validated_database,
                     )
                 ]
-                # De rollen die NIET op de lijst staan zijn wat `on` gaat afsluiten; dat is
-                # de regel waar een beheerder naar zoekt voordat hij omzet.
-                afgesloten = [role for role in connected if role not in validated_roles]
+                # The roles NOT on the list are what `on` will shut out, and that is the line
+                # an administrator looks for before switching over.
+                losing_access = [role for role in connected if role not in validated_roles]
                 logger.info(
                     f"dry-run voor database {validated_database} op {self._host}: "
                     f"{len(statements)} statement(s) {statements}, nu verbonden {connected}, "
-                    f"zou de toegang verliezen {afgesloten}"
+                    f"zou de toegang verliezen {losing_access}"
                 )
                 return {
                     "status": "dry-run",
@@ -932,13 +792,13 @@ class PostgresConnector:
             logger.exception(f"Failed to restrict database {database} on {self._host}")
             raise PostgresExecutionError(f"Database restriction failed: {e}") from e
 
-    #: De catalogusvragen van :meth:`transfer_public_objects`, per objectsoort. Elke vraag
-    #: bouwt zijn eigen ALTER-statement met ``quote_ident`` en de ``reg*``-casts van
-    #: PostgreSQL zelf: die namen komen uit de catalogus en zijn daar al correct genoteerd,
-    #: inclusief overload-signaturen die een identifier niet kan dragen.
+    #: The catalog queries of :meth:`transfer_public_objects`, per object kind. Each query
+    #: builds its own ALTER statement with ``quote_ident`` and PostgreSQL's own ``reg*``
+    #: casts: those names come out of the catalog and are already written correctly there,
+    #: overload signatures included, which an identifier cannot carry.
     #:
-    #: $1 is de nieuwe eigenaar, $2 de huidige. Een object dat al van de nieuwe eigenaar is
-    #: levert geen statement, dus een tweede ronde doet niets.
+    #: $1 is the new owner, $2 the current one. An object that already belongs to the new
+    #: owner yields no statement, so a second round does nothing.
     _OWNER_TRANSFER_QUERIES: ClassVar[dict[str, str]] = {
         "database": """
             SELECT 'ALTER DATABASE ' || quote_ident(d.datname) || ' OWNER TO ' || quote_ident($1)
@@ -950,9 +810,9 @@ class PostgresConnector:
             FROM pg_namespace n JOIN pg_roles o ON o.oid = n.nspowner
             WHERE n.nspname = 'public' AND o.rolname = $2
         """,
-        # Tabellen eerst, en zonder de sequences en indexen die aan een tabelkolom hangen:
-        # PostgreSQL weigert de eigenaar van zo'n sequence los te zetten, en laat hem bij
-        # de tabel mee verhuizen.
+        # Tables first, and without the sequences and indexes that hang off a table column:
+        # PostgreSQL refuses to set such a sequence's owner separately and moves it along
+        # with the table.
         "relation": """
             SELECT CASE c.relkind
                        WHEN 'v' THEN 'ALTER VIEW '
@@ -970,8 +830,8 @@ class PostgresConnector:
               )
             ORDER BY c.relkind
         """,
-        # Alleen zelfstandige types: het compositetype van een tabel en het arraytype van
-        # een element volgen hun eigenaar automatisch.
+        # Standalone types only: a table's composite type and an element's array type follow
+        # their owner by themselves.
         "type": """
             SELECT 'ALTER TYPE ' || t.oid::regtype::text || ' OWNER TO ' || quote_ident($1)
             FROM pg_type t JOIN pg_roles o ON o.oid = t.typowner
@@ -992,26 +852,20 @@ class PostgresConnector:
     }
 
     async def transfer_public_objects(self, database: str, new_owner: str, current_owner: str) -> dict[str, int]:
-        """Geef ``database`` en alles in zijn schema ``public`` aan ``new_owner``.
+        """Give ``database`` and everything in its ``public`` schema to ``new_owner``.
 
-        Voor OPI's eigen database: de migraties draaien als de app-rol en moeten dus elke
-        bestaande tabel bezitten, ook ``alembic_version`` (RC-410). Idempotent, en bedoeld
-        om bij elke start te draaien: alleen wat nog van ``current_owner`` is verhuist.
+        For OPI's own database: the migrations run as the app role and therefore have to own
+        every existing table, ``alembic_version`` included. Idempotent, and meant to run at
+        every start: only what still belongs to ``current_owner`` moves.
 
-        Geen ``REASSIGN OWNED BY``: dat raakt ook objecten buiten deze database, en op een
-        superuser is het ongeldig.
+        No ``REASSIGN OWNED BY``: that also touches objects outside this database, and on a
+        superuser it is invalid.
 
-        Args:
-            database: De database waarvan de objecten verhuizen
-            new_owner: De rol die eigenaar wordt
-            current_owner: Alleen objecten van deze rol verhuizen
-
-        Returns:
-            Het aantal verhuisde objecten per soort
+        Returns the number of objects moved, per kind.
 
         Raises:
-            PostgresExecutionError: Als een ALTER faalt
-            PostgresValidationError: Als een naam ongeldig is
+            PostgresExecutionError: an ALTER failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             validated_database = self._validate_identifier(database, "database")
@@ -1019,24 +873,24 @@ class PostgresConnector:
             validated_current_owner = self._validate_identifier(current_owner, "current owner")
 
             conn = await self._get_or_create_connection(validated_database)
-            verhuisd: dict[str, int] = {}
-            for soort, vraag in self._OWNER_TRANSFER_QUERIES.items():
-                statements = [row[0] for row in await conn.fetch(vraag, validated_new_owner, validated_current_owner)]
+            moved: dict[str, int] = {}
+            for kind, query in self._OWNER_TRANSFER_QUERIES.items():
+                statements = [row[0] for row in await conn.fetch(query, validated_new_owner, validated_current_owner)]
                 for statement in statements:
                     await conn.execute(statement)
-                verhuisd[soort] = len(statements)
+                moved[kind] = len(statements)
 
-            if any(verhuisd.values()):
+            if any(moved.values()):
                 logger.info(
                     f"Eigendom in {validated_database} verplaatst van {validated_current_owner} "
-                    f"naar {validated_new_owner}: {verhuisd}"
+                    f"naar {validated_new_owner}: {moved}"
                 )
             else:
                 logger.info(
                     f"Eigendom in {validated_database} staat al goed; niets van "
                     f"{validated_current_owner} te verplaatsen"
                 )
-            return verhuisd
+            return moved
 
         except PostgresValidationError:
             logger.exception("Validation failed for owner transfer")
@@ -1046,21 +900,11 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Owner transfer failed: {e}") from e
 
     async def execute_init_sql(self, database_name: str, sql_statements: list[str]) -> dict[str, Any]:
-        """Execute initialization SQL statements on a specific database.
-
-        This is typically used to create extensions or run other setup SQL
-        after a database has been created.
-
-        Args:
-            database_name: Name of database to connect to
-            sql_statements: List of SQL statements to execute
-
-        Returns:
-            Dictionary with operation status and details
+        """Run the init statements of a freshly created database; status "success" or "skipped".
 
         Raises:
-            PostgresExecutionError: If SQL execution fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: a statement failed.
+            PostgresValidationError: the database name does not hold up.
         """
         if not sql_statements:
             return {"status": "skipped", "message": "No SQL statements to execute"}
@@ -1068,7 +912,6 @@ class PostgresConnector:
         try:
             validated_database_name = self._validate_identifier(database_name, "database name")
 
-            # Connect to the target database (not postgres)
             conn = await self._get_or_create_connection(validated_database_name)
 
             executed = []
@@ -1101,17 +944,11 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Init SQL execution failed: {e}") from e
 
     async def delete_database(self, database_name: str) -> dict[str, Any]:
-        """Delete a database using the bound admin credentials.
-
-        Args:
-            database_name: Name of database to delete
-
-        Returns:
-            Dictionary with operation status and details
+        """Delete a database; status "deleted" or "not_found".
 
         Raises:
-            PostgresExecutionError: If database deletion fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the DROP DATABASE failed.
+            PostgresValidationError: the name does not hold up.
         """
         try:
             # Validate inputs
@@ -1154,14 +991,7 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Database deletion failed: {e}") from e
 
     async def count_active_connections(self, database_name: str) -> int:
-        """Count active connections to a database, excluding this connection.
-
-        Args:
-            database_name: Name of the database to check
-
-        Returns:
-            Number of active backend connections
-        """
+        """How many backends are connected to a database, this connection excluded."""
         validated_database_name = self._validate_identifier(database_name, "database name")
         conn = await self._get_or_create_connection("postgres")
         count = await conn.fetchval(
@@ -1171,13 +1001,10 @@ class PostgresConnector:
         return int(count or 0)
 
     async def list_databases(self) -> list[dict[str, Any]]:
-        """List all databases using the bound admin credentials.
-
-        Returns:
-            List of database dictionaries with details
+        """Every database on this server.
 
         Raises:
-            PostgresExecutionError: If listing databases fails
+            PostgresExecutionError: the query failed.
         """
         try:
             # Get connection to postgres database
@@ -1202,22 +1029,12 @@ class PostgresConnector:
             logger.exception(f"Failed to list databases on {self._host}")
             raise PostgresExecutionError(f"Database listing failed: {e}") from e
 
-    # Schema Management Operations
-
     async def create_schema(self, schema_name: str, database: str, owner: str) -> dict[str, Any]:
-        """Create a new database schema using the bound admin credentials.
-
-        Args:
-            schema_name: Name of schema to create
-            database: Database name to connect to
-            owner: Owner username for the schema
-
-        Returns:
-            Dictionary with operation status and details
+        """Create a schema owned by ``owner`` in ``database``; status "created" or "exists".
 
         Raises:
-            PostgresExecutionError: If schema creation fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the CREATE SCHEMA failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             # Validate inputs
@@ -1254,24 +1071,17 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Schema creation failed: {e}") from e
 
     async def set_role_search_path(self, username: str, database: str, schemas: list[str]) -> None:
-        """Set the default search_path for a role scoped to a specific database.
+        """Set a role's default search_path, scoped to one database.
 
-        This ensures applications that don't explicitly set a search_path
-        (e.g. via connection options) still resolve to the correct schema. With
-        multiple schemas (RC-17) the order is preserved -- the primary schema first --
-        and ``public`` is always appended last.
+        An application that does not set a search_path of its own then still resolves to the
+        right schema. ``schemas`` keeps its order, the primary one first, and ``public`` is
+        always appended last; it must not be empty.
 
-        Executes: ALTER ROLE <user> IN DATABASE <db> SET search_path TO <schemas...>, public
-
-        Args:
-            username: Role name to configure
-            database: Database to scope the setting to
-            schemas: Ordered schemas to set as the search_path (primary first); must be
-                non-empty.
+        Runs: ALTER ROLE <user> IN DATABASE <db> SET search_path TO <schemas...>, public
 
         Raises:
-            PostgresExecutionError: If the ALTER ROLE fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the ALTER ROLE failed.
+            PostgresValidationError: a name does not hold up.
         """
         if not schemas:
             raise PostgresValidationError("set_role_search_path requires at least one schema")
@@ -1294,19 +1104,11 @@ class PostgresConnector:
         )
 
     async def delete_schema(self, schema_name: str, database: str, cascade: bool = False) -> dict[str, Any]:
-        """Delete a database schema using the bound admin credentials.
-
-        Args:
-            schema_name: Name of schema to delete
-            database: Database name to connect to
-            cascade: Whether to cascade delete (remove all objects)
-
-        Returns:
-            Dictionary with operation status and details
+        """Delete a schema; ``cascade`` takes the objects in it with it.
 
         Raises:
-            PostgresExecutionError: If schema deletion fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the DROP SCHEMA failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             # Validate inputs
@@ -1348,18 +1150,14 @@ class PostgresConnector:
 
         This is the bottom under a restore: restoring into a database that already holds
         the application's tables adds the backup ON TOP of the rows already there, which
-        is how a repeated restore doubled a row count (RC-123). A database that exists but
-        is still empty is fine to restore into -- that is what a retry after a restore that
-        failed halfway looks like -- so the question is "empty?", not "exists?".
+        is how a repeated restore doubles a row count. A database that exists but is still
+        empty is fine to restore into, which is what a retry after a restore that failed
+        halfway looks like, so the question is "empty?", not "exists?".
 
-        Args:
-            database: Database name to inspect
-
-        Returns:
-            True if any table, view, sequence or foreign table exists in a non-system schema
+        True when any table, view, sequence or foreign table exists in a non-system schema.
 
         Raises:
-            PostgresExecutionError: If the check cannot be performed
+            PostgresExecutionError: the check could not be performed.
         """
         try:
             conn = await self._get_or_create_connection(database)
@@ -1381,16 +1179,10 @@ class PostgresConnector:
             raise PostgresExecutionError(f"Database emptiness check failed: {e}") from e
 
     async def list_schemas(self, database: str) -> list[dict[str, Any]]:
-        """List all database schemas using the bound admin credentials.
-
-        Args:
-            database: Database name to list schemas from
-
-        Returns:
-            List of schema dictionaries with details
+        """Every schema in ``database``.
 
         Raises:
-            PostgresExecutionError: If listing schemas fails
+            PostgresExecutionError: the query failed.
         """
         try:
             # Get connection to the specified database
@@ -1460,20 +1252,11 @@ class PostgresConnector:
     async def grant_schema_permissions(
         self, database: str, schema_name: str, username: str, permissions: list[str] | None = None
     ) -> dict[str, Any]:
-        """Grant permissions on a schema to a user using the bound admin credentials.
-
-        Args:
-            database: Database name where schema exists
-            schema_name: Name of schema
-            username: Username to grant permissions to
-            permissions: List of permissions (defaults to ['USAGE', 'CREATE'])
-
-        Returns:
-            Dictionary with operation status and details
+        """Grant ``permissions`` on a schema to a role; USAGE and CREATE when not given.
 
         Raises:
-            PostgresExecutionError: If granting permissions fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: a GRANT failed.
+            PostgresValidationError: a name or a permission does not hold up.
         """
         if permissions is None:
             permissions = ["USAGE", "CREATE"]
@@ -1529,22 +1312,14 @@ class PostgresConnector:
     async def grant_readonly_on_schema(self, database: str, schema_name: str, username: str) -> dict[str, Any]:
         """Grant strictly read-only access on a schema to a role.
 
-        Unlike grant_schema_permissions (which grants ALL on tables), this grants
-        only CONNECT/USAGE/SELECT and sets default privileges so tables created
-        later in the session stay readable. This is the server-side boundary for a
-        read-only database console; the tool's own read-only flag is only a hint.
-
-        Args:
-            database: Database where the schema lives (connection target)
-            schema_name: Schema to grant read access on
-            username: Role that receives read-only access
-
-        Returns:
-            Dictionary with operation status and details
+        Unlike ``grant_schema_permissions``, which grants ALL on the tables, this grants only
+        CONNECT, USAGE and SELECT, and sets default privileges so a table created later stays
+        readable. This is the server-side boundary for a read-only database console; the
+        tool's own read-only flag is no more than a hint.
 
         Raises:
-            PostgresExecutionError: If granting fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: a GRANT failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             validated_database = self._validate_identifier(database, "database")
@@ -1602,22 +1377,10 @@ class PostgresConnector:
         username: str | None = None,
         password: str | None = None,
     ) -> list[str]:
-        """Query extensions installed in a specific schema of a database.
+        """The extensions installed in one schema of a database.
 
-        When host/username/password are provided, creates a temporary connection
-        to the specified server (for external sources). Otherwise uses the bound
-        server connection.
-
-        Args:
-            database: Database name to query
-            schema: Schema name to check for extensions
-            host: Optional external host (defaults to bound server)
-            port: Database port (default 5432)
-            username: Optional external username (defaults to bound admin)
-            password: Optional external password (defaults to bound admin)
-
-        Returns:
-            List of extension names installed in the schema
+        With ``host``, ``username`` and ``password`` this opens a temporary connection to
+        that server, for an external source; without them it uses the bound connection.
         """
         query = (
             "SELECT e.extname FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE n.nspname = $1"
@@ -1654,31 +1417,15 @@ class PostgresConnector:
         source_username: str | None = None,
         source_password: str | None = None,
     ) -> list[str]:
-        """Pre-create extensions in the target schema before pg_dump clone.
+        """Install the source schema's extensions in the target schema, before the pg_dump.
 
-        pg_dump -n does not include CREATE EXTENSION statements. If the source schema
-        has extensions installed, the dumped DDL will reference extension functions
-        (e.g. uuid_generate_v4()) that don't exist in the target, causing the restore
-        to fail. This method queries the source for extensions and installs them in
-        the target schema before the pg_dump pipeline runs.
+        ``pg_dump -n`` leaves CREATE EXTENSION out, so the dumped DDL references extension
+        functions (``uuid_generate_v4()``) the target does not have and the restore fails.
 
-        For same-server clones, leave source_host as None (uses bound server).
-        For external-source clones, provide explicit source connection parameters.
+        ``source_host`` and friends are only for an external source; without them the source
+        is the bound server. The target is always the bound server.
 
-        The target is always on the bound server (self._host).
-
-        Args:
-            source_database: Source database to query for extensions
-            source_schema: Source schema containing the extensions
-            target_database: Target database where extensions should be installed
-            target_schema: Target schema name for the extensions (may differ from source)
-            source_host: Optional external source host (defaults to bound server)
-            source_port: Source database port (default 5432)
-            source_username: Optional external source username
-            source_password: Optional external source password
-
-        Returns:
-            List of extension names that were pre-created
+        Returns the extensions that were created.
         """
         extensions = await self._get_schema_extensions(
             source_database,
@@ -1737,31 +1484,19 @@ class PostgresConnector:
         target_owner_password: str,
         additional_schemas: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
-        """Clone a schema from source database to target database on the bound server.
+        """Clone a schema between two databases on the bound server.
 
-        This method clones within the SAME PostgreSQL server (the one this connector is bound to).
-        It uses pg_dump to stream schema data, avoiding the PostgreSQL template limitation.
-        The approach is production-safe and works with active databases.
+        Streamed through pg_dump, which works on an active database; the PostgreSQL template
+        route does not.
 
-        Args:
-            source_database: Source database name (on bound server)
-            target_database: Target database name (on bound server)
-            source_schema: Source schema name
-            target_schema: Target schema name
-            target_owner: Owner for the cloned schema
-            target_owner_password: Password for target owner (needed for pg_dump)
-            additional_schemas: Extra schemas to clone into the same target database, as
-                ``(source_name, target_name)`` pairs: the schemas ZAD declared (RC-17)
-                plus the ones the application created itself (RC-360). They ride along in
-                the same single pg_dump as the default schema, so a reference between two
-                of them restores (RC-360).
-
-        Returns:
-            Dictionary with operation status and details
+        ``additional_schemas`` are extra schemas to clone into the same target database, as
+        ``(source_name, target_name)`` pairs: the ones ZAD declared plus the ones the
+        application created itself. They ride along in the SAME single pg_dump as the default
+        schema, so a reference between two of them restores.
 
         Raises:
-            PostgresExecutionError: If schema cloning fails
-            PostgresValidationError: If input validation fails
+            PostgresExecutionError: the clone failed.
+            PostgresValidationError: a name does not hold up.
         """
         try:
             # Validate inputs
@@ -1868,53 +1603,14 @@ class PostgresConnector:
         target_owner_password: str,
         force_clone: bool = False,
     ) -> dict[str, Any]:
-        """Clone a schema from an external database server to this connector's bound server.
+        """Clone a schema from another PostgreSQL server onto the bound server.
 
-        This method enables cloning databases from a DIFFERENT PostgreSQL server (external source)
-        to the server this connector is bound to (target). Useful for:
-        - Migrating data from external production to local staging
-        - Cloning from databases exposed via port-forward, NodePort or LoadBalancer
-        - Cross-cluster data synchronization
-
-        The target server is the one this connector is bound to (self._host).
-
-        Args:
-            source_host: External source database host (IP or domain)
-            source_port: External source database port (e.g., 15432 for port-forward, 5432 direct)
-            source_username: Username for external source connection
-            source_password: Password for external source connection
-            source_database: Source database name on external cluster
-            source_schema: Source schema name to clone
-            target_database: Target database name on THIS connector's bound server
-            target_schema: Target schema name on THIS connector's bound server
-            target_owner: Owner for the cloned schema on target
-            target_owner_password: Password for target owner
-            force_clone: If True, drop existing target schema (default: False)
-
-        Returns:
-            Dictionary with operation status and details
+        The source is the ``source_*`` server, the target always the bound one.
+        ``force_clone`` drops an existing target schema first.
 
         Raises:
-            PostgresExecutionError: If schema cloning fails
-            PostgresValidationError: If input validation fails
-
-        Example:
-            >>> # Connector is bound to local server
-            >>> connector = PostgresConnector("localhost", "postgres", "local_admin_pass")
-            >>>
-            >>> # Clone FROM external TO bound server (localhost)
-            >>> result = await connector.clone_schema_from_external(
-            ...     source_host="external-db.example.com",  # External source
-            ...     source_port=5432,
-            ...     source_username="readonly_user",
-            ...     source_password="external_password",
-            ...     source_database="production_db",
-            ...     source_schema="production_schema",
-            ...     target_database="staging_db",  # On bound server (localhost)
-            ...     target_schema="staging_schema",
-            ...     target_owner="staging_owner",
-            ...     target_owner_password="owner_password"
-            ... )
+            PostgresExecutionError: the clone failed.
+            PostgresValidationError: a name, host or port does not hold up.
         """
         try:
             # Validate all identifiers
@@ -2053,31 +1749,19 @@ class PostgresConnector:
         working order for a cycle. The restore runs as ``target_owner``, so every restored
         object is owned by that role.
 
-        Port is fixed at the PostgreSQL default (5432); we never accept an
-        upstream port. Host must point at an in-cluster K8s service; external
-        hosts are rejected by ``_validate_in_cluster_host`` so a tenant
-        cannot redirect the streaming pipeline at an attacker-controlled
-        endpoint.
+        The port is fixed at PostgreSQL's default: an upstream port is never accepted. A host
+        has to point at an in-cluster K8s service, which ``_validate_in_cluster_host``
+        enforces, so a tenant cannot aim the streaming pipeline at an endpoint of its own.
 
         Args:
-            source_host: Source database host (in-cluster K8s service only)
-            source_username: Username for source database connection
-            source_password: Password for source database connection
-            source_database: Source database name
-            target_host: Target database host (in-cluster K8s service only)
-            target_username: Username for target database admin connection
-            target_password: Password for target database admin connection
-            target_database: Target database name
-            target_owner: Owner for the cloned schemas
-            target_owner_password: Password for target owner
-            schema_pairs: The schemas to clone, as ``(source_name, target_name)`` pairs;
-                a pair with equal names keeps its name in the target.
-            precreated_schemas: Source names that ``_precreate_extensions_for_clone``
-                already created in the target, so their existence check is skipped
-            force_clone: If True, allows dropping existing target schemas (default: False)
+            schema_pairs: The schemas to clone, as ``(source_name, target_name)`` pairs; a
+                pair with equal names keeps its name in the target.
+            precreated_schemas: Source names ``_precreate_extensions_for_clone`` already
+                created in the target, so their existence check is skipped.
+            force_clone: Allows dropping an existing target schema.
 
         Raises:
-            Exception: If clone operation fails
+            Exception: the clone failed.
         """
         if not schema_pairs:
             raise PostgresValidationError("schema_pairs cannot be empty")
@@ -2153,7 +1837,7 @@ class PostgresConnector:
                 _, check_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",  # noqa: S608  # psql -c does not interpolate psql variables, and the name passed _validate_identifier at the top of this function
                     tuples_only=True,
                 )
                 if not check_out.strip():
@@ -2185,7 +1869,7 @@ class PostgresConnector:
                 _, check_target_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c does not interpolate psql variables, and the name passed _validate_identifier at the top of this function
                     tuples_only=True,
                 )
                 if check_target_out.strip():
@@ -2247,14 +1931,14 @@ class PostgresConnector:
                 import subprocess
 
                 def _run_clone_pipeline() -> tuple[int, bytes, int, bytes, bytes]:
-                    dump = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+                    dump = subprocess.Popen(  # noqa: S603  # no shell; the variable parts are separate argv elements
                         dump_args,
                         env=source_env,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                     )
                     rewrite = subprocess.Popen(
-                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                         stdin=dump.stdout,
                         stdout=subprocess.PIPE,
                         env=child_env(),
@@ -2263,8 +1947,8 @@ class PostgresConnector:
                     if dump.stdout is None:
                         raise RuntimeError("pg_dump did not open a stdout pipe")
                     dump.stdout.close()
-                    restore = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                    restore = subprocess.Popen(  # noqa: S603  # no shell; the variable parts are separate argv elements
+                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                         env=target_env,
                         stdin=rewrite.stdout,
                         stdout=subprocess.PIPE,
@@ -2275,11 +1959,11 @@ class PostgresConnector:
                         raise RuntimeError("sed did not open a stdout pipe")
                     rewrite.stdout.close()
 
-                    co, ce = restore.communicate()
-                    de = dump.stderr.read() if dump.stderr else b""
+                    restore_out, restore_err = restore.communicate()
+                    dump_stderr = dump.stderr.read() if dump.stderr else b""
                     dump.wait()
                     rewrite.wait()
-                    return dump.returncode or 0, de, restore.returncode or 0, co, ce
+                    return dump.returncode or 0, dump_stderr, restore.returncode or 0, restore_out, restore_err
 
                 dump_rc, dump_err, restore_rc, clone_out, clone_err = await asyncio.to_thread(_run_clone_pipeline)
 
@@ -2316,7 +2000,7 @@ class PostgresConnector:
                 _, check_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c does not interpolate psql variables, and the name passed _validate_identifier at the top of this function
                     tuples_only=True,
                 )
                 if check_out.strip():
@@ -2375,16 +2059,6 @@ class PostgresConnector:
             raise Exception(f"Failed to clone schema using pg_dump: {e}") from e
 
 
-# Factory function for creating connector instances
 def create_postgres_connector(host: str, admin_username: str, admin_password: str) -> PostgresConnector:
-    """Factory function to create a PostgresConnector instance bound to specific credentials.
-
-    Args:
-        host: Database host
-        admin_username: Admin username for database operations
-        admin_password: Admin password for database operations
-
-    Returns:
-        PostgresConnector instance bound to the specified database server
-    """
+    """A connector bound to one server and one set of admin credentials."""
     return PostgresConnector(host, admin_username, admin_password)

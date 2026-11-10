@@ -1,10 +1,4 @@
-"""
-MinIO connector using mc CLI commands.
-
-This module provides functionality to interact with MinIO for bucket management,
-user operations, and access control by executing mc CLI commands directly,
-following the same pattern as kubectl.py.
-"""
+"""Buckets, users, policies and bucket lifecycle on MinIO, through the mc CLI."""
 
 import asyncio
 import contextlib
@@ -25,25 +19,23 @@ logger = logging.getLogger(__name__)
 
 
 class MinioConnectionError(Exception):
-    """Exception raised when MinIO connection is not available."""
+    """The mc CLI is not available."""
 
 
 class MinioExecutionError(Exception):
-    """Exception raised when mc command execution fails."""
+    """An mc command exited non-zero."""
 
 
 class MinioValidationError(Exception):
-    """Exception raised when input validation fails."""
+    """A bucket, user or policy name does not meet the rules."""
 
 
-#: Het ID van de lifecycle-regel die OPI op een bucket met versioning beheert. Andere
-#: regels op dezelfde bucket blijven staan; deze ene wordt vervangen.
+#: The ID of the lifecycle rule OPI owns on a bucket with versioning. Other rules on the same
+#: bucket stay; this one is replaced.
 NONCURRENT_VERSION_RULE_ID = "zad-noncurrent-versions"
 
 
 class MinioConnector:
-    """Connector for interacting with MinIO using mc CLI commands."""
-
     _instance = None
     _lock = threading.Lock()
     is_mc_available = False
@@ -51,7 +43,6 @@ class MinioConnector:
     _retry_task = None
 
     def __new__(cls) -> MinioConnector:
-        """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -60,26 +51,22 @@ class MinioConnector:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the MinIO connector."""
         if self._initialized:
             return
 
         logger.debug("Initializing MinioConnector")
 
-        # Setup environment variables for mc
         self.env = child_env()
 
-        # Set MC_CONFIG_DIR if not already set via environment
-        # This allows ConfigMap/env overrides while providing a sensible default
+        # A ConfigMap or env override wins over the setting.
         if "MC_CONFIG_DIR" not in self.env:
             self.env["MC_CONFIG_DIR"] = settings.MC_CONFIG_DIR
             logger.debug(f"Set MC_CONFIG_DIR to: {settings.MC_CONFIG_DIR}")
 
-        # Test mc CLI availability synchronously during initialization
         try:
             import subprocess
 
-            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)  # noqa: S607  # a tool from the image's PATH, not a fixed path
             if result.returncode == 0:
                 logger.info("MinIO CLI (mc) is available")
                 MinioConnector.is_mc_available = True
@@ -93,14 +80,10 @@ class MinioConnector:
         self._initialized = True
         logger.debug("MinioConnector initialized successfully")
 
-    # Security validation methods
-
-    # De drie naamtoetsen staan in opi/utils/naming.py: seaweedfs-storage stelt dezelfde
-    # eis (RC-331). Hier blijft de vertaling naar MinioValidationError staan, zodat de
-    # aanroepers en hun foutafhandeling onveranderd zijn.
+    # The three name checks live in opi/utils/naming.py, because seaweedfs-storage makes the
+    # same demand. Only the translation to MinioValidationError stays here.
     @staticmethod
     def _validate_bucket_name(bucket_name: str) -> str:
-        """Validate and sanitize bucket names according to S3 specifications."""
         try:
             return validate_bucket_name(bucket_name)
         except ValueError as e:
@@ -108,7 +91,6 @@ class MinioConnector:
 
     @staticmethod
     def _validate_username(username: str) -> str:
-        """Validate and sanitize MinIO usernames."""
         try:
             return validate_object_store_username(username)
         except ValueError as e:
@@ -116,19 +98,12 @@ class MinioConnector:
 
     @staticmethod
     def _validate_policy_name(policy_name: str) -> str:
-        """Validate policy name."""
         try:
             return validate_policy_name(policy_name)
         except ValueError as e:
             raise MinioValidationError(str(e)) from e
 
     async def _test_mc_availability(self) -> bool:
-        """
-        Test if mc CLI is available.
-
-        Returns:
-            True if mc is available, False otherwise
-        """
         try:
             logger.debug("Testing mc CLI availability")
 
@@ -155,25 +130,13 @@ class MinioConnector:
     async def _run_mc_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
     ) -> tuple[str, str, int]:
-        """
-        Run an mc command directly with subprocess.
-
-        Args:
-            args: List of mc command arguments
-            env: Optional environment variables
-            stdin_input: Optional string to pass to stdin
-
-        Returns:
-            Tuple of (stdout, stderr, return_code)
+        """One mc command; returns (stdout, stderr, exit code) without raising on non-zero.
 
         Raises:
-            MinioConnectionError: If mc CLI is not available
-            MinioExecutionError: If mc command fails
+            MinioConnectionError: when the mc CLI is not available.
         """
-        # Check MC CLI availability before running command
         if not MinioConnector.is_mc_available:
             raise MinioConnectionError("MC CLI is not available")
-        # Set up environment
         cmd_env = self.env.copy()
         if env:
             cmd_env.update(env)
@@ -195,7 +158,6 @@ class MinioConnector:
             async with track_subprocess_memory("minio-mc"):
                 stdout, stderr = await process.communicate(input=stdin_input.encode())
         else:
-            # Use regular exec for commands without stdin
             cmd = ["mc"]
             cmd.extend(args)
 
@@ -219,44 +181,29 @@ class MinioConnector:
     async def configure_alias(
         self, alias: str, host: str, access_key: str, secret_key: str, secure: bool = False, region: str = "us-east-1"
     ) -> bool:
-        """
-        Configure an mc alias for the MinIO server.
+        """Register an alias and prove it works by listing buckets; False when that failed.
 
-        Note: The region parameter is kept for documentation but not passed to mc CLI,
-        as mc alias doesn't support region configuration. Region is used when creating
-        secrets for Python MinIO clients.
-
-        Args:
-            alias: Alias name for the MinIO server
-            host: MinIO server host (e.g., "minio.example.com:9000")
-            access_key: Access key for authentication
-            secret_key: Secret key for authentication
-            secure: Whether to use HTTPS
-            region: AWS region for documentation (not used by mc alias command)
-
-        Returns:
-            True if alias was configured successfully, False otherwise
+        ``region`` does not reach mc at all: ``mc alias`` has no region option. It is here
+        because the secrets for the Python MinIO clients are written from the same values.
         """
         logger.debug(f"Configuring mc alias: {alias}")
 
         try:
             protocol = "https" if secure else "http"
 
-            # MC_HOST_<alias> in de omgeving in plaats van "mc alias set": de sleutels
-            # staan dan niet op een commandoregel, die leesbaar is voor elk proces in de
-            # container via /proc/<pid>/cmdline.
+            # MC_HOST_<alias> in the environment rather than "mc alias set": the keys are then
+            # not on a command line, which every process in the container can read through
+            # /proc/<pid>/cmdline.
             self.env[f"MC_HOST_{alias}"] = (
                 f"{protocol}://{quote(access_key, safe='')}:{quote(secret_key, safe='')}@{host}"
             )
 
-            # Test the alias by listing buckets
             test_stdout, test_stderr, test_code = await self._run_mc_command(["ls", alias])
             if test_code != 0:
                 logger.warning(f"Alias {alias} configured but connection test failed: {test_stderr}")
                 del self.env[f"MC_HOST_{alias}"]
                 return False
 
-            # Add to configured aliases set
             MinioConnector.configured_aliases.add(alias)
             logger.info(f"Successfully configured and tested alias: {alias}")
             return True
@@ -266,19 +213,10 @@ class MinioConnector:
             return False
 
     async def test_alias_connection(self, alias: str) -> bool:
-        """
-        Test connection to a specific MinIO alias.
-
-        Args:
-            alias: MinIO server alias to test
-
-        Returns:
-            True if connection is successful, False otherwise
-        """
+        """List the buckets to see whether the alias works, and record the outcome."""
         try:
             logger.debug(f"Testing connection to alias: {alias}")
 
-            # Try to list buckets as a connectivity test
             stdout, stderr, code = await self._run_mc_command(["ls", alias])
 
             if code == 0:
@@ -296,48 +234,22 @@ class MinioConnector:
             return False
 
     def is_alias_configured(self, alias: str) -> bool:
-        """
-        Check if an alias is configured and working.
-
-        Args:
-            alias: MinIO server alias to check
-
-        Returns:
-            True if alias is configured and working, False otherwise
-        """
+        """Whether a previous call proved this alias works."""
         return alias in MinioConnector.configured_aliases
 
     def get_configured_aliases(self) -> set[str]:
-        """
-        Get all configured aliases.
-
-        Returns:
-            Set of configured alias names
-        """
         return MinioConnector.configured_aliases.copy()
 
-    # User Management Operations
-
     async def create_user(self, alias: str, username: str, secret_key: str) -> dict[str, Any]:
-        """
-        Create a new MinIO user.
-
-        Args:
-            alias: MinIO server alias
-            username: Username (access key) for new user
-            secret_key: Secret key for new user
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Create a user; status "created" or "exists". ``username`` is also its access key."""
         try:
             validated_username = self._validate_username(username)
 
             if len(secret_key) < 8:
                 raise MinioValidationError("Secret key must be at least 8 characters long")
 
-            # De secret key via stdin: mc leest hem daar als hij niet als argument staat
-            # en stdin geen terminal is, en zo blijft hij van de commandoregel af.
+            # The secret key over stdin: mc reads it there when it is not an argument and
+            # stdin is no terminal, which keeps it off the command line.
             args = ["admin", "user", "add", alias, validated_username]
             stdout, stderr, code = await self._run_mc_command(args, stdin_input=f"{secret_key}\n")
 
@@ -365,16 +277,7 @@ class MinioConnector:
             raise MinioExecutionError(f"User creation failed: {e}") from e
 
     async def delete_user(self, alias: str, username: str) -> dict[str, Any]:
-        """
-        Delete a MinIO user.
-
-        Args:
-            alias: MinIO server alias
-            username: Username to delete
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Delete a user; status "deleted" or "not_found"."""
         try:
             validated_username = self._validate_username(username)
 
@@ -401,15 +304,7 @@ class MinioConnector:
             raise MinioExecutionError(f"User deletion failed: {e}") from e
 
     async def list_users(self, alias: str) -> list[dict[str, Any]]:
-        """
-        List all MinIO users.
-
-        Args:
-            alias: MinIO server alias
-
-        Returns:
-            List of user dictionaries with details
-        """
+        """Every user, as {username, access_key, status}."""
         try:
             args = ["admin", "user", "list", alias, "--json"]
             stdout, stderr, code = await self._run_mc_command(args)
@@ -421,7 +316,7 @@ class MinioConnector:
 
             user_list = []
             if stdout.strip():
-                # Parse JSON lines (mc outputs one JSON object per line)
+                # mc answers one JSON object per line, not one array.
                 for line in stdout.strip().split("\n"):
                     if line.strip():
                         try:
@@ -443,24 +338,11 @@ class MinioConnector:
             logger.exception("Failed to list users")
             raise MinioExecutionError(f"User listing failed: {e}") from e
 
-    # Policy Management Operations
-
     async def create_policy(self, alias: str, policy_name: str, policy_document: dict[str, Any]) -> dict[str, Any]:
-        """
-        Create a new policy.
-
-        Args:
-            alias: MinIO server alias
-            policy_name: Name of the policy
-            policy_document: Policy document as dictionary
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Create a policy; status "created" or "exists". mc reads the document from a file."""
         try:
             validated_policy_name = self._validate_policy_name(policy_name)
 
-            # Write policy to temporary file
             from opi.core.config import settings
 
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir=settings.TEMP_DIR) as f:
@@ -487,7 +369,6 @@ class MinioConnector:
                     "policy_name": validated_policy_name,
                 }
             finally:
-                # Clean up temporary file
                 with contextlib.suppress(OSError):
                     os.unlink(temp_file)
 
@@ -499,17 +380,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Policy creation failed: {e}") from e
 
     async def attach_policy(self, alias: str, policy_name: str, username: str) -> dict[str, Any]:
-        """
-        Attach a policy to a user.
-
-        Args:
-            alias: MinIO server alias
-            policy_name: Name of the policy to attach
-            username: Username to attach policy to
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Attach a policy to a user; status "attached", also when it already was."""
         try:
             validated_policy_name = self._validate_policy_name(policy_name)
             validated_username = self._validate_username(username)
@@ -547,17 +418,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Policy attachment failed: {e}") from e
 
     async def detach_policy(self, alias: str, policy_name: str, username: str) -> dict[str, Any]:
-        """
-        Detach a policy from a user.
-
-        Args:
-            alias: MinIO server alias
-            policy_name: Name of the policy to detach
-            username: Username to detach policy from
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Detach a policy from a user; status "detached"."""
         try:
             validated_policy_name = self._validate_policy_name(policy_name)
             validated_username = self._validate_username(username)
@@ -586,16 +447,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Policy detachment failed: {e}") from e
 
     async def remove_policy(self, alias: str, policy_name: str) -> dict[str, Any]:
-        """
-        Remove/delete a policy.
-
-        Args:
-            alias: MinIO server alias
-            policy_name: Name of the policy to remove
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Remove a policy; status "success" or "not_found"."""
         try:
             validated_policy_name = self._validate_policy_name(policy_name)
 
@@ -629,19 +481,8 @@ class MinioConnector:
             logger.exception(f"Failed to remove policy {policy_name}")
             raise MinioExecutionError(f"Policy removal failed: {e}") from e
 
-    # Bucket Management Operations
-
     async def create_bucket(self, alias: str, bucket_name: str) -> dict[str, Any]:
-        """
-        Create a new bucket.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket to create
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Create a bucket; status "created" or "exists"."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
             bucket_path = f"{alias}/{validated_bucket_name}"
@@ -672,17 +513,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Bucket creation failed: {e}") from e
 
     async def delete_bucket(self, alias: str, bucket_name: str, force: bool = False) -> dict[str, Any]:
-        """
-        Delete a bucket.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket to delete
-            force: Whether to force delete non-empty bucket
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Delete a bucket; status "deleted" or "not_found". ``force`` also empties it."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
             bucket_path = f"{alias}/{validated_bucket_name}"
@@ -713,15 +544,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Bucket deletion failed: {e}") from e
 
     async def list_buckets(self, alias: str) -> list[dict[str, Any]]:
-        """
-        List all buckets.
-
-        Args:
-            alias: MinIO server alias
-
-        Returns:
-            List of bucket dictionaries with details
-        """
+        """Every bucket, as {name, size, last_modified}."""
         try:
             args = ["ls", alias, "--json"]
             stdout, stderr, code = await self._run_mc_command(args)
@@ -733,7 +556,6 @@ class MinioConnector:
 
             bucket_list = []
             if stdout.strip():
-                # Parse JSON lines
                 for line in stdout.strip().split("\n"):
                     if line.strip():
                         try:
@@ -761,15 +583,8 @@ class MinioConnector:
 
         The counterpart of ``PostgresConnector.database_has_user_data``: a restore into a
         bucket that already holds objects merges the backup with what is there instead of
-        replacing it (RC-123). An existing but empty bucket is fine, which is what a retry
-        after a half-failed restore looks like.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of the bucket to inspect
-
-        Returns:
-            True if the bucket contains at least one object or prefix
+        replacing it. An existing but empty bucket is fine, which is what a retry after a
+        half-failed restore looks like.
         """
         try:
             stdout, stderr, code = await self._run_mc_command(["ls", f"{alias}/{bucket_name}", "--json"])
@@ -800,22 +615,8 @@ class MinioConnector:
             logger.exception(f"Failed to inspect bucket {bucket_name}")
             raise MinioExecutionError(f"Bucket emptiness check failed: {e}") from e
 
-    # Bucket Versioning Operations
-
     async def get_bucket_versioning_status(self, alias: str, bucket_name: str) -> dict[str, Any]:
-        """
-        Get bucket versioning status.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket to check
-
-        Returns:
-            Dictionary with versioning status:
-                - enabled: bool - True if versioning is enabled
-                - suspended: bool - True if versioning is suspended
-                - status: str - "Enabled", "Suspended", or "Unversioned"
-        """
+        """``{"enabled": bool, "suspended": bool, "status": "Enabled"|"Suspended"|"Unversioned"}``."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
             bucket_path = f"{alias}/{validated_bucket_name}"
@@ -828,14 +629,12 @@ class MinioConnector:
                 logger.error(error_msg)
                 raise MinioExecutionError(error_msg)
 
-            # Parse JSON output
             if stdout.strip():
                 try:
                     version_info = json.loads(stdout.strip())
-                    # De staat staat onder ``versioning``; het veld ``status`` ernaast is dat van
-                    # het COMMANDO ("success"). Dat las elke bucket als onversioneerd, waardoor
-                    # ensure_bucket_versioning nooit "unchanged" zag en nooit kon suspenden.
-                    # Gemeten op mc RELEASE.2025-08-13.
+                    # The state sits under ``versioning``; the ``status`` field next to it is
+                    # the COMMAND's ("success"). Reading that one makes every bucket look
+                    # unversioned. Measured on mc RELEASE.2025-08-13.
                     versioning = version_info.get("versioning")
                     state = (versioning if isinstance(versioning, dict) else version_info).get("status") or ""
 
@@ -846,10 +645,9 @@ class MinioConnector:
                     }
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse versioning info: {e}")
-                    # Fallback: assume unversioned
                     return {"enabled": False, "suspended": False, "status": "Unversioned"}
 
-            # No output means unversioned
+            # No output means unversioned.
             return {"enabled": False, "suspended": False, "status": "Unversioned"}
 
         except MinioValidationError:
@@ -860,16 +658,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Versioning status check failed: {e}") from e
 
     async def enable_bucket_versioning(self, alias: str, bucket_name: str) -> dict[str, Any]:
-        """
-        Enable versioning on a bucket.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket to enable versioning on
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Enable versioning on a bucket; status "enabled"."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
             bucket_path = f"{alias}/{validated_bucket_name}"
@@ -893,16 +682,7 @@ class MinioConnector:
             raise MinioExecutionError(f"Versioning enable failed: {e}") from e
 
     async def suspend_bucket_versioning(self, alias: str, bucket_name: str) -> dict[str, Any]:
-        """
-        Suspend versioning on a bucket (cannot be fully disabled once enabled).
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket to suspend versioning on
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Suspend versioning; status "suspended". S3 cannot turn versioning off once it was on."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
             bucket_path = f"{alias}/{validated_bucket_name}"
@@ -926,27 +706,13 @@ class MinioConnector:
             raise MinioExecutionError(f"Versioning suspend failed: {e}") from e
 
     async def ensure_bucket_versioning(self, alias: str, bucket_name: str, enable: bool) -> dict[str, Any]:
-        """
-        Idempotently ensure bucket versioning state.
-
-        Args:
-            alias: MinIO server alias
-            bucket_name: Name of bucket
-            enable: True to enable versioning, False to suspend versioning
-
-        Returns:
-            Dictionary with operation status:
-                - status: "enabled", "suspended", or "unchanged"
-                - message: Description of action taken
-        """
+        """Bring versioning to ``enable``; status "enabled", "suspended" or "unchanged"."""
         try:
             validated_bucket_name = self._validate_bucket_name(bucket_name)
 
-            # Check current versioning status
             current_status = await self.get_bucket_versioning_status(alias, validated_bucket_name)
 
             if enable:
-                # Want versioning enabled
                 if current_status["enabled"]:
                     logger.debug(f"Bucket {validated_bucket_name} versioning already enabled, no action needed")
                     return {
@@ -954,11 +720,9 @@ class MinioConnector:
                         "message": f"Bucket {validated_bucket_name} versioning already enabled",
                     }
                 else:
-                    # Enable versioning
                     logger.info(f"Enabling versioning on bucket {validated_bucket_name}")
                     return await self.enable_bucket_versioning(alias, validated_bucket_name)
             else:
-                # Want versioning suspended
                 if current_status["suspended"] or not current_status["enabled"]:
                     logger.debug(
                         f"Bucket {validated_bucket_name} versioning already suspended/disabled, no action needed"
@@ -968,7 +732,6 @@ class MinioConnector:
                         "message": f"Bucket {validated_bucket_name} versioning already suspended/disabled",
                     }
                 else:
-                    # Suspend versioning
                     logger.info(f"Suspending versioning on bucket {validated_bucket_name}")
                     return await self.suspend_bucket_versioning(alias, validated_bucket_name)
 
@@ -978,8 +741,6 @@ class MinioConnector:
         except Exception as e:
             logger.exception(f"Failed to ensure versioning state for bucket {bucket_name}")
             raise MinioExecutionError(f"Ensuring versioning state failed: {e}") from e
-
-    # Bucket Lifecycle Operations
 
     async def get_bucket_lifecycle(self, alias: str, bucket_name: str) -> list[dict[str, Any]]:
         """The lifecycle rules on a bucket, as the S3 document carries them.
@@ -1058,8 +819,6 @@ class MinioConnector:
         )
         return {"status": status, "rule": desired}
 
-    # Convenience methods for common operations
-
     async def grant_bucket_access(
         self,
         alias: str,
@@ -1067,18 +826,7 @@ class MinioConnector:
         bucket_name: str,
         permissions: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Grant user access to a bucket by creating and attaching a policy.
-
-        Args:
-            alias: MinIO server alias
-            username: Username to grant access to
-            bucket_name: Bucket name
-            permissions: List of permissions (defaults to ["read", "write"])
-
-        Returns:
-            Dictionary with operation status and details
-        """
+        """Create a bucket policy and attach it to a user; ``permissions`` defaults to read and write."""
         if permissions is None:
             permissions = ["read", "write"]
 
@@ -1086,23 +834,19 @@ class MinioConnector:
             validated_username = self._validate_username(username)
             validated_bucket_name = self._validate_bucket_name(bucket_name)
 
-            # Validate permissions
             valid_permissions = {"read", "write", "delete", "list"}
             for perm in permissions:
                 if perm.lower() not in valid_permissions:
                     raise MinioValidationError(f"Invalid permission: {perm}. Valid: {valid_permissions}")
 
-            # Create policy for bucket access
             policy_name = f"{validated_username}-{validated_bucket_name}-policy"
 
-            # Shared with seaweedfs-storage: one document, so one isolation (RC-331).
+            # Shared with seaweedfs-storage: one document, so one isolation.
             policy_document = bucket_access_policy(validated_bucket_name, permissions)
 
-            # Create the policy
             policy_result = await self.create_policy(alias, policy_name, policy_document)
             logger.debug(f"Policy creation result: {policy_result}")
 
-            # Attach policy to user
             attach_result = await self.attach_policy(alias, policy_name, validated_username)
             logger.debug(f"Policy attachment result: {attach_result}")
 
@@ -1124,28 +868,13 @@ class MinioConnector:
     async def mirror_bucket_cross_alias(
         self, source_alias: str, source_bucket: str, target_alias: str, target_bucket: str
     ) -> dict[str, Any]:
-        """
-        Mirror data from a source bucket to a target bucket across different aliases.
-
-        This is a simple data transfer method that assumes both buckets already exist
-        and only handles the mirroring operation. Bucket and user lifecycle management
-        should be handled at the manager layer.
-
-        Args:
-            source_alias: Source MinIO server alias
-            source_bucket: Source bucket name
-            target_alias: Target MinIO server alias
-            target_bucket: Target bucket name
-
-        Returns:
-            Dictionary with operation status and details
+        """Mirror one bucket onto another across aliases; both buckets have to exist already.
 
         Raises:
-            MinioValidationError: If input validation fails
-            MinioExecutionError: If mirroring operation fails
+            MinioValidationError: a bucket name does not hold up.
+            MinioExecutionError: mc mirror failed.
         """
         try:
-            # Validate bucket names
             validated_source_bucket = self._validate_bucket_name(source_bucket)
             validated_target_bucket = self._validate_bucket_name(target_bucket)
 
@@ -1184,7 +913,6 @@ class MinioConnector:
             raise MinioExecutionError(f"Cross-alias bucket mirroring failed: {e}") from e
 
 
-# Factory function for creating connector instances
 def create_minio_connector() -> MinioConnector:
-    """Factory function to create a MinioConnector instance."""
+    """The MinioConnector singleton."""
     return MinioConnector()

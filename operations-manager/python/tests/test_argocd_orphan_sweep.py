@@ -458,7 +458,7 @@ class TestRefusal:
 
     def test_an_unreachable_cluster_reaches_the_cli_as_exit_2(self) -> None:
         """KubectlConnectionError is the failure every read in inventory() shares: raised at
-        the start when isConnected is False (kubectl.py:229) and mid-run on a stderr saying
+        the start when is_connected is False (kubectl.py:229) and mid-run on a stderr saying
         'connection refused' (kubectl.py:297). Measured with the except narrowed back to
         SweepRefused alone: a traceback and exit 1, which means "there are orphans"."""
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})

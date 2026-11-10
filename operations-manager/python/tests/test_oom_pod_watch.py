@@ -794,7 +794,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(_pr1644_pod(restart_count=10)), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             kill = await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "app")
 
         assert kill is not None
@@ -811,7 +811,7 @@ class TestReadPodOomKill:
         pod = _pr1644_pod(restart_count=10, reason="Error")
         kubectl.run_command = AsyncMock(return_value=(json.dumps(pod), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             assert await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "app") is None
 
     @pytest.mark.asyncio
@@ -825,7 +825,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(_waker_pod(restart_count=3)), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             kill = await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-waker-59c7d8f4b7-qq2mn", "app")
 
         assert kill is None
@@ -843,7 +843,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(pod), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             kill = await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-waker-59c7d8f4b7-qq2mn", "app")
 
         assert kill is None
@@ -855,7 +855,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(pod), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             assert await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "app") is None
 
     @pytest.mark.asyncio
@@ -863,7 +863,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=("", "NotFound", 1))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             assert await read_pod_oom_kill("rig-regel-k4c", "weg", "app") is None
 
     @pytest.mark.asyncio
@@ -891,7 +891,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(pod), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             kill = await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "auth-wall")
 
         assert kill is not None
@@ -903,7 +903,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=(json.dumps(_pr1644_pod(restart_count=10)), "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             assert await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "weg") is None
 
     @pytest.mark.asyncio
@@ -911,7 +911,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock()
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = False
+            connector.is_connected = False
             assert await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "app") is None
         kubectl.run_command.assert_not_awaited()
 
@@ -920,7 +920,7 @@ class TestReadPodOomKill:
         kubectl = MagicMock()
         kubectl.run_command = AsyncMock(return_value=("<html>een proxy-fout</html>", "", 0))
         with patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector:
-            connector.isConnected = True
+            connector.is_connected = True
             assert await read_pod_oom_kill("rig-regel-k4c", "pr1644-api-7c9f4d8b6d-x2klm", "app") is None
 
 
@@ -976,7 +976,7 @@ class TestOomMetricSweep:
             patch(f"{WATCHER}.KubectlConnector", return_value=kubectl) as connector,
             patch(f"{WATCHER}.handle_observed_oom_kill", new=AsyncMock(return_value=True)) as handle,
         ):
-            connector.isConnected = True
+            connector.is_connected = True
             assert await run_oom_metric_sweep("local") == 0
 
         handle.assert_not_awaited()
@@ -1372,7 +1372,7 @@ class TestOomMetricSweeper:
 
 
 class TestWatchPodsCommand:
-    """De connector is een singleton die bij het bouwen zelf ``isConnected`` zet, dus de
+    """De connector is een singleton die bij het bouwen zelf ``is_connected`` zet, dus de
     vlag wordt gepatcht NA het bouwen, anders overschrijft de init de patch."""
 
     @pytest.mark.asyncio
@@ -1387,7 +1387,7 @@ class TestWatchPodsCommand:
         process = MagicMock()
         process.pid = 4242
         with (
-            patch.object(KubectlConnector, "isConnected", True),
+            patch.object(KubectlConnector, "is_connected", True),
             patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)) as spawn,
         ):
             assert await connector.watch_pods("component=application,!zad-role") is process
@@ -1405,7 +1405,7 @@ class TestWatchPodsCommand:
 
         connector = KubectlConnector()
         with (
-            patch.object(KubectlConnector, "isConnected", False),
+            patch.object(KubectlConnector, "is_connected", False),
             patch("asyncio.create_subprocess_exec", new=AsyncMock()) as spawn,
         ):
             assert await connector.watch_pods("component=application") is None

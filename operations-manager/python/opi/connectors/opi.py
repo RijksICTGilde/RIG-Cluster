@@ -27,8 +27,6 @@ class OpiConnectorError(Exception):
 
 
 class OpiConnector:
-    """HTTP client for communicating with a remote OPI instance."""
-
     def __init__(
         self,
         base_url: str,
@@ -55,10 +53,6 @@ class OpiConnector:
             "X-API-Key": self.api_key,
             "Content-Type": "application/json",
         }
-
-    # ------------------------------------------------------------------
-    # API methods
-    # ------------------------------------------------------------------
 
     async def health_check(self) -> dict:
         """GET /health on the remote OPI instance."""
@@ -92,10 +86,6 @@ class OpiConnector:
     async def cancel_task(self, task_id: str) -> dict:
         """POST /api/tasks/{task_id}/:cancel. Expects 200."""
         return await self._post(f"/api/tasks/{task_id}/:cancel", body=None, expected_status={200})
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     async def _get(self, path: str, expected_status: set[int]) -> dict:
         if not self.session:

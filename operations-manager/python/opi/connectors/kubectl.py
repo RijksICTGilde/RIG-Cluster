@@ -1,8 +1,4 @@
-"""
-Kubectl connector for managing Kubernetes resources.
-
-This module provides functionality to interact with Kubernetes clusters using kubectl.
-"""
+"""Read and change Kubernetes resources through the kubectl binary."""
 
 import asyncio
 import base64
@@ -30,8 +26,8 @@ logger = logging.getLogger(__name__)
 #:     Error from server (BadRequest): previous terminated container "app" in pod
 #:     "<naam>" not found
 #:
-#: That is not an error the user did anything about -- a pod that never crashed simply has
-#: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
+#: That is not an error the user did anything about, since a pod that never crashed simply
+#: has no earlier log, so it belongs in the panel as a sentence and not as raw stderr.
 _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
 
 #: Pause between two probes of the background connection recovery.
@@ -88,23 +84,20 @@ def is_previous_attempt_missing(stderr_text: str) -> bool:
 
 
 def _summarize_kubectl_command(args: list[str]) -> str:
-    """Secret-free summary of a kubectl invocation for logging: the operation
-    and the target project.
+    """Secret-free summary of a kubectl invocation for logging: the operation and the project.
 
-    Returns only the subcommand, the resource kind (the next token when it is a
-    plain positional, not a flag) and the target namespace (from
-    ``-n``/``--namespace``, which is ``rig-prd-<project>``). It deliberately
-    omits every flag value, resource name and stdin, so no secret can ever reach
-    the log regardless of the command -- e.g. ``kubectl apply (project
-    rig-prd-regel-k4c)`` or ``kubectl get pods (project rig-prd-amt-odc)``.
+    Only the subcommand, the resource kind (the next token when it is a plain positional, not
+    a flag) and the target namespace (from ``-n``/``--namespace``). Every flag value, resource
+    name and stdin is left out, so no secret can reach the log whatever the command:
+    `kubectl apply (project rig-prd-regel-k4c)`, `kubectl get pods (project rig-prd-amt-odc)`.
     """
     if not args:
         return "kubectl"
 
     parts = [f"kubectl {args[0]}"]
 
-    # Resource kind = first token after the verb, only when it's a plain
-    # positional (not a flag/flag-value). Resource names and values are skipped.
+    # The resource kind is the first token after the verb, and only when it is a plain
+    # positional: a resource name or a flag value must stay out.
     if len(args) > 1 and not args[1].startswith("-"):
         parts.append(args[1])
 
@@ -121,11 +114,11 @@ def _summarize_kubectl_command(args: list[str]) -> str:
 
 
 class KubectlConnectionError(Exception):
-    """Exception raised when kubectl connection is not available."""
+    """The connection to the cluster is not available."""
 
 
 class KubectlExecutionError(Exception):
-    """Exception raised when kubectl command execution fails."""
+    """A kubectl command exited non-zero."""
 
 
 def _label_failure_is_transient(error: BaseException) -> bool:
@@ -137,41 +130,31 @@ def _label_failure_is_transient(error: BaseException) -> bool:
 
 
 class KubectlConnector:
-    """Connector for interacting with Kubernetes clusters using kubectl."""
-
     _instance = None
-    isConnected = False
+    is_connected = False
     _retry_task = None
 
     def __new__(cls):
-        """Implement singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        """
-        Initialize the Kubectl connector.
-
-        When running inside a Kubernetes cluster, the connector will automatically
-        use the service account mounted into the pod.
-        """
+        """Inside a cluster kubectl picks up the service account mounted into the pod."""
         if self._initialized:
             return
 
         logger.debug("Initializing KubectlConnector")
 
-        # Setup env variables for kubectl
         self.env = child_env()
 
-        # Test connection synchronously during initialization
-        # This ensures isConnected is set before any commands are run
+        # Synchronously, so is_connected is set before any command runs.
         try:
             import subprocess
 
             result = subprocess.run(
-                ["kubectl", "auth", "whoami"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                ["kubectl", "auth", "whoami"],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                 capture_output=True,
                 text=True,
                 env=self.env,
@@ -179,19 +162,17 @@ class KubectlConnector:
             )
             if result.returncode == 0:
                 logger.info("Kubectl connection successful")
-                KubectlConnector.isConnected = True
+                KubectlConnector.is_connected = True
             else:
                 logger.warning(f"Kubectl connection failed: {result.stderr}")
-                KubectlConnector.isConnected = False
+                KubectlConnector.is_connected = False
         except Exception as e:
             logger.error(f"Error testing kubectl connection: {e}")
-            KubectlConnector.isConnected = False
+            KubectlConnector.is_connected = False
 
-        # Start async retry task if connection failed. If no event loop is
-        # running yet (e.g. instantiated from a synchronous test fixture or
-        # at import time) skip the retry-task scheduling; first async call
-        # will keep working without it and tests no longer crash on init.
-        if not KubectlConnector.isConnected:
+        # Without a running event loop (a synchronous test fixture, import time) there is no
+        # retry task to schedule; the first async call works without it.
+        if not KubectlConnector.is_connected:
             try:
                 self._retry_task = asyncio.create_task(self._connection_retry())
             except RuntimeError:
@@ -202,12 +183,7 @@ class KubectlConnector:
         logger.debug("KubectlConnector initialized successfully")
 
     async def _test_connection(self) -> bool:
-        """
-        Test kubectl connection using 'kubectl cluster-info'.
-
-        Returns:
-            True if connection is successful, False otherwise
-        """
+        """Whether ``kubectl auth whoami`` answers, and record that on the class."""
         try:
             logger.debug("Testing kubectl connection")
 
@@ -222,23 +198,23 @@ class KubectlConnector:
 
             if process.returncode == 0:
                 logger.info("Kubectl connection successful")
-                KubectlConnector.isConnected = True
+                KubectlConnector.is_connected = True
                 return True
             else:
                 logger.warning(f"Kubectl connection failed: {stderr_str}")
-                KubectlConnector.isConnected = False
+                KubectlConnector.is_connected = False
                 self._handle_connection_failure(stderr_str)
                 return False
 
         except Exception as e:
             logger.error(f"Error testing kubectl connection: {e}")
-            KubectlConnector.isConnected = False
+            KubectlConnector.is_connected = False
             return False
 
     def _handle_connection_failure(self, stderr_str: str):
-        """Handle connection failure by setting status and starting retry task."""
+        """On a refused connection, mark it down and start the retry task."""
         if "connection refused" in stderr_str.lower():
-            KubectlConnector.isConnected = False
+            KubectlConnector.is_connected = False
             # Start retry task if not already running (non-blocking)
             if KubectlConnector._retry_task is None or KubectlConnector._retry_task.done():
                 KubectlConnector._retry_task = asyncio.create_task(self._connection_retry())
@@ -262,32 +238,18 @@ class KubectlConnector:
         stdin_input: str | None = None,
         timeout: int = 60,
     ) -> tuple[str, str, int]:
-        """
-        Run a kubectl command directly with subprocess.
-
-        Args:
-            args: List of kubectl command arguments
-            env: Optional environment variables
-            stdin_input: Optional string to pass to stdin
-            timeout: Maximum seconds to wait for the command to complete (default: 60)
-
-        Returns:
-            Tuple of (stdout, stderr, return_code)
+        """One kubectl command; returns (stdout, stderr, exit code). A timeout yields exit 1.
 
         Raises:
-            KubectlConnectionError: If kubectl connection is not available
-            KubectlExecutionError: If kubectl command fails or times out
+            KubectlConnectionError: the connection is unavailable, or kubectl was refused.
         """
-        # Check connection before running command
-        if not KubectlConnector.isConnected:
+        if not KubectlConnector.is_connected:
             raise KubectlConnectionError("kubectl connection is not available")
 
-        # Set up environment
         cmd_env = self.env.copy()
         if env:
             cmd_env.update(env)
 
-        # Values-free "operation X on project Y" summary for log lines.
         safe_cmd = _summarize_kubectl_command(args)
 
         from opi.core.metrics import track_subprocess_memory
@@ -323,7 +285,6 @@ class KubectlConnector:
         if process.returncode != 0:
             logger.warning(f"Failed (code {process.returncode}): {safe_cmd} :: {stderr_str}")
 
-            # Check if this is a connection error and handle it
             if "connection refused" in stderr_str.lower():
                 self._handle_connection_failure(stderr_str)
                 error_msg = f"kubectl connection failed: {stderr_str}"
@@ -337,40 +298,14 @@ class KubectlConnector:
     async def run_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
     ) -> tuple[str, str, int]:
-        """
-        Run a kubectl command directly.
-
-        This is a public wrapper around _run_kubectl_command for use by other modules
-        that need direct kubectl access (e.g., backup manager).
-
-        Args:
-            args: List of kubectl command arguments
-            env: Optional environment variables
-            stdin_input: Optional input to pass via stdin
-
-        Returns:
-            Tuple of (stdout, stderr, return_code)
-        """
+        """The public form of ``_run_kubectl_command``, for a caller that needs raw kubectl."""
         return await self._run_kubectl_command(args, env, stdin_input)
 
     def template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
-        """
-        Process Jinja2 template variables in a manifest.
-
-        This implementation handles standard Jinja2 templating syntax.
-        Variables in the manifest should be in the format {{ variable }} and support Jinja2 features.
-
-        Args:
-            manifest_content: The content of the manifest file
-            variables: Dictionary of variables to replace
-
-        Returns:
-            The processed manifest content with variables replaced
-        """
+        """Render the manifest as a Jinja2 template, ending in a newline."""
         logger.debug(f"Templating manifest with variables: {variables.keys()}")
 
         result = render_template_source(manifest_content, variables)
-        # convention: files should end with a newline
         if not result.endswith("\n"):
             result += "\n"
         return result
@@ -378,33 +313,25 @@ class KubectlConnector:
     async def apply_manifest(
         self, file_path: str, variables: dict[str, Any] | None = None, namespace: str | None = None
     ) -> None:
-        """
-        Apply a Kubernetes manifest file with variable substitution.
+        """Apply a manifest file, rendering ``variables`` into it first.
 
-        Args:
-            file_path: Path to the manifest file
-            variables: Optional dictionary of variables to replace in the manifest
-            namespace: Optional namespace to apply the manifest to. If not provided,
-                      it will use the namespace specified in the manifest itself.
+        Without ``namespace`` the manifest's own namespace applies.
 
         Raises:
-            KubectlExecutionError: If the apply fails. The message front-loads the
-                manifest + namespace and collapses the (often multi-line) server
-                error onto one line. The connector does NOT log the failure itself:
-                the caller decides whether a failure is really an error (e.g. a
-                caller that retries on a transient Capsule RBAC race logs only once
-                it has genuinely given up).
+            KubectlExecutionError: the apply failed. The message front-loads the manifest and
+                namespace and collapses the server error onto one line. The connector does
+                NOT log the failure: the caller decides whether a failure is really an error,
+                so a caller that retries on a transient Capsule RBAC race logs once, after it
+                has given up.
         """
         logger.debug(f"Applying manifest: {file_path}{' in namespace ' + namespace if namespace else ''}")
 
-        # Read the manifest file
         with open(file_path) as f:
             manifest_content = f.read()
 
         if variables:
             manifest_content = self.template_manifest(manifest_content, variables)
 
-        # Apply manifest using stdin instead of temp file
         args = ["apply", "-f", "-"]
 
         if namespace:
@@ -420,16 +347,7 @@ class KubectlConnector:
         logger.info(f"Successfully applied manifest: {stdout}")
 
     async def get_secret(self, secret_name: str, namespace: str) -> dict[str, str] | None:
-        """
-        Retrieve a secret from Kubernetes and return its data as a dictionary.
-
-        Args:
-            secret_name: Name of the secret to retrieve
-            namespace: The namespace containing the secret
-
-        Returns:
-            Dictionary with secret data (decoded from base64) if found, None otherwise
-        """
+        """A Secret's data, base64-decoded, or None when it is absent or unreadable."""
         logger.debug(f"Retrieving secret {secret_name} from namespace {namespace}")
 
         # Get the secret from Kubernetes in JSON format
@@ -473,31 +391,16 @@ class KubectlConnector:
         but not for a caller that would CREATE something on the strength of the absence.
         This one keeps the two apart.
 
-        Args:
-            secret_name: Name of the secret
-            namespace: The namespace that would contain it
-
-        Returns:
-            True  - the Secret exists
-            False - the Secret is confirmed absent (NotFound)
-            None  - the check itself failed; existence is unknown, so the caller must not
-                    conclude the Secret is gone
+        True when it exists, False on a definitive NotFound, and None when the check itself
+        failed: the caller must not conclude the Secret is gone.
         """
         return await self.resource_exists("secret", secret_name, namespace)
 
     async def resource_exists(self, resource_type: str, resource_name: str, namespace: str) -> bool | None:
-        """
-        Ground-truth existence check for a namespaced resource.
+        """Ground-truth existence check for a namespaced resource.
 
-        Args:
-            resource_type: Resource type as kubectl names it (e.g. 'secret', 'role')
-            resource_name: Name of the resource
-            namespace: The namespace that would contain it
-
-        Returns:
-            True  - the resource exists
-            False - the resource is confirmed absent (NotFound)
-            None  - the check itself failed; existence is unknown
+        ``resource_type`` is the type as kubectl names it ('secret', 'role'). True when it
+        exists, False on a definitive NotFound, and None when the check itself failed.
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["get", resource_type, resource_name, "-n", namespace, "-o", "name"]
@@ -510,15 +413,9 @@ class KubectlConnector:
         return None
 
     async def get_sops_secret_from_namespace(self, namespace: str, secret_name: str) -> str | None:
-        """
-        Retrieve the SOPS AGE private key from the specified namespace.
+        """The SOPS AGE private key out of ``secret_name``, or None when it is not readable.
 
-        Args:
-            namespace: The namespace to retrieve the secret from
-            secret_name: Name of the Secret holding the key; the caller owns that name
-
-        Returns:
-            The private key if found, None otherwise
+        The caller owns the Secret's name.
         """
         logger.debug(f"Retrieving SOPS secret from namespace: {namespace}")
 
@@ -537,7 +434,6 @@ class KubectlConnector:
                 logger.error(f"Failed to retrieve SOPS secret: {stderr}")
             return None
 
-        # Decode the base64 encoded key
         encoded_key = stdout.strip()
         if not encoded_key:
             logger.error("Empty key data received")
@@ -548,18 +444,10 @@ class KubectlConnector:
         return decoded_key
 
     async def namespace_exists(self, namespace: str) -> bool:
-        """
-        Check if a namespace exists in the cluster.
-
-        Args:
-            namespace: The namespace to check
-
-        Returns:
-            True if the namespace exists, False otherwise
-        """
+        """Whether the namespace exists. A failed read counts as absent; see
+        :meth:`namespace_absent` for a caller that may not conclude that."""
         logger.debug(f"Checking if namespace exists: {namespace}")
 
-        # Check if the namespace exists
         args = ["get", "namespace", namespace]
 
         stdout, stderr, code = await self._run_kubectl_command(args)
@@ -572,7 +460,7 @@ class KubectlConnector:
             return False
 
     async def namespace_absent(self, namespace: str) -> bool | None:
-        """Is de namespace weg (True), aanwezig (False), of onbekend (None)?"""
+        """Is the namespace gone (True), present (False), or unknown (None)?"""
         stdout, stderr, code = await self._run_kubectl_command(["get", "namespace", namespace, "-o", "name"])
         if code == 0:
             return False
@@ -582,7 +470,7 @@ class KubectlConnector:
         return None
 
     async def wait_for_namespace_deletion(self, namespace: str, max_retries: int = 40, retry_delay: int = 5) -> bool:
-        """Wacht tot de namespace weg is (NotFound van de API-server)."""
+        """Wait until the namespace is gone (a NotFound from the API server)."""
         for attempt in range(1, max_retries + 1):
             absent = await self.namespace_absent(namespace)
             if absent:
@@ -596,12 +484,12 @@ class KubectlConnector:
     async def wait_for_resource_absence(
         self, resource_type: str, resource_name: str, namespace: str, max_retries: int = 20, retry_delay: int = 2
     ) -> bool:
-        """Wacht tot een namespaced resource weg is (NotFound van de API-server).
+        """Wait until a namespaced resource is gone (a NotFound from the API server).
 
-        Voor resources die een controller asynchroon opruimt, zoals een AppProject dat
-        ArgoCD prunt nadat zijn manifest uit git is. Een onmeetbare lezing (None uit
-        resource_exists) telt als nog aanwezig: pas een uitgelezen NotFound geldt als weg.
-        Na een timeout komt False terug en beslist de aanroeper zoals zonder deze wacht.
+        For a resource a controller cleans up asynchronously, such as an AppProject ArgoCD
+        prunes once its manifest left git. An unmeasurable read (None from
+        ``resource_exists``) counts as still present: only a read NotFound counts as gone.
+        After a timeout it returns False and the caller decides as it would without this wait.
         """
         for attempt in range(1, max_retries + 1):
             exists = await self.resource_exists(resource_type, resource_name, namespace)
@@ -621,24 +509,21 @@ class KubectlConnector:
         Namespaces without the label are present with an empty string, so a caller
         can tell "missing label" from "missing namespace" (absent from the dict).
         """
-        alle_labels = await self.get_namespace_labels_map()
-        return {namespace: labels.get(label_key, "") for namespace, labels in alle_labels.items()}
+        all_labels = await self.get_namespace_labels_map()
+        return {namespace: labels.get(label_key, "") for namespace, labels in all_labels.items()}
 
     async def get_namespace_labels_map(self) -> dict[str, dict[str, str]]:
         """Every namespace in the cluster, mapped to all of its labels.
 
-        One call instead of one per namespace. Startup checks 45 projects across 44
-        namespaces; asking per namespace meant 127 ``kubectl get`` invocations (a
-        subprocess each) plus 127 unconditional ``kubectl label`` calls, together 70
-        of the 83 seconds it took to boot. With this map both questions -- does it
-        exist, does it carry the right labels -- are answered locally.
+        One call instead of one per namespace: with this map both questions, does it exist
+        and does it carry the right labels, are answered locally.
         """
         args = ["get", "namespaces", "-o", "json"]
         stdout, stderr, code = await self._run_kubectl_command(args)
 
         if code != 0:
-            # Fall back to per-namespace checks rather than guessing: an empty map
-            # would read as "no namespace exists" and trigger creation attempts.
+            # Raise rather than guess: an empty map would read as "no namespace exists" and
+            # set off creation attempts.
             logger.warning(f"Could not list namespaces: {stderr}")
             raise KubectlExecutionError(f"Failed to list namespaces: {stderr}")
 
@@ -653,28 +538,20 @@ class KubectlConnector:
         return result
 
     async def delete_namespace(self, namespace: str) -> bool:
-        """
-        Delete a namespace from the cluster.
-
-        Args:
-            namespace: The namespace to delete
-
-        Returns:
-            True if the namespace was successfully deleted or didn't exist, False otherwise
+        """Delete a namespace; True when it is gone or was never there.
 
         Raises:
-            KubectlExecutionError: If the namespace belongs to the platform itself
+            KubectlExecutionError: the namespace belongs to the platform itself.
         """
         logger.debug(f"Deleting namespace: {namespace}")
 
-        # Tweede laag naast de weigering van een gereserveerde projectnaam: een
-        # projectverwijdering mag de namespace van het platform zelf nooit meenemen.
+        # A second layer next to the refusal of a reserved project name: deleting a project
+        # may never take the platform's own namespace with it.
         if is_platform_namespace(namespace):
             raise KubectlExecutionError(
                 f"Weigert namespace '{namespace}' te verwijderen: dat is een namespace van het platform zelf."
             )
 
-        # Delete the namespace with ignore-not-found to handle cases where it doesn't exist
         args = ["delete", "namespace", namespace, "--ignore-not-found=true"]
 
         stdout, stderr, code = await self._run_kubectl_command(args)
@@ -687,19 +564,11 @@ class KubectlConnector:
             return False
 
     async def remove_argocd_application_finalizers(self, app_name: str, namespace: str | None = None) -> bool:
-        """
-        Remove all finalizers from an ArgoCD Application resource.
+        """Strip the finalizers off an Application CR; True when it is gone or was never there.
 
-        This is useful when an ArgoCD Application is stuck because its managed resources
-        (e.g., the target namespace) have been deleted out-of-band. Removing the finalizers
-        allows the Application to be garbage collected.
-
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-
-        Returns:
-            True if finalizers were successfully removed or app doesn't exist, False on error
+        The way out when an Application is stuck because the resources it manages (its target
+        namespace, say) were deleted out of band: without finalizers it can be collected.
+        ``namespace`` defaults to this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         logger.info(f"Removing finalizers from ArgoCD Application '{app_name}' in namespace '{namespace}'")
@@ -731,17 +600,10 @@ class KubectlConnector:
             return False
 
     async def delete_argocd_application(self, app_name: str, namespace: str | None = None) -> bool:
-        """
-        Delete an ArgoCD Application directly using kubectl.
+        """Delete an Application CR directly; True when it is gone or was never there.
 
-        This is a fallback when GitOps-based deletion doesn't work (e.g., parent app not syncing).
-
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-
-        Returns:
-            True if successfully deleted or app doesn't exist, False on error
+        The fallback when deletion over GitOps does not work, such as a parent app that is
+        not syncing. ``namespace`` defaults to this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         logger.info(f"Deleting ArgoCD Application '{app_name}' in namespace '{namespace}'")
@@ -758,24 +620,14 @@ class KubectlConnector:
             return False
 
     async def argocd_application_exists(self, app_name: str, namespace: str | None = None) -> bool | None:
-        """
-        Ground-truth existence check for an ArgoCD Application CR via the Kubernetes API.
+        """Ground-truth existence check for an Application CR, through the Kubernetes API.
 
-        This is the honest fallback for the ArgoCD API, which returns an ambiguous
-        'permission denied' when its cache is stalled (see
-        ArgoConnector.wait_for_application_deletion). The Kubernetes API instead answers
-        cleanly: the object exists, a definitive NotFound, or a transport error we can
-        tell apart.
+        The honest fallback for the ArgoCD API, which answers an ambiguous 'permission
+        denied' while its cache is stalled (see ``ArgoConnector.wait_for_application_deletion``).
 
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-
-        Returns:
-            True  - the Application CR exists
-            False - the Application CR is confirmed absent (NotFound)
-            None  - the check itself failed; existence is unknown, so the caller must
-                    not conclude the application is gone
+        True when it exists, False on a definitive NotFound, and None when the check itself
+        failed: the caller must not conclude the application is gone. ``namespace`` defaults
+        to this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         stdout, stderr, code = await self._run_kubectl_command(
@@ -789,20 +641,15 @@ class KubectlConnector:
         return None
 
     async def get_argocd_application(self, app_name: str, namespace: str | None = None) -> dict[str, Any] | None:
-        """
-        One ArgoCD Application CR, read through the Kubernetes API.
+        """One ArgoCD Application CR, read through the Kubernetes API.
 
         The Kubernetes API and not the ArgoCD API, for the same reason as
         ``argocd_application_exists`` above, and because the terminate patch next to this one
         goes through that same API.
 
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-
-        Returns:
-            The Application CR, or ``None`` when it is absent or could not be read. Those two
-            are one answer on purpose; the log line below says which it was.
+        ``None`` both when it is absent and when it could not be read: those two are one
+        answer on purpose, and the log line below says which it was. ``namespace`` defaults to
+        this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         stdout, stderr, code = await self._run_kubectl_command(
@@ -831,28 +678,21 @@ class KubectlConnector:
         counted in the destination namespace through kubectl.
 
         Not read from the Application's own ``status.resources``: the controller stops
-        recomputing that once the object has a deletionTimestamp. Measured on the sandbox
-        on 1 October 2026, an Application of 14 resources whose ConfigMaps were held by a
-        finalizer: ``status.resources`` stayed on 14 for the whole 78s cascade while the
-        live count went 14, 13, 12, 8, 4, 0. A frozen number reads as a stall, which is
-        exactly the behaviour this is here to replace.
+        recomputing that once the object has a deletionTimestamp, and a frozen number reads
+        as a stall.
 
         The count is every ArgoCD-owned resource in that namespace, not only this
-        Application's. Filtering on the name would answer 0 for a long-named Application on
-        a label cluster, where the mark is the name CUT to 63 characters, and a permanent 0
-        is a permanent stall. A namespace that keeps emptying is a cascade at work, and one
-        that stops emptying while our Application stays is the stall we are looking for.
+        Application's. Filtering on the name would answer 0 for a long-named Application on a
+        label cluster, where the mark is the name CUT to 63 characters, and a permanent 0 is a
+        permanent stall. A namespace that keeps emptying is a cascade at work, and one that
+        stops emptying while our Application stays is the stall we are looking for.
 
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-            resource_types: kubectl type names to inventory; defaults to discovering them.
-                A caller that polls passes the types it discovered once.
+        ``resource_types`` are the kubectl type names to inventory, discovered when not given;
+        a caller that polls passes the types it discovered once.
 
-        Returns:
-            (deletion underway, ArgoCD-owned resources left in the destination namespace,
-            inventory complete), or ``None`` when the Application or its namespace could
-            not be read. None is not "no progress", but it is no proof of progress either.
+        Returns (deletion underway, ArgoCD-owned resources left in the destination namespace,
+        inventory complete), or ``None`` when the Application or its namespace could not be
+        read. None is not "no progress", but it is no proof of progress either.
         """
         application = await self.get_argocd_application(app_name, namespace)
         if application is None:
@@ -875,20 +715,15 @@ class KubectlConnector:
         return underway, len(tracked), complete
 
     async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
-        """
-        Remove any running operation from an ArgoCD Application.
+        """Remove any running operation from an Application CR.
 
-        The operation is read first: a json-patch remove on an absent path is rejected
-        with a generic 422 by this apiserver, so reading first avoids false errors when
-        there is no operation running. Zie features/argocd-vastgelopen-verwijdering.md.
+        The operation is read first: a json-patch remove on an absent path is rejected with a
+        generic 422 by this apiserver, so reading first avoids false errors when no operation
+        is running. See features/argocd-vastgelopen-verwijdering.md.
 
-        Args:
-            app_name: The name of the ArgoCD Application
-            namespace: Namespace holding the Application CR; defaults to this instance's cluster
-
-        Returns:
-            True if no running operation remains (removed, none present, or app gone),
-            False if the Application could not be read or the patch failed.
+        True when no running operation remains (removed, none present, or the app is gone),
+        False when the Application could not be read or the patch failed. ``namespace``
+        defaults to this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
 
@@ -971,14 +806,9 @@ class KubectlConnector:
         return stdout.strip()
 
     async def list_argocd_applications(self, namespace: str | None = None) -> list[dict[str, Any]]:
-        """
-        Every ArgoCD Application CR, read through the Kubernetes API.
+        """Every Application CR, empty when the query failed.
 
-        Args:
-            namespace: Namespace holding the Application CRs; defaults to this instance's cluster
-
-        Returns:
-            The Application CRs, empty when the query failed.
+        ``namespace`` defaults to this instance's cluster.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         stdout, stderr, code = await self._run_kubectl_command(["get", "applications", "-n", namespace, "-o", "json"])
@@ -994,18 +824,15 @@ class KubectlConnector:
         return data.get("items", []) if isinstance(data, dict) else []
 
     async def list_namespaced_resource_types(self) -> list[str] | None:
-        """
-        The namespaced resource types this cluster can list and delete.
+        """The namespaced resource types this cluster can list and delete.
 
         Discovered rather than hard-coded: a fixed list is a guaranteed blind spot for a
         sweep whose whole job is finding what was left behind.
 
-        Returns:
-            kubectl type names (``secrets``, ``deployments.apps``, ...) minus
-            ``_TRACKING_SWEEP_SKIPPED_TYPES``, or ``None`` when the discovery itself
-            failed. A failed discovery must not read as 'this cluster has no types':
-            every namespace would then inventory as empty and a sweep would report
-            SCHOON without having looked at anything (RC-226).
+        kubectl type names (``secrets``, ``deployments.apps``, ...) minus
+        ``_TRACKING_SWEEP_SKIPPED_TYPES``, or ``None`` when the discovery itself failed. A
+        failed discovery must not read as 'this cluster has no types': every namespace would
+        then inventory as empty and a sweep would report SCHOON without having looked.
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["api-resources", "--namespaced=true", "--verbs=list,delete", "-o", "name"]
@@ -1023,16 +850,13 @@ class KubectlConnector:
         return types
 
     async def list_namespaced_kinds(self) -> dict[str, str] | None:
-        """
-        The namespaced kinds this cluster serves, keyed ``Kind.group`` (core: ``Kind``).
+        """The namespaced kinds this cluster serves, keyed ``Kind.group`` (core: ``Kind``).
 
-        A manifest names its type by ``apiVersion`` and ``kind``, kubectl by plural and
-        group. This maps the one onto the other, so a set of kinds read from manifests can
-        be queried as the same type names ``list_namespaced_resource_types`` returns.
-
-        Returns:
-            ``{"Deployment.apps": "deployments.apps", "Secret": "secrets", ...}``, or
-            ``None`` when the discovery failed.
+        A manifest names its type by ``apiVersion`` and ``kind``, kubectl by plural and group.
+        This maps the one onto the other, so a set of kinds read from manifests can be queried
+        as the same type names ``list_namespaced_resource_types`` returns:
+        ``{"Deployment.apps": "deployments.apps", "Secret": "secrets", ...}``, or ``None``
+        when the discovery failed.
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["api-resources", "--namespaced=true", "--verbs=list", "-o", "wide", "--no-headers"]
@@ -1087,15 +911,13 @@ class KubectlConnector:
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None, own_types: list[str] | None = None
     ) -> tuple[list[TrackedResource], bool] | None:
-        """Every resource in a namespace marked as ArgoCD's own.
+        """Every resource in a namespace marked as ArgoCD's own, with whether that is complete.
 
-        Args:
-            namespace: The namespace to inventory.
-            resource_types: kubectl types to query; defaults to all namespaced types.
-            own_types: Types where silence means incompleteness; Forbidden on types outside this set is OK.
+        ``resource_types`` are the kubectl types to query, all namespaced types when not
+        given. ``own_types`` are the types where silence means an incomplete inventory; a
+        Forbidden on a type outside that set is fine.
 
-        Returns:
-            (Resources, is_inventory_complete) or None if the read failed.
+        Returns (resources, inventory complete), or None when the read failed.
         """
         types = resource_types if resource_types is not None else await self.list_namespaced_resource_types()
         if not types:
@@ -1113,11 +935,10 @@ class KubectlConnector:
             return [], True
         complete = True
         if code != 0:
-            # kubectl reports a non-zero exit when ONE of the queried types fails (an
-            # unavailable aggregated API, or a type this service account may not list in
-            # this namespace) but still prints what it did get. Keeping that part beats
-            # reporting nothing, as long as the caller hears that it IS a part: the types
-            # that stayed silent are exactly where a leftover resource hides.
+            # kubectl exits non-zero when ONE of the queried types fails (an unavailable
+            # aggregated API, or a type this service account may not list here) but still
+            # prints what it did get. That part is kept, as long as the caller hears that it
+            # IS a part: the types that stayed silent are where a leftover resource hides.
             failed_types = types_named_in_kubectl_error(stderr, types)
             judged = set(own_types) if own_types is not None else set(types)
             tolerated = [
@@ -1153,15 +974,7 @@ class KubectlConnector:
         return tracked, complete
 
     async def delete_tracked_resources(self, resources: list[TrackedResource]) -> list[TrackedResource]:
-        """
-        Delete tracked resources, one by one.
-
-        Args:
-            resources: The resources to delete
-
-        Returns:
-            The resources that could NOT be deleted.
-        """
+        """Delete tracked resources one by one; returns the ones that could NOT be deleted."""
         failed = []
         for resource in resources:
             deleted = await self.delete_resource(resource.kubectl_type, resource.name, resource.namespace)
@@ -1172,19 +985,11 @@ class KubectlConnector:
         return failed
 
     async def wait_for_capsule_tenant_label(self, namespace: str, timeout: int = 30) -> bool:
-        """
-        Wait for Capsule to assign the tenant label to a namespace.
+        """Wait for Capsule to put its tenant label on a namespace; False on a timeout.
 
-        Capsule's admission webhook assigns an ownerReference and tenant label to namespaces
-        created by tenant users. Once this label is present, it's safe to modify the namespace
-        with labels and annotations.
-
-        Args:
-            namespace: The namespace to check
-            timeout: Maximum time to wait in seconds (default: 30)
-
-        Returns:
-            True if the tenant label was found within the timeout, False otherwise
+        Capsule's admission webhook assigns an ownerReference and a tenant label to a
+        namespace created by a tenant user. Only once that label is there is it safe to put
+        labels and annotations on the namespace.
         """
         logger.info(f"Waiting for Capsule to assign tenant label to namespace '{namespace}'")
 
@@ -1229,27 +1034,18 @@ class KubectlConnector:
         reconciling a fresh namespace. A failure that trying again will not fix (the
         resource does not exist, kubectl cannot resolve the kind) is reported at once.
 
-        Args:
-            resource_type: The type of resource (e.g., 'namespace', 'pod', 'service')
-            resource_name: The name of the resource
-            labels: The label keys and values to apply
-            namespace: The namespace of the resource (not needed for cluster-scoped resources like namespaces)
-
-        Returns:
-            True if the labels were applied successfully, False otherwise
+        A cluster-scoped resource needs no ``namespace``.
         """
         if not labels:
             return True
 
-        beschrijving = ",".join(f"{key}={value}" for key, value in labels.items())
-        logger.debug(f"Applying labels {beschrijving} to {resource_type}/{resource_name}")
+        description = ",".join(f"{key}={value}" for key, value in labels.items())
+        logger.debug(f"Applying labels {description} to {resource_type}/{resource_name}")
 
-        # Build the kubectl label command with --overwrite to handle existing labels
         args = ["label", resource_type, resource_name]
         args.extend(f"{key}={value}" for key, value in labels.items())
         args.append("--overwrite")
 
-        # Add namespace flag if provided and not a cluster-scoped resource
         if namespace and resource_type.lower() != "namespace":
             args.extend(["-n", namespace])
 
@@ -1269,7 +1065,7 @@ class KubectlConnector:
             logger.error(f"Failed to apply labels to {resource_type}/{resource_name}: {e}")
             return False
 
-        logger.info(f"Successfully applied labels {beschrijving} to {resource_type}/{resource_name}")
+        logger.info(f"Successfully applied labels {description} to {resource_type}/{resource_name}")
         return True
 
     async def apply_annotation_to_resource(
@@ -1280,26 +1076,15 @@ class KubectlConnector:
         annotation_value: str,
         namespace: str | None = None,
     ) -> bool:
-        """
-        Apply an annotation to a specific Kubernetes resource.
+        """Put one annotation on a resource; False on any failure.
 
-        Args:
-            resource_type: The type of resource (e.g., 'namespace', 'pod', 'service')
-            resource_name: The name of the resource
-            annotation_key: The annotation key to apply
-            annotation_value: The annotation value to apply
-            namespace: The namespace of the resource (not needed for cluster-scoped resources like namespaces)
-
-        Returns:
-            True if the annotation was applied successfully, False otherwise
+        A cluster-scoped resource needs no ``namespace``.
         """
         logger.debug(f"Applying annotation {annotation_key}={annotation_value} to {resource_type}/{resource_name}")
 
         try:
-            # Build the kubectl annotate command
             args = ["annotate", resource_type, resource_name, f"{annotation_key}={annotation_value}"]
 
-            # Add namespace flag if provided and not a cluster-scoped resource
             if namespace and resource_type.lower() != "namespace":
                 args.extend(["-n", namespace])
 
@@ -1320,35 +1105,24 @@ class KubectlConnector:
             return False
 
     async def get_deployment_logs(self, deployment_name: str, namespace: str, lines: int = 100) -> list[str]:
-        """
-        Get logs from all pods belonging to a deployment.
+        """The last ``lines`` log lines of every pod of a deployment, empty on any failure.
 
-        Uses label selector instead of deployment/ to avoid needing deployment
-        get permissions - only requires pods and pods/log permissions.
-
-        Args:
-            deployment_name: Name of the deployment
-            namespace: Namespace containing the deployment
-            lines: Number of recent lines to retrieve (default: 100)
-
-        Returns:
-            List of log lines from all pods in the deployment
+        Through a label selector and not ``deployment/``, so this needs only the pods and
+        pods/log permissions and not get on the deployment.
         """
         logger.debug(f"Getting logs for deployment {deployment_name} in namespace {namespace}")
 
         try:
-            # Use label selector instead of deployment/ to only require pod permissions
             args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}"]
             stdout, stderr, code = await self._run_kubectl_command(args)
 
             if code != 0:
                 logger.warning(f"Failed to get deployment logs: {stderr}")
 
-            # Split logs into lines, filter out empty lines
             log_lines = [line for line in stdout.split("\n") if line.strip()]
 
-            # If no logs found (e.g. CrashLoopBackOff with no running container),
-            # try fetching previous container logs
+            # No lines at all means there is no running container (a CrashLoopBackOff), and
+            # then the previous attempt is what the reader wants.
             if not log_lines:
                 prev_args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}", "--previous"]
                 prev_stdout, _, prev_code = await self._run_kubectl_command(prev_args)
@@ -1371,39 +1145,32 @@ class KubectlConnector:
         pod_name: str | None = None,
         previous: bool = False,
     ) -> asyncio.subprocess.Process | None:
-        """
-        Start streaming logs from a deployment using kubectl logs -f.
+        """The subprocess of a ``kubectl logs -f``, or None when it could not be started.
 
-        Without ``pod_name`` this uses a label selector instead of deployment/ to avoid
-        needing deployment get permissions - only pods and pods/log permissions. That is
-        also what makes it show every matching pod at once: during a rolling update the
-        lines of the serving pod and of the crashing one arrive interleaved and, without
-        ``--prefix``, indistinguishable. Naming a pod is the way out of that.
+        Without ``pod_name`` this uses a label selector and not ``deployment/``, so it needs
+        only the pods and pods/log permissions. That is also what makes it show every matching
+        pod at once: during a rolling update the lines of the serving pod and of the crashing
+        one arrive interleaved and, without ``--prefix``, indistinguishable. Naming a pod is
+        the way out of that.
 
-        Returns a subprocess that streams logs in real-time. The caller is
-        responsible for reading from process.stdout, terminating the process
-        when done, and restarting it if it exits (which it does for pods in
-        CrashLoopBackOff or after the matched pod terminates).
+        The caller owns the process: read ``stdout``, terminate it when done, and restart it
+        when it exits, which it does for a pod in CrashLoopBackOff and after the matched pod
+        terminates.
 
         Args:
-            deployment_name: Name of the deployment
-            namespace: Namespace containing the deployment
-            lines: Number of historical lines to retrieve initially. Pass 0
-                on reattach so the follower only streams NEW output and does
-                not re-dump the same stored tail every backoff cycle.
-            pod_name: One specific pod to follow. The caller MUST have checked that this
-                pod belongs to the project asking for it -- this method does not, and a
-                namespace carries the deployments of a whole team.
-            previous: Read the PREVIOUS attempt of the container instead of the current
-                one. Only meaningful together with ``pod_name``. There is nothing to
-                follow about a container that already stopped: the API hands over the
-                stored log and the process ends immediately, so a caller must not treat
-                that exit as a stream that needs reattaching.
-
-        Returns:
-            Subprocess with stdout stream, or None if failed to start
+            lines: How many historical lines to fetch first. Pass 0 on a reattach, so the
+                follower only streams NEW output instead of re-dumping the same stored tail
+                every backoff cycle.
+            pod_name: One specific pod to follow. The caller MUST have checked that this pod
+                belongs to the project asking for it: this method does not, and a namespace
+                carries the deployments of a whole team.
+            previous: Read the PREVIOUS attempt of the container instead of the current one.
+                Only meaningful together with ``pod_name``. There is nothing to follow about a
+                container that already stopped: the API hands over the stored log and the
+                process ends at once, so a caller must not treat that exit as a stream that
+                needs reattaching.
         """
-        if not KubectlConnector.isConnected:
+        if not KubectlConnector.is_connected:
             logger.error("kubectl connection is not available for log streaming")
             return None
 
@@ -1426,7 +1193,6 @@ class KubectlConnector:
                 if previous:
                     cmd.append("--previous")
             else:
-                # Use label selector instead of deployment/ to only require pod permissions
                 cmd = [
                     "kubectl",
                     "logs",
@@ -1452,8 +1218,8 @@ class KubectlConnector:
             logger.error(f"Error starting log stream for {target}: {e}")
             return None
 
-    # Event object prefixes and reasons that are infrastructure noise —
-    # not actionable by project users.
+    # Event object prefixes and reasons that are infrastructure noise: a project user can do
+    # nothing about them.
     _IGNORED_EVENT_PREFIXES = ("cm-acme-",)
     _IGNORED_EVENT_REASONS = (
         "FailedToUpdateEndpoint",
@@ -1467,17 +1233,9 @@ class KubectlConnector:
         event_type: str | None = "Warning",
         max_age_hours: float = 2,
     ) -> list[dict[str, str]]:
-        """
-        Get recent events from a namespace.
+        """The recent events of a namespace, as {type, reason, object, kind, message, time}.
 
-        Args:
-            namespace: Namespace to get events from
-            limit: Maximum number of events to retrieve (default: 50)
-            event_type: Filter by event type (default: "Warning"), None for all
-            max_age_hours: Only return events younger than this (default: 2)
-
-        Returns:
-            List of event dictionaries with keys: type, reason, object, kind, message, time
+        ``event_type`` None keeps every type; ``max_age_hours`` drops anything older.
         """
         from datetime import datetime
 
@@ -1539,27 +1297,21 @@ class KubectlConnector:
         """The application pods of one deployment, with what each of them is actually doing.
 
         This answers the question the ArgoCD status cannot: *which pod is serving traffic
-        right now*. During a rolling update two pods sit behind one Service -- the previous
-        version still serving and the new one failing to come up -- and ArgoCD reports the
+        right now*. During a rolling update two pods sit behind one Service, the previous
+        version still serving and the new one failing to come up, and ArgoCD reports the
         deployment Degraded for both. Only the pod list tells them apart.
 
         One ``kubectl get pods -l <selector> -o json``; the selector comes from
         ``deployment_pod_selector`` so the service-owned pods (sleep-mode's waker and
         friends) are excluded exactly as everywhere else.
 
-        Args:
-            namespace: The (cluster-prefixed) namespace the deployment runs in
-            deployment_name: The deployment whose pods are wanted
-
-        Returns:
-            One dict per pod with ``name``, ``app`` (the component's unique name),
-            ``pod_template_hash``, ``deleting`` and -- read from the ``app`` container's
-            status -- ``ready``, ``image``, ``restart_count``, ``started_at`` and
-            ``has_previous_attempt``. Best-effort like the rest of this connector: a
-            failing command or unparsable output logs and yields an empty list, never
-            raises.
+        One dict per pod with ``name``, ``app`` (the component's unique name),
+        ``pod_template_hash``, ``deleting``, and from the ``app`` container's status
+        ``ready``, ``image``, ``restart_count``, ``started_at`` and ``has_previous_attempt``.
+        Best-effort like the rest of this connector: a failing command or unparsable output
+        logs and yields an empty list, never raises.
         """
-        if not KubectlConnector.isConnected:
+        if not KubectlConnector.is_connected:
             logger.debug("kubectl not available; no application pods for %s", deployment_name)
             return []
 
@@ -1635,13 +1387,10 @@ class KubectlConnector:
         The caller owns the process: read ``stdout``, terminate it when done, and
         restart it when it exits (which it does on any API-server hiccup).
 
-        Args:
-            label_selector: Label selector limiting the stream, e.g. ``component=application``
-
-        Returns:
-            The subprocess with a stdout stream, or None when it could not be started.
+        ``label_selector`` limits the stream, e.g. ``component=application``. None when the
+        process could not be started.
         """
-        if not KubectlConnector.isConnected:
+        if not KubectlConnector.is_connected:
             logger.error("kubectl connection is not available for the pod watch")
             return None
 
@@ -1673,19 +1422,11 @@ class KubectlConnector:
         return process
 
     async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
-        """Get the image a running container was started from.
+        """The image a running container was started from, or None when it cannot be read.
 
-        Read from ``.spec.containers[]`` rather than from a deployment or an overlay:
-        the pod is what is actually running, and during a rolling update the two pods
-        behind one Service differ exactly here.
-
-        Args:
-            namespace: Namespace the pod runs in
-            pod_name: Name of the pod
-            container_name: Name of the container within the pod
-
-        Returns:
-            The image reference, or None when the pod or container cannot be read.
+        Read from ``.spec.containers[]`` rather than from a deployment or an overlay: the pod
+        is what is actually running, and during a rolling update the two pods behind one
+        Service differ exactly here.
         """
         args = [
             "get",
@@ -1703,15 +1444,9 @@ class KubectlConnector:
         return stdout.strip() or None
 
     async def get_deployment_status(self, namespace: str, deployment_name: str | None = None) -> list[dict[str, str]]:
-        """
-        Get status of deployments in a namespace, optionally filtered by deployment name.
+        """The deployments of a namespace, as {name, ready, replicas, available, updated}.
 
-        Args:
-            namespace: Namespace to check
-            deployment_name: Optional specific deployment name to check
-
-        Returns:
-            List of deployment status dictionaries with keys: name, ready, replicas, available, updated
+        ``deployment_name`` narrows it to one deployment.
         """
         logger.debug(f"Getting deployment status in namespace {namespace}")
 
@@ -1763,17 +1498,7 @@ class KubectlConnector:
             return []
 
     async def get_deployment_conditions(self, namespace: str, deployment_name: str) -> list[dict[str, str]] | None:
-        """
-        Get the status conditions of a specific deployment.
-
-        Args:
-            namespace: Namespace of the deployment
-            deployment_name: Name of the deployment
-
-        Returns:
-            List of condition dicts (with keys: type, status, reason, message),
-            or None if the deployment was not found.
-        """
+        """A deployment's conditions as {type, status, reason, message}, or None when absent."""
         try:
             args = [
                 "get",
@@ -1798,17 +1523,7 @@ class KubectlConnector:
             return None
 
     async def delete_resource(self, resource_type: str, resource_name: str, namespace: str | None = None) -> bool:
-        """
-        Delete a Kubernetes resource.
-
-        Args:
-            resource_type: The type of resource to delete (e.g., 'secret', 'pod', 'deployment')
-            resource_name: The name of the resource to delete
-            namespace: The namespace containing the resource (not needed for cluster-scoped resources)
-
-        Returns:
-            True if the resource was deleted successfully, False otherwise
-        """
+        """Delete one resource; False on any failure. A cluster-scoped one needs no namespace."""
         logger.debug(f"Deleting {resource_type} {resource_name}{' in namespace ' + namespace if namespace else ''}")
 
         try:
@@ -1838,17 +1553,11 @@ class KubectlConnector:
     async def get_vpa_recommendation(
         self, namespace: str, workload_name: str, container_name: str = "app"
     ) -> VpaContainerRecommendation | None:
-        """
-        Read a VerticalPodAutoscaler's recommendation for one container.
+        """A VerticalPodAutoscaler's recommendation for one container, normalized.
 
-        Returns the normalized recommendation (CPU in millicores, memory in
-        MiB), or None when the VPA is missing, its status is not yet populated
-        (freshly created), or the values cannot be parsed.
-
-        Args:
-            namespace: Namespace containing the VPA
-            workload_name: VPA object name (matches the Deployment name)
-            container_name: Container whose recommendation to read (default "app")
+        ``workload_name`` is the VPA object's name, which matches the Deployment's. None when
+        the VPA is missing, its status is not populated yet (freshly created), or the values
+        cannot be parsed.
         """
         try:
             args = ["get", "verticalpodautoscaler", workload_name, "-n", namespace, "-o", "json"]
@@ -1873,11 +1582,8 @@ class KubectlConnector:
         """One named namespaced resource, as the API returns it.
 
         Works for a custom resource too, so the caller passes the fully qualified type
-        (``clusters.postgresql.cnpg.io``) when the short name could be ambiguous.
-
-        Returns:
-            The resource, or ``None`` when it is absent or could not be read. The log line
-            below says which of the two it was.
+        (``clusters.postgresql.cnpg.io``) when the short name could be ambiguous. ``None``
+        both when it is absent and when it could not be read; the log line below says which.
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["get", resource_type, resource_name, "-n", namespace, "-o", "json"]
@@ -1898,17 +1604,7 @@ class KubectlConnector:
     async def get_resources_by_label(
         self, resource_type: str, namespace: str, label_selector: str
     ) -> list[dict[str, Any]]:
-        """
-        Get Kubernetes resources matching a label selector.
-
-        Args:
-            resource_type: The type of resource to get (e.g., 'ingress', 'deployment', 'service')
-            namespace: The namespace to search in
-            label_selector: Label selector string (e.g., 'app.kubernetes.io/part-of=myapp')
-
-        Returns:
-            List of resource dictionaries with metadata
-        """
+        """The resources of one type in a namespace matching ``label_selector``."""
         logger.debug(f"Getting {resource_type} resources in namespace {namespace} with selector: {label_selector}")
 
         try:
@@ -1946,18 +1642,9 @@ class KubectlConnector:
 
 
 def create_kubectl_connector() -> KubectlConnector:
-    """
-    Create and return a KubectlConnector instance.
+    """The KubectlConnector singleton.
 
-    When running inside a Kubernetes cluster, the connector will automatically use
-    the service account mounted into the pod.
-
-    Returns:
-        KubectlConnector instance
+    Deliberately not logged: this returns the one existing instance and creates nothing, and
+    every periodic job calls it. ``__init__`` logs the real creation once.
     """
-    # Deliberately not logged: KubectlConnector is a singleton, so this returns the
-    # one existing instance and creates nothing. Logging "Creating ..." here put a
-    # line in the log for every caller, with no work behind it -- the real creation
-    # is logged once by __init__. Every periodic job calls this, so the noise was
-    # continuous.
     return KubectlConnector()

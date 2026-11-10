@@ -192,7 +192,7 @@ class TestEenOnbereikbareMailrelayIsEenPlatformfout:
 
         # Budget op 0: anders slaapt de herhaallus 30 seconden in deze test.
         with (
-            patch.object(MailConnector, "_eenmalig_verzoek", AsyncMock(side_effect=fout)),
+            patch.object(MailConnector, "_single_request", AsyncMock(side_effect=fout)),
             patch("opi.connectors.mail.RELAY_CONNECT_RETRY_SECONDS", 0.0),
             pytest.raises(MailRelayUnavailableError) as gevangen,
         ):

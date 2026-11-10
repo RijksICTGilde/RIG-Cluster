@@ -155,7 +155,7 @@ async def terminate_stuck_operation(
     commit, opruimen, push, dus een omgevallen kubectl zou de manifests gecommit en ongepusht
     achterlaten; op de time-out-tak zou hij van een nette time-out een ``KubectlConnectionError``
     maken. En die tak is niet zeldzaam: ``_run_kubectl_command`` gooit zodra
-    ``KubectlConnector.isConnected`` False is, en die vlag gaat procesbreed om bij een enkele
+    ``KubectlConnector.is_connected`` False is, en die vlag gaat procesbreed om bij een enkele
     "connection refused", met een achtergrondretry van 30s.
     """
     try:

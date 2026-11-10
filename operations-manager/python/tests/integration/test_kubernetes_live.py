@@ -72,7 +72,7 @@ def connector(kubectl: Kubectl) -> Iterator[KubectlConnector]:
     """De connector zoals OPI hem bouwt, tegen de KUBECONFIG van het wegwerpcluster."""
     KubectlConnector._instance = None
     built = create_kubectl_connector()
-    if not built.isConnected:
+    if not built.is_connected:
         pytest.fail("kubectl kan niet bij het cluster; draai task test-cluster-up")
     drop_by_prefix()
     yield built

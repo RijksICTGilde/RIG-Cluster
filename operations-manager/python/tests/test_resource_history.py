@@ -607,7 +607,7 @@ class TestOomPathBypassesAvailabilityGuard:
         data = _make_project_data(component_limits="45Mi", component_requests="45Mi")
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()
@@ -635,7 +635,7 @@ class TestOomPathBypassesAvailabilityGuard:
         data = _make_project_data(component_limits="45Mi", component_requests="45Mi")
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()
@@ -682,7 +682,7 @@ class TestLimitRequestMargin:
         data = _make_project_data(component_limits="25Mi", component_requests="25Mi")
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=15, avg_mb=15)
-        mock_kubectl.isConnected = False  # skip guard + VPA
+        mock_kubectl.is_connected = False  # skip guard + VPA
 
         mock_pm = MagicMock()
         mock_pm.save_and_commit_project = AsyncMock()
@@ -719,7 +719,7 @@ class TestImplausibleMeasurement:
         mock_git_data.return_value = (data, "test.yaml")
         # 0.3Mi: real enough to survive "== 0", far too small to size on.
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0.3, avg_mb=0.3)
-        mock_kubectl.isConnected = False
+        mock_kubectl.is_connected = False
 
         mock_pm = MagicMock()
         mock_pm.save_and_commit_project = AsyncMock()
@@ -766,7 +766,7 @@ class TestRootRepair:
         mock_git_data.return_value = (_starved_project_data(), "test.yaml")
         # Nothing to measure, and the deployment reports Available=False.
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()
@@ -796,7 +796,7 @@ class TestRootRepair:
         """A component sanitize switched off for OOM comes back on with its memory."""
         mock_git_data.return_value = (_starved_project_data("12 restarts; OOMKilled detected"), "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()
@@ -825,7 +825,7 @@ class TestRootRepair:
         """Memory says nothing about a missing image: that disable stays."""
         mock_git_data.return_value = (_starved_project_data("ImagePullBackOff: manifest unknown"), "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()
@@ -860,7 +860,7 @@ class TestRootRepair:
         )
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0)
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_unavailable()
 
         mock_pm = MagicMock()

@@ -676,7 +676,7 @@ def _kubectl_cluster(
     """
     with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
         kubectl = KubectlConnector()
-    KubectlConnector.isConnected = True
+    KubectlConnector.is_connected = True
 
     application: dict = {
         "metadata": {"name": "nd-j7s-pr-63", "deletionTimestamp": "2026-10-15T18:51:00Z"},

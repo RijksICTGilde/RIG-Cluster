@@ -373,7 +373,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     result = PodHealthResult(component_name=unique_name)
     kubectl = KubectlConnector()
 
-    if not KubectlConnector.isConnected:
+    if not KubectlConnector.is_connected:
         logger.warning("kubectl not connected, cannot check pod health for %s", unique_name)
         return result
 
@@ -604,7 +604,7 @@ async def describe_components_waiting(
     wanted = set(component_names)
     kubectl = KubectlConnector()
 
-    if not KubectlConnector.isConnected or not wanted:
+    if not KubectlConnector.is_connected or not wanted:
         return []
 
     try:
@@ -1636,7 +1636,7 @@ async def read_pod_oom_kill(namespace: str, pod_name: str, container_name: str) 
     application-pod guard the watch gets from its selector.
     """
     kubectl = KubectlConnector()
-    if not KubectlConnector.isConnected:
+    if not KubectlConnector.is_connected:
         return None
     try:
         stdout, stderr, code = await kubectl.run_command(["get", "pod", "-n", namespace, pod_name, "-o", "json"])

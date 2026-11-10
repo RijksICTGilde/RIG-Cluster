@@ -63,7 +63,7 @@ async def _van_de_health_check(pod: dict) -> str | None:
     with patch("opi.services.oom_watcher.KubectlConnector") as mock_cls:
         mock_kubectl = MagicMock()
         mock_cls.return_value = mock_kubectl
-        mock_cls.isConnected = True
+        mock_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": [pod]}), "", 0))
         result = await check_pod_health("rig-prd-myproject", "productie-api")
     return result.image_pull_error

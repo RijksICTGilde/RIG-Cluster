@@ -1,10 +1,7 @@
-"""
-Vertical Pod Autoscaler recommendation parsing.
+"""Turn a VerticalPodAutoscaler's ``.status.recommendation`` into normalized values.
 
-Pure logic for turning a VerticalPodAutoscaler object's
-`.status.recommendation` into normalized values (CPU in millicores, memory in
-MiB). The kubectl I/O lives in :meth:`KubectlConnector.get_vpa_recommendation`;
-this module has no I/O so it stays trivially testable.
+CPU in millicores, memory in MiB. The kubectl I/O lives in
+:meth:`KubectlConnector.get_vpa_recommendation`; this module has none.
 """
 
 import logging
@@ -15,19 +12,14 @@ from opi.services.resource_analyzer import parse_k8s_cpu_to_m, parse_k8s_memory_
 
 logger = logging.getLogger(__name__)
 
-# Both quantity parsers live in opi/services/resource_analyzer.py, so "is 2 more than
-# 100m" is answered in one place. Re-exported here because this module is where every
-# caller already imports parse_k8s_cpu_to_m from.
+# parse_k8s_cpu_to_m is re-exported: callers import it from here, not from
+# opi/services/resource_analyzer.py where it lives.
 __all__ = ["VpaContainerRecommendation", "parse_k8s_cpu_to_m", "parse_vpa_status"]
 
 
 @dataclass
 class VpaContainerRecommendation:
-    """Normalized VPA recommendation for a single container.
-
-    CPU values are in millicores, memory values in MiB. `target` is the
-    headline recommendation; `lower`/`upper` form the confidence envelope.
-    """
+    """`target` is the headline recommendation; `lower`/`upper` form the confidence envelope."""
 
     container_name: str
     target_cpu_m: float
@@ -41,10 +33,9 @@ class VpaContainerRecommendation:
 def parse_vpa_status(vpa_json: dict[str, Any], container_name: str = "app") -> VpaContainerRecommendation | None:
     """Extract one container's recommendation from a VPA object's JSON.
 
-    Returns None when the recommender has not yet populated `.status`
-    (freshly created VPA), when the requested container is absent, or when a
-    value cannot be parsed - all of which mean "no usable recommendation, fall
-    back to the other source".
+    None when the recommender has not populated `.status` yet (a freshly created VPA), when
+    the container is absent, or when a value cannot be parsed: all of them mean "no usable
+    recommendation, fall back to the other source".
     """
     recommendations = vpa_json.get("status", {}).get("recommendation", {}).get("containerRecommendations", [])
     for entry in recommendations:

@@ -1,6 +1,4 @@
-"""
-OPI Connectors package for external system integration.
-"""
+"""Connectors: one module per external system OPI talks to."""
 
 from opi.connectors.argo import create_argo_connector
 from opi.connectors.keycloak import create_keycloak_connector

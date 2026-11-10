@@ -1,10 +1,4 @@
-"""
-Keycloak connector - thin wrapper around python-keycloak library.
-
-This connector provides access to Keycloak Admin API operations through
-the python-keycloak library, maintaining a consistent interface for the
-operations manager.
-"""
+"""Realms, clients, identity providers, flows, roles, groups and users on Keycloak."""
 
 import logging
 import secrets
@@ -32,9 +26,9 @@ DISCOVERY_TIMEOUT_SECONDS = 10.0
 # confirm-link + verify-by-email/re-authentication steps. See features/keycloak-auto-link.md.
 AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
 
-#: De identity provider waarlangs een projectrealm bij SSO Rijk uitkomt. Elke blauwdruk voor
-#: een projectrealm maakt hem onder deze alias aan (``sso-only.yaml``, ``sso-support.yaml``),
-#: en de flow die er automatisch naartoe stuurt noemt hem als ``defaultProvider``.
+#: The identity provider a project realm reaches SSO Rijk through. Every project-realm
+#: blueprint creates it under this alias (``sso-only.yaml``, ``sso-support.yaml``), and the
+#: flow that redirects to it names it as its ``defaultProvider``.
 PLATFORM_IDP_ALIAS = "rig-platform-oidc"
 
 #: Browser flow with required OTP on every password login (built by ensure_required_otp_browser_flow).
@@ -63,9 +57,7 @@ def _redirect_uris_and_origins(
     support_http: bool,
     additional_redirect_uris: list[str] | None,
 ) -> tuple[list[str], list[str]]:
-    """Build redirect URIs and web origins from ingress hosts and additional URIs.
-
-    Extracted to avoid duplication in create and update paths."""
+    """Build redirect URIs and web origins from ingress hosts and additional URIs."""
     redirect_uris: set[str] = set()
     web_origins: set[str] = set()
 
@@ -86,15 +78,15 @@ def _redirect_uris_and_origins(
 def role_gate_flow_alias(client_id: str) -> str:
     """Alias of the role-restricted browser flow for this client.
 
-    Name changed from ``browser-restricted-<client>`` in 2026-08: the previous location
-    in the forms-subflow was skipped when the Cookie step reused an existing realm session.
-    Sessions from other clients would bypass the check. Replace, don't update.
+    Replace such a flow, never update one: the predecessor ``browser-restricted-<client>``
+    sat in the forms subflow, where the Cookie step skipped it and a session from another
+    client passed the check unseen.
     """
     return f"browser-role-gate-{client_id}"
 
 
 def legacy_restricted_flow_alias(client_id: str) -> str:
-    """De flow die ``role_gate_flow_alias`` vervangt; bestaat alleen in oudere realms."""
+    """The flow ``role_gate_flow_alias`` replaced; only an older realm still has it."""
     return f"browser-restricted-{client_id}"
 
 
@@ -116,19 +108,10 @@ class KeycloakConnector:
         client_id: str | None = None,
         client_secret: str | None = None,
     ):
-        """
-        Initialize the Keycloak connector.
+        """Authenticate against the master realm.
 
-        Authenticates against the master realm using either a client-credentials
-        service account (client_id + client_secret) or, as a fallback, an admin
-        username + password (direct grant).
-
-        Args:
-            keycloak_url: Base URL of the Keycloak server
-            admin_username: Admin username for Keycloak API access
-            admin_password: Admin password for Keycloak API access
-            client_id: Service-account client id (client-credentials mode)
-            client_secret: Service-account client secret (client-credentials mode)
+        With the client-credentials service account (client_id plus client_secret), or as a
+        fallback with the admin username and password (direct grant).
         """
         self.keycloak_url = keycloak_url.rstrip("/")
         self.admin_username = admin_username
@@ -171,8 +154,6 @@ class KeycloakConnector:
             )
             logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (admin user: {admin_username})")
 
-    # ==================== Realm Operations ====================
-
     def _refresh_admin_token(self) -> None:
         """Mint a fresh admin access token on the underlying connection.
 
@@ -198,12 +179,9 @@ class KeycloakConnector:
         admin_events_enabled: bool | None = None,
         admin_events_details_enabled: bool | None = None,
     ) -> dict[str, Any]:
-        """
-        Create a new realm in Keycloak.
+        """Create a realm, or bring an existing one in line (a 409 is not a failure).
 
         Args:
-            realm_name: Name of the realm to create
-            display_name: Optional display name for the realm
             add_master_idp: Whether to add the master OIDC IDP (default: False)
             sso_session_idle_timeout: Optional SSO session idle timeout in seconds. When
                 omitted, Keycloak's default (30 min) is kept.
@@ -213,9 +191,6 @@ class KeycloakConnector:
             events_expiration: Optional user-event retention in seconds.
             admin_events_enabled: Optional; store admin events.
             admin_events_details_enabled: Optional; include representations in admin events.
-
-        Returns:
-            Dictionary containing realm information including client details
         """
         logger.info(f"Creating Keycloak realm: {realm_name}")
 
@@ -270,7 +245,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Create the realm (idempotent - handles conflicts)
             try:
                 self.admin.create_realm(payload=realm_data)
                 logger.info(f"Created new realm: {realm_name}")
@@ -307,7 +281,6 @@ class KeycloakConnector:
             # auth paths behaving the same and costs one token request per realm created.
             self._refresh_admin_token()
 
-            # Get the realm details
             realm_info = self.admin.get_realm(realm_name=realm_name)
 
             # Make identity fields read-only for end users (impersonation hardening).
@@ -333,7 +306,6 @@ class KeycloakConnector:
                 except Exception as e:
                     logger.warning(f"Failed to add master OIDC provider to realm {realm_name}: {e}")
 
-            # Get the discovery URL
             discovery_url = self.get_discovery_url(realm_name)
 
             result = {
@@ -398,22 +370,22 @@ class KeycloakConnector:
         await self._update_required_action(realm_name, alias, {"enabled": enabled})
 
     async def set_required_action_default(self, realm_name: str, alias: str, default: bool) -> None:
-        """Zet of een required action aan een NIEUWE gebruiker wordt gehangen.
+        """Set whether a required action is attached to a NEW user.
 
-        Zo stelt een nieuw lokaal account in een realm met verplichte OTP bij zijn eerste
-        login een authenticator-app in.
+        That is how a new local account in a realm with mandatory OTP sets up an
+        authenticator app at its first login.
         """
         await self._update_required_action(realm_name, alias, {"defaultAction": default})
 
     async def _update_required_action(self, realm_name: str, alias: str, changes: dict[str, Any]) -> None:
-        """Schrijf velden op een required action provider, en alleen als ze afwijken."""
+        """Write fields onto a required action provider, and only when they differ."""
         try:
             self.admin.change_current_realm(realm_name)
             action = self.admin.get_required_action_by_alias(alias)
             if action is None:
                 logger.warning(f"Required action {alias} not found in realm {realm_name}, nothing to change")
                 return
-            if all(action.get(veld) == waarde for veld, waarde in changes.items()):
+            if all(action.get(field) == value for field, value in changes.items()):
                 return
             action.update(changes)
             self.admin.update_required_action(alias, payload=action)
@@ -468,14 +440,7 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
 
     async def delete_realm(self, realm_name: str) -> bool:
-        """
-        Delete a realm from Keycloak.
-
-        Args:
-            realm_name: Name of the realm to delete
-
-        Returns:
-            True if deletion was successful
+        """Delete a realm.
 
         Raises:
             KeycloakError: If deletion fails
@@ -492,8 +457,7 @@ class KeycloakConnector:
             raise
 
     async def realm_exists(self, realm_name: str) -> bool:
-        """
-        Check if a realm exists.
+        """Whether the realm exists.
 
         Only 404 is treated as "not found". Any other Keycloak error
         (auth failure, 5xx, network) is re-raised so callers do not
@@ -538,15 +502,7 @@ class KeycloakConnector:
             return False
 
     async def get_realm(self, realm_name: str) -> dict[str, Any] | None:
-        """
-        Get realm configuration.
-
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            Realm configuration dict or None if not found
-        """
+        """The realm's configuration, or ``None`` when it does not exist."""
         try:
             return self.admin.get_realm(realm_name=realm_name)
         except KeycloakGetError:
@@ -561,7 +517,6 @@ class KeycloakConnector:
         409 branch of ``create_realm`` never sends one.
 
         Args:
-            realm_name: Name of the realm
             payload: The fields to set. An empty payload is a no-op, so a caller that
                 found no difference does not have to check.
         """
@@ -585,8 +540,8 @@ class KeycloakConnector:
             logger.info(f"Client '{existing_client.get('clientId')}' redirect URIs and web origins are already correct")
             return
 
-        # Alleen deze twee sleutels: Keycloak laat weggelaten velden staan, dus de
-        # attributen en de flows van de bestaande client blijven ongemoeid.
+        # These two keys only: Keycloak leaves an omitted field as it is, so the existing
+        # client keeps its attributes and its flows.
         self.admin.update_client(
             client_id=existing_client["id"],
             payload={"redirectUris": redirect_uris, "webOrigins": web_origins},
@@ -594,20 +549,9 @@ class KeycloakConnector:
         logger.info(f"Updated redirect URIs and web origins of client '{existing_client.get('clientId')}'")
 
     def get_discovery_url(self, realm_name: str) -> str:
-        """
-        Get the OIDC discovery URL for a realm.
-
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            OIDC discovery URL
-        """
         discovery_url = f"{self.keycloak_url}/realms/{realm_name}/.well-known/openid-configuration"
         logger.debug(f"Discovery URL for realm '{realm_name}': {discovery_url}")
         return discovery_url
-
-    # ==================== Client Operations ====================
 
     async def create_oidc_client(
         self,
@@ -619,20 +563,13 @@ class KeycloakConnector:
         direct_access_grants: bool = False,
         service_accounts: bool = False,
     ) -> dict[str, Any]:
-        """
-        Create an OIDC client in the specified realm, or converge an existing one.
+        """Create an OIDC client, or converge an existing one.
 
         Args:
-            realm_name: Name of the realm
-            client_id: Client ID for the OIDC client
-            client_name: Optional display name for the client
             redirect_uris: Allowed redirect URIs, required and never a wildcard
             web_origins: Allowed web origins; derived from the redirect URIs when omitted
             direct_access_grants: Allow the password grant (ROPC) on a NEW client
             service_accounts: Allow client credentials on a NEW client
-
-        Returns:
-            Dictionary containing client information including secret
 
         Raises:
             ValueError: When no redirect URIs are given. A client without them is a
@@ -663,7 +600,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -673,11 +609,9 @@ class KeycloakConnector:
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
                     logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', checking for changes")
-                    # Get existing client info - we're already in the target realm context
                     all_clients = self.admin.get_clients()
                     existing_client = next((c for c in all_clients if c.get("clientId") == client_id), None)
                     if existing_client:
-                        # Get the client secret
                         existing_secret = self.admin.get_client_secrets(existing_client["id"])
                         client_data["secret"] = existing_secret.get("value", "")
                         client_data["created"] = False
@@ -691,29 +625,16 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Switch back to master
             self.admin.change_current_realm("master")
             return client_data
 
         except KeycloakError as e:
             logger.error(f"Failed to create OIDC client '{client_id}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def delete_oidc_client(self, realm_name: str, client_id: str) -> bool:
-        """
-        Delete an OIDC client by its clientId from the specified realm.
-
-        Idempotent: returns False if the client does not exist.
-
-        Args:
-            realm_name: Realm the client lives in
-            client_id: The client's clientId field
-
-        Returns:
-            True if a client was deleted, False if none was found
-        """
+        """Delete an OIDC client by its clientId; False when no such client was there."""
         logger.info(f"Deleting OIDC client '{client_id}' from realm '{realm_name}'")
         try:
             # find_client_by_client_id switches back to master, so re-switch before delete
@@ -734,11 +655,7 @@ class KeycloakConnector:
             raise
 
     async def list_client_ids_by_prefix(self, realm_name: str, prefix: str) -> list[str]:
-        """
-        Return the clientIds in a realm that start with the given prefix.
-
-        Used to garbage-collect orphaned ephemeral clients (e.g. dbconsole-*).
-        """
+        """The clientIds in a realm that start with ``prefix``, to sweep up ephemeral clients."""
         try:
             self.admin.change_current_realm(realm_name)
             all_clients = self.admin.get_clients()
@@ -751,12 +668,6 @@ class KeycloakConnector:
             raise
 
     def _generate_client_secret(self) -> str:
-        """
-        Generate a secure client secret.
-
-        Returns:
-            A randomly generated client secret
-        """
         alphabet = string.ascii_letters + string.digits
         return "".join(secrets.choice(alphabet) for _ in range(32))
 
@@ -773,13 +684,9 @@ class KeycloakConnector:
         service_accounts: bool = False,
         require_pkce: bool = False,
     ) -> dict[str, Any]:
-        """
-        Create a client for a specific deployment in the specified realm.
+        """Create a deployment's OIDC client, public and confidential pair included.
 
         Args:
-            deployment_name: Name of the deployment
-            project_name: Name of the project
-            ingress_hosts: List of ingress hostnames for redirect URIs
             realm_name: Realm name (required, must be explicitly provided)
             support_http: Whether to generate both HTTP and HTTPS redirect URIs (default: False, HTTPS only)
             additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
@@ -790,9 +697,6 @@ class KeycloakConnector:
             require_pkce: Whether Keycloak must refuse an authorization code without PKCE S256.
                 Only the platform's own clients set this; of a project deployment the
                 application itself decides.
-
-        Returns:
-            Dictionary containing client information and OIDC configuration
         """
         client_id = f"{project_name}-{deployment_name}"
         client_secret = self._generate_client_secret()
@@ -814,7 +718,7 @@ class KeycloakConnector:
         frontchannel_logout_url = f"https://{ingress_hosts[0]}{logout_path}" if logout_path and ingress_hosts else ""
 
         # The front-channel key is ALWAYS stated, empty when there is no path: otherwise the 409
-        # comparison below cannot see the field being taken out and the client keeps a stale URL.
+        # comparison below cannot see the field disappear and the client keeps a stale URL.
         expected_attributes: dict[str, str] = {
             "post.logout.redirect.uris": "+",
             "frontchannel.logout.url": frontchannel_logout_url,
@@ -836,22 +740,21 @@ class KeycloakConnector:
             "webOrigins": web_origins,
             "standardFlowEnabled": True,
             "implicitFlowEnabled": False,
-            # Standaard uit, en opt-in per project: een applicatie die de gebruiker naar
-            # Keycloak stuurt heeft de password grant noch een service account nodig. De
-            # update-tak hieronder laat ze bewust buiten de vergelijking, zodat een
-            # bestaande client zijn flows houdt.
+            # Off by default and opt-in per project: an application that sends the user to
+            # Keycloak needs neither the password grant nor a service account. The update
+            # branch below deliberately leaves them out of its comparison, so an existing
+            # client keeps its flows.
             "directAccessGrantsEnabled": direct_access_grants,
             "serviceAccountsEnabled": service_accounts,
-            # Voorwaarde voor frontchannel.logout.url, en binnen de federatie de reden dat de
-            # realm-sessie een uitlog overleeft. _ensure_public_client zet hem ook, en omzetten
-            # telt pas als beide mee gaan: zie de vork in
+            # A precondition for frontchannel.logout.url, and within the federation the reason
+            # a realm session survives a logout. _ensure_public_client sets it too, and a
+            # change only counts when both move: see the fork in
             # features/keycloak-always-clear-session-logout.md.
             "frontchannelLogout": True,
             "attributes": expected_attributes,
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             # Try to create the client
@@ -869,7 +772,6 @@ class KeycloakConnector:
                     if existing_client:
                         client_secret = await self.get_client_secret(existing_client["id"], realm_name)
 
-                        # Check if redirect URIs need updating
                         existing_redirect_uris = set(existing_client.get("redirectUris", []))
                         existing_web_origins = set(existing_client.get("webOrigins", []))
                         existing_attrs = existing_client.get("attributes", {}) or {}
@@ -890,7 +792,6 @@ class KeycloakConnector:
                                 f"Client '{client_id}' needs updating. "
                                 f"Redirect URIs current: {existing_redirect_uris}, expected: {expected_redirect_uris}"
                             )
-                            # Switch back to target realm for update
                             self.admin.change_current_realm(realm_name)
                             merged_attrs = {**existing_attrs, **expected_attributes}
                             update_data = {
@@ -919,10 +820,8 @@ class KeycloakConnector:
                 realm_name=realm_name,
             )
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
-            # Get discovery URL
             discovery_url = self.get_discovery_url(realm_name)
 
             result = {
@@ -939,7 +838,6 @@ class KeycloakConnector:
                 "updated": updated,
             }
 
-            # Assign custom client scope to both clients
             await self._assign_custom_scope_to_client(client_id, realm_name)
             await self._assign_custom_scope_to_client(public_client_id, realm_name)
 
@@ -947,7 +845,6 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to create client '{client_id}' for deployment '{deployment_name}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
@@ -974,8 +871,9 @@ class KeycloakConnector:
             "implicitFlowEnabled": False,
             "directAccessGrantsEnabled": False,
             "serviceAccountsEnabled": False,
-            # De tweede drager van de vlag, naast create_deployment_client. Omzetten telt pas
-            # als beide mee gaan: zie de vork in features/keycloak-always-clear-session-logout.md.
+            # The second carrier of the flag, next to create_deployment_client. A change only
+            # counts when both move: see the fork in
+            # features/keycloak-always-clear-session-logout.md.
             "frontchannelLogout": True,
             "attributes": {
                 "pkce.code.challenge.method": "S256",
@@ -1016,26 +914,17 @@ class KeycloakConnector:
                 raise
 
     async def delete_deployment_client(self, deployment_name: str, project_name: str, realm_name: str) -> bool:
-        """
-        Delete a client for a specific deployment from the specified realm.
+        """Delete a deployment's client; False when no such client was there.
 
-        Args:
-            deployment_name: Name of the deployment
-            project_name: Name of the project
-            realm_name: Realm name (required, must be explicitly provided)
-
-        Returns:
-            True if deletion was successful, False if client not found
+        ``realm_name`` has no default: the caller names the realm.
         """
         client_id = f"{project_name}-{deployment_name}"
 
         logger.info(f"Deleting client '{client_id}' for deployment '{deployment_name}' in project '{project_name}'")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Find the client
             target_client = await self.find_client_by_client_id(client_id, realm_name)
 
             if not target_client:
@@ -1046,7 +935,6 @@ class KeycloakConnector:
             # find_client_by_client_id switches back to master, so re-switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Delete the client using its internal ID
             self.admin.delete_client(client_id=target_client["id"])
 
             logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
@@ -1061,13 +949,11 @@ class KeycloakConnector:
             else:
                 logger.debug(f"Public client '{public_client_id}' not found in realm '{realm_name}', skipping")
 
-            # Switch back to master
             self.admin.change_current_realm("master")
             return True
 
         except KeycloakError as e:
             logger.error(f"Failed to delete client '{client_id}' for deployment '{deployment_name}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
@@ -1080,19 +966,12 @@ class KeycloakConnector:
         support_http: bool = False,
         additional_redirect_uris: list[str] | None = None,
     ) -> bool:
-        """
-        Update the ingress hosts for an existing deployment client.
+        """Update the ingress hosts of an existing deployment client.
 
         Args:
-            deployment_name: Name of the deployment
-            project_name: Name of the project
-            ingress_hosts: Updated list of ingress hostnames
             realm_name: Realm name (uses default if None)
             support_http: Whether to generate both HTTP and HTTPS redirect URIs (default: False, HTTPS only)
             additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
-
-        Returns:
-            True if update was successful
         """
         realm_name = realm_name or settings.KEYCLOAK_DEFAULT_REALM
         client_id = f"{project_name}-{deployment_name}"
@@ -1104,10 +983,8 @@ class KeycloakConnector:
             logger.info(f"Additional redirect URIs: {additional_redirect_uris}")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Find the client
             target_client = await self.find_client_by_client_id(client_id, realm_name)
 
             if not target_client:
@@ -1132,7 +1009,6 @@ class KeycloakConnector:
             }
             self.admin.update_client(client_id=target_client["id"], payload=update_data)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully updated hosts for client '{client_id}'")
@@ -1140,31 +1016,21 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to update hosts for client '{client_id}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def find_client_by_client_id(self, client_id: str, realm_name: str | None = None) -> dict[str, Any] | None:
-        """
-        Find a client by its clientId (not internal ID).
+        """The client with this clientId, or ``None`` when no client has it.
 
-        Args:
-            client_id: The client's clientId field
-            realm_name: Realm name (uses default if None)
-
-        Returns:
-            Client data dictionary or None if not found
+        Without ``realm_name`` the configured default realm.
         """
         realm_name = realm_name or settings.KEYCLOAK_DEFAULT_REALM
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Get all clients and filter manually
             all_clients = self.admin.get_clients()
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             # Filter by clientId
@@ -1178,30 +1044,21 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to search for client '{client_id}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def get_client_secret(self, client_internal_id: str, realm_name: str | None = None) -> str | None:
-        """
-        Retrieve the client secret for an existing client.
+        """A client's secret, or ``None`` when it could not be read.
 
-        Args:
-            client_internal_id: The internal Keycloak client ID (not the clientId)
-            realm_name: Realm name (uses default if None)
-
-        Returns:
-            The client secret or None if retrieval failed
+        Without ``realm_name`` the configured default realm.
         """
         realm_name = realm_name or settings.KEYCLOAK_DEFAULT_REALM
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             secret_data = self.admin.get_client_secrets(client_id=client_internal_id)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             client_secret = secret_data.get("value")
@@ -1214,14 +1071,13 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to retrieve client secret for client {client_internal_id}: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def regenerate_client_secret(self, client_internal_id: str, realm_name: str) -> str:
-        """Laat Keycloak een nieuw clientsecret maken en geef het terug.
+        """Have Keycloak make a new client secret and return it.
 
-        Het oude secret werkt daarna niet meer: Keycloak vervangt het.
+        The old secret stops working: Keycloak replaces it.
         """
         try:
             self.admin.change_current_realm(realm_name)
@@ -1238,8 +1094,6 @@ class KeycloakConnector:
         logger.info(f"Regenerated client secret for client {client_internal_id} in realm {realm_name}")
         return client_secret
 
-    # ==================== Identity Provider Operations ====================
-
     async def add_identity_provider(
         self,
         realm_name: str,
@@ -1254,27 +1108,15 @@ class KeycloakConnector:
         config_overrides: dict[str, Any] | None = None,
         first_broker_login_flow_alias: str = "first broker login",
     ) -> dict[str, Any]:
-        """
-        Add an OIDC identity provider to a realm.
+        """Add an OIDC identity provider to a realm.
 
         Args:
-            realm_name: Name of the realm
-            provider_alias: Alias for the identity provider
-            display_name: Display name shown in the UI
-            client_id: OAuth client ID for this IDP
-            client_secret: OAuth client secret for this IDP
-            discovery_url: OIDC discovery URL (.well-known/openid-configuration)
             provider_type: Type of provider (default: "oidc")
-            authenticate_by_default: Auto-redirect to this IDP on login (default: True)
             update_profile_first_login: Whether to show profile update on first login (default: "off")
             config_overrides: Optional dict merged into provider config after defaults (YAML wins)
-
-        Returns:
-            Dictionary containing provider information
         """
         logger.info(f"Adding identity provider {provider_alias} to realm {realm_name}")
 
-        # Build OIDC configuration
         provider_config: dict[str, Any] = {
             "clientId": client_id,
             "clientSecret": client_secret,
@@ -1285,7 +1127,6 @@ class KeycloakConnector:
             "backchannelSupported": "false",
         }
 
-        # Add explicit OIDC endpoints derived from discovery URL
         if discovery_url.endswith("/.well-known/openid-configuration"):
             realm_base = discovery_url.replace("/.well-known/openid-configuration", "")
             provider_config["authorizationUrl"] = f"{realm_base}/protocol/openid-connect/auth"
@@ -1317,7 +1158,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -1356,10 +1196,8 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Get the provider info
             provider_info = self.admin.get_idp(idp_alias=provider_alias)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully added identity provider {provider_alias} to realm {realm_name}")
@@ -1367,7 +1205,6 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to add identity provider {provider_alias} to realm {realm_name}: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
@@ -1393,30 +1230,14 @@ class KeycloakConnector:
         config_overrides: dict[str, Any] | None = None,
         first_broker_login_flow_alias: str = "first broker login",
     ) -> dict[str, Any]:
-        """
-        Add a SAML identity provider to a realm.
+        """Add a SAML identity provider to a realm.
 
         Args:
-            realm_name: Name of the realm
-            provider_alias: Alias for the identity provider
-            display_name: Display name shown in the UI
-            idp_entity_id: Entity ID of the external IDP (metadata URL)
-            single_sign_on_service_url: SSO service URL of the external IDP
-            single_logout_service_url: Logout service URL of the external IDP
             name_id_policy_format: NameID policy format (default: persistent)
             principal_type: Principal type (SUBJECT, ATTRIBUTE, FRIENDLY_ATTRIBUTE)
-            signing_certificate: IDP signing certificate (PEM format, without headers)
             sp_entity_id: Our SP entity ID (defaults to realm issuer)
-            validate_signature: Validate SAML response signatures
-            want_assertions_signed: Require signed assertions
-            want_assertions_encrypted: Require encrypted assertions
-            authenticate_by_default: Auto-redirect to this IDP on login
             sync_mode: Sync mode for attributes (FORCE, IMPORT, LEGACY)
-            enabled: Whether the IDP is enabled
             update_profile_first_login: Whether to show profile update on first login (default: "off")
-
-        Returns:
-            Dictionary containing provider information
         """
         logger.info(f"Adding SAML identity provider {provider_alias} to realm {realm_name}")
 
@@ -1429,7 +1250,6 @@ class KeycloakConnector:
                 "assertion signatures"
             )
 
-        # Build SAML configuration
         provider_config = {
             "idpEntityId": idp_entity_id,
             "singleSignOnServiceUrl": single_sign_on_service_url,
@@ -1453,11 +1273,9 @@ class KeycloakConnector:
             "attributeConsumingServiceIndex": "0",
         }
 
-        # Add SP entity ID if provided
         if sp_entity_id:
             provider_config["entityId"] = sp_entity_id
 
-        # Add signing certificate if provided
         if signing_certificate:
             provider_config["signingCertificate"] = signing_certificate
             provider_config["validateSignature"] = "true" if validate_signature else "false"
@@ -1485,7 +1303,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -1526,10 +1343,8 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Get the provider info
             provider_info = self.admin.get_idp(idp_alias=provider_alias)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully added SAML identity provider {provider_alias} to realm {realm_name}")
@@ -1537,32 +1352,17 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to add SAML identity provider {provider_alias} to realm {realm_name}: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def update_identity_provider(
         self, realm_name: str, provider_alias: str, provider_type: str = "oidc", config: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """
-        Update an existing identity provider.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias for the identity provider
-            provider_type: Type of provider (oidc, saml, etc.)
-            config: Provider-specific configuration
-
-        Returns:
-            Dictionary containing updated provider information
-        """
         logger.info(f"Updating identity provider {provider_alias} in realm {realm_name}")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Get current provider
             try:
                 current_provider = self.admin.get_idp(idp_alias=provider_alias)
             except KeycloakGetError:
@@ -1578,16 +1378,13 @@ class KeycloakConnector:
                     provider_type,
                 )
 
-            # Update configuration
             if config:
                 current_provider["config"].update(config)
 
             self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
 
-            # Get updated provider
             provider_info = self.admin.get_idp(idp_alias=provider_alias)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully updated identity provider {provider_alias} in realm {realm_name}")
@@ -1595,20 +1392,10 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to update identity provider {provider_alias} in realm {realm_name}: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def get_identity_providers(self, realm_name: str) -> list[dict[str, Any]]:
-        """
-        Get all identity providers configured in a realm.
-
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            List of identity provider configurations
-        """
         try:
             self.admin.change_current_realm(realm_name)
             providers = self.admin.get_idps()
@@ -1619,96 +1406,43 @@ class KeycloakConnector:
             return []
 
     async def get_identity_provider_mappers(self, realm_name: str, provider_alias: str) -> list[dict[str, Any]]:
-        """
-        Get all identity provider mappers for a specific provider.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-
-        Returns:
-            List of mapper configurations
-        """
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
             mappers = self.admin.get_idp_mappers(idp_alias=provider_alias)
-            # Switch back to master
             self.admin.change_current_realm("master")
             return mappers or []
         except KeycloakError:
-            # Switch back to master
             self.admin.change_current_realm("master")
             return []
 
     async def create_identity_provider_mapper(
         self, realm_name: str, provider_alias: str, mapper_config: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """
-        Create an identity provider mapper.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-            mapper_config: Mapper configuration
-
-        Returns:
-            Created mapper configuration
-        """
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
             result = self.admin.add_mapper_to_idp(idp_alias=provider_alias, payload=mapper_config)
-            # Switch back to master
             self.admin.change_current_realm("master")
             return result
         except KeycloakError as e:
             logger.error(f"Failed to create IDP mapper: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def update_identity_provider_mapper(
         self, realm_name: str, provider_alias: str, mapper_id: str, mapper_config: dict[str, Any]
     ) -> bool:
-        """
-        Update an identity provider mapper.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-            mapper_id: ID of the mapper to update
-            mapper_config: Updated mapper configuration
-
-        Returns:
-            True if update was successful
-        """
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
             self.admin.update_mapper_in_idp(idp_alias=provider_alias, mapper_id=mapper_id, payload=mapper_config)
-            # Switch back to master
             self.admin.change_current_realm("master")
             return True
         except KeycloakError:
-            # Switch back to master
             self.admin.change_current_realm("master")
             return False
 
     async def ensure_standard_oidc_mappers(self, realm_name: str, provider_alias: str) -> bool:
-        """
-        Ensure all standard OIDC identity provider mappers exist.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-
-        Returns:
-            True if all mappers were successfully ensured
-        """
         logger.info(f"Ensuring standard OIDC mappers for {provider_alias} in realm {realm_name}")
 
-        # Get existing mappers
         existing_mappers = await self.get_identity_provider_mappers(realm_name, provider_alias)
         existing_mapper_names = {mapper.get("name") for mapper in existing_mappers}
 
@@ -1778,7 +1512,6 @@ class KeycloakConnector:
             },
         ]
 
-        # Create missing mappers
         for mapper in expected_mappers:
             mapper_name = mapper["name"]
             if mapper_name in existing_mapper_names:
@@ -1790,27 +1523,14 @@ class KeycloakConnector:
 
         return True
 
-    # ==================== Client Scope Operations ====================
-
     async def create_custom_client_scope(
         self,
         realm_name: str,
         scope_name: str = "custom_attributes_passthrough",
         realm_type: RealmType = RealmType.PROJECT,
     ) -> dict[str, Any] | None:
-        """
-        Create the custom_attributes_passthrough client scope.
-
-        Args:
-            realm_name: Name of the realm
-            scope_name: Name of the client scope to create
-            realm_type: Type of realm (PLATFORM or PROJECT)
-
-        Returns:
-            Created client scope data or None if failed
-        """
+        """Create the custom_attributes_passthrough client scope; ``None`` when that failed."""
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             client_scope_data = {
@@ -1823,52 +1543,36 @@ class KeycloakConnector:
                 },
             }
 
-            # Check if client scope already exists
             existing_scopes = self.admin.get_client_scopes()
             for scope in existing_scopes:
                 if scope.get("name") == scope_name:
                     logger.info(f"Client scope '{scope_name}' already exists in realm '{realm_name}'")
-                    # Ensure mappers exist
                     await self._add_custom_attributes_mappers(realm_name, scope["id"], realm_type)
                     await self.assign_client_scope_as_realm_default(realm_name, scope["id"], default=True)
-                    # Switch back to master
                     self.admin.change_current_realm("master")
                     return scope
 
-            # Create the client scope
             logger.info(f"Creating custom client scope '{scope_name}' in realm '{realm_name}'")
             self.admin.create_client_scope(payload=client_scope_data)
 
-            # Get the created scope
             created_scopes = self.admin.get_client_scopes()
             for scope in created_scopes:
                 if scope.get("name") == scope_name:
                     logger.info(f"Successfully created client scope '{scope_name}'")
                     await self._add_custom_attributes_mappers(realm_name, scope["id"], realm_type)
                     await self.assign_client_scope_as_realm_default(realm_name, scope["id"], default=True)
-                    # Switch back to master
                     self.admin.change_current_realm("master")
                     return scope
 
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
         except KeycloakError as e:
             logger.error(f"Failed to create client scope '{scope_name}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def _add_custom_attributes_mappers(self, realm_name: str, scope_id: str, realm_type: RealmType) -> None:
-        """
-        Add custom attribute mappers to the custom_attributes_passthrough scope.
-
-        Args:
-            realm_name: Name of the realm
-            scope_id: ID of the client scope
-            realm_type: Type of realm (PLATFORM or PROJECT)
-        """
         # Switch to target realm (already switched in parent method)
 
         # Common mappers for all realms
@@ -1986,14 +1690,12 @@ class KeycloakConnector:
             ]
         )
 
-        # Get existing mappers
         try:
             existing_mappers = self.admin.get_mappers_from_client_scope(client_scope_id=scope_id)
             existing_mapper_names = {mapper.get("name") for mapper in (existing_mappers or [])}
         except KeycloakError:
             existing_mapper_names = set()
 
-        # Add mappers with idempotency check
         for mapper in mappers:
             if mapper["name"] in existing_mapper_names:
                 logger.debug(f"Mapper '{mapper['name']}' already exists, skipping")
@@ -2006,16 +1708,7 @@ class KeycloakConnector:
                 logger.warning(f"Failed to add protocol mapper {mapper['name']}: {e}")
 
     async def delete_client_by_client_id(self, realm_name: str, client_id: str) -> bool:
-        """
-        Delete a single client by its clientId in the given realm.
-
-        Args:
-            realm_name: Name of the realm
-            client_id: The clientId (not the internal UUID)
-
-        Returns:
-            True if the client was deleted, False if it was not found
-        """
+        """Delete one client by its clientId; False when no such client was there."""
         target_client = await self.find_client_by_client_id(client_id, realm_name)
         if not target_client:
             logger.warning(f"Client '{client_id}' not found in realm '{realm_name}' - nothing to delete")
@@ -2029,25 +1722,12 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
 
     async def list_realms(self) -> list[str]:
-        """
-        List the names of all realms (read-only).
-
-        Returns:
-            List of realm names
-        """
+        """List the names of all realms (read-only)."""
         realms = self.admin.get_realms()
         return [realm.get("realm", "") for realm in realms or [] if realm.get("realm")]
 
     async def list_clients(self, realm_name: str) -> list[dict[str, Any]]:
-        """
-        List all clients in a realm (read-only).
-
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            List of dicts with client_id, public flag, and internal id
-        """
+        """Per client in the realm its ``client_id``, whether it is public, and its internal id."""
         try:
             self.admin.change_current_realm(realm_name)
             clients = self.admin.get_clients()
@@ -2063,44 +1743,20 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
 
     async def get_client_scopes(self, realm_name: str) -> list[dict[str, Any]]:
-        """
-        Get all client scopes in a realm.
-
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            List of client scope configurations
-        """
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
             scopes = self.admin.get_client_scopes()
-            # Switch back to master
             self.admin.change_current_realm("master")
             return scopes or []
         except KeycloakError:
-            # Switch back to master
             self.admin.change_current_realm("master")
             return []
 
     async def assign_client_scope_to_client(
         self, realm_name: str, client_internal_id: str, scope_id: str, default: bool = True
     ) -> bool:
-        """
-        Assign a client scope to a client.
-
-        Args:
-            realm_name: Name of the realm
-            client_internal_id: Internal ID of the client
-            scope_id: ID of the client scope
-            default: Whether to assign as default scope (True) or optional (False)
-
-        Returns:
-            True if scope was assigned successfully
-        """
+        """Assign a client scope to a client, as its default scope or as an optional one."""
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             scope_type = "default" if default else "optional"
@@ -2115,7 +1771,6 @@ class KeycloakConnector:
                     client_id=client_internal_id, client_scope_id=scope_id, payload={}
                 )
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully assigned client scope as {scope_type}")
@@ -2123,26 +1778,17 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to assign client scope: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return False
 
     async def assign_client_scope_as_realm_default(self, realm_name: str, scope_id: str, default: bool = True) -> bool:
-        """
-        Assign a client scope as a realm-level default client scope.
+        """Make a client scope the realm's default scope, or its optional one.
 
-        Args:
-            realm_name: Name of the realm
-            scope_id: ID of the client scope
-            default: Whether to assign as default scope (True) or optional (False)
-
-        Returns:
-            True if the scope IS the realm default afterwards, which includes the case
-            where it already was
+        True when the scope IS the realm default afterwards, which includes the case where it
+        already was.
         """
         scope_type = "default" if default else "optional"
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             logger.info(f"Assigning client scope '{scope_id}' as realm-level {scope_type} client scope")
@@ -2152,42 +1798,30 @@ class KeycloakConnector:
             else:
                 self.admin.add_default_optional_client_scope(scope_id=scope_id)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully assigned client scope as realm-level {scope_type} client scope")
             return True
 
         except KeycloakError as e:
-            # Een 409 is hier de gewenste eindtoestand: de scope staat al als realm-default.
-            # Elke herhaalde bootstrap tegen een bestaande Keycloak gaf anders een ERROR-regel.
+            # A 409 is the wanted end state here: the scope already is the realm default.
             if getattr(e, "response_code", None) == 409:
                 logger.info(f"Client scope '{scope_id}' is already realm-level {scope_type}, skipping")
                 self.admin.change_current_realm("master")
                 return True
             logger.error(f"Failed to assign client scope as realm default: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return False
 
     async def _assign_custom_scope_to_client(self, client_id: str, realm_name: str) -> None:
-        """
-        Helper method to assign the custom attributes client scope to a client.
-
-        Args:
-            client_id: Client ID (not internal ID)
-            realm_name: Name of the realm
-        """
         try:
             logger.info(f"Assigning custom client scope to client '{client_id}'")
 
-            # Find the client
             client = await self.find_client_by_client_id(client_id, realm_name)
             if not client:
                 logger.warning(f"Client '{client_id}' not found, cannot assign custom scope")
                 return
 
-            # Find the custom client scope
             scopes = await self.get_client_scopes(realm_name)
             custom_scope = None
             for scope in scopes:
@@ -2199,7 +1833,6 @@ class KeycloakConnector:
                 logger.warning(f"Custom client scope 'custom_attributes_passthrough' not found in realm '{realm_name}'")
                 return
 
-            # Assign the scope to the client as default
             success = await self.assign_client_scope_to_client(
                 realm_name, client["id"], custom_scope["id"], default=True
             )
@@ -2212,19 +1845,10 @@ class KeycloakConnector:
         except Exception as e:
             logger.warning(f"Error assigning custom client scope to client '{client_id}': {e}")
 
-    # ==================== Authentication Flow Operations ====================
-
     async def configure_sso_redirect_flow(self, realm_name: str, provider_alias: str) -> None:
-        """
-        Configure realm for SSO-only authentication with automatic redirect.
-
-        Args:
-            realm_name: Name of the realm to configure
-            provider_alias: Alias of the identity provider to redirect to
-        """
+        """Point the realm at SSO-only authentication, redirecting to ``provider_alias``."""
         logger.info(f"Configuring External IDP Redirector flow for realm {realm_name}")
 
-        # Switch to target realm
         self.admin.change_current_realm(realm_name)
 
         # Step 1: Disable local authentication
@@ -2247,19 +1871,12 @@ class KeycloakConnector:
         # Step 2: Create External IDP Redirector flow
         await self._create_external_idp_redirector_flow(realm_name, provider_alias)
 
-        # Switch back to master
         self.admin.change_current_realm("master")
 
         logger.info(f"Successfully configured External IDP Redirector flow for realm {realm_name}")
 
     async def _create_external_idp_redirector_flow(self, realm_name: str, provider_alias: str) -> None:
-        """
-        Create External IDP Redirector authentication flow.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider to redirect to
-        """
+        """Create the External IDP Redirector flow, redirecting to ``provider_alias``."""
         flow_alias = "External IDP Redirector"
 
         logger.info(f"Creating External IDP Redirector flow for realm {realm_name}")
@@ -2302,20 +1919,11 @@ class KeycloakConnector:
         logger.info(f"Set '{flow_alias}' as Browser Flow for realm {realm_name}")
 
     async def ensure_browser_flow(self, realm_name: str, flow_alias: str) -> bool:
-        """
-        Ensure the realm's browser flow is set to the specified flow.
+        """Point the realm's browser flow at ``flow_alias``; False when it already was.
 
-        This is idempotent - if the flow is already set, no change is made.
-
-        Args:
-            realm_name: Name of the realm
-            flow_alias: Alias of the flow to set as browser flow (e.g., "browser", "External IDP Redirector")
-
-        Returns:
-            True if flow was changed, False if already correct
+        ``flow_alias`` is a flow name such as "browser" or "External IDP Redirector".
         """
         try:
-            # Get current realm config
             realm_config = await self.get_realm(realm_name)
             if not realm_config:
                 logger.warning(f"Realm {realm_name} not found, cannot set browser flow")
@@ -2326,7 +1934,6 @@ class KeycloakConnector:
                 logger.debug(f"Realm {realm_name} browser flow already set to '{flow_alias}'")
                 return False
 
-            # Update the browser flow
             self.admin.change_current_realm(realm_name)
             self.admin.update_realm(realm_name=realm_name, payload={"browserFlow": flow_alias})
             self.admin.change_current_realm("master")
@@ -2342,18 +1949,9 @@ class KeycloakConnector:
     async def _add_execution_with_requirement(
         self, realm_name: str, flow_alias: str, provider: str, requirement: str
     ) -> None:
-        """
-        Add an execution to a flow and set its requirement.
-
-        Args:
-            realm_name: Name of the realm
-            flow_alias: Alias of the authentication flow
-            provider: Provider ID for the execution
-            requirement: Requirement level (ALTERNATIVE, REQUIRED, DISABLED)
-        """
+        """Add an execution to a flow; ``requirement`` is ALTERNATIVE, REQUIRED or DISABLED."""
         # Already switched to target realm
 
-        # Get flow executions
         flows = self.admin.get_authentication_flows()
         target_flow = None
         for flow in flows:
@@ -2364,17 +1962,14 @@ class KeycloakConnector:
         if not target_flow:
             raise KeycloakError(f"Flow '{flow_alias}' not found")
 
-        # Get executions for this flow
         executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
 
-        # Check if execution already exists
         target_execution = None
         for execution in executions:
             if execution.get("providerId") == provider:
                 target_execution = execution
                 break
 
-        # Create execution if it doesn't exist
         if not target_execution:
             execution_data = {"provider": provider}
             try:
@@ -2392,12 +1987,10 @@ class KeycloakConnector:
                     break
 
         if target_execution:
-            # Check if requirement already matches
             if target_execution.get("requirement") == requirement:
                 logger.debug(f"Execution '{provider}' already has requirement '{requirement}'")
                 return
 
-            # Update requirement
             update_data = {
                 "id": target_execution.get("id"),
                 "requirement": requirement,
@@ -2413,22 +2006,13 @@ class KeycloakConnector:
             logger.debug(f"Set {provider} execution to {requirement} requirement")
 
     async def _configure_redirector_execution(self, realm_name: str, flow_alias: str, provider_alias: str) -> None:
-        """
-        Configure the Identity Provider Redirector execution.
-
-        Args:
-            realm_name: Name of the realm
-            flow_alias: Alias of the authentication flow
-            provider_alias: Alias of the identity provider to redirect to
-        """
+        """Give the Identity Provider Redirector ``provider_alias`` as its defaultProvider."""
         logger.info(f"Configuring Identity Provider Redirector in flow '{flow_alias}'")
 
         # Already switched to target realm
 
-        # Get executions
         executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
 
-        # Find the Identity Provider Redirector execution
         redirector_execution = None
         for execution in executions:
             if execution.get("providerId") == "identity-provider-redirector":
@@ -2449,7 +2033,6 @@ class KeycloakConnector:
             "config": {"defaultProvider": provider_alias},
         }
 
-        # Check if config already exists
         existing_config_id = redirector_execution.get("authenticationConfig")
 
         if existing_config_id:
@@ -2462,7 +2045,6 @@ class KeycloakConnector:
                     logger.debug(f"Config already has correct defaultProvider '{provider_alias}'")
                     return
 
-                # Update existing config
                 update_data = {
                     "id": existing_config_id,
                     "alias": config_alias,
@@ -2483,15 +2065,15 @@ class KeycloakConnector:
             logger.info("Created Identity Provider Redirector config")
 
     async def _clear_redirector_execution(self, flow_alias: str) -> None:
-        """Haal de ``defaultProvider`` van de Identity Provider Redirector af, als hij er een heeft.
+        """Take the ``defaultProvider`` off the Identity Provider Redirector, if it has one.
 
-        De tegenrichting van ``_configure_redirector_execution``, en nodig om dezelfde reden:
-        een project dat van ``sso-only`` naar ``sso-support`` gaat hoort zijn inlogscherm terug
-        te krijgen. Zonder deze kant blijft de rolpoort doorsturen naar SSO Rijk, want niets
-        haalt zo'n config ooit weg.
+        The other direction of ``_configure_redirector_execution``, and needed for the same
+        reason: a project that moves from ``sso-only`` to ``sso-support`` has to get its login
+        screen back. Without this side the role gate keeps redirecting to SSO Rijk, because
+        nothing else ever removes such a config.
 
-        Doet niets als er geen redirector of geen config staat: dat is de normale toestand van
-        een poort die altijd al bij ``sso-support`` hoorde.
+        Does nothing when there is no redirector or no config, which is the normal state of a
+        gate that always belonged to ``sso-support``.
         """
         executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
         redirector = next((e for e in executions if e.get("providerId") == "identity-provider-redirector"), None)
@@ -2515,11 +2097,9 @@ class KeycloakConnector:
         redirect_to_idp: str | None = None,
         require_otp: bool = False,
     ) -> None:
-        """
-        Create a browser flow that restricts access to users with a specific client role.
+        """Create a browser flow that only admits holders of a client role.
 
         Args:
-            realm_name: Name of the realm
             flow_alias: Alias for the new flow (see ``role_gate_flow_alias``)
             client_id: Client ID for the role check
             role_name: Client role name that grants access
@@ -2549,9 +2129,9 @@ class KeycloakConnector:
         redirect_to_idp: str | None = None,
         require_otp: bool = False,
     ) -> None:
-        """Bouw een browser flow waarin de rolcontrole NAAST de authenticators staat.
+        """Build a browser flow in which the role check sits NEXT TO the authenticators.
 
-        De structuur, en waarom hij zo is::
+        The structure, and why it is this one::
 
             <flow>
               <flow>-authenticate            REQUIRED
@@ -2566,44 +2146,42 @@ class KeycloakConnector:
                 Condition - user role (negate)  REQUIRED
                 Deny Access                     REQUIRED
 
-        De inlogstappen zelf komen uit ``_ensure_browser_authenticators``, dezelfde die de
-        realmflow van ``sso-support-otp`` bouwt. ``require_otp`` zet de OTP-stap daar
-        verplicht, zodat de poort dezelfde eis stelt als het realm eromheen.
+        The login steps themselves come from ``_ensure_browser_authenticators``, the same one
+        that builds the realm flow of ``sso-support-otp``. ``require_otp`` makes the OTP step
+        there mandatory, so the gate demands what the realm around it demands.
 
-        De rolcontrole hoort op hetzelfde niveau als het inloggen zelf, want alleen daar
-        draait hij ongeacht HOE iemand binnenkwam. Stond hij in de forms-subflow, dan sloeg
-        de Cookie-stap hem over en kwam een bestaande realm-sessie er ongetoetst langs.
+        The role check belongs at the same level as the login itself, because only there does
+        it run no matter HOW someone got in. Inside the forms subflow the Cookie step skips
+        it, and an existing realm session passes unchecked.
 
-        Het omhulsel ``-authenticate`` is geen opsmuk maar de kern van de reparatie:
-        Keycloak negeert ALTERNATIVE-stappen zodra er op datzelfde niveau iets REQUIRED
-        staat. De rolcontrole rechtstreeks naast Cookie/forms zetten schakelt die dus
-        allemaal uit en weigert iedereen, ook rolhouders (gemeten op 25.0.6: ook een
-        gebruiker MET de rol kreeg "Invalid username or password"). Door de authenticators
-        samen in een REQUIRED subflow te zetten staan ze onderling weer alleen tussen
-        elkaar, en staat de conditionele rolcontrole ernaast in plaats van ertussen.
+        The ``-authenticate`` wrapper is not decoration: Keycloak ignores ALTERNATIVE steps as
+        soon as something at that same level is REQUIRED. Putting the role check straight next
+        to Cookie and forms therefore switches all of those off and refuses everyone, role
+        holders included (measured on 25.0.6: a user WITH the role got "Invalid username or
+        password"). With the authenticators together in a REQUIRED subflow they are alone
+        among themselves again, and the conditional role check sits beside them instead of
+        between them.
 
-        Binnen ``-deny-no-role`` maakt de volgorde niet uit: Keycloak kiest de voorwaarde
-        van een CONDITIONAL subflow op type en niet op plek. Nagemeten door Deny Access
-        expliciet vooraan te zetten; rolhouders kwamen er nog steeds door en de rest nog
-        steeds niet. Daarom dragen die twee stappen geen expliciete prioriteit.
+        Inside ``-deny-no-role`` the order does not matter: Keycloak picks the condition of a
+        CONDITIONAL subflow on type and not on position. Those two steps therefore carry no
+        explicit priority.
 
-        Elke stap wordt apart opgezocht voor hij wordt aangemaakt, zodat herhaald
-        toepassen (elke reprocess doet dit) niets verdubbelt.
+        Every step is looked up before it is created, so applying this again, which every
+        reprocess does, duplicates nothing.
 
-        ``redirect_to_idp`` IS DE TEMPLATE VAN HET PROJECT, EN HIJ MOET MEE
+        ``redirect_to_idp`` IS THE PROJECT'S TEMPLATE, AND IT HAS TO COME ALONG
 
-        Deze flow hangt als ``browserFlowOverride`` op de client, en een clientoverride wint
-        van de browser flow van de realm. Alles wat ``sso-only`` op de REALM zet - de flow
-        "External IDP Redirector", met ``defaultProvider`` op de identity provider - geldt
-        voor deze clients dus niet. De ``identity-provider-redirector`` hierboven stond
-        daarbij zonder config, en zo'n redirector doet niets: de flow viel door naar het
-        wachtwoordformulier. Een project met ``template: sso-only`` EN ``restrict-access``
-        kreeg daardoor het gewone inlogscherm van Keycloak, precies het beeld dat de
-        blauwdruk belooft weg te nemen (gemeten op regel-k4c, 2 september 2026).
+        This flow hangs on the client as ``browserFlowOverride``, and a client override beats
+        the realm's browser flow. So everything ``sso-only`` sets on the REALM, the flow
+        "External IDP Redirector" with ``defaultProvider`` on the identity provider, does not
+        hold for these clients. The ``identity-provider-redirector`` above then stands without
+        a config, and such a redirector does nothing: the flow falls through to the password
+        form, and a project with ``template: sso-only`` AND ``restrict-access`` gets exactly
+        the login screen the blueprint promises to take away.
 
-        Met een alias erin krijgt de redirector dezelfde ``defaultProvider`` als de
-        realmflow, en stuurt de poort net zo goed door. Zonder alias (``sso-support``) blijft
-        hij bewust onbeschreven: daar HOORT het inlogscherm te verschijnen.
+        With an alias in it the redirector gets the same ``defaultProvider`` as the realm
+        flow, and the gate redirects just as well. Without an alias (``sso-support``) it stays
+        deliberately unconfigured: there the login screen IS supposed to appear.
         """
         role_desc = f"{client_id}.{role_name}" if client_id else role_name
         logger.info(f"Building role gate browser flow '{flow_alias}' for role '{role_desc}' in realm '{realm_name}'")
@@ -2628,15 +2206,15 @@ class KeycloakConnector:
                 )
                 logger.debug(f"Created top-level flow '{flow_alias}'")
 
-            # Volgorde, en waarom die hier de beveiliging draagt: staat ``-deny-no-role``
-            # vóór ``-authenticate``, dan draait de rolcontrole voordat er een gebruiker is
-            # en wordt IEDEREEN geweigerd. Hij wordt op dezelfde manier vastgelegd als in
-            # ``ensure_auto_link_first_broker_login_flow``: een expliciete prioriteit op de
-            # executions, en subflows op hun aanmaakvolgorde, waar de server
-            # getNextPriority (hoogste + 1) voor teruggeeft. Wat de prioriteit WEL kwijtraakt
-            # is een handgeschreven, partiele PUT op de requirement; daarom loopt alles hier
-            # via ``_ensure_execution_in_flow`` en ``_ensure_subflow``, die het opgehaalde
-            # object compleet terugsturen.
+            # Order carries the security here: with ``-deny-no-role`` BEFORE
+            # ``-authenticate`` the role check runs before there is a user and EVERYONE is
+            # refused. It is pinned the same way as in
+            # ``ensure_auto_link_first_broker_login_flow``: an explicit priority on the
+            # executions, and subflows on their creation order, for which the server returns
+            # getNextPriority (highest + 1). What DOES lose that priority is a hand-written,
+            # partial PUT on the requirement, which is why everything here goes through
+            # ``_ensure_execution_in_flow`` and ``_ensure_subflow``, which send the fetched
+            # object back whole.
             await self._ensure_subflow(flow_alias, authenticate, "REQUIRED", "Authenticate the user")
             await self._ensure_browser_authenticators(
                 realm_name=realm_name,
@@ -2662,11 +2240,10 @@ class KeycloakConnector:
             raise
 
     async def delete_authentication_flow_by_alias(self, realm_name: str, flow_alias: str) -> bool:
-        """Verwijder een top-level flow als hij bestaat; zegt of er iets weg is.
+        """Delete a top-level flow when it exists; says whether anything was removed.
 
-        Opruimen mag nooit de reden zijn dat een uitrol faalt, dus een weigering van
-        Keycloak (bijvoorbeeld omdat er nog een client aan hangt) wordt gelogd en niet
-        doorgegeven.
+        Cleaning up may never be the reason a rollout fails, so a refusal by Keycloak (because
+        a client still hangs off the flow, for instance) is logged and not passed on.
         """
         try:
             self.admin.change_current_realm(realm_name)
@@ -2685,16 +2262,12 @@ class KeycloakConnector:
     async def _add_condition_user_role(
         self, subflow_alias: str, role_name: str, negate: bool = True, client_id: str | None = None
     ) -> None:
-        """
-        Add a "Condition - User Role" execution to a sub-flow.
+        """Add a "Condition - User Role" execution to a sub-flow.
 
-        Supports both client roles and realm roles:
-        - Client role: pass client_id, uses format "clientId.roleName"
-        - Realm role: omit client_id (None), uses just "roleName"
+        With ``client_id`` the condition is on the client role ``clientId.roleName``; without
+        it on the realm role ``roleName``. ``negate`` passes when the user does NOT have it.
 
         Args:
-            subflow_alias: Alias of the sub-flow
-            role_name: Role name to check
             negate: If True, condition passes when user does NOT have the role
             client_id: Client ID for client roles, None for realm roles
         """
@@ -2729,7 +2302,6 @@ class KeycloakConnector:
         if not condition_execution:
             raise KeycloakError("Could not find conditional-user-role execution")
 
-        # Set requirement to REQUIRED (if not already)
         current_requirement = condition_execution.get("requirement")
         if current_requirement == "REQUIRED":
             logger.debug(f"Condition - User Role is already REQUIRED in '{subflow_alias}'")
@@ -2764,23 +2336,15 @@ class KeycloakConnector:
         existing_config_id = condition_execution.get("authenticationConfig")
 
         if existing_config_id:
-            # Update existing config
             config_data["id"] = existing_config_id
             self.admin.update_authenticator_config(payload=config_data, config_id=existing_config_id)
         else:
-            # Create new config
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
 
         logger.debug(f"Configured Condition - User Role: {cond_user_role}, negate={negate}")
 
     async def _add_deny_access(self, subflow_alias: str, error_message: str) -> None:
-        """
-        Add a "Deny Access" execution to a sub-flow.
-
-        Args:
-            subflow_alias: Alias of the sub-flow
-            error_message: Error message in ${key} format for theme resolution
-        """
+        """Add a "Deny Access" execution; ``error_message`` is a ${key} the theme resolves."""
         logger.debug(f"Adding Deny Access to sub-flow '{subflow_alias}'")
 
         # First check if execution already exists (idempotency)
@@ -2811,7 +2375,6 @@ class KeycloakConnector:
         if not deny_execution:
             raise KeycloakError("Could not find deny-access-authenticator execution")
 
-        # Set requirement to REQUIRED (if not already)
         current_requirement = deny_execution.get("requirement")
         if current_requirement == "REQUIRED":
             logger.debug(f"Deny Access is already REQUIRED in '{subflow_alias}'")
@@ -2840,11 +2403,9 @@ class KeycloakConnector:
         existing_config_id = deny_execution.get("authenticationConfig")
 
         if existing_config_id:
-            # Update existing config
             config_data["id"] = existing_config_id
             self.admin.update_authenticator_config(payload=config_data, config_id=existing_config_id)
         else:
-            # Create new config
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
 
         logger.debug(f"Configured Deny Access with error message: {error_message}")
@@ -2858,13 +2419,11 @@ class KeycloakConnector:
         redirect_to_idp: str | None = None,
         require_otp: bool = False,
     ) -> None:
-        """
-        Create a browser flow that restricts access to users with a specific realm role.
+        """Create a browser flow that only admits holders of a realm role.
 
-        Realm roles enable unified access control across multiple apps in the same realm.
+        A realm role covers every app in the realm at once.
 
         Args:
-            realm_name: Name of the realm
             flow_alias: Alias for the new flow (see ``role_gate_flow_alias``)
             role_name: Realm role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
@@ -2885,20 +2444,11 @@ class KeycloakConnector:
     async def set_client_authentication_flow_override(
         self, realm_name: str, client_id: str, browser_flow_alias: str
     ) -> None:
-        """
-        Set the authentication flow override for a client.
-
-        Args:
-            realm_name: Name of the realm
-            client_id: Client ID (not the internal UUID)
-            browser_flow_alias: Alias of the browser flow to use
-        """
         logger.info(f"Setting browser flow override '{browser_flow_alias}' for client '{client_id}'")
 
         try:
             self.admin.change_current_realm(realm_name)
 
-            # Find the client
             clients = self.admin.get_clients()
             target_client = None
             for client in clients:
@@ -2911,7 +2461,6 @@ class KeycloakConnector:
 
             client_uuid = target_client["id"]
 
-            # Update the client with the flow override
             update_data = {
                 "authenticationFlowBindingOverrides": {
                     "browser": browser_flow_alias,
@@ -2972,9 +2521,7 @@ class KeycloakConnector:
         account requires the realm's duplicateEmailsAllowed=false (set by the SSO setup).
 
         Args:
-            realm_name: Name of the realm
             require_confirmation: Show the single idp-confirm-link screen before linking
-            flow_alias: Alias for the top-level flow
         """
         logger.info(
             f"Ensuring auto-link first-broker-login flow '{flow_alias}' in realm '{realm_name}' "
@@ -3161,14 +2708,9 @@ class KeycloakConnector:
                 return users
 
     async def _ensure_subflow(self, parent_alias: str, subflow_alias: str, requirement: str, description: str) -> None:
-        """
-        Create a basic-flow subflow under a parent (sub)flow and set its requirement (idempotent).
+        """Create a basic-flow subflow under a parent (sub)flow and set its requirement.
 
-        Args:
-            parent_alias: Alias of the parent flow or subflow
-            subflow_alias: Alias for the subflow (must be unique within the realm)
-            requirement: Requirement level for the subflow (REQUIRED, ALTERNATIVE, ...)
-            description: Human-readable description
+        Idempotent. ``subflow_alias`` has to be unique within the realm.
         """
         subflow_data = {
             "alias": subflow_alias,
@@ -3220,8 +2762,6 @@ class KeycloakConnector:
         gapped priorities is what keycloak-config-cli does and is the reliable ordering mechanism.
 
         Args:
-            flow_alias: Alias of the flow or subflow
-            provider: Provider ID for the execution
             requirement: Requirement level (ALTERNATIVE, REQUIRED, DISABLED)
             priority: Explicit priority for deterministic ordering (Keycloak >= 25)
         """
@@ -3299,18 +2839,14 @@ class KeycloakConnector:
         error_message: str = "${accessDeniedNoPermission}",
         skip_clients: list[str] | None = None,
     ) -> None:
-        """
-        Create a post-broker login flow that restricts access to users with a specific client role.
+        """Create a post-broker login flow that only admits holders of a client role.
 
-        This flow runs after SSO/IdP authentication and checks if the user has the required role.
-        If they don't have the role, access is denied with a custom error message.
-
-        Uses the custom RequireClientRoleAuthenticator SPI which properly handles both success
-        and failure cases in post-broker login flows (unlike conditional sub-flows which fail
-        when skipped).
+        It runs after the SSO login through the IdP and denies access with ``error_message``
+        when the user lacks the role. Through the custom RequireClientRoleAuthenticator SPI,
+        because a conditional sub-flow FAILS when it is skipped, which in a post-broker flow
+        denies everyone.
 
         Args:
-            realm_name: Name of the realm
             flow_alias: Alias for the new flow (e.g., "post-broker-restricted-myapp")
             client_id: Client ID for the role check
             role_name: Client role name that grants access
@@ -3367,24 +2903,13 @@ class KeycloakConnector:
         client_id: str | None = None,
         skip_clients: list[str] | None = None,
     ) -> None:
-        """
-        Add the custom RequireClientRoleAuthenticator to a flow.
+        """Add the custom RequireClientRoleAuthenticator to a flow.
 
-        This authenticator checks if the user has a specific role and:
-        - Calls success() if the user has the role (allowing the flow to complete)
-        - Calls failure() with an error page if the user lacks the role
-        - Skips the role check if the OAuth client is in the skip_clients list
-
-        Supports both client roles and realm roles:
-        - Client role: pass client_id
-        - Realm role: omit client_id (None)
-
-        This approach works correctly for post-broker login flows, unlike conditional
-        sub-flows which fail when skipped.
+        It calls success() for a user who has the role, failure() with an error page for one
+        who does not, and skips the check entirely for an OAuth client in ``skip_clients``.
+        With ``client_id`` the role is a client role, without it a realm role.
 
         Args:
-            flow_alias: Alias of the parent flow to add the authenticator to
-            role_name: Role name that grants access
             error_message: Error message in ${key} format for theme resolution
             client_id: Client ID for client roles, None for realm roles
             skip_clients: List of OAuth client IDs that should bypass this role check
@@ -3451,46 +2976,32 @@ class KeycloakConnector:
         if client_id:
             config_data["config"]["clientId"] = client_id
 
-        # Add skipClients if provided
         if skip_clients:
             config_data["config"]["skipClients"] = ",".join(skip_clients)
             logger.debug(f"Configuring skipClients: {skip_clients}")
 
         if existing_config_id:
-            # Update existing config
             config_data["id"] = existing_config_id
             self.admin.update_authenticator_config(payload=config_data, config_id=existing_config_id)
             logger.debug(f"Updated RequireRoleAuthenticator config: role={role_desc}")
         else:
-            # Create new config
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
             logger.debug(f"Created RequireRoleAuthenticator config: role={role_desc}")
 
     async def set_identity_provider_post_broker_login_flow(
         self, realm_name: str, provider_alias: str, flow_alias: str
     ) -> None:
-        """
-        Set the post-broker login flow for an identity provider.
-
-        This flow runs after every successful SSO authentication through this IdP.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-            flow_alias: Alias of the post-broker login flow to use
-        """
+        """Set an IdP's post-broker login flow, which runs after every SSO login through it."""
         logger.info(f"Setting post-broker login flow '{flow_alias}' for IdP '{provider_alias}' in realm '{realm_name}'")
 
         try:
             self.admin.change_current_realm(realm_name)
 
-            # Get the identity provider
             try:
                 idp = self.admin.get_idp(idp_alias=provider_alias)
             except KeycloakGetError:
                 raise KeycloakError(f"Identity provider '{provider_alias}' not found in realm '{realm_name}'")
 
-            # Update the identity provider with the post-broker login flow
             idp["postBrokerLoginFlowAlias"] = flow_alias
 
             self.admin.update_idp(idp_alias=provider_alias, payload=idp)
@@ -3511,17 +3022,12 @@ class KeycloakConnector:
         error_message: str = "${accessDeniedNoPermission}",
         skip_clients: list[str] | None = None,
     ) -> None:
-        """
-        Create a post-broker login flow that restricts access to users with a specific realm role.
+        """Create a post-broker login flow that only admits holders of a realm role.
 
-        This flow runs after SSO/IdP authentication and checks if the user has the required
-        realm role. If they don't have the role, access is denied with a custom error message.
-
-        Uses the custom RequireClientRoleAuthenticator SPI with empty client ID for realm roles,
-        which allows unified access control across multiple applications.
+        As :meth:`create_post_broker_login_flow`, with an empty client id, so one role covers
+        every application in the realm.
 
         Args:
-            realm_name: Name of the realm
             flow_alias: Alias for the new flow (e.g., "post-broker-restricted-realm")
             role_name: Realm role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
@@ -3571,20 +3077,8 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
-    # ==================== Realm Role Operations ====================
-
     async def create_realm_role(self, realm_name: str, role_name: str, description: str | None = None) -> bool:
-        """
-        Create a realm role in the specified realm.
-
-        Args:
-            realm_name: Name of the realm
-            role_name: Name of the role to create
-            description: Optional description for the role
-
-        Returns:
-            True if role was created or already exists
-        """
+        """Create a realm role; True both when it was created and when it already existed."""
         logger.info(f"Creating realm role '{role_name}' in realm '{realm_name}'")
 
         role_data = {
@@ -3595,7 +3089,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -3607,7 +3100,6 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully ensured realm role '{role_name}' exists")
@@ -3615,33 +3107,18 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to create realm role '{role_name}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
-
-    # ==================== Client Role Operations ====================
 
     async def create_client_role(
         self, realm_name: str, client_id: str, role_name: str, description: str | None = None
     ) -> bool:
-        """
-        Create a client role for the specified client.
-
-        Args:
-            realm_name: Name of the realm
-            client_id: Client ID (not the internal UUID)
-            role_name: Name of the role to create
-            description: Optional description for the role
-
-        Returns:
-            True if role was created or already exists
-        """
+        """Create a client role; True both when it was created and when it already existed."""
         logger.info(f"Creating client role '{role_name}' for client '{client_id}' in realm '{realm_name}'")
 
         try:
             self.admin.change_current_realm(realm_name)
 
-            # Find the client by clientId
             clients = self.admin.get_clients()
             target_client = None
             for client in clients:
@@ -3679,21 +3156,11 @@ class KeycloakConnector:
             raise
 
     async def assign_client_role_to_user(self, realm_name: str, client_id: str, user_id: str, role_name: str) -> None:
-        """
-        Assign a client role to a user.
-
-        Args:
-            realm_name: Name of the realm
-            client_id: Client ID (not the internal UUID)
-            user_id: User ID (internal UUID)
-            role_name: Name of the client role to assign
-        """
         logger.info(f"Assigning client role '{role_name}' to user '{user_id}' for client '{client_id}'")
 
         try:
             self.admin.change_current_realm(realm_name)
 
-            # Find the client by clientId
             clients = self.admin.get_clients()
             target_client = None
             for client in clients:
@@ -3706,7 +3173,6 @@ class KeycloakConnector:
 
             client_uuid = target_client["id"]
 
-            # Get the client role
             roles = self.admin.get_client_roles(client_id=client_uuid)
             target_role = None
             for role in roles:
@@ -3717,7 +3183,6 @@ class KeycloakConnector:
             if not target_role:
                 raise KeycloakError(f"Client role '{role_name}' not found for client '{client_id}'")
 
-            # Assign the role to the user
             self.admin.assign_client_role(user_id=user_id, client_id=client_uuid, roles=[target_role])
             logger.info(f"Assigned client role '{role_name}' to user '{user_id}'")
 
@@ -3728,20 +3193,7 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
-    # ==================== Group Operations ====================
-
     async def create_group(self, realm_name: str, group_name: str, path: str | None = None) -> dict[str, Any]:
-        """
-        Create a group in the specified realm.
-
-        Args:
-            realm_name: Name of the realm
-            group_name: Name of the group to create
-            path: Optional group path (e.g., "/parent/child")
-
-        Returns:
-            Dictionary containing group information including group ID
-        """
         logger.info(f"Creating group '{group_name}' in realm '{realm_name}'")
 
         group_data = {
@@ -3750,7 +3202,6 @@ class KeycloakConnector:
         }
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -3762,7 +3213,6 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Get the created/existing group
             groups = self.admin.get_groups(query={"search": group_name})
             group_info = None
             for group in groups:
@@ -3770,7 +3220,6 @@ class KeycloakConnector:
                     group_info = group
                     break
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             if not group_info:
@@ -3781,11 +3230,8 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to create group '{group_name}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
-
-    # ==================== User Operations ====================
 
     async def create_user(
         self,
@@ -3799,17 +3245,9 @@ class KeycloakConnector:
         totp_secret: str | None = None,
         skip_email_verification: bool = False,
     ) -> dict[str, Any]:
-        """
-        Create a user in the specified realm.
+        """Create a user.
 
         Args:
-            realm_name: Name of the realm
-            username: Username for the new user
-            password: Password for the new user
-            email: Optional email address
-            first_name: Optional first name
-            last_name: Optional last name
-            enabled: Whether the user is enabled (default: True)
             totp_secret: Optional raw TOTP secret. When set, an OTP credential is
                 imported alongside the password so Keycloak's conditional-OTP
                 browser step requires it at login. Note: Keycloak only imports
@@ -3817,9 +3255,6 @@ class KeycloakConnector:
                 below) the OTP credential is not added.
             skip_email_verification: Let this user in without confirming their address.
                 Only for an account whose address does not exist, see the callers.
-
-        Returns:
-            User information dictionary including user ID
         """
         logger.info(f"Creating user '{username}' in realm '{realm_name}'")
 
@@ -3835,8 +3270,8 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            # Wie een adres heeft, bevestigt het, ongeacht ``verifyEmail`` op de realm.
-            # Waarom: features/keycloak-mail.md.
+            # Whoever has an address confirms it, whatever ``verifyEmail`` says on the realm.
+            # Why: features/keycloak-mail.md.
             user_data["emailVerified"] = skip_email_verification
             if not skip_email_verification:
                 user_data["requiredActions"] = ["VERIFY_EMAIL"]
@@ -3847,13 +3282,12 @@ class KeycloakConnector:
         if last_name:
             user_data["lastName"] = last_name
 
-        # Staat de provider uit, dan slaat de browserflow de opgeslagen actie stil over.
-        # Gemeten, zie features/invites.md.
+        # With the provider disabled the browser flow silently skips the stored action.
+        # Measured, see features/invites.md.
         if "requiredActions" in user_data:
             await self.set_required_action_enabled(realm_name, "VERIFY_EMAIL", True)
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             try:
@@ -3865,10 +3299,8 @@ class KeycloakConnector:
                 else:
                     raise
 
-            # Get the created user
             created_user = await self.get_user_by_username(realm_name, username)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             if not created_user:
@@ -3879,7 +3311,6 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to create user '{username}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
@@ -3895,23 +3326,12 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
 
     async def get_user_by_username(self, realm_name: str, username: str) -> dict[str, Any] | None:
-        """
-        Find a user by username in the specified realm.
-
-        Args:
-            realm_name: Name of the realm
-            username: Username to search for
-
-        Returns:
-            User information dictionary or None if not found
-        """
+        """The user with this username, or ``None`` when there is none."""
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             users = self.admin.get_users(query={"username": username, "exact": "true"})
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             if users and len(users) > 0:
@@ -3923,28 +3343,16 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to search for user '{username}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def get_user_by_email(self, realm_name: str, email: str) -> dict[str, Any] | None:
-        """
-        Find a user by email address in the specified realm.
-
-        Args:
-            realm_name: Name of the realm
-            email: Email address to search for
-
-        Returns:
-            User information dictionary or None if not found
-        """
+        """The user with this email address, or ``None`` when there is none."""
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             users = self.admin.get_users(query={"email": email, "exact": "true"})
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             if users and len(users) > 0:
@@ -3956,25 +3364,14 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to search for user with email '{email}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             return None
 
     async def delete_user_by_username(self, realm_name: str, username: str) -> bool:
-        """
-        Delete a user from the specified realm by username.
-
-        Args:
-            realm_name: Name of the realm
-            username: Username of the user to delete
-
-        Returns:
-            True if deletion was successful, False if user not found
-        """
+        """Delete a user by username; False when no such user was there."""
         logger.info(f"Deleting user '{username}' from realm '{realm_name}'")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
             user = await self.get_user_by_username(realm_name, username)
@@ -3988,7 +3385,6 @@ class KeycloakConnector:
             user_id = user["id"]
             self.admin.delete_user(user_id=user_id)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info(f"Successfully deleted user '{username}' from realm '{realm_name}'")
@@ -3996,29 +3392,17 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to delete user '{username}': {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def assign_realm_management_role(self, realm_name: str, user_id: str, target_realm: str) -> bool:
-        """
-        Assign realm management roles to a user for managing a target realm.
-
-        Args:
-            realm_name: Realm where the user exists (typically 'master')
-            user_id: ID of the user to grant permissions to
-            target_realm: Name of the realm the user will manage
-
-        Returns:
-            True if role was assigned successfully
-        """
+        """Let a user manage ``target_realm``; the user lives in ``realm_name``, usually master."""
         logger.info(f"Assigning realm management roles to user {user_id} for realm {target_realm}")
 
         try:
             # Switch to source realm (where user exists)
             self.admin.change_current_realm(realm_name)
 
-            # Get realm-management client for target realm
             all_clients = self.admin.get_clients()
             target_client_id = f"{target_realm}-realm"
 
@@ -4032,7 +3416,6 @@ class KeycloakConnector:
             if not client_id:
                 raise KeycloakError(f"Realm management client for '{target_realm}' not found")
 
-            # Get available roles
             available_roles = self.admin.get_client_roles_of_user(user_id=user_id, client_id=client_id)
 
             if not available_roles or len(available_roles) == 0:
@@ -4042,10 +3425,8 @@ class KeycloakConnector:
 
             logger.info(f"Found {len(available_roles)} available roles")
 
-            # Assign all available roles
             self.admin.assign_client_role(user_id=user_id, client_id=client_id, roles=available_roles)
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             logger.info("Successfully assigned realm management roles")
@@ -4053,34 +3434,24 @@ class KeycloakConnector:
 
         except KeycloakError as e:
             logger.error(f"Failed to assign realm management roles: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def assign_realm_admin_from_master(
         self, target_realm_name: str, user_id: str, role_names: list[str] | None = None
     ) -> bool:
-        """
-        Assign realm management permissions to a master realm user for a specific realm.
+        """Make a master-realm user the delegated admin of one realm.
 
-        This creates a delegated admin who can login to the main Keycloak admin console
-        (/admin/) but can only see and manage the specified realm.
-
-        In master realm, each realm has a corresponding client named '{realm}-realm'
-        with roles that grant management access to that realm.
+        Such a user can log in to the admin console at /admin/ but sees and manages only that
+        realm. In master every realm has a client named '{realm}-realm' whose roles grant
+        management access to it.
 
         Args:
-            target_realm_name: Name of the realm to grant management access to
-            user_id: ID of the user (must exist in master realm)
             role_names: List of role names to assign (default: all management roles)
-
-        Returns:
-            True if roles were assigned successfully
         """
         logger.info(f"Assigning realm management permissions for '{target_realm_name}' to master realm user {user_id}")
 
         try:
-            # Ensure we're in master realm
             self.admin.change_current_realm("master")
 
             # Find the {realm}-realm client in master (grants management access to target realm)
@@ -4100,7 +3471,6 @@ class KeycloakConnector:
 
             client_uuid = realm_client["id"]
 
-            # Get available client roles
             available_roles = self.admin.get_client_roles(client_id=client_uuid)
 
             if not available_roles:
@@ -4108,10 +3478,9 @@ class KeycloakConnector:
                 return True
 
             # Filter to requested roles if specified, otherwise assign all
-            if role_names:  # noqa: SIM108
+            if role_names:  # noqa: SIM108  # a ternary over these two multi-line branches reads worse
                 roles_to_assign = [r for r in available_roles if r["name"] in role_names]
             else:
-                # Assign all management roles for full realm admin access
                 roles_to_assign = available_roles
 
             if roles_to_assign:
@@ -4132,29 +3501,18 @@ class KeycloakConnector:
     async def assign_realm_roles_to_user(
         self, realm_name: str, user_id: str, role_names: list[str]
     ) -> dict[str, list[str]]:
-        """
-        Assign realm roles to a user.
-
-        Args:
-            realm_name: Name of the realm
-            user_id: ID of the user
-            role_names: List of role names to assign
-
-        Returns:
-            Dict with 'assigned' and 'not_found' lists of role names
+        """Assign realm roles; returns ``{"assigned": [...], "not_found": [...]}`` of role names.
 
         Raises:
-            KeycloakError: If role assignment fails
+            KeycloakError: the assignment itself failed.
         """
         logger.info(f"Assigning realm roles {role_names} to user {user_id} in realm {realm_name}")
 
         result: dict[str, list[str]] = {"assigned": [], "not_found": []}
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Get all realm roles
             all_roles = self.admin.get_realm_roles()
 
             # Filter to requested roles and track what's missing
@@ -4175,43 +3533,30 @@ class KeycloakConnector:
             if result["not_found"]:
                 logger.error(f"Realm roles not found: {result['not_found']}")
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             return result
 
         except KeycloakError as e:
             logger.error(f"Failed to assign realm roles: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def assign_realm_role_to_user(self, realm_name: str, user_id: str, role_name: str) -> bool:
-        """
-        Assign a single realm role to a user.
-
-        Args:
-            realm_name: Name of the realm
-            user_id: ID of the user
-            role_name: Name of the realm role to assign
-
-        Returns:
-            True if role was assigned successfully
+        """Assign one realm role to a user.
 
         Raises:
-            KeycloakError: If role assignment fails or role not found
+            KeycloakError: the assignment failed, or the role does not exist.
         """
         logger.info(f"Assigning realm role '{role_name}' to user {user_id} in realm {realm_name}")
 
         try:
             self.admin.change_current_realm(realm_name)
 
-            # Get the specific realm role
             role = self.admin.get_realm_role(role_name=role_name)
             if not role:
                 raise KeycloakError(f"Realm role '{role_name}' not found in realm '{realm_name}'")
 
-            # Assign the role to the user
             self.admin.assign_realm_roles(user_id=user_id, roles=[role])
             logger.info(f"Successfully assigned realm role '{role_name}' to user {user_id}")
 
@@ -4224,24 +3569,11 @@ class KeycloakConnector:
             raise
 
     async def join_user_to_group(self, realm_name: str, user_id: str, group_name: str) -> bool:
-        """
-        Add a user to a group.
-
-        Args:
-            realm_name: Name of the realm
-            user_id: ID of the user
-            group_name: Name of the group
-
-        Returns:
-            True if user was added to group successfully
-        """
         logger.info(f"Adding user {user_id} to group '{group_name}' in realm {realm_name}")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Find the group
             groups = self.admin.get_groups(query={"search": group_name})
             target_group = None
             for group in groups:
@@ -4254,44 +3586,28 @@ class KeycloakConnector:
                 self.admin.change_current_realm("master")
                 return False
 
-            # Add user to group
             self.admin.group_user_add(user_id=user_id, group_id=target_group["id"])
             logger.info(f"Successfully added user {user_id} to group '{group_name}'")
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             return True
 
         except KeycloakError as e:
             logger.error(f"Failed to add user to group: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
     async def remove_all_realm_roles(self, realm_name: str, user_id: str) -> bool:
-        """
-        Remove all realm roles from a user (useful for removing default role assignments).
-        After this, only explicitly assigned roles will remain.
-
-        Args:
-            realm_name: Name of the realm
-            user_id: ID of the user
-
-        Returns:
-            True if user roles were removed successfully
-        """
+        """Strip every realm role off a user, so only what is assigned afterwards remains."""
         logger.info(f"Removing all realm roles from user {user_id} in realm {realm_name}")
 
         try:
-            # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Get user's current realm roles
             user_roles = self.admin.get_realm_roles_of_user(user_id=user_id)
 
             if user_roles:
-                # Remove all realm roles
                 self.admin.delete_realm_roles_of_user(user_id=user_id, roles=user_roles)
                 role_names = [role.get("name") for role in user_roles]
                 logger.info(
@@ -4300,14 +3616,12 @@ class KeycloakConnector:
             else:
                 logger.info(f"No realm roles to remove for user {user_id}")
 
-            # Switch back to master
             self.admin.change_current_realm("master")
 
             return True
 
         except KeycloakError as e:
             logger.error(f"Failed to remove realm roles from user: {e}")
-            # Switch back to master
             self.admin.change_current_realm("master")
             raise
 
@@ -4370,9 +3684,6 @@ class KeycloakConnector:
         logger.info(f"Granted master 'admin' role to service account of client '{client_id}'")
 
 
-# ==================== Factory Function ====================
-
-
 async def create_keycloak_connector(
     keycloak_url: str | None = None,
     admin_username: str | None = None,
@@ -4389,14 +3700,8 @@ async def create_keycloak_connector(
     account client).
 
     Args:
-        keycloak_url: Base URL of the Keycloak server (uses config default if None)
-        admin_username: Admin username for Keycloak API access (uses config default if None)
-        admin_password: Admin password for Keycloak API access (uses config default if None)
         use_client_credentials: Force client-credentials (True) or admin password
             (False); None auto-selects based on whether a client secret is set.
-
-    Returns:
-        KeycloakConnector instance
     """
     if use_client_credentials is None:
         use_client_credentials = bool(settings.KEYCLOAK_ADMIN_CLIENT_SECRET)
@@ -4421,12 +3726,6 @@ async def fetch_oidc_metadata(discovery_url: str) -> dict[str, Any]:
     The document is the authoritative source for the issuer and the JWKS URI, so
     token verification never has to assemble those URLs itself.
 
-    Args:
-        discovery_url: The .well-known/openid-configuration URL of the realm
-
-    Returns:
-        The parsed discovery document
-
     Raises:
         aiohttp.ClientError: When the document cannot be retrieved
     """
@@ -4439,12 +3738,6 @@ async def fetch_oidc_metadata(discovery_url: str) -> dict[str, Any]:
 
 async def fetch_jwks(jwks_uri: str) -> dict[str, Any]:
     """Fetch a realm's JSON Web Key Set.
-
-    Args:
-        jwks_uri: The jwks_uri from the realm's discovery document
-
-    Returns:
-        The parsed JWKS
 
     Raises:
         aiohttp.ClientError: When the key set cannot be retrieved

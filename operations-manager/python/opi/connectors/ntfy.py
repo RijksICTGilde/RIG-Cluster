@@ -20,16 +20,12 @@ NTFY_TIMEOUT_SECONDS = 15
 
 @dataclass(frozen=True)
 class NtfyTarget:
-    """The ntfy server and the topic on it that a push goes to."""
-
     server: str
     topic: str
 
 
 @dataclass(frozen=True)
 class NtfyMessage:
-    """One push: what it says and how ntfy should present it."""
-
     title: str
     body: str
     priority: str = "default"

@@ -1,9 +1,4 @@
-"""
-Prometheus connector for querying metrics from Prometheus.
-
-This module provides functionality to interact with Prometheus for retrieving
-cluster and application metrics.
-"""
+"""Query Prometheus directly, without Grafana in between."""
 
 import asyncio
 import logging
@@ -12,10 +7,8 @@ from typing import TYPE_CHECKING, Any
 import requests
 from prometheus_api_client.exceptions import PrometheusApiClientException
 
-# Imported from the submodule, not the package root: the package root exposes its classes
-# through a module-level __getattr__ shim, so a type checker resolves
-# `prometheus_api_client.PrometheusConnect` to the union of everything that shim can
-# return and then rejects perfectly valid constructor arguments.
+# Import from the submodule, not the package root: the root's module-level __getattr__ shim
+# makes a type checker resolve PrometheusConnect to a union and reject valid arguments.
 from prometheus_api_client.prometheus_connect import PrometheusConnect
 
 from opi.connectors.grafana_prometheus import close_grafana_connector
@@ -33,8 +26,6 @@ HTTP_TIMEOUT_SECONDS = 10
 
 
 class PrometheusConnector:
-    """Connector for interacting with Prometheus for metrics retrieval."""
-
     _instance: PrometheusConnector | None = None
     is_connected: bool = False
     prom: Any  # PrometheusConnect instance (untyped library)
@@ -42,7 +33,6 @@ class PrometheusConnector:
     _prometheus_url: str
 
     def __new__(cls) -> PrometheusConnector:
-        """Implement singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -69,9 +59,8 @@ class PrometheusConnector:
     ) -> list[dict[str, Any]]:
         """Run an instant query, by default evaluated now.
 
-        In a thread, and that is not decoration: prometheus_api_client is synchronous and
-        talks through ``requests``, so a direct call holds the event loop for the whole
-        request, DNS and retries included, and no other request is served meanwhile.
+        In a thread: prometheus_api_client is synchronous and talks through ``requests``, so a
+        direct call holds the event loop for the whole request, DNS and retries included.
 
         Raises:
             ValueError: when a datasource_uid is given. This connector has one store;
@@ -93,8 +82,8 @@ class PrometheusConnector:
     async def query_batch(self, queries: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
         """Run instant queries and return the results per key.
 
-        One HTTP request per query, sequentially inside one thread: the library is
-        synchronous, so the thread is what keeps the event loop free.
+        One HTTP request per query, sequentially inside one thread: the library is synchronous,
+        so the thread is what keeps the event loop free.
         """
         return await asyncio.to_thread(self._run_instant, queries)
 
@@ -126,19 +115,10 @@ class PrometheusConnector:
             raise MetricsQueryError(f"Failed to execute range queries: {e}") from e
 
     def discover_metric_names(self, match_selector: str) -> list[str]:
-        """
-        Discover available metric names matching a label selector.
+        """The metric names matching a label matcher such as '{job="minio"}', sorted.
 
-        Uses the Prometheus ``/api/v1/series`` endpoint which searches the TSDB
-        index directly.  This is essential for jobs with long scrape intervals
-        (e.g. 2 hours) where PromQL instant queries would return empty results
-        due to the default 5-minute staleness window.
-
-        Args:
-            match_selector: A Prometheus label matcher, e.g. '{job="minio"}'.
-
-        Returns:
-            Sorted list of metric names.
+        Through ``/api/v1/series``, which searches the TSDB index: a job with a scrape interval
+        longer than the 5-minute staleness window returns nothing on a PromQL instant query.
         """
         url = f"{self._prometheus_url.rstrip('/')}/api/v1/series"
         logger.debug(f"Discovering metric names via series API: match[]={match_selector}")
@@ -165,20 +145,10 @@ class PrometheusConnector:
     async def query_range(
         self, query: str, start_time: str | int | float, end_time: str | int | float, step: str
     ) -> list[dict[str, Any]]:
-        """
-        Execute a range query to get time-series data.
+        """Run a range query; the bounds take RFC3339 or a Unix timestamp, the step e.g. "5m".
 
-        In a thread for the same reason as :meth:`query`. prometheus_api_client wants
-        datetime bounds; a string here failed every range query on the sandbox.
-
-        Args:
-            query: The PromQL query to execute.
-            start_time: Start time (RFC3339 or Unix timestamp).
-            end_time: End time (RFC3339 or Unix timestamp).
-            step: Query resolution step (e.g., "5m", "1h").
-
-        Returns:
-            List of metric results with time-series values.
+        In a thread for the same reason as :meth:`query`. prometheus_api_client wants datetime
+        bounds; a string here failed every range query on the sandbox.
         """
         logger.debug(f"Executing range query: {query} from {start_time} to {end_time} step {step}")
 
@@ -197,27 +167,18 @@ class PrometheusConnector:
 
 
 def create_prometheus_connector() -> PrometheusConnector:
-    """
-    Create and return a PrometheusConnector instance.
-
-    Returns:
-        PrometheusConnector instance (singleton)
-    """
+    """The PrometheusConnector singleton."""
     logger.debug("Creating PrometheusConnector")
     return PrometheusConnector()
 
 
 async def get_metrics_connector() -> Any:
-    """
-    Get the appropriate metrics connector based on configuration.
+    """The connector singleton for the configured ``METRICS_BACKEND``.
 
-    PrometheusConnector queries Prometheus directly (sandbox), GrafanaPrometheusConnector
-    goes through Grafana (ODCN production and staging). Both satisfy
+    PrometheusConnector queries Prometheus directly (sandbox), GrafanaPrometheusConnector goes
+    through Grafana (ODCN production and staging). Both satisfy
     ``connectors.metrics_backend.MetricsBackend``; the queries live in
     ``services.metrics_queries``.
-
-    Returns:
-        The connector singleton for the configured METRICS_BACKEND.
     """
     from opi.core.config import settings
 

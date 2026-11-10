@@ -34,7 +34,7 @@
 "opi/connectors/http.py" = ["ANN001", "ANN204"]
 "opi/connectors/keycloak.py" = ["ANN204", "B904", "BLE001", "C901", "PLR0912", "PLR0913", "PLR0915"]
 "opi/connectors/kopia.py" = ["BLE001", "C901", "PLR0913"]
-"opi/connectors/kubectl.py" = ["ANN202", "ANN204", "BLE001", "C901", "N815", "PLR0913"]
+"opi/connectors/kubectl.py" = ["ANN202", "ANN204", "BLE001", "C901", "PLR0913"]
 "opi/connectors/mail.py" = ["ANN401", "PLR0913"]
 "opi/connectors/minio_mc.py" = ["BLE001", "PLR0913"]
 "opi/connectors/opi.py" = ["ANN401", "BLE001", "PLR0913"]

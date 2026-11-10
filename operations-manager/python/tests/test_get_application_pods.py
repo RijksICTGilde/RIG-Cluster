@@ -88,7 +88,7 @@ def _connector() -> KubectlConnector:
 async def _run(stdout: str, code: int = 0) -> list[dict[str, Any]]:
     connector = _connector()
     with (
-        patch.object(KubectlConnector, "isConnected", True),
+        patch.object(KubectlConnector, "is_connected", True),
         patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(stdout, "", code))),
     ):
         return await connector.get_application_pods("rig-prd-psd-law", "pr-114")
@@ -129,7 +129,7 @@ async def test_de_selector_sluit_dienstpods_uit_en_scoped_op_de_deployment():
     connector = _connector()
     runner = AsyncMock(return_value=(json.dumps({"items": []}), "", 0))
     with (
-        patch.object(KubectlConnector, "isConnected", True),
+        patch.object(KubectlConnector, "is_connected", True),
         patch.object(connector, "_run_kubectl_command", runner),
     ):
         await connector.get_application_pods("rig-prd-psd-law", "pr-114")
@@ -202,7 +202,7 @@ async def test_zonder_kubectl_verbinding_geen_aanroep():
     connector = _connector()
     runner = AsyncMock()
     with (
-        patch.object(KubectlConnector, "isConnected", False),
+        patch.object(KubectlConnector, "is_connected", False),
         patch.object(connector, "_run_kubectl_command", runner),
     ):
         assert await connector.get_application_pods("ns", "pr-114") == []
@@ -213,7 +213,7 @@ async def test_zonder_kubectl_verbinding_geen_aanroep():
 async def test_een_falende_aanroep_gooit_niet():
     connector = _connector()
     with (
-        patch.object(KubectlConnector, "isConnected", True),
+        patch.object(KubectlConnector, "is_connected", True),
         patch.object(connector, "_run_kubectl_command", AsyncMock(side_effect=RuntimeError("kubectl weg"))),
     ):
         assert await connector.get_application_pods("ns", "pr-114") == []

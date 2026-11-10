@@ -62,55 +62,6 @@
       "dutch-comments": 74,
       "comment-heavy-functions": 1
     },
-    "opi/connectors/argo.py": {
-      "dutch-identifiers": 6,
-      "dutch-comments": 21
-    },
-    "opi/connectors/chisel_connector.py": {
-      "dutch-comments": 2
-    },
-    "opi/connectors/git.py": {
-      "dutch-comments": 51
-    },
-    "opi/connectors/git_repo.py": {
-      "dutch-comments": 54,
-      "comment-heavy-functions": 1
-    },
-    "opi/connectors/http.py": {
-      "dutch-comments": 1
-    },
-    "opi/connectors/keycloak.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 34
-    },
-    "opi/connectors/kopia.py": {
-      "dutch-comments": 9
-    },
-    "opi/connectors/kubectl.py": {
-      "dutch-comments": 7,
-      "comment-heavy-functions": 1
-    },
-    "opi/connectors/mail.py": {
-      "dutch-identifiers": 27,
-      "dutch-comments": 22
-    },
-    "opi/connectors/minio_mc.py": {
-      "dutch-comments": 14
-    },
-    "opi/connectors/postgres.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 25
-    },
-    "opi/connectors/prometheus.py": {
-      "dutch-comments": 6
-    },
-    "opi/connectors/seaweedfs_shell.py": {
-      "dutch-identifiers": 23,
-      "dutch-comments": 35
-    },
-    "opi/connectors/skopeo.py": {
-      "dutch-comments": 6
-    },
     "opi/core/authz/actions.py": {
       "dutch-comments": 1
     },

@@ -53,7 +53,7 @@ def test_a_test_that_resets_the_singleton_itself_starts_no_process() -> None:
 
     assert connector._initialized is True
     assert connector._retry_task is None
-    assert KubectlConnector.isConnected is False
+    assert KubectlConnector.is_connected is False
 
 
 def test_a_kubectl_start_is_refused_and_recorded() -> None:

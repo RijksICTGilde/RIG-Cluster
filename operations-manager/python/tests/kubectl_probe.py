@@ -93,7 +93,7 @@ def preinitialize_kubectl_without_probing() -> None:
     connector._initialized = False
     _init_without_probing(connector)
     KubectlConnector._instance = connector
-    KubectlConnector.isConnected = False
+    KubectlConnector.is_connected = False
     KubectlConnector._retry_task = None
 
 
@@ -102,7 +102,7 @@ def kubectl_arrangement_for(item: pytest.Item) -> Iterator[None]:
     """Hold this test's arrangement around kubectl for its duration.
 
     A test with a cluster of its own keeps the real probe. Everywhere else ``__init__`` skips
-    the probe, also when the test resets the singleton itself, and ``isConnected`` is False:
+    the probe, also when the test resets the singleton itself, and ``is_connected`` is False:
     that is what the probe concludes in a run without a cluster, so the layer runs through the
     same branches as CI.
     """
@@ -112,7 +112,7 @@ def kubectl_arrangement_for(item: pytest.Item) -> Iterator[None]:
         yield
         return
 
-    KubectlConnector.isConnected = False
+    KubectlConnector.is_connected = False
     with patch.object(KubectlConnector, "__init__", _init_without_probing):
         if item.get_closest_marker(OWN_KUBECTL_MARKER):
             yield

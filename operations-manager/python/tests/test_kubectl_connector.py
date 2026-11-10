@@ -374,7 +374,7 @@ def fake_kubectl(connector, tmp_path):
     script.write_text(FAKE_KUBECTL)
     script.chmod(0o755)
     connector.env = connector.env | {"PATH": f"{tmp_path}:{os.environ['PATH']}"}
-    KubectlConnector.isConnected = True
+    KubectlConnector.is_connected = True
 
     argv_dump = tmp_path / "argv"
     stdin_dump = tmp_path / "stdin"
@@ -388,7 +388,7 @@ async def test_stdin_input_travels_through_a_pipe_and_never_through_the_argument
     process = MagicMock()
     process.communicate = AsyncMock(return_value=(b"applied", b""))
     process.returncode = 0
-    KubectlConnector.isConnected = True
+    KubectlConnector.is_connected = True
 
     with (
         patch(
@@ -408,7 +408,7 @@ async def test_a_command_without_input_opens_no_stdin_pipe(connector):
     process = MagicMock()
     process.communicate = AsyncMock(return_value=(b"", b""))
     process.returncode = 0
-    KubectlConnector.isConnected = True
+    KubectlConnector.is_connected = True
 
     with patch(
         "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)
@@ -597,24 +597,24 @@ async def test_apply_labels_to_resource_lets_a_programming_error_through(connect
 
 
 class TestConnectionGate:
-    """``isConnected`` is class state: one failed probe blocks every connector instance."""
+    """``is_connected`` is class state: one failed probe blocks every connector instance."""
 
     @pytest.fixture(autouse=True)
     def _restore_connection_state(self):
-        was_connected = KubectlConnector.isConnected
-        KubectlConnector.isConnected = True
+        was_connected = KubectlConnector.is_connected
+        KubectlConnector.is_connected = True
         yield
-        KubectlConnector.isConnected = was_connected
+        KubectlConnector.is_connected = was_connected
 
     async def test_a_command_is_refused_while_the_connection_is_marked_down(self, connector):
-        KubectlConnector.isConnected = False
+        KubectlConnector.is_connected = False
 
         with pytest.raises(KubectlConnectionError):
             await connector._run_kubectl_command(["get", "pods"])
 
     async def test_a_second_connector_is_blocked_by_the_first_ones_failed_probe(self, connector):
         other = KubectlConnector()
-        KubectlConnector.isConnected = False
+        KubectlConnector.is_connected = False
 
         with pytest.raises(KubectlConnectionError):
             await other._run_kubectl_command(["get", "pods"])

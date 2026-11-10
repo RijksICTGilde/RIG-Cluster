@@ -160,7 +160,7 @@ async def observe_image_pull_failures() -> int:
     global _observed_at, _snapshot
 
     kubectl = KubectlConnector()
-    if not KubectlConnector.isConnected:
+    if not KubectlConnector.is_connected:
         logger.debug("kubectl not connected, not observing image-pull failures")
         return len(_snapshot)
 

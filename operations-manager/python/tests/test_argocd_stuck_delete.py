@@ -56,7 +56,7 @@ def _reset_singleton():
 def connector():
     with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
         conn = KubectlConnector()
-    KubectlConnector.isConnected = True
+    KubectlConnector.is_connected = True
     return conn
 
 

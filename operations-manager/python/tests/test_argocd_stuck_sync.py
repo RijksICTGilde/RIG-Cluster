@@ -231,7 +231,7 @@ class TestGetApplication:
     def connector(self) -> KubectlConnector:
         with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
             conn = KubectlConnector()
-        KubectlConnector.isConnected = True
+        KubectlConnector.is_connected = True
         return conn
 
     @pytest.mark.asyncio
@@ -348,7 +348,7 @@ class TestTerminateStuckOperation:
     @pytest.mark.asyncio
     async def test_an_unreachable_kubectl_is_not_an_exception_for_the_caller(self, kubectl: MagicMock) -> None:
         """Beide aanroepers staan op een pad dat niet mag stranden, en deze tak is niet
-        zeldzaam: ``_run_kubectl_command`` gooit zodra ``KubectlConnector.isConnected`` False
+        zeldzaam: ``_run_kubectl_command`` gooit zodra ``KubectlConnector.is_connected`` False
         is, en die vlag gaat procesbreed om bij een enkele "connection refused"."""
         kubectl.get_argocd_application = AsyncMock(
             side_effect=KubectlConnectionError("kubectl connection failed: connection refused")
@@ -582,7 +582,7 @@ class TestItRunsBeforeThePush:
         ``_process_application_manifests`` heen zodat de repositories daarna ook overgeslagen
         worden. Gemeten voor de reparatie: ``RAISED KubectlConnectionError``, order
         ``['manifests', 'commit']``, push awaited 0. Precies in de situatie waarvoor deze
-        feature bestaat, want een hik van de apiserver zet ``isConnected`` procesbreed op
+        feature bestaat, want een hik van de apiserver zet ``is_connected`` procesbreed op
         False. De opruimronde staat sinds RC-422 binnen de mutatie, dus vlak voor de write."""
         order: list[str] = []
         workspace = _werkmap(order)

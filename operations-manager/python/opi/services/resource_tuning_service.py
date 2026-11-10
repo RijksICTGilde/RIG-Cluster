@@ -483,7 +483,7 @@ async def _analyze_component_resources(
     # Skip unhealthy deployments — their low memory usage is misleading. Not on the
     # OOM path: an OOM'ing component is unavailable precisely when it needs a bump,
     # so the availability guard (built for the nightly sweep) must not fire there.
-    if not oom_triggered and kubectl is not None and KubectlConnector.isConnected:
+    if not oom_triggered and kubectl is not None and KubectlConnector.is_connected:
         try:
             conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
             if conditions is not None:
@@ -565,7 +565,7 @@ async def _analyze_component_resources(
     # (freshly created), fall back to the Prometheus memory sizing above.
     source = "prometheus"
     vpa_rec = None
-    if supports_vpa(cluster) and kubectl is not None and KubectlConnector.isConnected:
+    if supports_vpa(cluster) and kubectl is not None and KubectlConnector.is_connected:
         try:
             vpa_rec = await kubectl.get_vpa_recommendation(namespace, unique_name)
         except Exception as e:

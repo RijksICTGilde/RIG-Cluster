@@ -1,9 +1,6 @@
-"""
-Grafana Prometheus connector for querying metrics via Grafana's API.
+"""Query Prometheus/Mimir through Grafana's datasource API, with a service account token.
 
-This module provides functionality to query Prometheus/Mimir metrics through
-Grafana's datasource API, using a service account token for authentication.
-This is used in ODCN production where direct Prometheus access is not available.
+The route for ODCN, where Prometheus itself is not reachable.
 """
 
 import asyncio
@@ -31,13 +28,7 @@ RECOVERY_MAX_DELAY = 60.0
 
 
 class GrafanaPrometheusConnector:
-    """
-    Connector for querying Prometheus metrics through Grafana's API.
-
-    This connector provides the same interface as PrometheusConnector but
-    queries metrics via Grafana's /api/ds/query endpoint instead of directly
-    accessing Prometheus.
-    """
+    """The same interface as PrometheusConnector, over Grafana's ``/api/ds/query``."""
 
     _instance: GrafanaPrometheusConnector | None = None
     is_connected: bool = False
@@ -53,14 +44,13 @@ class GrafanaPrometheusConnector:
     _unavailable_since: float | None
 
     def __new__(cls) -> GrafanaPrometheusConnector:
-        """Implement singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the Grafana Prometheus connector (config only, no I/O)."""
+        """Config only, no I/O: ``start_probe`` makes the first call."""
         if self._initialized:
             return
 
@@ -137,7 +127,7 @@ class GrafanaPrometheusConnector:
         """Probe until the backend answers, then stop.
 
         No attempt limit: giving up would leave the pod without metrics until someone
-        restarts it, which is what the ten-attempt version did on 4 November 2026.
+        restarts it.
         """
         if immediate and await self._probe():
             return
@@ -165,7 +155,6 @@ class GrafanaPrometheusConnector:
         return True
 
     def _get_headers(self) -> dict[str, str]:
-        """Get HTTP headers with Bearer token authentication."""
         return {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
@@ -199,7 +188,6 @@ class GrafanaPrometheusConnector:
         return resp
 
     async def _discover_datasource(self) -> None:
-        """Auto-discover the Prometheus/Mimir datasource UID."""
         logger.debug("Auto-discovering Prometheus/Mimir datasource...")
 
         # Failures go to debug: the probe reports them through _mark_unavailable, which
@@ -262,20 +250,7 @@ class GrafanaPrometheusConnector:
         step: str = "5m",
         datasource_uid: str | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Execute a single PromQL query through Grafana's API (async, non-blocking).
-
-        Args:
-            query: The PromQL query to execute
-            instant: If True, execute instant query. If False, execute range query.
-            start_time: Start time for range queries
-            end_time: End time for range queries
-            step: Step interval for range queries
-            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
-
-        Returns:
-            List of metric results in Prometheus API format
-        """
+        """One query, in Prometheus API format; ``datasource_uid`` overrides the configured one."""
         results = await self._execute_batch_queries(
             queries={"A": query},
             instant=instant,
@@ -295,21 +270,9 @@ class GrafanaPrometheusConnector:
         step: str = "5m",
         datasource_uid: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """
-        Execute multiple PromQL queries in a single Grafana API request.
+        """Several queries in one Grafana request, keyed by refId.
 
         All queries in a batch share the same instant/range mode and time window.
-
-        Args:
-            queries: Mapping of refId to PromQL query string
-            instant: If True, execute instant queries. If False, range queries.
-            start_time: Start time for range queries
-            end_time: End time for range queries
-            step: Step interval for range queries
-            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
-
-        Returns:
-            Dictionary mapping refId to list of metric results in Prometheus API format
         """
         if not queries:
             return {}
@@ -342,12 +305,10 @@ class GrafanaPrometheusConnector:
         return self._convert_batch_grafana_response(grafana_result, queries.keys(), instant)
 
     def _log_response_problems(self, grafana_result: dict[str, Any], queries: dict[str, str]) -> None:
-        """
-        Report problems that Grafana returns inside a 200 OK body.
+        """Report problems that Grafana returns inside a 200 OK body.
 
-        /api/ds/query answers 200 even when the datasource itself fails, and puts the
-        reason in results[refId].error. Without this the caller sees an empty result and
-        nothing is logged at all.
+        /api/ds/query answers 200 even when the datasource itself fails, and puts the reason in
+        results[refId].error. Without this the caller sees an empty result and nothing is logged.
         """
         ref_results = grafana_result.get("results", {})
 
@@ -392,17 +353,7 @@ class GrafanaPrometheusConnector:
         ref_ids: Iterable[str],
         instant: bool = True,
     ) -> dict[str, list[dict[str, Any]]]:
-        """
-        Convert a batched Grafana API response to Prometheus API format, keyed by refId.
-
-        Args:
-            grafana_result: The raw Grafana response JSON
-            ref_ids: The refIds that were queried
-            instant: Whether these were instant queries
-
-        Returns:
-            Dictionary mapping refId to list of metric results
-        """
+        """Convert a batched Grafana response to Prometheus API format, keyed by refId."""
         all_results: dict[str, list[dict[str, Any]]] = {ref_id: [] for ref_id in ref_ids}
         ref_results = grafana_result.get("results", {})
 
@@ -415,7 +366,6 @@ class GrafanaPrometheusConnector:
         return all_results
 
     def _convert_frames(self, frames: list[dict[str, Any]], instant: bool) -> list[dict[str, Any]]:
-        """Convert Grafana data frames to Prometheus API format."""
         results: list[dict[str, Any]] = []
 
         for frame in frames:
@@ -466,10 +416,8 @@ class GrafanaPrometheusConnector:
     ) -> list[dict[str, Any]]:
         """Run an instant query, by default evaluated at the end of a five-minute window.
 
-        Args:
-            expr: The PromQL to evaluate.
-            at: Evaluation timestamp; Grafana evaluates the minute before it.
-            datasource_uid: Another datasource than the configured one, for billing Mimir.
+        Grafana evaluates the minute before ``at``. ``datasource_uid`` picks another datasource
+        than the configured one, for billing Mimir.
 
         Raises:
             MetricsUnavailableError: when the backend is known to be unavailable.
@@ -503,11 +451,7 @@ class GrafanaPrometheusConnector:
     async def query_range(
         self, query: str, start_time: str | int | float, end_time: str | int | float, step: str
     ) -> list[dict[str, Any]]:
-        """Execute a range query to get time-series data.
-
-        ``start_time``/``end_time`` accept Unix-epoch seconds or an ISO-8601
-        string (matching PrometheusConnector, the interchangeable sibling).
-        """
+        """Run a range query; the bounds take Unix-epoch seconds or an ISO-8601 string."""
         self._ensure_connected()
 
         logger.debug(f"Executing range query: {query} from {start_time} to {end_time} step {step}")

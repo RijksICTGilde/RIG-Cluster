@@ -1,8 +1,7 @@
 """TransIP REST API v6 connector for DNS administration.
 
 Only what the CAA reconciler needs: authenticate, list the domains this account
-holds, read a zone, and add a record. There is deliberately no delete method --
-we never need one here, and what does not exist cannot be called by accident.
+holds, read a zone, and add a record.
 
 The API key is IP-whitelisted at TransIP, so these calls only succeed from a
 whitelisted source (in our setup: a pod in the production cluster, the same
@@ -47,9 +46,9 @@ class TransIPConnector:
     async def _get_token(self) -> str:
         """Fetch (and cache) an access token.
 
-        The signature covers the exact bytes of the request body, so the body is
-        built once and both signed and sent -- serializing twice would produce a
-        different byte string and TransIP would reject the signature.
+        The signature covers the exact bytes of the body, so the body is built once and both
+        signed and sent: serializing it twice yields other bytes and TransIP rejects the
+        signature.
         """
         if self._token:
             return self._token

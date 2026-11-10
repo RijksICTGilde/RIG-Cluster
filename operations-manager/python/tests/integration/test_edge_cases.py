@@ -33,7 +33,7 @@ class TestEmptyResults:
         """Test that empty log results are handled correctly."""
         with patch("opi.api.logs_router.KubectlConnector") as mock_class:
             mock_instance = MagicMock()
-            mock_instance.isConnected = True
+            mock_instance.is_connected = True
 
             async def empty_logs(*args: Any, **kwargs: Any) -> list[str]:
                 return []

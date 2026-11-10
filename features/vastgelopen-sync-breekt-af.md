@@ -80,7 +80,7 @@ opruimen.
 ronde voor de push staat TUSSEN de commits en `push_changes()`, dus stranden zou de manifests
 gecommit en ongepusht achterlaten, en op de time-out-tak zou het van een nette time-out een
 kubectl-fout maken. Die tak is niet zeldzaam: `_run_kubectl_command` gooit zodra
-`KubectlConnector.isConnected` False is, en die vlag gaat procesbreed om bij één "connection
+`KubectlConnector.is_connected` False is, en die vlag gaat procesbreed om bij één "connection
 refused", met een achtergrondretry van 30s. De blokkade blijft dan staan tot de volgende ronde,
 en dat is beter dan een halve levering.
 

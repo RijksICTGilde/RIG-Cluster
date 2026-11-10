@@ -63,7 +63,7 @@ def _sleeping_project() -> dict:
 class TestAbsentPodsAreExplainedByTheServiceThatCausedThem:
     @patch("opi.services.oom_watcher.KubectlConnector")
     async def test_a_sleeping_deployment_reports_that_it_sleeps(self, mock_kubectl) -> None:
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_returning([])
         state = collect_deployment_state(_sleeping_project(), "productie")
 
@@ -78,7 +78,7 @@ class TestAbsentPodsAreExplainedByTheServiceThatCausedThem:
     @patch("opi.services.oom_watcher.KubectlConnector")
     async def test_a_deployment_that_is_not_sleeping_still_reports_missing_pods(self, mock_kubectl) -> None:
         """The other half of the plan's step-3 check: no claim, no excuse."""
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_returning([])
 
         statuses = await describe_components_waiting("rig-productie", [_APP], {_APP: "frontend"}, DeploymentState())
@@ -91,7 +91,7 @@ class TestOnlyTheApplicationsOwnPodsAreDescribed:
     @patch("opi.services.oom_watcher.KubectlConnector")
     async def test_a_service_owned_pod_is_not_read_as_the_component(self, mock_kubectl) -> None:
         """The waker's ImagePullBackOff must not become "frontend: image ophalen mislukt"."""
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_returning(
             [_pod("productie-frontend-waker-abc", role="waker", waiting_reason="ImagePullBackOff")]
         )
@@ -108,7 +108,7 @@ class TestOnlyTheApplicationsOwnPodsAreDescribed:
     async def test_a_real_application_pod_is_still_described(self, mock_kubectl) -> None:
         """The exclusion is about the label, not about sleeping: an application pod with a
         problem is reported even while a service claims the deployment sleeps."""
-        mock_kubectl.isConnected = True
+        mock_kubectl.is_connected = True
         mock_kubectl.return_value = _kubectl_returning(
             [_pod("productie-frontend-7c9", waiting_reason="ImagePullBackOff")]
         )
