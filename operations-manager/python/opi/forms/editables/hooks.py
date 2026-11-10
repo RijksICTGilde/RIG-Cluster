@@ -25,19 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-    """Fill in None base-domain values from resolvers before processing.
+    """Fill in None base-domain values from the resolvers, mutating the deployments in place.
 
-    When the user didn't interact with the base-domain select, the value
-    is None in the wizard state. The resolvers know the cluster default.
-    This mutates the deployment dicts in place so ensure_domain_requests
-    sees the actual domain.
+    A base-domain select the user never touched is None in the wizard state, while the
+    resolvers know the cluster default, and ``ensure_domain_requests`` needs the actual domain.
 
-    The cluster default domain is never materialised: a cluster-default
-    deployment carries no explicit ``base-domain`` (its absence *means*
-    "use the default"), and ensure_domain_requests never requests the
-    default anyway. Writing it would add a spurious key and, before the
-    resolver was fixed, even a wrong nice-URL domain plus a phantom
-    domain request.
+    The cluster default itself is never materialised: a cluster-default deployment carries no
+    explicit ``base-domain`` (its absence *means* "use the default"), so writing it would add
+    a spurious key and a phantom domain request.
     """
     resolvers = context.get("resolvers")
     if not resolvers:
@@ -131,13 +126,12 @@ class ResolveAttachmentsHook:
 class PreserveAttachmentContentHook:
     """Re-attach the encrypted content of existing attachments at save (smart merge).
 
-    The modal wizard strips attachment ``content`` from its session state (only ``id`` +
-    ``filename`` are needed to display the catalog), so the saved catalog entries arrive
-    without ``content``. This restores it from the original project data, captured before
-    the form merge and passed via ``context['original_attachment_content']`` ({id ->
-    content}). It is the "preserve a field the form does not carry" case: new uploads are
-    handled separately by ``ResolveAttachmentsHook`` (tmp staging); this covers existing
-    ones. Runs before ``StripTransientsHook`` so the restored content survives.
+    The modal wizard strips attachment ``content`` from its session state (the catalog only
+    needs ``id`` and ``filename``), so the saved catalog entries arrive without it. This
+    restores it from the original project data, captured before the form merge and passed via
+    ``context['original_attachment_content']`` ({id -> content}). It covers existing
+    attachments; a new upload goes through ``ResolveAttachmentsHook``. Runs before
+    ``StripTransientsHook``, so the restored content survives.
     """
 
     order: int = 1

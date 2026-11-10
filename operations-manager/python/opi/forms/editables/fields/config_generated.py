@@ -1,9 +1,7 @@
-"""Generated editables - computed at submit time, not rendered in forms.
+"""Generated editables: computed at submit time, not rendered in forms.
 
-These editables use generators to produce values from the merged YAML
-data during final submission. Order matters: the list below defines
-the execution order, and later generators may depend on values
-produced by earlier ones.
+Order matters. The list below is the execution order, and a later generator may depend on
+what an earlier one produced.
 """
 
 from __future__ import annotations
@@ -13,8 +11,6 @@ from opi.forms.editables.generators import (
     AttachmentStagingResolveGenerator,
     ProjectNameGenerator,
 )
-
-# --- Pure Editable definitions (data logic only) ---
 
 PROJECT_NAME_EDITABLE = Editable(
     yaml_path="name",

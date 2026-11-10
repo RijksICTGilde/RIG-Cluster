@@ -79,7 +79,7 @@ async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = Fals
         patch("opi.manager.project_manager.ProjectManager", return_value=manager),
         patch("opi.web.project_edit_security.apply_form_data_to_project", return_value=copy.deepcopy(na)),
         patch("opi.web.router_wizard.ServiceAdapter"),
-        patch("opi.web.router_wizard.zet_verborgen_leden_terug"),
+        patch("opi.web.router_wizard.restore_hidden_members"),
         patch("opi.web.router_wizard.ensure_approval_requests"),
         patch("opi.web.router_wizard._validate_finished_project"),
         patch("opi.web.router_wizard.clear_wizard_state"),

@@ -21,15 +21,9 @@ def resolve_active_sections(
     flow: FormFlow,
     step_data: dict[str, dict[str, Any]],
 ) -> list[FormSection]:
-    """Evaluate visibility conditions and return the active sections.
+    """The sections of *flow* that should be visible, in order.
 
-    Args:
-        flow: The FormFlow whose sections to evaluate.
-        step_data: Merged form data from all wizard steps so far,
-                   keyed by section_id.
-
-    Returns:
-        Ordered list of FormSections that should be visible.
+    *step_data* is the merged form data of every wizard step so far, keyed by section_id.
     """
     merged = _merge_step_data(step_data)
     return [section for section in flow.sections if _is_visible(section, merged)]
@@ -39,7 +33,7 @@ def resolve_active_section_ids(
     flow: FormFlow,
     step_data: dict[str, dict[str, Any]],
 ) -> list[str]:
-    """Convenience: return just the section_ids of active sections."""
+    """Just the section_ids of the active sections."""
     return [s.section_id for s in resolve_active_sections(flow, step_data)]
 
 
@@ -51,11 +45,9 @@ def get_section_metadata(
 
 
 def _is_visible(section: FormSection, data: dict[str, Any]) -> bool:
-    """Check whether a section is visible given the current data."""
     visible = section.visible
     if isinstance(visible, bool):
         return visible
-    # visible is Callable[[dict[str, Any]], bool]
     fn: Callable[[dict[str, Any]], bool] = visible
     return fn(data)
 

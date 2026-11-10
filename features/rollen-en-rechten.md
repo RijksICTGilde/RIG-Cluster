@@ -145,8 +145,8 @@ productiedeployment zit vraagt dus `ops`, ook op de deployment-variant van die r
 De Team-kaart en de API-route `PUT /api/projects/{project}/leden/{naam}/rol` (die
 `roles: [...]` neemt) wijzigen één lid, en lopen langs `set_member_roles` in
 `opi/services/api_token_service.py`. De team-wizard schrijft de hele ledenlijst in één
-keer, dus hij gaat niet per lid door die functie; `bewaak_ledenlijst`
-(`opi/forms/wizard/leden.py`) roept wel dezelfde guards aan als zij:
+keer, dus hij gaat niet per lid door die functie; `guard_member_list`
+(`opi/forms/wizard/members.py`) roept wel dezelfde guards aan als zij:
 
 - `clean_roles`: weigert een lege lijst en een onbekende rol;
 - `require_an_admin`: weigert een lijst waarin niemand `admin` heeft.

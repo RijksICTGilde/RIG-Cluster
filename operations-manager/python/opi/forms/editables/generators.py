@@ -33,14 +33,13 @@ class ProjectNameGenerator:
 class IssuerGenerator:
     """Compute the TLS issuer based on the deployment's base-domain.
 
-    Stores what the chosen domain implies, so the field reads as a normal setting the user
-    can then override. The manifest generation no longer depends on it being there: it
-    derives the same value through ``effective_issuer`` when the field is absent, which is
-    what the API and task write paths leave behind.
+    Stores what the chosen domain implies, so the field reads as a normal setting the user can
+    override. The field is optional: manifest generation derives the same value through
+    ``effective_issuer`` when it is absent, which is what the API and task write paths leave
+    behind.
 
-    The deployment index determines which deployment to read the
-    base-domain from. It is set during editable materialization
-    (``[*]`` -> ``[N]``).
+    ``deployment_index`` says which deployment to read the base-domain from, and is set during
+    editable materialization (``[*]`` -> ``[N]``).
     """
 
     def __init__(self, deployment_index: int = 0) -> None:
@@ -60,11 +59,11 @@ class IssuerGenerator:
 class AttachmentStagingResolveGenerator:
     """Resolve staged attachment uploads into encrypted catalog entries.
 
-    During the create-wizard a file is parked in the staging store and the
-    catalog entry carries ``content: "staging:<token>"``. At submit time this generator
-    reads each staged file, encrypts it with the project public key into an AGE block,
-    replaces the placeholder, and removes the staged file. Uses a ``_generated`` path - the
-    return value is discarded during cleanup.
+    During the create-wizard a file is parked in the staging store and the catalog entry
+    carries ``content: "staging:<token>"``. At submit time this generator reads each staged
+    file, encrypts it with the project public key into an AGE block, replaces the placeholder
+    and removes the staged file. It sits on a ``_generated`` path, so its return value is
+    discarded during cleanup.
     """
 
     _PREFIX = "staging:"
@@ -92,9 +91,8 @@ class AttachmentStagingResolveGenerator:
                     logger.warning("Staged attachment '%s' not found; skipping", entry.get("id"))
                     continue
                 if not public_key:
-                    # Fail closed: returning here would commit the literal
-                    # 'staging:<token>' placeholder, which later fails AGE
-                    # decryption at deploy time. Abort the save instead.
+                    # Fail closed: returning here commits the literal 'staging:<token>'
+                    # placeholder, which then fails AGE decryption at deploy time.
                     raise ValueError(
                         f"Kan bijlage '{entry.get('id')}' niet versleutelen: project heeft geen AGE-publieke sleutel."
                     )

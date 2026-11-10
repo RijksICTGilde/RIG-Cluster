@@ -23,13 +23,10 @@ logger = logging.getLogger(__name__)
 def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data: dict[str, Any] | None) -> Any:
     """Return *existing* when both values are AGE blocks with identical plaintext.
 
-    AGE encryption is non-deterministic: re-encrypting unchanged plaintext
-    produces entirely different ciphertext, so every form save would rewrite
-    the block in git (pure-churn diffs and push conflicts with concurrent
-    commits). When the freshly encrypted value decrypts to the same plaintext
-    as the stored one, keep the stored ciphertext verbatim. On any doubt
-    (missing key, decrypt failure) return *new*, so changed content or a
-    rotated key still forces re-encryption.
+    AGE encryption is non-deterministic, so re-encrypting unchanged plaintext yields entirely
+    different ciphertext and every form save would rewrite the block in git. On any doubt (no
+    key, decrypt failure) *new* is returned, so changed content or a rotated key still
+    re-encrypts.
     """
     if not (isinstance(existing, str) and isinstance(new, str)) or existing == new:
         return new
@@ -51,18 +48,15 @@ def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data:
 
 
 class EncryptedDisplayConverter:
-    """Displays encrypted fields as status indicators, not actual values."""
+    """Shows an encrypted field as a status, never as a value. The field is read-only."""
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """For form inputs - not used since field is readonly."""
         return ""
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-        """Never writes - field is readonly. Preserves original."""
         return value
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Status message for display-card widget."""
         if carries_encrypted_value(value):
             return "Versleuteld opgeslagen"
         if value:
@@ -71,8 +65,6 @@ class EncryptedDisplayConverter:
 
 
 class TruncateConverter:
-    """Truncates values for display, showing first N characters + '...'."""
-
     def __init__(self, max_length: int = 20) -> None:
         self.max_length = max_length
 
@@ -111,15 +103,14 @@ class EmptyToNoneConverter:
 
 
 class LogoutPathConverter:
-    """Schrijft het logout-pad genormaliseerd weg, zodat formulier en API hetzelfde opleveren.
+    """Writes the logout path normalized, so the form and the API produce the same file.
 
-    De API normaliseert al via de ``field_validator`` van ``KeycloakConfig``; zonder deze
-    converter zou dezelfde invoer via het formulier een ANDER projectbestand opleveren.
+    The API normalizes through the ``field_validator`` of ``KeycloakConfig``, so without this
+    converter the same input would yield a different project file per entrance.
 
-    Een onjuiste waarde komt hier ongewijzigd uit. Valideren en schrijven zijn in de
-    processor losgekoppeld (``_write_field`` draait ook als ``_validate_field`` fouten
-    vond), dus gooien zou de save laten klappen in plaats van de foutmelding van
-    ``LogoutPathValidator`` bij het veld te laten zien.
+    An invalid value comes out unchanged. Validating and writing are decoupled in the processor
+    (``_write_field`` also runs when ``_validate_field`` found errors), so raising here would
+    break the save instead of showing the message of ``LogoutPathValidator`` at the field.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
@@ -160,17 +151,17 @@ class EnsureListConverter:
 
 
 class ServiceListConverter:
-    """Converts mixed str/dict service list to/from structured format."""
+    """Converts mixed str/dict service list to/from structured format.
+
+    ``preserve_catalog_data`` is for the PROJECT services list only. A component references
+    attachments through its ``config``, so restoring the catalog ``data`` onto a component's
+    services list would copy the whole catalog onto the component.
+    """
 
     def __init__(self, preserve_catalog_data: bool = False) -> None:
-        # The attachments catalog ``data`` lives only on the PROJECT services list. Restoring
-        # it is correct there, but it must NOT be restored onto a component's services list (a
-        # component only references attachments via ``config``); doing so duplicates the whole
-        # catalog onto the component. Only the project-level editable opts in.
         self._preserve_catalog_data = preserve_catalog_data
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
-        """Extract service names from mixed list."""
         from opi.services.services import ServiceAdapter
 
         if not value or not isinstance(value, list):
@@ -178,20 +169,16 @@ class ServiceListConverter:
         return ServiceAdapter.extract_service_names_from_project_services(value)
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str | dict]:
-        """Convert service names back to simple list (configs added separately).
+        """Convert service names back to a simple list; configs are added separately.
 
-        Handles both list input (multiple checkboxes) and single string
-        (one checkbox checked, json-enc passes a scalar instead of array).
+        ``json-enc`` delivers a single checked box as a scalar instead of an array, and it
+        promotes a storage entry to a dict (``{"persistent-storage": {"config": ...}}``); such
+        a dict is kept as it is.
 
-        When a storage service is checked, ``json-enc.js`` promotes the
-        string entry to a dict (``{"persistent-storage": {"config": ...}}``).
-        These dicts are kept as-is so storage config is preserved.
-
-        The attachments catalog ``data`` (uploaded files, encrypted) is managed by the
-        project Bijlagen UI, not this service-selection form, so it is absent from the
-        submission. It is restored from the existing project data onto the still-selected
-        ``attachments`` entry; otherwise saving the services list would silently drop
-        every uploaded attachment.
+        The attachments catalog ``data`` is managed by the project Bijlagen UI, so it is absent
+        from this submission and is restored from the existing project data onto the
+        still-selected ``attachments`` entry. Without that, saving the services list silently
+        drops every uploaded attachment.
         """
         from opi.forms.wizard.services_merge import dedupe_service_list
 
@@ -200,11 +187,8 @@ class ServiceListConverter:
         if not isinstance(value, list):
             return []
 
-        # The selection is a set keyed by service name, so collapse duplicates here rather
-        # than letting one reach the project file (where only the first entry gets promoted
-        # to a config record). The picker used to produce them itself, via the hidden input
-        # that travelled alongside a locked-and-therefore-disabled checkbox; that input is
-        # gone, but a set is still a set.
+        # In the project file only the first entry of a name is promoted to a config record,
+        # so a duplicate is collapsed here instead of reaching it.
         value = dedupe_service_list(value)
 
         if self._preserve_catalog_data:
@@ -231,7 +215,6 @@ class ServiceListConverter:
         return {"attachments": {**current, "data": existing_data}}
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
-        """For display: just service names."""
         return self.read(value)
 
 
@@ -275,9 +258,8 @@ class IntegerListConverter:
 class ListSingleSelectConverter:
     """Converts a YAML list to/from a single select value.
 
-    Use this when the YAML stores a list (e.g. clusters: [local]) but the
-    form should show a single-select dropdown.  Switching back to a
-    multi-select widget later only requires removing this converter.
+    For an editable whose YAML holds a list (``clusters: [local]``) while the form shows a
+    single-select dropdown.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
@@ -299,18 +281,12 @@ class ListSingleSelectConverter:
 class KeyValueConverter:
     """Converts KEY=value text to/from YAML storage format.
 
-    Two write modes controlled by ``write_as``:
+    ``write_as`` picks the storage shape: ``"dict"`` parses the text into a map and encrypts
+    each value on its own, ``"string"`` keeps the raw text as one string literal (what
+    ``user-env-vars`` and ``aliases`` use).
 
-    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict, encrypting each
-      value on its own. No editable uses this since RC-106 moved ``aliases`` onto the
-      block shape; it is kept as the general map mode of this converter.
-    - ``"string"``: Keeps the raw text as a string literal.
-      Used for ``user-env-vars`` and ``aliases``, which are stored as one string
-      (and later AGE-encrypted by a generator).
-
-    When the stored value is AGE-encrypted, ``read()`` and ``view()``
-    auto-detect the encryption and decrypt transparently using the
-    project's private key (resolved from ``context_data``).
+    An AGE-encrypted stored value is detected and decrypted by ``read()`` and ``view()`` with
+    the project's private key from ``context_data``.
     """
 
     def __init__(self, fmt: str = "env", write_as: str = "dict") -> None:
@@ -318,13 +294,8 @@ class KeyValueConverter:
         self.write_as = write_as  # "dict" or "string"
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Return the stored text for display in the editor.
-
-        If the value is AGE-encrypted and ``context_data`` is provided,
-        the value is decrypted first using the project's private key.
-        """
-        # Never log the value: this converter carries user-env-vars and aliases, which
-        # hold secrets (the deploy path holds the same rule, project_manager.py).
+        """Return the stored text for the editor, decrypted when it is an AGE block."""
+        # Never log the value itself: user-env-vars and aliases hold secrets.
         logger.debug("[KeyValueConverter.read] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         value = self._maybe_decrypt(value, context_data)
         if isinstance(value, dict):
@@ -332,23 +303,21 @@ class KeyValueConverter:
                 return ""
             if self.fmt == "env":
                 return "\n".join(f"{k}={v}" for k, v in value.items())
-            # YAML format: KEY: value text for the editor.
             return dump_yaml_to_string(dict(value)).rstrip("\n")
         return str(value or "")
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> dict[str, str] | str | None:
-        """Convert form input to the appropriate YAML storage format.
+        """Convert form input to the YAML storage format; empty input gives None.
 
-        Returns None for empty input so the YAML key is omitted.
-        When ``write_as="string"`` and *context_data* contains a project
-        AGE public key, the result is AGE-encrypted automatically.
+        None lets the YAML key be omitted. With ``write_as="string"`` and a project AGE public
+        key in *context_data* the result is encrypted.
         """
         logger.debug("[KeyValueConverter.write] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
         if result and self.write_as == "string" and isinstance(result, str):
             result = self._encrypt(result, context_data)
         elif result and self.write_as == "dict" and isinstance(result, dict):
-            # Map mode: encrypt each value independently (values may hold secrets).
+            # A value in the map may hold a secret, so each one is encrypted on its own.
             result = {k: self._encrypt(str(v), context_data) for k, v in result.items()}
         logger.debug(
             "[KeyValueConverter.write] result type=%s", type(result).__name__ if result is not None else "None"
@@ -356,7 +325,6 @@ class KeyValueConverter:
         return result
 
     def _write_as_dict(self, value: Any) -> dict[str, str] | None:
-        """Parse KEY=value text into a dict for YAML map storage."""
         if isinstance(value, dict):
             return value or None
         text = str(value or "").strip()
@@ -366,11 +334,9 @@ class KeyValueConverter:
 
     @staticmethod
     def _write_as_string(value: Any) -> str | None:
-        """Return raw text as a string for YAML literal scalar storage."""
         if isinstance(value, dict):
             if not value:
                 return None
-            # Convert dict back to KEY=value text
             return "\n".join(f"{k}={v}" for k, v in value.items())
         text = str(value or "").strip()
         return text or None
@@ -379,18 +345,16 @@ class KeyValueConverter:
     def _parse_env_text(text: str) -> dict[str, str]:
         """Parse KEY=value or YAML key-value text into a dict.
 
-        Delegates to ``validate_and_parse_env_vars`` so that aliases entered
-        in YAML form (``KEY: "value with = inside"``) are not corrupted by
-        a naive split on ``=``. Falls back to a permissive KEY=VALUE split
-        if parsing fails, matching the previous behavior for malformed input.
+        Goes through ``validate_and_parse_env_vars`` so an alias written in YAML form
+        (``KEY: "value with = inside"``) is not corrupted by a naive split on ``=``.
         """
         from opi.utils.env_vars import validate_and_parse_env_vars
 
         try:
             return validate_and_parse_env_vars(text)
         except ValueError, TypeError:
-            # Validation should have caught this upstream; preserve the old
-            # permissive behavior so we never silently raise from the converter.
+            # Validation upstream has already reported this, and a converter must not raise:
+            # a permissive split keeps the save on the field error instead of a 500.
             result: dict[str, str] = {}
             for line in text.splitlines():
                 stripped = line.strip()
@@ -403,10 +367,10 @@ class KeyValueConverter:
 
     @staticmethod
     def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:
-        """Decrypt AGE-encrypted value using the project's private key.
+        """Decrypt an AGE-encrypted value with the project's private key.
 
-        Aliases are stored as a dict of ``name -> value``; each value may be
-        AGE-encrypted independently, so decrypt them per-entry.
+        Aliases are a dict of ``name -> value`` whose values are encrypted on their own, so
+        a dict is decrypted per entry.
         """
         if isinstance(value, dict):
             return {k: KeyValueConverter._maybe_decrypt(v, context_data) for k, v in value.items()}
@@ -434,11 +398,8 @@ class KeyValueConverter:
     def _encrypt(value: str, context_data: dict[str, Any] | None) -> str:
         """Encrypt a plain-text value with the project's AGE public key.
 
-        The fields on this converter (``user-env-vars``, ``aliases``) hold secrets, so
-        failing means refusing the save: returning the plain value would write it down.
-
-        Raises:
-            AgeEncryptionError: when the project has no AGE public key.
+        Raises ``AgeEncryptionError`` when the project has no public key: the fields on this
+        converter hold secrets, so returning the plain value would write it down.
         """
         if carries_encrypted_value(value):
             return value
@@ -484,7 +445,6 @@ class CloneFromConverter:
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-        """Dict -> string for form display."""
         if isinstance(value, dict):
             return value.get("reference", "")
         if isinstance(value, str):
@@ -492,7 +452,6 @@ class CloneFromConverter:
         return ""
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-        """String -> dict for YAML storage."""
         if not value or (isinstance(value, str) and not value.strip()):
             return None
         if isinstance(value, dict):
@@ -543,7 +502,6 @@ class KeycloakRealmsDisplayConverter:
         return value
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[dict[str, str]]:
-        """Returns structured data for template rendering."""
         if not value or not isinstance(value, list):
             return []
         return [
@@ -564,7 +522,7 @@ class CustomDomainSelectConverter:
         return self.view(value)
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-        return value  # passthrough - merge happens in post-processing
+        return value  # the merge happens in post-processing
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         if not value:
@@ -577,41 +535,32 @@ class CustomDomainSelectConverter:
         return value
 
 
-# ---------------------------------------------------------------------------
-# RRULE schedule converters
-# ---------------------------------------------------------------------------
-
-
 class RRuleFrequencyConverter:
-    """Reads/writes the FREQ part of an RRULE schedule string.
+    """Reads and writes the FREQ part of an RRULE schedule string.
 
-    This is the main schedule field converter. On write, it combines
-    the frequency with transient time/day fields from context_data
-    to produce the full RRULE string.
+    On write it combines the frequency with the transient time and day fields from
+    ``context_data`` into the full RRULE.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Extract frequency from RRULE for the select dropdown."""
         if not value:
             return ""
         parts = parse_rrule(str(value))
         return parts.get("FREQ", "").upper()
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
-        """Combine frequency + transient fields into RRULE string."""
         freq = str(value).strip().upper() if value else ""
         if not freq:
             return None
 
-        # Read transient field values from context_data (already written by processor)
+        # The transient fields are read from context_data, where the processor has already
+        # written them; they live under their own path, so the deployments are scanned for one.
         hour = 2
         minute = 0
         byday = ""
         bymonthday = ""
 
         if context_data:
-            # Find the transient values — they're written to context under their paths
-            # We need to search for any deployment index; scan deployments list
             deployments = context_data.get("deployments", [])
             for _i, dep in enumerate(deployments if isinstance(deployments, list) else []):
                 backup = dep.get("backup", {}) if isinstance(dep, dict) else {}
@@ -632,12 +581,10 @@ class RRuleFrequencyConverter:
         return build_rrule(freq, hour, minute, byday, bymonthday)
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Human-readable schedule summary."""
         return format_rrule(str(value) if value else None)
 
 
 def _find_parent_rrule(context_data: dict[str, Any] | None) -> str:
-    """Find the RRULE string from the first deployment with a schedule."""
     if not context_data:
         return ""
     deployments = context_data.get("deployments", [])
@@ -660,18 +607,17 @@ class RRuleTimeConverter:
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Extract time from parent RRULE in context_data."""
-        # value is None for transient fields; read from context instead
+        # A transient field has no value of its own, so the time comes from the context.
         rrule = _find_parent_rrule(context_data)
         if not rrule:
-            return "02:00"  # default
+            return "02:00"
         parts = parse_rrule(rrule)
         hour = parts.get("BYHOUR", "2")
         minute = parts.get("BYMINUTE", "0")
         return f"{int(hour):02d}:{int(minute):02d}"
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-        """Pass through — RRuleFrequencyConverter reads this from context."""
+        """A no-op: ``RRuleFrequencyConverter`` picks this field up from the context."""
         return value
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
@@ -750,108 +696,100 @@ class CommaSeparatedListConverter:
 
 
 class CommandLineConverter:
-    """Een startcommando als een regel tekst, opgeslagen als lijst argumenten.
-
-    Kubernetes wil ``command`` als losse argumenten, maar niemand typt een lijst. Dit veld
-    toont dus een regel zoals je hem in een terminal schrijft en splitst hem hier, zodat
-    het projectbestand de vorm houdt die het cluster verwacht:
+    """A start command as one line of text, stored as the list of arguments the cluster wants.
 
         sh -c "/app/docker/prod/seeder && exec /app/docker/prod/web"
 
-    wordt
+    becomes
 
         ["sh", "-c", "/app/docker/prod/seeder && exec /app/docker/prod/web"]
 
-    De regels, bewust klein gehouden:
+    The splitting rules:
 
-    * witruimte scheidt argumenten;
-    * wat tussen dubbele quotes staat blijft bij elkaar, spaties incluis;
-    * een dubbele quote is een scheidingsteken en bereikt de container niet. Wil je er echt
-      een doorgeven, dan verdubbel je hem (``""``), zoals in een spreadsheet.
+    * whitespace separates arguments;
+    * what sits between double quotes stays together, spaces included;
+    * a double quote is a separator and does not reach the container. A literal one is
+      written doubled (``""``), as in a spreadsheet.
 
-    Geen backslash-escapes, anders dan een shell. Een backslash in een commando is meestal
-    een pad op Windows of een regeleinde, en die stilzwijgend opeten is erger dan hem
-    doorgeven. Wie een letterlijke quote nodig heeft, heeft ``""``.
+    Unlike a shell there are no backslash escapes: a backslash reaches the container as it
+    was typed.
     """
 
     QUOTE = '"'
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Lijst -> de regel die de gebruiker ziet."""
         if not isinstance(value, list):
             return "" if value is None else str(value)
         return " ".join(self._quote(str(argument)) for argument in value)
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str] | None:
-        """De getypte regel -> de lijst die het cluster krijgt.
+        """The typed line as the list the cluster gets; empty gives None.
 
-        Leeg levert None, zodat ``remove_when_none`` de sleutel weghaalt: het schema eist
-        minstens een argument, dus een lege lijst opslaan zou het project afkeuren.
+        None lets ``remove_when_none`` drop the key. The schema demands at least one
+        argument, so an empty list would make the project invalid.
         """
         if isinstance(value, list):
-            argumenten = [str(item) for item in value if str(item).strip()]
-            return argumenten or None
-        argumenten = split_command_line(str(value or ""))
-        return argumenten or None
+            arguments = [str(item) for item in value if str(item).strip()]
+            return arguments or None
+        arguments = split_command_line(str(value or ""))
+        return arguments or None
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Alleen-lezen weergave: dezelfde regel die je zou typen."""
         if not value:
             return "Zoals in het image"
         return self.read(value, context_data)
 
     def _quote(self, argument: str) -> str:
-        verdubbeld = argument.replace(self.QUOTE, self.QUOTE * 2)
-        if argument == "" or any(teken.isspace() for teken in argument) or self.QUOTE in argument:
-            return f"{self.QUOTE}{verdubbeld}{self.QUOTE}"
-        return verdubbeld
+        doubled = argument.replace(self.QUOTE, self.QUOTE * 2)
+        if argument == "" or any(character.isspace() for character in argument) or self.QUOTE in argument:
+            return f"{self.QUOTE}{doubled}{self.QUOTE}"
+        return doubled
 
 
-def split_command_line(regel: str) -> list[str]:
-    """Splits een commandoregel in argumenten. Zie ``CommandLineConverter`` voor de regels.
+def split_command_line(line: str) -> list[str]:
+    """Split a command line into arguments; ``CommandLineConverter`` holds the rules.
 
-    Een niet-gesloten quote wordt hier afgesloten alsof hij aan het eind stond; het is de
-    validator die daarover klaagt, zodat de gebruiker een foutmelding krijgt in plaats van
-    een stilzwijgend ander commando.
+    An unterminated quote is closed here as if it stood at the end. The validator is what
+    complains about it, so the user gets a message instead of a silently different command.
     """
-    argumenten: list[str] = []
-    huidig: list[str] = []
-    begonnen = False
+    arguments: list[str] = []
+    current: list[str] = []
+    started = False
     in_quote = False
     index = 0
-    while index < len(regel):
-        teken = regel[index]
-        if teken == CommandLineConverter.QUOTE:
-            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
-                huidig.append(CommandLineConverter.QUOTE)
-                begonnen = True
+    while index < len(line):
+        character = line[index]
+        if character == CommandLineConverter.QUOTE:
+            if line[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+                current.append(CommandLineConverter.QUOTE)
+                started = True
                 index += 2
                 continue
             in_quote = not in_quote
-            begonnen = True
+            started = True
             index += 1
             continue
-        if teken.isspace() and not in_quote:
-            if begonnen:
-                argumenten.append("".join(huidig))
-                huidig, begonnen = [], False
+        if character.isspace() and not in_quote:
+            if started:
+                arguments.append("".join(current))
+                current, started = [], False
             index += 1
             continue
-        huidig.append(teken)
-        begonnen = True
+        current.append(character)
+        started = True
         index += 1
-    if begonnen:
-        argumenten.append("".join(huidig))
-    return argumenten
+    if started:
+        arguments.append("".join(current))
+    return arguments
 
 
-def command_line_has_unbalanced_quote(regel: str) -> bool:
-    """Of er een dubbele quote openstaat aan het eind van de regel."""
+def command_line_has_unbalanced_quote(line: str) -> bool:
+    """Whether a double quote is still open at the end of the line."""
     open_quote = False
     index = 0
-    while index < len(regel):
-        if regel[index] == CommandLineConverter.QUOTE:
-            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+    while index < len(line):
+        if line[index] == CommandLineConverter.QUOTE:
+            if line[index + 1 : index + 2] == CommandLineConverter.QUOTE:
                 index += 2
                 continue
             open_quote = not open_quote
@@ -860,14 +798,14 @@ def command_line_has_unbalanced_quote(regel: str) -> bool:
 
 
 class NonEmptyListConverter:
-    """Laat lege keuzes niet in de lijst belanden.
+    """Keeps an empty choice out of the list.
 
-    Voor een reeks met een vaste maat waar de lege optie "geen" betekent. Zo'n reeks
-    rendert altijd een rij, dus zonder dit levert "geen rol toekennen" een lijst met een
-    lege string op, en dat is iets anders dan geen rol: het is een rol zonder naam.
+    For a sequence of fixed size whose empty option means "none". Such a sequence always
+    renders a row, so without this "assign no role" stores a list with an empty string,
+    which is a role without a name rather than no role.
 
-    Geeft None terug als er niets overblijft, zodat ``remove_when_none`` de sleutel
-    weghaalt in plaats van een lege lijst te schrijven.
+    Returns None when nothing is left, so ``remove_when_none`` drops the key instead of
+    writing an empty list.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
@@ -877,38 +815,32 @@ class NonEmptyListConverter:
         if value is None:
             return None
         items = value if isinstance(value, list) else [value]
-        overgebleven = [item for item in items if item is not None and str(item).strip() != ""]
-        return overgebleven or None
+        remaining = [item for item in items if item is not None and str(item).strip() != ""]
+        return remaining or None
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         return value
 
 
 class InviteTargetConverter:
-    """Adres (formulier) <-> ``component:deployment[:/pad]`` (projectbestand).
+    """Address (form) <-> ``component:deployment[:/path]`` (project file).
 
-    De bestemmingskeuzelijst van een uitnodiging toont ADRESSEN, want die herkent een mens,
-    en bewaart de KEUZE, want die overleeft een wijziging van het subdomein, het
-    domeinformaat of het cluster. Deze converter is het scharnier daartussen. De afleiding
-    zelf staat niet hier maar in ``opi/services/catalog/invite/destination.py``, zodat het
-    formulier en de publieke uitnodigingspagina dezelfde bron delen.
+    The destination picker shows addresses, which a human recognizes, and stores the choice,
+    which survives a change of subdomain, domain format or cluster. The derivation itself
+    lives in ``opi/services/catalog/invite/destination.py``, shared with the public invite
+    page; that page is not a form and has its own entrance (``resolve_invite_url``).
 
-    Een adres dat niet van dit project is levert geen keuze op, en er wordt dus niets
-    weggeschreven. Dat dekt zowel de lege optie ("geen knop tonen") als een optie die
-    inmiddels niet meer af te leiden valt; voor het bestand betekenen die hetzelfde,
-    namelijk dat hier geen keuze vastligt. Een vast ``application-url`` naar een bestemming
-    BUITEN het project is een eigen veld en niet de zaak van deze keuzelijst.
-
-    Let op de reikwijdte: dit is de FORMULIERkant. De publieke pagina is geen formulier en
-    heeft zijn eigen ingang (``resolve_invite_url``) op dezelfde bron.
+    An address that is not of this project yields no choice and nothing is written. That
+    covers both the empty option ("show no button") and an option that no longer resolves:
+    for the file those mean the same, that no choice is fixed here. A fixed
+    ``application-url`` to a destination outside the project is a field of its own.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Opgeslagen keuze -> het adres dat in de lijst voorgeselecteerd moet staan.
+        """The stored choice as the address the picker should preselect.
 
-        Een keuze die niet meer oplost selecteert niets, precies zoals de succespagina er
-        geen knop voor toont. De lijst leest dan als "geen bestemming", en dat is het ook:
-        de opgeslagen bestemming wijst nergens meer heen.
+        A choice that no longer resolves selects nothing, just as the success page shows no
+        button for it.
         """
         from opi.services.catalog.invite.destination import url_for_target
 
@@ -917,7 +849,7 @@ class InviteTargetConverter:
         return url_for_target(value, context_data) or ""
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
-        """Gekozen adres -> de keuze erachter, of None om niets weg te schrijven."""
+        """The chosen address as the choice behind it, or None to write nothing."""
         from opi.services.catalog.invite.destination import target_for_url
 
         if not value or not isinstance(value, str) or not context_data:
@@ -925,7 +857,7 @@ class InviteTargetConverter:
         return target_for_url(value, context_data)
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        """Alleen-lezen weergave: het adres waar het vandaag heen wijst."""
+        """Read-only view: the address this points at today."""
         from opi.services.catalog.invite.destination import url_for_target
 
         if not value or not isinstance(value, str):

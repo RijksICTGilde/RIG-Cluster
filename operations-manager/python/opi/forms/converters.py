@@ -1,12 +1,4 @@
-"""
-Value converters for form field transformation.
-
-Converters handle bidirectional transformation between form values
-and storage/display formats. Common use cases:
-- AGE encryption/decryption for sensitive fields
-- Date/time format conversion
-- JSON serialization/deserialization
-"""
+"""Value converters between the format a form field shows and the format that is stored."""
 
 from typing import Any, Protocol
 
@@ -14,98 +6,49 @@ from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_safe
 
 
 class Converter(Protocol):
-    """
-    Protocol for value converters.
+    """``to_form`` goes from storage to the form, ``from_form`` back from a submission to storage."""
 
-    Converters transform values between form display format
-    and storage/processing format.
-    """
+    async def to_form(self, value: Any) -> Any: ...
 
-    async def to_form(self, value: Any) -> Any:
-        """
-        Convert value for form display.
-
-        Args:
-            value: Value from storage/model
-
-        Returns:
-            Value suitable for form display
-        """
-        ...
-
-    async def from_form(self, value: Any) -> Any:
-        """
-        Convert form value back to storage format.
-
-        Args:
-            value: Value from form submission
-
-        Returns:
-            Value suitable for storage/model
-        """
-        ...
+    async def from_form(self, value: Any) -> Any: ...
 
 
 class IdentityConverter:
-    """
-    Identity converter that returns values unchanged.
-
-    Used as the default converter when no transformation is needed.
-    """
+    """The default converter, for a field that needs no transformation."""
 
     async def to_form(self, value: Any) -> Any:
-        """Return value unchanged."""
         return value
 
     async def from_form(self, value: Any) -> Any:
-        """Return value unchanged."""
         return value
 
 
 class StringConverter:
-    """
-    Converter that ensures values are strings.
-
-    Converts None to empty string and other types to their string representation.
-    """
+    """``None`` becomes the empty string; ``from_form`` also strips the submitted value."""
 
     async def to_form(self, value: Any) -> str:
-        """Convert value to string for form display."""
         if value is None:
             return ""
         return str(value)
 
     async def from_form(self, value: Any) -> str:
-        """Convert form value to string."""
         if value is None:
             return ""
         return str(value).strip()
 
 
 class IntegerConverter:
-    """
-    Converter for integer values.
-
-    Handles string-to-int conversion for form submissions.
-    """
+    """``default`` answers for an empty or unparseable submission."""
 
     def __init__(self, default: int = 0) -> None:
-        """
-        Initialize with default value for empty/invalid input.
-
-        Args:
-            default: Default value if conversion fails
-        """
         self.default = default
 
     async def to_form(self, value: Any) -> str:
-        """Convert integer to string for form display."""
         if value is None:
             return ""
         return str(value)
 
     async def from_form(self, value: Any) -> int:
-        """Convert form value to integer."""
         if value is None or value == "":
             return self.default
         try:
@@ -115,14 +58,9 @@ class IntegerConverter:
 
 
 class BooleanConverter:
-    """
-    Converter for boolean values.
-
-    Handles checkbox/boolean field conversions.
-    """
+    """A string counts as true when it reads ``true``, ``1``, ``yes`` or ``on``."""
 
     async def to_form(self, value: Any) -> bool:
-        """Convert value to boolean for form display."""
         if value is None:
             return False
         if isinstance(value, bool):
@@ -132,7 +70,6 @@ class BooleanConverter:
         return bool(value)
 
     async def from_form(self, value: Any) -> bool:
-        """Convert form value to boolean."""
         if value is None:
             return False
         if isinstance(value, bool):
@@ -143,14 +80,9 @@ class BooleanConverter:
 
 
 class ListConverter:
-    """
-    Converter for list/multi-select values.
-
-    Handles conversion between list and form array formats.
-    """
+    """A comma-separated string is split, anything else becomes a one-item list."""
 
     async def to_form(self, value: Any) -> list[str]:
-        """Convert value to list for form display."""
         if value is None:
             return []
         if isinstance(value, list):
@@ -160,7 +92,6 @@ class ListConverter:
         return [str(value)]
 
     async def from_form(self, value: Any) -> list[str]:
-        """Convert form value to list."""
         if value is None:
             return []
         if isinstance(value, list):
@@ -171,15 +102,9 @@ class ListConverter:
 
 
 class IntegerListConverter:
-    """
-    Converter for comma-separated integer lists.
-
-    Handles conversion between list[int] and comma-separated string format.
-    Used for port numbers and similar integer list fields.
-    """
+    """Comma-separated on the form, ``list[int]`` in storage; an unparseable entry is skipped."""
 
     def to_form(self, value: Any) -> str:
-        """Convert list[int] to comma-separated string for form display."""
         if value is None:
             return ""
         if isinstance(value, list):
@@ -189,7 +114,6 @@ class IntegerListConverter:
         return str(value)
 
     def from_form(self, value: Any) -> list[int]:
-        """Convert comma-separated string from form to list[int]."""
         if value is None or value == "":
             return []
         if isinstance(value, list):
@@ -199,7 +123,6 @@ class IntegerListConverter:
         return self._try_parse_single_int(value)
 
     def _parse_int_list(self, values: list[Any]) -> list[int]:
-        """Parse a list of values to integers, skipping invalid ones."""
         result: list[int] = []
         for v in values:
             parsed = self._try_parse_single_int(v)
@@ -207,7 +130,7 @@ class IntegerListConverter:
         return result
 
     def _try_parse_single_int(self, value: Any) -> list[int]:
-        """Try to parse a single value as an integer, return empty list on failure."""
+        """One item, or nothing at all when the value is not an integer."""
         if isinstance(value, str):
             value = value.strip()
             if not value:
@@ -219,14 +142,9 @@ class IntegerListConverter:
 
 
 class YAMLConverter:
-    """
-    Converter for YAML-formatted values.
-
-    Converts between YAML strings and Python dicts/lists.
-    """
+    """YAML that does not parse comes back as the raw string, not as an error."""
 
     async def to_form(self, value: Any) -> str:
-        """Convert value to YAML string for form display."""
         if value is None:
             return ""
         if isinstance(value, str):
@@ -234,7 +152,6 @@ class YAMLConverter:
         return dump_yaml_to_string(value)
 
     async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:
-        """Convert YAML string from form to Python object."""
         if value is None or value == "":
             return {}
         if not isinstance(value, str):
@@ -247,14 +164,9 @@ class YAMLConverter:
 
 
 class KeyValueConverter:
-    """
-    Converter for KEY=VALUE formatted environment variables.
-
-    Converts between KEY=VALUE string format and dict.
-    """
+    """Reads both ``KEY=VALUE`` and ``KEY: VALUE`` lines, and skips a line starting with ``#``."""
 
     async def to_form(self, value: Any) -> str:
-        """Convert dict to KEY=VALUE string for form display."""
         if value is None:
             return ""
         if isinstance(value, str):
@@ -265,7 +177,6 @@ class KeyValueConverter:
         return str(value)
 
     async def from_form(self, value: Any) -> dict[str, str]:
-        """Convert KEY=VALUE string from form to dict."""
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -280,14 +191,12 @@ class KeyValueConverter:
                     key, val = line.split("=", 1)
                     result[key.strip()] = val.strip()
                 elif ":" in line:
-                    # Also support YAML format
                     key, val = line.split(":", 1)
                     result[key.strip()] = val.strip()
             return result
         return {}
 
 
-# Registry of available converters
 CONVERTER_REGISTRY: dict[str, type[Converter]] = {
     "IdentityConverter": IdentityConverter,
     "StringConverter": StringConverter,
@@ -301,19 +210,6 @@ CONVERTER_REGISTRY: dict[str, type[Converter]] = {
 
 
 def get_converter(name: str, **kwargs: Any) -> Converter:
-    """
-    Get a converter instance by name.
-
-    Args:
-        name: Converter class name
-        **kwargs: Arguments to pass to converter constructor
-
-    Returns:
-        Converter instance
-
-    Raises:
-        KeyError: If converter not found in registry
-    """
     if name not in CONVERTER_REGISTRY:
         raise KeyError(f"Unknown converter: {name}")
     return CONVERTER_REGISTRY[name](**kwargs)

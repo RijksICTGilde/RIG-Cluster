@@ -205,15 +205,15 @@ Dat formulier bezit het pad `users` als geheel (`USERS_SEQUENCE_EDITABLE`), dus 
 voorziening gooide een collega toevoegen elk token en elk service account van het project
 weg, onder een commit die "Projectleden bijgewerkt" heet.
 
-`opi/forms/wizard/leden.py` houdt daarom uit het formulier wat het niet bewerkt, en zet het
+`opi/forms/wizard/members.py` houdt daarom uit het formulier wat het niet bewerkt, en zet het
 bij het opslaan terug, net zoals `opi/forms/wizard/secrets.py` dat voor versleutelde
 waarden doet:
 
-- `leden_voor_formulier` vult de modaal met alleen de mensen, zonder hun tokens. Een
+- `members_for_form` vult de modaal met alleen de mensen, zonder hun tokens. Een
   service-accountregel in het formulier zou als lid zonder adres landen, en geen uitkomst
   laat hem overleven: leegmaken valt op de verplichte-veldcontrole, weghalen verwijdert het
   account en een adres invullen laat het schema de regel weigeren;
-- `zet_verborgen_leden_terug` zet bij het opslaan de service accounts terug zoals ze in het
+- `restore_hidden_members` zet bij het opslaan de service accounts terug zoals ze in het
   bestand staan, en de tokens van een mens op zijn e-mailadres. Een lid dat uit de lijst is
   gehaald is zijn tokens wel kwijt, want dat is wat het verwijderen van een lid hoort te
   doen; er gaat een regel in het log over welke dat waren.

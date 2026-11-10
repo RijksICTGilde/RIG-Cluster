@@ -1,4 +1,4 @@
-"""Backward compatibility re-export. Use section.py / FormSection instead."""
+"""Backward compatibility re-export of ``opi.forms.visualizers.sections.FormSection``."""
 
 from opi.forms.visualizers.sections import FormSection as EditablePart
 

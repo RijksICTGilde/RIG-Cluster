@@ -57,37 +57,30 @@ def editable_to_form_field(
     help_template = editable.help_template
     examples = editable.examples
 
-    # --- Shared logic ---
-
-    # 1. Resolve the path (real for data access, virtual for form names)
+    # The real path is for the data, the virtual one for the form field names.
     real_path = resolve_path(yaml_path, index)
     virt = ed.virtualize or parent_virtualize
     form_path = apply_virtualize(real_path, virt) if virt else real_path
 
-    # 2. Extract value from YAML, real path first, then the virtual one.
-    #
-    # The virtual fallback mirrors ``_read_submitted`` in the processor, and without it a
-    # value the wizard stored was invisible when the step was rendered again: wizard state
-    # keeps service CONFIG under the virtual key while the real ``services`` key holds only
-    # the chosen names. The read then returned None, the default below took over, and the
-    # user saw the default where their own choice should have been -- indistinguishable
-    # from "my change was not saved", and it did get overwritten on the next submit.
+    # The value comes from the real path first and then the virtual one, the same fallback
+    # as ``_read_submitted`` in the processor. Wizard state keeps service CONFIG under the
+    # virtual key while the real ``services`` key holds only the chosen names, so without it
+    # a stored value reads as None, the default below takes over, and the user sees the
+    # default where their own choice should be.
     raw_value = smart_get_value(yaml_data, real_path)
     if raw_value is None and virt and form_path != real_path:
         raw_value = smart_get_value(yaml_data, form_path)
 
     # A callable default is computed from the surrounding project data, so a field can be
-    # prefilled with something derived (the first team member's address, a text carrying the
-    # project name) instead of a constant. It runs only when the field has no stored value,
-    # so it never overwrites what a user typed, and it may return None to mean "no default
-    # after all". Errors are deliberately not caught: a broken default is a bug in our own
-    # code, and swallowing it would silently render an empty field instead.
+    # prefilled with something derived instead of a constant. It runs only when the field has
+    # no stored value, and it may return None to mean "no default after all". An error from it
+    # is deliberately not caught: swallowing it renders an empty field instead.
     if raw_value is None and default is not None:
         raw_value = default(yaml_data) if callable(default) else default
 
-    # 3. Apply converter for display
-    # For editable widgets, use read() to convert stored value → form-compatible value
-    # (e.g. dict → string for select dropdowns). Use view() for read-only display.
+    # An editable widget takes ``read()``, which converts the stored value into a
+    # form-compatible one (a dict into a string for a select); a read-only one takes
+    # ``view()``.
     display_value = raw_value
     if converter:
         if widget in ("select", "text", "password", "textarea", "radio"):
@@ -95,37 +88,29 @@ def editable_to_form_field(
         else:
             display_value = converter.view(raw_value, context_data=yaml_data)
 
-    # 3a. Een aanvinkvakje staat aan of uit, dus zijn waarde is een ECHTE boolean.
-    #
-    # Hier ging het mis: een vakje is geen select/text/textarea/radio, dus het viel in de
-    # tak hierboven die ``view()`` gebruikt - de MENSELIJKE weergave. Een BooleanConverter
-    # levert daar "Ja" of "Nee" op, en het sjabloon toetst ``:checked="field.value"``: een
-    # niet-lege tekst, dus ook "Nee" zette het vakje aan. Elk vakje stond aan, ook bij een
-    # opgeslagen ``false``. Zichtbaar bij "Markeer voor verwijdering" van een databaseschema
-    # en bij "Versiebeheer op de bucket".
-    #
-    # De waarheid staat in de opgeslagen waarde, niet in de weergave ervan; de reeks
-    # hieronder is dezelfde als die BooleanConverter.write() gebruikt, zodat tonen en
-    # opslaan het over hetzelfde eens zijn.
+    # A checkbox is on or off, so its value has to be a REAL boolean, read from the stored
+    # value and not from the display of it. A checkbox is none of the widgets above, so it
+    # takes the ``view()`` branch, where a BooleanConverter yields "Ja" or "Nee"; the template
+    # tests ``:checked="field.value"``, and a non-empty string ticks the box, "Nee" included.
+    # The set below is the one ``BooleanConverter.write()`` uses, so showing and storing agree.
     if widget == "checkbox":
         display_value = raw_value in (True, "true", "on", "yes", "1")
 
-    # 3b. Auto-detect KV format from stored value so the toggle matches
+    # The KV format is detected from the stored value, so the toggle matches it.
     if converter and hasattr(converter, "detect_format") and raw_value is not None:
         detected_fmt = converter.detect_format(raw_value)
         attributes = dict(attributes or {})
         attributes["kv_format"] = detected_fmt
 
-    # 4. Resolve options (pass current value so providers can include tuner-set values)
+    # The current value travels along, so a provider can include a tuner-set value.
     option_context = dict(provider_context or {})
     if raw_value is not None:
         option_context.setdefault("current_value", str(raw_value))
-    # Pass yaml_data and resolved path so providers can do path-based lookups
+    # yaml_data and the resolved path, so a provider can look something up by path.
     option_context["yaml_data"] = yaml_data
     option_context["yaml_path"] = real_path
     options = _resolve_options(options_provider_name, option_context)
 
-    # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
     if htmx_trigger:
         htmx_attrs["hx-trigger"] = htmx_trigger
@@ -134,16 +119,15 @@ def editable_to_form_field(
     if htmx_swap:
         htmx_attrs["hx-swap"] = htmx_swap
 
-    # 6. Determine readonly
     readonly = readonly_flag or (readonly_on_edit_flag and edit_mode)
 
-    # 7. Check locked_by_service: force value + readonly when the service is active
+    # An active locked_by_service forces the value and makes the field read-only.
     if locked_by_service and _is_service_active(locked_by_service, yaml_data):
         display_value = True
         readonly = True
         description = f"Vereist door: {_service_display_name(locked_by_service)}"
 
-    # 8. Build FormField (use form_path for name/path, look up errors by real_path)
+    # The name and path are the form path, the errors are keyed by the real path.
     return FormField(
         name=form_path,
         path=form_path,
@@ -174,24 +158,21 @@ def editable_to_form_field(
 def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:
     """Evaluate a ``show_when`` condition against a dependency value.
 
-    Returns True when the condition is met (or when *show_when* is None,
-    in which case truthiness of *dep_value* decides).
+    Without a *show_when* the truthiness of *dep_value* decides. The operators:
 
-    Supported operators:
-    - ``{"contains": "value"}`` - dep_value is a list containing "value"
-    - ``{"contains_any": [...]}`` - dep_value is a list containing any value
-    - ``{"not_equals": "value"}`` - dep_value is anything BUT "value"
-    - ``{"field": "value"}`` - dep_value equals "value"
-    - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
+    - ``{"contains": "value"}``: dep_value is a list holding "value"
+    - ``{"contains_any": [...]}``: dep_value is a list holding any of them
+    - ``{"not_equals": "value"}``: dep_value is anything BUT "value"
+    - ``{"field": "value"}``: dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}``: dep_value is in the list
     """
     if show_when is None:
         return bool(dep_value)
 
     for key, expected in show_when.items():
         if key == "not_equals":
-            # "Everything except this one value" (RC-142: every peer project except the
-            # wildcard). Listing the allowed values is not an option when the allowed set
-            # is open-ended, and an absent value is not the excluded one, so it shows.
+            # "Everything except this one value", for an allowed set that is open-ended and
+            # so cannot be listed. An absent value is not the excluded one, so it shows.
             if dep_value == expected:
                 return False
         elif key == "contains":
@@ -225,23 +206,22 @@ def should_render_editable(
 ) -> bool:
     """Check if an editable should be rendered based on its dependencies.
 
-    Eerst een poort die niets met afhankelijkheden te maken heeft: een veld met
-    ``alleen_bij_bewerken`` verschijnt niet in de aanmaakwizard. Zie de toelichting bij die
-    vlag in :mod:`opi.forms.visualizers.visualizer`.
+    First a gate that has nothing to do with dependencies: a field with
+    ``only_when_editing`` does not appear in the create wizard. See that flag in
+    :mod:`opi.forms.visualizers.visualizer`.
 
-    Implements 4 dependency patterns:
+    Then the four dependency patterns:
 
     1. show_when is an EditableCondition -> evaluate against yaml_data (no depends_on needed)
     2. No depends_on -> always render (True)
     3. depends_on set, no show_when -> render if dependency value is truthy
     4. depends_on + show_when dict -> evaluate conditions (see ``evaluate_show_when``)
 
-    When *siblings* is provided, the dependency value is passed through the
-    dependency field's converter (if any) before comparison.  This is needed
-    when a converter maps stored values to sentinel display values (e.g.
-    ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
+    With *siblings* given, the dependency value goes through the dependency field's own
+    converter before the comparison. That is what a converter mapping a stored value onto a
+    sentinel needs (``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` to ``"__custom__"``).
     """
-    if editable.alleen_bij_bewerken and not edit_mode:
+    if editable.only_when_editing and not edit_mode:
         return False
 
     ed = editable.editable
@@ -250,10 +230,9 @@ def should_render_editable(
     depends_on = ed.depends_on
     show_when = ed.show_when
 
-    # Callable condition: evaluate against full yaml_data
     if isinstance(show_when, EditableCondition):
-        # Provide resolver map so the condition can resolve transient
-        # defaults (e.g. base-domain when not explicitly selected)
+        # The resolver map lets the condition resolve a transient default, such as the
+        # base-domain when none was explicitly selected.
         if siblings and hasattr(show_when, "set_resolvers"):
             show_when.set_resolvers(build_resolver_map(siblings))
         return show_when.check(yaml_data)
@@ -261,17 +240,15 @@ def should_render_editable(
     if not depends_on:
         return True
 
-    # Resolve [*] wildcard in depends_on when rendering inside a sequence
     if index is not None and "[*]" in depends_on:
         depends_on = depends_on.replace("[*]", f"[{index}]", 1)
 
     dep_value = smart_get_value(yaml_data, depends_on)
 
-    # Same virtual fallback as the value read in editable_to_form_field. A dependency on
-    # another service's config (e.g. the invite auth methods following the keycloak
-    # template) names the real path, but in wizard state that config lives under the
-    # virtual key while the real ``services`` key holds only the chosen names. Without
-    # this the condition always saw None and the field stayed hidden for the whole wizard.
+    # The same virtual fallback as the value read in editable_to_form_field. A dependency on
+    # another service's config names the real path, but in wizard state that config lives
+    # under the virtual key, so without this the condition always sees None and the field
+    # stays hidden for the whole wizard.
     if dep_value is None:
         virt = editable.editable.virtualize
         if virt:
@@ -279,21 +256,19 @@ def should_render_editable(
             if virtual_depends_on != depends_on:
                 dep_value = smart_get_value(yaml_data, virtual_depends_on)
 
-    # Apply the dependency field's converter so show_when compares against
-    # the form-compatible value (e.g. "__custom__", "DAILY") rather than
-    # the raw stored value (e.g. a custom domain, an RRULE string).
+    # Through the dependency field's converter, so show_when compares against the
+    # form-compatible value ("__custom__", "DAILY") and not the raw stored one.
     if siblings and show_when and dep_value is not None:
         dep_converter = _find_converter_for_path(siblings, depends_on)
         if dep_converter:
             dep_value = dep_converter.read(dep_value, context_data=yaml_data)
 
-    # Not in the data yet (e.g. a freshly added sequence item): fall back to the
-    # dependency field's default so show_when reflects the default selection on
-    # first render (e.g. provide-as defaults to "file" -> show the path field).
+    # Not in the data yet, as in a freshly added sequence row: the dependency field's
+    # default makes show_when reflect the default selection on the first render.
     if dep_value is None and siblings:
         dep_value = _find_default_for_path(siblings, depends_on)
-        # A computed default must be resolved before comparison: comparing the function
-        # object itself against a show_when value silently evaluates to False.
+        # A computed default is resolved before the comparison: the function object itself
+        # silently compares False against any show_when value.
         if callable(dep_value):
             dep_value = dep_value(yaml_data)
 
@@ -323,11 +298,6 @@ def resolve_options_for_editable(
     return _resolve_options(provider_name, context)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
 def _find_converter_for_path(
     siblings: list[EditableVisualizer],
     yaml_path: str,
@@ -336,7 +306,6 @@ def _find_converter_for_path(
     for sib in siblings:
         if sib.editable.yaml_path == yaml_path:
             return sib.editable.converter
-        # Recurse into groups
         if sib.children:
             result = _find_converter_for_path(sib.children, yaml_path)
             if result is not None:
@@ -378,7 +347,7 @@ def _resolve_options(
     kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
         # Key names only, never values: one of the kwargs is ``yaml_data``, the whole project
-        # dict, which carries repository passwords and every other secret in the project file.
+        # dict, which carries repository passwords and every other secret.
         logger.debug(f"_resolve_options: provider={provider_name!r}, kwargs={sorted(kwargs)}")
         provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
@@ -407,15 +376,10 @@ def _filter_provider_kwargs(
 def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg]
     """Extract service names from a services list, in every shape it may hold.
 
-    Delegates to the shared reader instead of guessing. The local version took
-    ``item.keys()``, which is the legacy single-key form: for the modern record
-    ``{"name": "cross-domain-access", "config": {...}}`` it yielded ``["name", "config"]``
-    and the service's own name never appeared.
-
-    That is not cosmetic. A ``show_when={"contains": <service>}`` block disappears the
-    moment the list holds records rather than names, and adding a row to a service-config
-    sequence rewrites the list into exactly that shape. So the first click on "Item
-    toevoegen" hid the whole section it was supposed to extend.
+    Through the shared reader, not by guessing: reading ``item.keys()`` yields
+    ``["name", "config"]`` for a modern record and never the service's own name. A
+    ``show_when={"contains": <service>}`` block then disappears the moment the list holds
+    records rather than names, which is what adding a row to a service-config sequence does.
     """
     from opi.services.services import service_entry_name
 
@@ -430,7 +394,6 @@ def _is_service_active(service_name: str, yaml_data: dict[str, Any]) -> bool:
     return service_name in _extract_names_from_list(services)
 
 
-# Display names for services used in locked_by_service hints
 _SERVICE_DISPLAY_NAMES: dict[str, str] = {
     "authorization-wall": "Authorization Wall",
     "keycloak": "Keycloak",

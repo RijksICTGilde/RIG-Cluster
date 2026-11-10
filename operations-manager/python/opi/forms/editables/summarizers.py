@@ -5,10 +5,9 @@ field wants. These two cover the case where the value itself must not be shown:
 ``HiddenSummary`` leaves the field out, ``MaskedSummary`` says that it is filled
 in without saying what it holds.
 
-Both ignore the value they are given -- that is the point. They take it as an
-argument because the protocol does, and because a summarizer that DOES look at
-the value (shortening it, counting items) is a normal thing to write next to
-these.
+Both ignore the value they are given, and take it as an argument only because the protocol
+does; a summarizer that DOES look at the value, shortening it or counting items, is a normal
+thing to write next to these.
 """
 
 from __future__ import annotations
@@ -20,9 +19,9 @@ from typing import Any
 class HiddenSummary:
     """Keep the field out of the summary entirely.
 
-    For values that a summary has no business repeating and that gain nothing
-    from a placeholder either -- a token, a private key. The field keeps its
-    normal behaviour everywhere else; only the summary skips it.
+    For a value a summary has no business repeating and that gains nothing from a placeholder
+    either, such as a token or a private key. The field keeps its normal behaviour everywhere
+    else; only the summary skips it.
     """
 
     def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:

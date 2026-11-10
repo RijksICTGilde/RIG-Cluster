@@ -84,8 +84,6 @@
 "opi/forms/visualizers/wizard_sections.py" = ["ANN401"]
 "opi/forms/widgets/base.py" = ["PLR0913"]
 "opi/forms/widgets/fields.py" = ["C901", "PLR0912", "PLR0913"]
-"opi/forms/wizard/leden.py" = ["N818"]
-"opi/forms/wizard/resolver.py" = ["ERA001"]
 "opi/forms/wizard/save.py" = ["ANN401", "PLR0913"]
 "opi/forms/wizard/secrets.py" = ["ANN401"]
 "opi/forms/wizard/services_merge.py" = ["ANN401"]

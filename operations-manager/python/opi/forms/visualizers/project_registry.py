@@ -1,9 +1,4 @@
-"""
-Project editable definitions and form layout.
-
-Re-exports all visualizer constants from field modules and provides
-the public API functions for form composition.
-"""
+"""Re-exports the visualizer constants of the field modules, and composes the project form."""
 
 from __future__ import annotations
 
@@ -64,7 +59,6 @@ from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VA
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
-# Re-export all visualizer constants for backward compatibility
 __all__ = [
     "AGE_PRIVATE_KEY",
     "AGE_PUBLIC_KEY",

@@ -24,11 +24,9 @@ from opi.forms.editables.fields.components import (
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
-# The component form's service-specific visualizers are contributed by each service via
-# config_component_visualizers() and gathered here in config_component_order, so the tail
-# of COMPONENTS_SEQUENCE is not a hand-synced list. (The visualizer definitions still
-# authored below move into their service packages one service at a time; temp-storage
-# already lives in catalog/temp_storage/visualizers.py.)
+# A service contributes its component visualizers through config_component_visualizers(),
+# gathered here in config_component_order, so the tail of COMPONENTS_SEQUENCE is not a
+# hand-synced list.
 from opi.services.registry import component_service_notices, component_service_visualizers
 
 COMPONENT_NAME = EditableVisualizer(
@@ -55,17 +53,10 @@ COMPONENT_IMAGE = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Container image",
     description="Docker image van je applicatie. Moet een rootless image zijn.",
-    # EEN REGEL, en niet twee. Hier stonden twee zinnen aan elkaar geplakt - de spatie
-    # ertussen ontbrak, dus op het scherm stond "...hello-world:latest.Kan leeg gelaten
-    # worden" - en samen met de omschrijving erboven waren dat drie regels tekst tussen het
-    # label en het invoerveld. Gemeld als "de tip van Docker staat gepropt tussen de
-    # invulvelden".
-    #
-    # De zin die weg is ("kan leeg gelaten worden") staat woordelijk in de hulpdialoog
-    # achter het vraagteken, onder de kop "Mag dit leeg zijn?". Het voorbeeld blijft hier
-    # wel staan: zonder help_text valt de omschrijving weg naast het vraagteken (zie
-    # widgets/text.html.j2, dat de tekst alleen toont als er allebei is) en blijft er een
-    # los icoon boven het veld hangen - precies de klacht die dat sjabloon oploste.
+    # One line, and short: together with the description above it this is all the text
+    # between the label and the input. It may not be empty either, because
+    # widgets/text.html.j2 only shows the description beside the question mark when there is
+    # a help_text too, and otherwise a lone icon hangs above the field.
     help_text="Bijvoorbeeld: ghcr.io/minbzk/base-images/hello-world:latest",
     help_template="container-image.html.j2",
     attributes={"data-paste-clean": "container-image"},
@@ -166,8 +157,8 @@ COMPONENT_PATH = EditableVisualizer(
     children=[COMPONENT_PATH_MATCH, COMPONENT_PATH_REWRITE],
 )
 
-# Geen placeholder met een voorbeeld erin: een dubbele quote komt in de gerenderde HTML
-# terug als &quot;, dus het voorbeeld liet zien wat je juist niet moet typen.
+# No placeholder with an example in it: a double quote comes back as &quot; in the rendered
+# HTML, so the example would show exactly what not to type.
 COMPONENT_COMMAND = EditableVisualizer(
     editable=COMPONENT_COMMAND_EDITABLE,
     widget=WidgetType.TEXT,
@@ -192,11 +183,11 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_PORTS_OUTBOUND,
         COMPONENT_SERVICES,
         COMPONENT_PATH,
-        # Per-service component visualizers, gathered from the registry in config_component_order.
-        # Includes the aliases / user-env-vars system services (RC-25), which sort first.
+        # Per-service component visualizers, gathered from the registry in
+        # config_component_order; the aliases and user-env-vars system services sort first.
         *component_service_visualizers(),
-        # En wat de diensten te MELDEN hebben op dit niveau zonder er iets te configureren
-        # (Service.component_form_notices). Readonly, dus de verwerking slaat ze over.
+        # And what the services have to SAY at this level without configuring anything
+        # (Service.component_form_notices). Readonly, so the processing skips them.
         *component_service_notices(),
     ],
 )

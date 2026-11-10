@@ -1,75 +1,37 @@
-"""
-Internationalization (i18n) support for forms.
+"""The ``Translator`` protocol and its implementations, for form labels and messages.
 
-This module provides the Translator protocol and implementations for
-translating form labels, descriptions, and error messages.
-
-The design supports multiple translation backends:
-- IdentityTranslator: Returns keys unchanged (default/development)
-- DictTranslator: Uses a simple dictionary for translations
-- BabelTranslator: Integration with Babel/gettext (future)
+``IdentityTranslator`` returns the key unchanged and is the default; ``DictTranslator`` looks
+the key up in a dictionary.
 """
 
 from typing import Protocol
 
 
 class Translator(Protocol):
-    """
-    Protocol for translation functions.
+    """Turns a message key such as ``"form.name.label"`` into a localized string."""
 
-    Translators convert message keys to localized strings.
-    """
-
-    def __call__(self, key: str) -> str:
-        """
-        Translate a message key.
-
-        Args:
-            key: Message key (e.g., "form.name.label")
-
-        Returns:
-            Translated string
-        """
-        ...
+    def __call__(self, key: str) -> str: ...
 
 
 class IdentityTranslator:
-    """
-    Identity translator that returns keys unchanged.
-
-    Used as the default when no i18n is configured.
-    """
+    """Returns the key unchanged: the default when no i18n is configured."""
 
     def __call__(self, key: str) -> str:
-        """Return the key unchanged."""
         return key
 
 
 class DictTranslator:
-    """
-    Dictionary-based translator.
-
-    Uses a simple dictionary for translations. Useful for testing
-    or simple applications without full i18n infrastructure.
-    """
+    """Looks a key up in a dictionary; ``fallback_to_key`` decides what a miss does."""
 
     def __init__(
         self,
         translations: dict[str, str] | None = None,
         fallback_to_key: bool = True,
     ) -> None:
-        """
-        Initialize with translation dictionary.
-
-        Args:
-            translations: Dict mapping keys to translations
-            fallback_to_key: If True, return key when translation not found
-        """
         self.translations = translations or {}
         self.fallback_to_key = fallback_to_key
 
     def __call__(self, key: str) -> str:
-        """Translate using the dictionary."""
         if key in self.translations:
             return self.translations[key]
         if self.fallback_to_key:
@@ -77,39 +39,24 @@ class DictTranslator:
         raise KeyError(f"Translation not found: {key}")
 
     def add(self, key: str, value: str) -> None:
-        """Add a translation."""
         self.translations[key] = value
 
     def update(self, translations: dict[str, str]) -> None:
-        """Add multiple translations."""
         self.translations.update(translations)
 
 
 class FormTranslator:
-    """
-    Form-specific translator with message formatting.
-
-    Handles translation of form-related messages including labels,
-    descriptions, and validation error messages.
-    """
+    """A translator that puts *prefix* in front of every key before passing it on."""
 
     def __init__(
         self,
         translator: Translator | None = None,
         prefix: str = "",
     ) -> None:
-        """
-        Initialize the form translator.
-
-        Args:
-            translator: Base translator to use
-            prefix: Optional prefix for all keys (e.g., "forms.")
-        """
         self._translator = translator or IdentityTranslator()
         self._prefix = prefix
 
     def __call__(self, key: str) -> str:
-        """Translate a key with optional prefix."""
         full_key = f"{self._prefix}{key}" if self._prefix else key
         return self._translator(full_key)
 
@@ -279,7 +226,6 @@ DEFAULT_NL_TRANSLATIONS = {
 
 
 def get_default_nl_translator() -> DictTranslator:
-    """Get a translator with default Dutch translations."""
     return DictTranslator(DEFAULT_NL_TRANSLATIONS.copy())
 
 
@@ -287,23 +233,13 @@ def create_translator(
     language: str = "nl",
     translations: dict[str, str] | None = None,
 ) -> Translator:
-    """
-    Create a translator for the specified language.
-
-    Args:
-        language: Language code (e.g., "nl", "en")
-        translations: Optional additional translations
-
-    Returns:
-        Translator instance
-    """
+    """A translator for *language*; an unsupported language gets the identity translator."""
     if language == "nl":
         translator = get_default_nl_translator()
         if translations:
             translator.update(translations)
         return translator
 
-    # Default to identity translator for unsupported languages
     if translations:
         return DictTranslator(translations)
     return IdentityTranslator()

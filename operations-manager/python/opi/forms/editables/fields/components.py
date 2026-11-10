@@ -20,16 +20,10 @@ from opi.forms.editables.validators import (
     PathValidator,
 )
 
-# The component form's service-specific fields are contributed by each service via
-# config_editables(ConfigLayer.COMPONENT) and gathered here in config_component_order,
-# so the tail of COMPONENTS_SEQUENCE_EDITABLE is not a hand-synced list. (The service
-# editable definitions still authored below move into their service packages one
-# service at a time; temp-storage already lives in catalog/temp_storage/editables.py.)
+# A service contributes its component fields through config_editables(ConfigLayer.COMPONENT),
+# gathered here in config_component_order, so the tail of COMPONENTS_SEQUENCE_EDITABLE is not
+# a hand-synced list.
 from opi.services.registry import component_service_editables
-
-# ===========================================================================
-# Pure Editable definitions (data logic only)
-# ===========================================================================
 
 COMPONENT_NAME_EDITABLE = Editable(
     yaml_path="components[*]/name",
@@ -43,7 +37,7 @@ COMPONENT_DESCRIPTION_EDITABLE = Editable(
     remove_when_none=True,
 )
 
-# What image means on a top-level component is undecided; the trade-off is in
+# What an image means on a top-level component is not settled; see
 # features/component-image-field-clarification.md.
 COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
@@ -108,16 +102,14 @@ COMPONENT_SERVICES_EDITABLE = Editable(
     values_provider="FilteredServiceOptionsProvider",
 )
 
-#: The container's start command. Kubernetes replaces the image's ENTRYPOINT with this,
-#: so a value here silently discards whatever start-up logic the image brought along, and
-#: a command the image does not have gives a pod that never starts with an error that
-#: points nowhere ("exec: \"sh\": executable file not found in $PATH" is a real one from
-#: our own test images). Optional, and it stays out of the file when left empty: the
-#: schema demands minItems 1, so an empty list would not even validate.
+#: The container's start command. Kubernetes replaces the image's ENTRYPOINT with it, so a
+#: value here silently discards whatever start-up logic the image brought along, and a command
+#: the image does not have gives a pod that never starts with an error pointing nowhere
+#: ("exec: \"sh\": executable file not found in $PATH"). It stays out of the file when left
+#: empty: the schema demands minItems 1, so an empty list would not validate.
 #:
-#: One line of text for the user, a list of arguments in the file. Nobody types a list and
-#: Kubernetes wants one, so ``CommandLineConverter`` splits the line and keeps whatever
-#: sits between double quotes together.
+#: One line of text for the user, a list of arguments in the file; ``CommandLineConverter``
+#: splits the line and keeps whatever sits between double quotes together.
 COMPONENT_COMMAND_EDITABLE = Editable(
     yaml_path="components[*]/command",
     converter=CommandLineConverter(),
@@ -165,8 +157,8 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
         # Per-service component fields, gathered from the registry in config_component_order.
-        # Includes the aliases / user-env-vars system services, which own those two plain
-        # component properties (RC-25) and sort first, where they were hand-listed before.
+        # The aliases and user-env-vars system services own those two plain component
+        # properties and sort first.
         *component_service_editables(),
     ],
 )

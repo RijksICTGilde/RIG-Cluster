@@ -1,13 +1,11 @@
-"""De veldvoorbereiding die elke widgetadapter deelt.
+"""The field preparation every widget adapter shares.
 
-Per veldtype staat hier WAT er gerenderd wordt: welke opties een keuzelijst krijgt, hoe
-een waarde in tekst komt, hoe een reeks zijn items opbouwt. Dat is bedrijfslogica en
-verandert niet mee met het componentensysteem.
+Per field type this says WHAT is rendered: which options a select gets, how a value becomes
+text, how a sequence builds its items. That is domain logic and does not change along with
+the component system.
 
-WAAR het mee gerenderd wordt, staat in de subklasse: die kiest de sjabloonmap en de
-omgeving. Vandaag is dat er een - :class:`opi.forms.widgets.lotc.LOTCWidgetAdapter`.
-Dit bestand heette ``roos.py`` en droeg daarnaast een eigen kale Jinja-omgeving op
-``opi/templates/``; die is met de roos-bouwlijn verdwenen.
+WHAT it is rendered with sits in the subclass, which picks the template directory and the
+environment; today that is :class:`opi.forms.widgets.lotc.LOTCWidgetAdapter`.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.forms.editables.sequence_identity import IDENTITY_KEYS
 from opi.forms.widgets.base import WidgetAdapter
 from opi.services.catalog.aliases.overview import alias_variabelen
@@ -34,18 +32,14 @@ if TYPE_CHECKING:
 
 
 class FieldWidgetAdapter(WidgetAdapter):
-    """De gedeelde veldvoorbereiding; een subklasse levert de render.
+    """The shared field preparation; a subclass supplies the rendering.
 
-    Zelf niet bruikbaar: :meth:`_render_template` kiest de sjabloonmap en de omgeving en
-    hoort daarom bij het componentensysteem, niet hier.
+    Not usable on its own: :meth:`_render_template` picks the template directory and the
+    environment, which belongs with the component system and not here.
     """
 
     def _render_template(self, template_name: str, ctx: dict[str, object]) -> str:
         raise NotImplementedError
-
-    # ------------------------------------------------------------------
-    # Field rendering methods
-    # ------------------------------------------------------------------
 
     def render_text(self, field: FormField) -> str:
         return self._render_template("text.html.j2", {"field": field})
@@ -119,10 +113,10 @@ class FieldWidgetAdapter(WidgetAdapter):
     def render_service_cards(self, field: FormField) -> str:
         """Render service options as selectable cards with dependency logic.
 
-        The dependency algorithm (identical on server and client):
-        1. Build requires_map: service -> service-level deps
-        2. Build reverse_deps: dep -> [active services that need it]
-        3. locked = checked AND has active reverse deps
+        The dependency algorithm, identical on the server and in the client: build
+        ``requires_map`` (service -> its service-level deps), then the reverse map (dep ->
+        the active services needing it); a service is locked when it is checked AND something
+        active depends on it.
         """
         # Imported here, not at module scope: the service registry imports the catalog,
         # which imports the forms package, which imports this module. A top-level import
@@ -145,7 +139,6 @@ class FieldWidgetAdapter(WidgetAdapter):
                 val_dict: dict[str, object] = val  # type: ignore[assignment]
                 selected_names.update(val_dict.keys())
 
-        # Step 1: requires_map
         requires_map: dict[str, list[str]] = {}
         for option in options:
             requires_raw = option.get("requires")
@@ -158,14 +151,12 @@ class FieldWidgetAdapter(WidgetAdapter):
                 if svc_deps:
                     requires_map[str(option.get("value", ""))] = svc_deps
 
-        # Step 2: reverse_deps
         depended_by_active: dict[str, list[str]] = {}
         for svc, deps in requires_map.items():
             if svc in selected_names:
                 for dep in deps:
                     depended_by_active.setdefault(dep, []).append(svc)
 
-        # Build card data
         locked_values_raw = field.attributes.get("locked_values", "")
         locked_values: set[str] = set(locked_values_raw.split(",")) if locked_values_raw else set()
         cards: list[dict[str, object]] = []
@@ -175,7 +166,6 @@ class FieldWidgetAdapter(WidgetAdapter):
             dependents = depended_by_active.get(value, [])
             is_locked = checked and (bool(dependents) or value in locked_values)
 
-            # Resolve dependent labels for the hint
             dependents_labels: list[str] = []
             if is_locked:
                 for dep_val in dependents:
@@ -189,13 +179,12 @@ class FieldWidgetAdapter(WidgetAdapter):
             svc_deps = requires_map.get(value, [])
             help_template = option.get("help_template")
             # A ticked service whose config lives on another layer shows no config screen
-            # after this step. Say where it IS configured instead of leaving the user with
-            # nothing happening (RC-33). Derived from the registry, so the template never
-            # names a service.
+            # after this step, so the hint says where it IS configured. Derived from the
+            # registry, so the template never names a service.
             #
-            # Rendered for every service that has one, ticked or not, and revealed by CSS
-            # on the selected card: the user ticks a box and moves on with Next, so a
-            # server-rendered line only reaches them on a page they would never revisit.
+            # Rendered for every service that has one, ticked or not, and revealed by CSS on
+            # the selected card: the user ticks a box and moves on with Next, so a
+            # server-rendered line would only reach them on a page they never revisit.
             config_hint = config_hint_for_value(value)
             cards.append(
                 {
@@ -206,12 +195,11 @@ class FieldWidgetAdapter(WidgetAdapter):
                     "color": str(option.get("color", "hemelblauw")),
                     "checked": checked,
                     "is_locked": is_locked,
-                    # Vergrendeld is NIET disabled. ``disabled`` in HTML betekent twee
-                    # dingen tegelijk -- niet aanpasbaar en niet versturen -- en wij
-                    # bedoelen alleen het eerste. Een vergrendelde dienst moet juist
-                    # meekomen in de POST; het slot is een UI-eigenschap, bewaakt door de
-                    # JS (de verandering wordt teruggedraaid) en door de server
-                    # (``apply_services_mutation`` vult een vereiste dienst aan).
+                    # Locked is NOT disabled. ``disabled`` in HTML means two things at once,
+                    # not changeable and not submitted, and only the first is meant here: a
+                    # locked service has to travel along in the POST. The lock is a UI
+                    # property, guarded by the JS (which reverts the change) and by the server
+                    # (``apply_services_mutation`` adds a required service back).
                     "disabled": field.readonly,
                     "server_locked": value in locked_values,
                     "data_requires": json.dumps(svc_deps) if svc_deps else None,
@@ -219,8 +207,8 @@ class FieldWidgetAdapter(WidgetAdapter):
                     "help_template": str(help_template) if help_template else None,
                     "config_hint": config_hint,
                     "requires_approval": bool(option.get("requires_approval")),
-                    # Alleen gevuld voor een vervangen dienst, en die kaart staat er alleen
-                    # nog voor een project dat hem al heeft (ServiceOptionsProvider).
+                    # Only filled for a replaced service, and that card only shows for a
+                    # project that already has it (ServiceOptionsProvider).
                     "replaced_by": option.get("replaced_by"),
                 }
             )
@@ -238,21 +226,21 @@ class FieldWidgetAdapter(WidgetAdapter):
 
     @staticmethod
     def _kv_completions_json(field: FormField) -> str:
-        """De namen die de editor mag voorstellen, als JSON, of een lege tekst.
+        """The names the editor may suggest, as JSON, or an empty string.
 
-        Alleen het aliassenveld vraagt hierom (``kv_completions: "aliassen"``). De lijst
-        wordt HIER opgehaald en niet in de visualizer opgeschreven: die is een constante
-        op modulehoogte, en de variabelen worden afgeleid uit de dienstdefinities. Een
-        vaste lijst zou binnen een release uit de pas lopen met de validatie.
+        Only the aliases field asks for this (``kv_completions: "aliassen"``). The list is
+        fetched HERE and not written out in the visualizer, which is a module-level constant:
+        the variables are derived from the service definitions, and a fixed list would drift
+        away from the validation within a release.
         """
         if field.attributes.get("kv_completions") != "aliassen":
             return ""
 
         return json.dumps(
             [
-                {"naam": variabele.naam, "dienst": dienst.label, "beschrijving": variabele.beschrijving}
-                for dienst in alias_variabelen()
-                for variabele in dienst.variabelen
+                {"naam": variable.naam, "dienst": service.label, "beschrijving": variable.beschrijving}
+                for service in alias_variabelen()
+                for variable in service.variabelen
             ]
         )
 
@@ -262,7 +250,7 @@ class FieldWidgetAdapter(WidgetAdapter):
     def render_sequence(self, field: FormField, items_html: list[str]) -> str:
         return self._render_template(
             "sequence.html.j2",
-            {"field": field, "items_html": items_html, "gerenderde_reeksen_veld": GERENDERDE_REEKSEN_VELD},
+            {"field": field, "items_html": items_html, "gerenderde_reeksen_veld": RENDERED_SEQUENCES_FIELD},
         )
 
     def _is_simple_sequence(self, field: FormField) -> bool:
@@ -287,12 +275,11 @@ class FieldWidgetAdapter(WidgetAdapter):
 
     @staticmethod
     def _identity_fields(field: FormField, index: int) -> list[dict[str, str]]:
-        """De sleutel van rij *index*, als verborgen veld, zolang de rij hem niet post.
+        """The key of row *index* as a hidden field, as long as the row does not post it.
 
-        Een readonly sleutel rendert als ``disabled`` en komt dus niet mee in de
-        inzending; de verwerker moest de rijen daarom op index paren, en dan erft een
-        rij achter een verwijderde rij de configuratie van zijn buur. Zie
-        ``opi/forms/editables/sequence_identity.py``.
+        A readonly key renders as ``disabled`` and is therefore not submitted, which leaves
+        the processor pairing rows by index, and then a row behind a removed row inherits its
+        neighbour's configuration. See ``opi/forms/editables/sequence_identity.py``.
         """
         items = field.children or []
         if not 0 <= index < len(items):
@@ -302,10 +289,6 @@ class FieldWidgetAdapter(WidgetAdapter):
             for kind in items[index].children or []
             if kind.readonly and kind.value and kind.path.rsplit("/", 1)[-1] in IDENTITY_KEYS
         ]
-
-    # ------------------------------------------------------------------
-    # Layout rendering methods
-    # ------------------------------------------------------------------
 
     def render_row(self, row: Row, children_html: list[str]) -> str:
         return self._render_template("row.html.j2", {"row": row, "children_content": "\n".join(children_html)})
@@ -319,13 +302,11 @@ class FieldWidgetAdapter(WidgetAdapter):
         )
 
     def render_flow(self, children_html: list[str]) -> str:
-        """De buitenste verticale stapel om de velden van een stap.
+        """The outer vertical stack around the fields of a step.
 
-        Hoort bij de adapter en niet bij de renderer omdat het een COMPONENTaanroep is;
-        WELKE component, en of hij meteen gerenderd wordt, hangt van het componentensysteem
-        af. Hier stond de kale ``<c-layout-flow>``-tag die de roos-adapter opleverde en die
-        ``process_components`` later omzette. Die weg is er niet meer, dus dit is geen
-        werkende ondergrens meer maar een val: de subklasse hoort hem te leveren.
+        On the adapter and not on the renderer because it is a COMPONENT call, and which
+        component, and whether it is rendered right away, depends on the component system.
+        There is no working fallback here: the subclass has to supply it.
         """
         raise NotImplementedError
 
@@ -341,10 +322,6 @@ class FieldWidgetAdapter(WidgetAdapter):
             {"button_group": button_group, "buttons_content": "\n".join(buttons_html)},
         )
 
-    # ------------------------------------------------------------------
-    # Error and message rendering
-    # ------------------------------------------------------------------
-
     def render_error(self, message: str) -> str:
         return f'<span class="rvo-form-field__error-text">{self.escape_html(message)}</span>'
 
@@ -357,10 +334,6 @@ class FieldWidgetAdapter(WidgetAdapter):
         if not text:
             return ""
         return f'<span class="rvo-form-field__helper-text">{self.escape_html(text)}</span>'
-
-    # ------------------------------------------------------------------
-    # Form wrapper
-    # ------------------------------------------------------------------
 
     def render_form_start(
         self,
@@ -393,20 +366,14 @@ def render_preset_cards(
     locked_presets: dict[str, str] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Render preset cards using the same visual style as service cards.
+    """Render preset cards in the same visual style as the service cards.
 
-    Args:
-        presets: Available presets for this section.
-        flow_id: Current wizard flow ID.
-        section_id: Current section ID.
-        yaml_data: Current YAML data for detecting applied state.
-        locked_presets: Map of preset_id -> hint text for presets that
-            cannot be toggled (e.g. forced by a service dependency).
-        csrf_token: CSRF token rendered into the cards' hx-post header so
-            the preset POST passes central CSRF enforcement.
+    ``locked_presets`` maps a preset_id onto the hint text for a preset that cannot be
+    toggled, for instance because a service dependency forces it. ``csrf_token`` is rendered
+    into the cards' hx-post header, so the preset POST passes the central CSRF enforcement.
 
-    Het kaarttemplate rendert in de templateomgeving. Die import staat binnenin om een
-    kringloop te vermijden: de omgeving leunt via de dienstenregistry op deze pakketmap.
+    The card template renders in the template environment, imported inside the function to
+    avoid a cycle: that environment leans on this package through the service registry.
     """
     from opi.http.render.templates_lotc import templates_lotc
 
@@ -446,7 +413,6 @@ def _is_preset_applied(preset: Preset, yaml_data: dict) -> bool:
         if existing is None:
             return False
         if isinstance(value, list):
-            # For lists: check that all preset items exist in the existing list
             if not isinstance(existing, list):
                 return False
             for item in value:

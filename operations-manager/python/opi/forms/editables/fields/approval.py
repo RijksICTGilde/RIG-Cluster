@@ -9,10 +9,6 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
 
-# ---------------------------------------------------------------------------
-# Individual approval-item fields (children of sequence item)
-# ---------------------------------------------------------------------------
-
 APPROVAL_ITEM_TYPE_EDITABLE = Editable(
     yaml_path="_approval_items[*]/type",
 )
@@ -40,10 +36,6 @@ APPROVAL_ITEM_MESSAGE_EDITABLE = Editable(
     yaml_path="_approval_items[*]/message",
     remove_when_none=True,
 )
-
-# ---------------------------------------------------------------------------
-# Sequence root
-# ---------------------------------------------------------------------------
 
 APPROVAL_ITEMS_EDITABLE = Editable(
     yaml_path="_approval_items",

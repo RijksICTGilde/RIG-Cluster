@@ -8,12 +8,9 @@ The project YAML stores services as a mixed list (strings and dicts):
           config:
             template: sso-only
 
-Standard get_value/set_value treat "services" as a dict key, so
-paths like "services/keycloak/config/template" fail because
-data["services"] is a list, not a dict.
-
-This module provides smart_get_value and smart_set_value that detect
-service config paths and resolve them correctly through the list.
+Standard get_value/set_value treat "services" as a dict key, so a path like
+"services/keycloak/config/template" fails: data["services"] is a list, not a dict. The
+smart_* functions here recognize a service config path and resolve it through the list.
 """
 
 from __future__ import annotations
@@ -26,18 +23,17 @@ from opi.forms.editables.path import delete_value, get_value, resolve_path, set_
 from opi.services.services import service_entry_body, service_entry_name
 
 #: The wizard keeps service SELECTION and service CONFIG apart in its state: ``services``
-#: holds the chosen names, ``_services-config`` holds their configuration. Both are
-#: service-config roots. Reading only ``services`` meant every config lookup during the
-#: wizard returned None, and the field then fell back to its own default -- so a user's
-#: choice was silently replaced by the default on the way back through the steps.
+#: holds the chosen names, ``_services-config`` their configuration. Both are service-config
+#: roots, and both have to be read: reading only ``services`` makes every config lookup during
+#: the wizard return None, and the field then falls back to its own default, so the user's
+#: choice is silently replaced on the way back through the steps.
 #:
-#: The virtual root appears in TWO shapes, which is why every function below branches on
-#: the actual type instead of assuming one: a plain dict keyed by service name in a form
-#: SUBMISSION, and the services-list format in wizard STATE.
+#: The virtual root appears in TWO shapes, which is why every function below branches on the
+#: actual type: a plain dict keyed by service name in a form SUBMISSION, and the services-list
+#: format in wizard STATE.
 #:
-#: The pair itself is declared once, in ``editable.py``: the service packages use it to
-#: DECLARE virtualization and this module uses it to RESOLVE it, and they must not be able
-#: to drift apart.
+#: The pair itself is declared once, in ``editable.py``, so the service packages that DECLARE
+#: virtualization and this module, which RESOLVES it, cannot drift apart.
 _SERVICE_ROOTS = SERVICE_VIRTUALIZE
 
 _SERVICE_CONFIG_RE = re.compile(rf"^({'|'.join(_SERVICE_ROOTS)})/([^/\[]+)(/(.+))?$")
@@ -88,24 +84,17 @@ def service_root_of(yaml_path: str) -> str:
 
 
 def parse_service_path(yaml_path: str) -> tuple[str, str | None]:
-    """Parse a service config path into (service_name, sub_path).
+    """Parse a service config path into (service_name, sub_path), or raise ``ValueError``.
 
-    Args:
-        yaml_path: A path like "services/keycloak/config/template".
-
-    Returns:
-        Tuple of (service_name, sub_path_or_None).
-        E.g. ("keycloak", "config/template") or ("keycloak", None).
-
-    Raises:
-        ValueError: If the path is not a service config path.
+    "services/keycloak/config/template" gives ("keycloak", "config/template"), and
+    "services/keycloak" gives ("keycloak", None).
     """
     m = _SERVICE_CONFIG_RE.match(yaml_path)
     if not m:
         msg = f"Not a service config path: {yaml_path!r}"
         raise ValueError(msg)
     service_name = m.group(2)
-    sub_path = m.group(4)  # the part after the service name
+    sub_path = m.group(4)
     return service_name, sub_path
 
 
@@ -113,16 +102,7 @@ def find_service_in_list(
     services: list[Any],
     service_name: str,
 ) -> tuple[int, dict[str, Any] | str | None]:
-    """Find a service entry in the mixed services list.
-
-    Args:
-        services: The services list (mix of strings and dicts).
-        service_name: Service to find (e.g. "keycloak").
-
-    Returns:
-        (index, entry) where entry is the raw list item, or (-1, None)
-        if not found.
-    """
+    """The (index, raw entry) of *service_name* in the mixed services list, or (-1, None)."""
     for i, item in enumerate(services):
         if service_entry_name(item) == service_name:
             return i, item
@@ -133,29 +113,22 @@ def ensure_service_in_list(
     services: list[Any],
     service_name: str,
 ) -> tuple[int, dict[str, Any]]:
-    """Find or create a service dict entry in the services list.
-
-    If the service exists as a string, promotes it to a dict.
-    If it doesn't exist, appends a new dict entry.
-
-    Returns:
-        (index, service_dict) - the dict entry for the service.
-    """
+    """The (index, dict entry) for *service_name*, created or promoted from a string if needed."""
     idx, entry = find_service_in_list(services, service_name)
 
     if idx == -1:
-        # Service not in list - add it in the uniform record form (RC-5 A2.3).
+        # Not in the list yet, so add it in the uniform record form.
         new_entry: dict[str, Any] = {"name": service_name}
         services.append(new_entry)
         return len(services) - 1, new_entry
 
     if isinstance(entry, str):
-        # Promote bare string to the uniform record form.
+        # Promote a bare string to the uniform record form.
         promoted: dict[str, Any] = {"name": service_name}
         services[idx] = promoted
         return idx, promoted
 
-    # Already a dict (record or legacy) - leave its form as-is.
+    # Already a dict, record or legacy: leave its form as it is.
     if not isinstance(entry, dict):
         msg = f"Unexpected service entry type: {type(entry)}"
         raise TypeError(msg)
@@ -163,13 +136,7 @@ def ensure_service_in_list(
 
 
 def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
-    """Get a value from YAML data, handling service config paths.
-
-    For service config paths (e.g. "services/keycloak/config/template"),
-    navigates through the services list to find the correct entry.
-
-    For all other paths, delegates to the standard get_value.
-    """
+    """Get a value from YAML data; a service config path is walked through the services list."""
     if not is_service_config_path(yaml_path):
         return get_value(data, yaml_path)
 
@@ -178,10 +145,9 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
         # Dict-shaped root (a form submission): a plain walk is the correct read.
         return get_value(data, yaml_path)
     if services is None:
-        # De genoemde root ontbreekt helemaal. Dat is geen "niet gevonden" maar de normale
-        # toestand in de wizard, waar de config alleen onder de virtuele root staat. Hier
-        # teruggeven zou de terugval hieronder overslaan, en dat deed het: de realm-rollen
-        # bij een uitnodiging waren leeg omdat de provider het echte pad vraagt.
+        # The named root is missing entirely. That is not "not found" but the normal state
+        # mid-wizard, where the config only lives under the virtual root, so returning here
+        # would skip the fallback below.
         services = []
 
     value = _read_from_service_list(services, yaml_path)
@@ -195,13 +161,12 @@ def _read_from_sibling_roots(data: dict[str, Any], yaml_path: str) -> Any:
 
     A reader asks for "services/keycloak/config/..." because that is where the value
     lives in the project file, but during the wizard the same config sits under the
-    virtual root while ``services`` holds only the chosen names. Falling back here fixes
-    every reader at once: options providers were returning empty lists in the wizard (the
-    invite realm-role picker had nothing to choose from) purely because they asked for
-    the real path.
+    virtual root while ``services`` holds only the chosen names. Falling back here answers
+    every reader at once, including the options providers, which otherwise return an empty
+    list in the wizard purely because they ask for the real path.
 
-    Reads only. A WRITE must never wander to another root, or an edit would land
-    somewhere the form does not read back.
+    Reads only. A WRITE must never wander to another root, or an edit lands somewhere the
+    form does not read back.
     """
     own_root = service_root_of(yaml_path)
     for other_root in _SERVICE_ROOTS:
@@ -234,14 +199,10 @@ def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:
 
 
 def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
-    """Check whether a path exists in the form data.
+    """Whether a path exists in the form data, by truthiness of its value.
 
-    Unlike ``smart_get_value``, this treats a service string entry
-    (e.g. ``"keycloak"`` in the services list) as *present* for the
-    path ``services/keycloak``.  For deeper paths it checks that the
-    nested value is truthy.
-
-    Non-service paths delegate to ``get_value`` and check truthiness.
+    Unlike ``smart_get_value`` a service string entry (``"keycloak"`` in the services list)
+    counts as present for the path ``services/keycloak``.
     """
     if not is_service_config_path(yaml_path):
         return bool(get_value(data, yaml_path))
@@ -251,29 +212,28 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
         # Dict-shaped root (a form submission): a plain walk is the correct read.
         return bool(get_value(data, yaml_path))
     if services is None:
-        # The named root is missing entirely -- the normal state mid-wizard, where the
-        # config only exists under the virtual root. Not "absent": look next door.
+        # The named root is missing entirely: the normal state mid-wizard, where the config
+        # only exists under the virtual root. Not "absent", so look next door.
         services = []
 
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
 
     if idx == -1:
-        # Same fallback as ``smart_get_value``: mid-wizard the config lives under the
-        # virtual root while ``services`` holds only the chosen names, so a requirement
-        # written as a real path (``services/keycloak/config/restrict-access`` -- the only
-        # way to write it, since that is where it lands in the project file) would read as
-        # unmet while the user is looking straight at the value they entered.
+        # Same fallback as ``smart_get_value``: mid-wizard the config lives under the virtual
+        # root while ``services`` holds only the chosen names. A requirement is written as a
+        # real path, since that is where it lands in the project file, so without this it
+        # reads as unmet while the user is looking straight at the value they entered.
         return bool(_read_from_sibling_roots(data, yaml_path))
 
-    # "services/keycloak" - service just needs to be in the list
+    # For "services/keycloak" the service only has to be in the list.
     if sub_path is None:
         return True
 
     if entry is None:
         return False
 
-    # Deeper path - need a dict entry with config
+    # A deeper path needs a dict entry with a config body.
     service_data = _service_entry_body(entry, service_name)
     if not isinstance(service_data, dict):
         return False
@@ -285,30 +245,21 @@ def check_requirements(
     requires: list[str],
     form_data: dict[str, Any],
 ) -> list[str]:
-    """Return the subset of *requires* paths that are NOT met.
-
-    Each requirement path is checked with ``smart_path_exists``.
-    An empty return list means all requirements are satisfied.
-    """
+    """The subset of *requires* paths that are NOT met, each checked with ``smart_path_exists``."""
     return [path for path in requires if not smart_path_exists(form_data, path)]
 
 
 def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:
-    """Set a value in YAML data, handling service config paths.
+    """Set a value in YAML data; a service config path is written through the services list.
 
-    For service config paths:
-    - Finds or creates the service entry in the services list
-    - Promotes string entries to dicts when needed
-    - Sets the config sub-path within the service dict
-
-    For all other paths, delegates to the standard set_value.
+    The service entry is found or created, a string entry is promoted to a dict, and the value
+    is set at the config sub-path inside it.
     """
     if not is_service_config_path(yaml_path):
         return set_value(data, yaml_path, value)
 
     service_name, sub_path = parse_service_path(yaml_path)
 
-    # Ensure services list exists
     root = service_root_of(yaml_path)
     # A dict-shaped root is a form submission, not a services list. Writing through the
     # list machinery would replace that dict with an empty list and throw away everything
@@ -322,9 +273,9 @@ def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[st
     is_record = "name" in service_entry or "reference" in service_entry
 
     if sub_path is None:
-        # Setting the service's entire config body.
+        # Setting the service's entire config body. A record keeps its identity key, and only
+        # the config-bearing fields are replaced.
         if is_record:
-            # New record: keep the identity key, replace the config-bearing fields.
             id_key = "name" if "name" in service_entry else "reference"
             id_val = service_entry[id_key]
             service_entry.clear()
@@ -334,8 +285,8 @@ def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[st
         else:
             service_entry[service_name] = value
     else:
-        # Navigate into the config-carrying body (record entry itself, or the
-        # legacy name-keyed sub-dict); initialise it if absent.
+        # Into the config-carrying body: the record entry itself, or the legacy name-keyed
+        # sub-dict. Initialised when absent.
         body = _service_entry_body(service_entry, service_name)
         if not isinstance(body, dict):
             if is_record:
@@ -351,14 +302,8 @@ def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[st
 def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
     """Remove a key from YAML data, handling service config paths.
 
-    For service config paths with a sub-path (e.g.
-    ``services/keycloak/config/restrict-access/realm-role``), deletes
-    only the targeted config key - the service entry itself is kept.
-
-    For top-level service paths (no sub-path), removes the service
-    entry from the list.
-
-    For all other paths, delegates to the standard delete_value.
+    With a sub-path (``services/keycloak/config/restrict-access/realm-role``) only that config
+    key goes and the service entry stays. Without one the whole service entry leaves the list.
     """
     if not is_service_config_path(yaml_path):
         delete_value(data, yaml_path)
@@ -375,10 +320,8 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
         return
 
     if sub_path is None:
-        # No sub-path: remove the entire service entry
         services.pop(idx)
     elif entry is not None:
-        # Has sub-path: delete only the nested config key
         body = _service_entry_body(entry, service_name)
         if isinstance(body, dict):
             delete_value(body, sub_path)
@@ -387,18 +330,17 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
 def expand_wildcard_path(data: dict[str, Any], yaml_path: str) -> list[tuple[str, Any]]:
     """Every concrete path *yaml_path* matches, with the value stored there.
 
-    A yaml path with ``[*]`` addresses a whole column of a list ("the realm-roles of
-    every invite"), and ``smart_get_value`` answers it as a nested list -- fine for a
-    read, useless for a message, which has to name the ONE entry that is wrong. This
-    resolves the wildcards instead, so every pair is a path a form field or an API caller
-    can act on.
+    A yaml path with ``[*]`` addresses a whole column of a list ("the realm-roles of every
+    invite"), and ``smart_get_value`` answers it as a nested list: fine for a read, useless for
+    a message, which has to name the ONE entry that is wrong. Resolving the wildcards makes
+    every pair a path a form field or an API caller can act on.
 
-    Recursive rather than a single pass: ``resolve_path`` replaces the FIRST wildcard
-    only, so a path with two list levels (``active[*]/realm-roles[*]``) would otherwise
-    be read verbatim and match nothing.
+    Recursive rather than a single pass, because ``resolve_path`` replaces the FIRST wildcard
+    only: a path with two list levels (``active[*]/realm-roles[*]``) would otherwise be read
+    verbatim and match nothing.
 
-    A missing value comes back as ``None`` rather than being dropped -- "this entry has
-    no value" is exactly what a caller looking for an unfilled field is asking about.
+    A missing value comes back as ``None`` rather than being dropped: "this entry has no value"
+    is what a caller looking for an unfilled field is asking about.
     """
     if "[*]" not in yaml_path:
         return [(yaml_path, smart_get_value(data, yaml_path))]

@@ -1,15 +1,13 @@
 """What a flow is allowed to write, derived from the flow itself.
 
 An ``Editable`` already says where its field lives in the project file
-(``yaml_path``). The editables of a flow therefore describe, without anything
-being added, exactly which paths that flow may touch. Everything else is by
-definition not editable through it, and so does not need to be "preserved"
-either - it is never written in the first place.
+(``yaml_path``). The editables of a flow therefore describe, with nothing added, exactly
+which paths that flow may touch. Everything else is by definition not editable through it,
+and so needs no "preserving" either: it is never written in the first place.
 
-That default-deny rule is not new: it is what ``StripTransientsHook`` and the
-service-config fold already do for their own corner. Naming the fields to
-protect one by one does not hold - four separate leaks proved that. Deriving
-the permitted set from the flow does.
+That default-deny rule is not new; it is what ``StripTransientsHook`` and the service-config
+fold already do for their own corner. Naming the fields to protect one by one does not hold:
+deriving the permitted set from the flow does.
 """
 
 from __future__ import annotations
@@ -81,10 +79,9 @@ def flow_write_paths(sections: list[FormSection]) -> list[str]:
 def _has_submitted_ancestor(merged_data: dict[str, Any], yaml_path: str) -> bool:
     """Whether some container above *yaml_path* was submitted as a dict.
 
-    That is what tells "the user emptied this field" apart from "this flow
-    never carried this field": the container is there, the key inside it is
-    not. Without the distinction, a cleared value comes back on the next save
-    - the oldest of the four leaks this module replaces.
+    That is what tells "the user emptied this field" apart from "this flow never carried this
+    field": the container is there, the key inside it is not. Without the distinction, a
+    cleared value comes back on the next save.
     """
     segments = yaml_path.split("/")
     return any(isinstance(smart_get_value(merged_data, "/".join(segments[:i])), dict) for i in range(1, len(segments)))
@@ -116,9 +113,9 @@ def apply_write_paths(
 ) -> dict[str, Any]:
     """Write only *paths* from *merged_data* onto *existing_data*, in place.
 
-    A path the submission carries is written. A path it does not carry, while
-    a container above it was submitted, is removed - the user emptied it.
-    Anything not in *paths* is not touched at all.
+    A path the submission carries is written. A path it does not carry, while a container
+    above it was submitted, is removed: the user emptied it. Anything not in *paths* is not
+    touched at all.
     """
     for path in paths:
         value = smart_get_value(merged_data, path)

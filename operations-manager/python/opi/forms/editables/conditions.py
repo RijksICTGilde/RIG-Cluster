@@ -21,9 +21,8 @@ from opi.services.catalog.publish_on_web.subdomain import (
     get_supported_base_domains,
 )
 
-#: De schakelaarwaarde van het keuzeveld "eigen domein", en de sleutel van het transiente
-#: veld waar die keuze naar deferet. Ze horen bij elkaar: de een zegt "kijk daar", de ander
-#: draagt de waarde.
+#: The value of the "own domain" choice, and the key of the transient field it defers to.
+#: They belong together: the one says "look there", the other carries the value.
 CUSTOM_DOMAIN_SENTINEL = "__custom__"
 CUSTOM_BASE_DOMAIN_KEY = "base-domain:custom"
 
@@ -39,19 +38,14 @@ def _effective_base_domain(
     Asks the service first (``get_domain_setting``), so both storage locations answer --
     the resolver map is keyed on the editable's yaml_path, which is the service path only,
     and a deployment that still carries its base domain at the root would otherwise read as
-    "not set" and get the cluster default (RC-60). Falls through to ``get_effective_value``
+    "not set" and get the cluster default. Falls through to ``get_effective_value``
     when nothing is stored, which is what makes "cluster default" resolvable at all.
 
-    ``__custom__`` telt hier NIET als opgeslagen waarde. Het is de schakelaar van het
-    keuzeveld, niet een domein: het echte domein staat dan in het transiente veld
-    ``base-domain:custom`` waar de keuze naar deferet. Tijdens het RENDEREN is die
-    deferral al opgelost en staat het domein er gewoon, maar tijdens het VERWERKEN nog
-    niet -- ``_resolve_deferrals`` draait pas na de veldenlus. Wie hier de sentinel
-    teruggaf liet beide aanvraag-condities op ``base_domain == "__custom__"`` afslaan,
-    dus gold het aanvraagvakje als verborgen, sloeg de verwerker het over, en werd het
-    aangevinkte vakje weggegooid. Gevolg: het vakje sprong terug op uit en de
-    PRE_SAVE-hook die de aanvraag doet liep nooit, dus een eigen domein of subdomein
-    werd stil nooit aangevraagd.
+    ``__custom__`` does not count as a stored value: it is the switch of the select, and the
+    domain itself then sits in the transient field ``base-domain:custom``. While rendering that
+    deferral is resolved, while PROCESSING it is not yet (``_resolve_deferrals`` runs after the
+    field loop), so returning the sentinel here makes both request conditions read as hidden,
+    the processor skips the request checkbox, and a ticked box is thrown away.
     """
     stored = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
     if stored is not None and stored != CUSTOM_DOMAIN_SENTINEL:
@@ -65,11 +59,10 @@ def _effective_base_domain(
 
 
 class SentinelValueCondition:
-    """True when the field value equals a sentinel that indicates deferral.
+    """True when the field value equals the sentinel that indicates deferral.
 
-    Used by "select with other" patterns: when the select's value is the
-    sentinel (e.g. ``__custom__``), the parent defers to the transient
-    text field for its final value.
+    For "select with other": on the sentinel the parent takes its final value from the
+    transient text field instead.
     """
 
     def __init__(self, sentinel: str = CUSTOM_DOMAIN_SENTINEL) -> None:
@@ -84,13 +77,8 @@ class SentinelValueCondition:
 class SubdomainNeedsRequestCondition:
     """True when the deployment's subdomain needs a request on a restricted domain.
 
-    Used as ``show_when`` on the subdomain-request checkbox. When used this way,
-    ``check()`` receives the full ``yaml_data`` dict.
-
-    Returns True when:
-    - The deployment uses a subdomain-based domain format
-    - The base domain has restricted subdomains (cluster config)
-    - The subdomain is NOT already approved in ``domains.allowed-subdomains``
+    Used as ``show_when`` on the subdomain-request checkbox, so ``check()`` receives the full
+    ``yaml_data`` dict rather than one dependency value.
     """
 
     def __init__(self, deployment_index: int = 0) -> None:
@@ -98,7 +86,6 @@ class SubdomainNeedsRequestCondition:
         self._resolvers: dict | None = None
 
     def set_resolvers(self, resolvers: dict) -> None:
-        """Inject resolver map for transient value resolution."""
         self._resolvers = resolvers
 
     def check(self, value: Any) -> bool:
@@ -128,7 +115,6 @@ class SubdomainNeedsRequestCondition:
             if not custom_config or not custom_config.get("restricted-subdomains", False):
                 return False
 
-        # Domain is restricted — check if subdomain is already approved
         status = get_subdomain_status(value, base_domain, subdomain)
         return status != "approved"
 
@@ -136,13 +122,8 @@ class SubdomainNeedsRequestCondition:
 class DomainNeedsRequestCondition:
     """True when the deployment's base domain is not the cluster default and not approved.
 
-    Used as ``show_when`` on the domain-request checkbox. When the condition
-    returns True, the user needs to request approval for this domain.
-
-    Returns True when:
-    - A base domain is selected (not None, not __custom__)
-    - The domain is NOT the cluster default
-    - The domain is NOT in ``domains.allowed-domains`` with ``status: approved``
+    Used as ``show_when`` on the domain-request checkbox, so ``check()`` receives the full
+    ``yaml_data`` dict rather than one dependency value.
     """
 
     def __init__(self, deployment_index: int = 0) -> None:
@@ -150,7 +131,6 @@ class DomainNeedsRequestCondition:
         self._resolvers: dict | None = None
 
     def set_resolvers(self, resolvers: dict) -> None:
-        """Inject resolver map for transient value resolution."""
         self._resolvers = resolvers
 
     def check(self, value: Any) -> bool:
@@ -170,12 +150,10 @@ class DomainNeedsRequestCondition:
 
         cluster = opi_config.settings.CLUSTER_MANAGER
 
-        # Cluster default domain is always allowed
         ingress_postfix = get_ingress_postfix(cluster)
         cluster_domain = ingress_postfix.lstrip(".")
         if base_domain == cluster_domain:
             return False
 
-        # Check if domain is already approved
         domain_config = get_project_allowed_domain_config(value, base_domain)
         return not (domain_config and domain_config.get("status") == "approved")

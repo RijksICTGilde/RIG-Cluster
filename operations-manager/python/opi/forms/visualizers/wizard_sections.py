@@ -68,10 +68,9 @@ def _extract_services(data: dict[str, Any]) -> list[str]:
 
 
 def _service_component_layouts(slot: str | None = None) -> list[Any]:
-    """Collect the per-component layout nodes each service hooks into the component
-    form (RC-5 'service owns its fields'), in registry order. A component-level service
-    (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
-    of it living hand-authored in COMPONENTS_SECTION.
+    """The per-component layout nodes each service hooks into the component form, in registry
+    order. A component-level service (metrics-scraper and the like) owns its fieldset through
+    ``config_component_layout()`` instead of it being hand-authored in COMPONENTS_SECTION.
 
     *slot* selects which PLACE in the component form is being filled. The form names
     its slots (``COMPONENT_IMAGE_SLOT``) and a service marks a layout node for one by
@@ -90,12 +89,12 @@ def _service_component_layouts(slot: str | None = None) -> list[Any]:
 
 
 def _service_component_notices() -> list[Any]:
-    """De layoutplekken van de informatieblokken uit ``component_service_notices()``.
+    """The layout places of the notice blocks from ``component_service_notices()``.
 
-    Afgeleid van het pad van het blok zelf (het laatste segment), zodat het formulier geen
-    enkele dienstnaam kent: een dienst die zo'n blok toevoegt, verschijnt vanzelf, en een
-    dienst die het weghaalt verdwijnt vanzelf. Los van ``_service_component_layouts()``
-    omdat dat de haak voor CONFIGURATIE is, en die telt mee in ``config_layers()``.
+    Derived from the block's own path (its last segment), so the form knows no service name at
+    all: a service that adds such a block appears by itself, and one that removes it
+    disappears by itself. Separate from ``_service_component_layouts()``, which is the hook
+    for CONFIGURATION and counts towards ``config_layers()``.
     """
     from opi.services.registry import component_service_notices
 
@@ -103,11 +102,10 @@ def _service_component_notices() -> list[Any]:
 
 
 def _service_deployment_component_layouts() -> list[Any]:
-    """Collect the per-deployment-component layout nodes each service hooks into the
-    deployment-edit form (RC-25), in ``config_component_order``.
+    """The per-deployment-component layout nodes each service hooks into the deployment-edit
+    form, in ``config_component_order``.
 
-    The deployment-component counterpart of ``_service_component_layouts``. Before RC-25
-    this layer had no service-owned hook, so its one fieldset was hand-authored here.
+    The deployment-component counterpart of ``_service_component_layouts``.
     """
     contributors = sorted(
         (get_service(service_type) for service_type in ServiceType),
@@ -118,10 +116,6 @@ def _service_deployment_component_layouts() -> list[Any]:
         nodes.extend(service.config_deployment_component_layout())
     return nodes
 
-
-# ---------------------------------------------------------------------------
-# Core sections (always visible)
-# ---------------------------------------------------------------------------
 
 IDENTITY_SECTION = FormSection(
     section_id="identity",
@@ -174,8 +168,8 @@ COMPONENTS_SECTION = FormSection(
                         "description",
                         "image",
                         *_service_component_layouts(COMPONENT_IMAGE_SLOT),
-                        # Het startcommando hoort bij het image: het vervangt de entrypoint
-                        # daarvan, dus je beoordeelt de twee samen.
+                        # The start command belongs with the image: it replaces that
+                        # image's entrypoint, so the two are judged together.
                         "command",
                     ],
                 ),
@@ -200,11 +194,10 @@ COMPONENTS_SECTION = FormSection(
                     description="Selecteer welke services dit component gebruikt.",
                     children=["services"],
                 ),
-                # Wat de gekozen diensten te MELDEN hebben, elk als eigen kaart, direct na
-                # de keuze waar het over gaat. Binnen de fieldset hierboven oogde zo'n blok
-                # als onderdeel van het keuzevak terwijl het een mededeling is over wat je
-                # zojuist aanzette. Welke blokken dit zijn bepaalt de dienst zelf; zie
-                # Service.component_form_notices.
+                # What the chosen services have to SAY, each on its own card, right after the
+                # choice it is about. Inside the fieldset above such a block reads as part of
+                # the picker, while it is a notice about what was just switched on. Which
+                # blocks these are the service decides; see Service.component_form_notices.
                 *_service_component_notices(),
                 Fieldset(
                     legend="Publicatie",
@@ -216,10 +209,9 @@ COMPONENTS_SECTION = FormSection(
                         Sequence(field_name="path"),
                     ],
                 ),
-                # Component-level services hook their fieldsets/sequences in here,
-                # collected from the service catalog in config_component_order. The
-                # aliases + user-env-vars system services sort first (RC-25), so they
-                # land exactly where the hand-authored "Variabelen" fieldset used to sit.
+                # Component-level services hook their fieldsets and sequences in here,
+                # collected from the service catalog in config_component_order; the aliases
+                # and user-env-vars system services sort first.
                 *_service_component_layouts(),
             ],
         ),
@@ -237,14 +229,13 @@ DEPLOYMENTS_SECTION = FormSection(
 
 
 def _components_create_section() -> FormSection:
-    """De componentenstap voor de AANMAAK-wizard, met de initiële omgevingsvariabelen.
+    """The components step of the CREATE wizard, with the initial environment variables.
 
-    RC-388 haalde het veld uit alle generieke formulieren: een opgeslagen waarde kan een
-    geheim bevatten en hoort achter een step-up. Bij het AANMAKEN van een project valt er
-    nog niets terug te lezen, dus daar is alleen schrijven zonder step-up zinvol en
-    veilig; alles daarna gaat via het venster in ``opi/web/router_env_vars.py``.
-    Het veld zelf blijft van de dienst (zelfde visualizer, zelfde validator); alleen de
-    keuze "wel op aanmaak, niet op bewerken" staat hier.
+    The field is out of every generic form, because a stored value can hold a secret and
+    belongs behind a step-up. While CREATING a project there is nothing to read back yet, so
+    writing without a step-up is both useful and safe there; everything after that goes
+    through the window in ``opi/web/router_env_vars.py``. The field itself stays the service's
+    (same visualizer, same validator); only the choice "on create, not on edit" is made here.
     """
     from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS
 
@@ -252,20 +243,20 @@ def _components_create_section() -> FormSection:
         COMPONENTS_SEQUENCE,
         children=[*(COMPONENTS_SEQUENCE.children or []), COMPONENT_USER_ENV_VARS],
     )
-    basis_layout = COMPONENTS_SECTION.layout[0]
-    if not isinstance(basis_layout, Sequence):
+    base_layout = COMPONENTS_SECTION.layout[0]
+    if not isinstance(base_layout, Sequence):
         raise TypeError("de componentenstap bestaat uit één Sequence")
-    # Achteraan: het veld vult de initiële waarde en is een toevoeging, geen kern van
-    # de stap. De dienst-layouts (aliassen e.d.) blijven op hun plek.
+    # At the end: the field fills the initial value and is an addition, not the core of the
+    # step. The service layouts (aliases and the like) stay where they are.
     child_layout = [
-        *basis_layout.child_layout,
+        *base_layout.child_layout,
         Fieldset(
             legend="Eigen omgevingsvariabelen",
             description="Omgevingsvariabelen voor dit component. Worden versleuteld opgeslagen; bekijken en wijzigen kan straks achter een extra bevestiging.",
             children=["user-env-vars"],
         ),
     ]
-    layout: list[LayoutElement | str] = [dataclasses.replace(basis_layout, child_layout=child_layout)]
+    layout: list[LayoutElement | str] = [dataclasses.replace(base_layout, child_layout=child_layout)]
     return FormSection(
         section_id=COMPONENTS_SECTION.section_id,
         title=COMPONENTS_SECTION.title,
@@ -292,23 +283,17 @@ CONFIG_DISPLAY_SECTION = FormSection(
     ],
 )
 
-# ---------------------------------------------------------------------------
-# Conditional sections (visible based on selected services)
-# ---------------------------------------------------------------------------
-
-# RC-5: the keycloak service owns its config section (built by
-# KeycloakService.config_form_section); re-exported here so flows / EDIT_SECTIONS /
-# tests keep referring to it. The nested additional-clients editables stay in the
-# forms layer; the service references them.
+# The keycloak service owns its config section (built by
+# KeycloakService.config_form_section); re-exported here so flows, EDIT_SECTIONS and tests
+# keep referring to it. The nested additional-clients editables stay in the forms layer; the
+# service references them.
 
 
 def _with_service_help(section: FormSection | None, service_type: ServiceType) -> FormSection:
     """Stamp the service's own explanation onto its config section.
 
-    The question mark that opens it already exists on the service card and in the
-    overview; the config screen is where someone actually has to decide something, and
-    it was the one place without it. Done here, where the sections are collected, so a
-    service declares its help once on its ServiceDefinition and every surface picks it up.
+    Done here, where the sections are collected, so a service declares its help once on its
+    ServiceDefinition and every surface picks it up.
 
     ``config_form_section`` may legitimately answer None (a service with no fields at
     that layer), but every section that goes through here is listed as a step in a flow.
@@ -327,17 +312,17 @@ KEYCLOAK_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.KEYCLOAK).config_form_section(ConfigLayer.PROJECT), ServiceType.KEYCLOAK
 )
 
-# RC-5: the namespace-postgres service owns its config section (built by
-# NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the
-# familiar name so flows / EDIT_SECTIONS / tests keep referring to it.
+# The namespace-postgres service owns its config section (built by
+# NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the familiar
+# name so flows, EDIT_SECTIONS and tests keep referring to it.
 POSTGRESQL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT),
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
 )
 
-#: The "Webadres" step, built by the service that owns the fields (RC-60). Kept under the
-#: familiar name so flows, EDIT_SECTIONS and tests keep one place to refer to; the wildcard
-#: form (no deployment index) is the layer description.
+#: The "Webadres" step, built by the service that owns the fields. Kept under the familiar
+#: name so flows, EDIT_SECTIONS and tests keep one place to refer to; the wildcard form (no
+#: deployment index) is the layer description.
 DOMAIN_SECTION = get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section()
 
 WIZARD_DEPLOYMENT_SECTION = FormSection(
@@ -375,10 +360,9 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
     )
 
 
-# RC-5 prototype: the authorization-wall service now OWNS its config section - it is
-# built by AuthorizationWallProvider.config_form_section() and merely re-exported here
-# under the familiar name, so flows.py / EDIT_SECTIONS / tests keep referring to it.
-# (keycloak / postgres sections still live hand-authored above until they follow.)
+# The authorization-wall service OWNS its config section: it is built by
+# AuthorizationWallProvider.config_form_section() and merely re-exported here under the
+# familiar name, so flows.py, EDIT_SECTIONS and tests keep referring to it.
 AUTH_WALL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT), ServiceType.AUTHORIZATION_WALL
 )
@@ -411,9 +395,9 @@ CROSS_DOMAIN_CONFIG_SECTION = _with_service_help(
     ServiceType.CROSS_DOMAIN_ACCESS,
 )
 
-# redis and minio-storage own project-level settings that had a model and an API route but
-# no form field anywhere (RC-25); their sections are built by the services and re-exported
-# here so the derived SERVICE_CONFIG_SECTIONS picks them up by config_section_id.
+# redis and minio-storage own project-level settings; their sections are built by the services
+# and re-exported here so the derived SERVICE_CONFIG_SECTIONS picks them up by
+# config_section_id.
 REDIS_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.REDIS).config_form_section(ConfigLayer.PROJECT), ServiceType.REDIS
 )
@@ -435,14 +419,9 @@ IMAGE_REGISTRIES_CONFIG_SECTION = _with_service_help(
     ServiceType.IMAGE_REGISTRIES,
 )
 
-# ---------------------------------------------------------------------------
-# Lookup for conditional sections keyed by service name
-# ---------------------------------------------------------------------------
-
-# Per-service config sections indexed by section_id, so the four service dicts can be
-# DERIVED from the provider registry (config_section_id) instead of hand-synced
-# (RC-5 Phase 3). Adding a service's config section = define it here + declare
-# config_section_id on its provider.
+# Per-service config sections indexed by section_id, so the four service dicts are DERIVED
+# from the provider registry (config_section_id) instead of hand-synced. Adding a service's
+# config section means defining it here and declaring config_section_id on its provider.
 _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
     section.section_id: section
     for section in (
@@ -467,14 +446,6 @@ SERVICE_CONFIG_SECTIONS: dict[str, FormSection] = {
     for service_type in ServiceType
     if (provider := get_service(service_type)).config_section_id in _CONFIG_SECTIONS_BY_ID
 }
-
-# ---------------------------------------------------------------------------
-# All sections for easy iteration
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Detail edit sections (for inline editing from project details page)
-# ---------------------------------------------------------------------------
 
 IDENTITY_EDIT_SECTION = FormSection(
     section_id="identity-edit",
@@ -505,15 +476,14 @@ def _strip_removed_services_from_components(
 ) -> None:
     """Remove services from components that are no longer in the project services list.
 
-    When a user removes a service from the root ``services`` list, the
-    component-level ``services`` lists must be updated to match.  Otherwise
-    the YAML becomes inconsistent and the service-removal detection in
-    ``cleanup_removed_services_from_yaml_change`` won't fire (it checks
-    component-level usage).
+    Removing a service from the root ``services`` list has to update the component-level
+    ``services`` lists too, or the YAML goes inconsistent and the service-removal detection in
+    ``cleanup_removed_services_from_yaml_change``, which checks component-level usage, never
+    fires.
 
-    Behalve een dienst die ``component_selection_follows_config`` declareert: daar
-    blijft de verwijzing staan, zodat een ``validate_project``-grendel hem nog ziet.
-    Zie features/image-registries.md, "De weg terug is geen stille weg".
+    Except for a service that declares ``component_selection_follows_config``: there the
+    reference stays, so a ``validate_project`` guard still sees it. See
+    features/image-registries.md, "De weg terug is geen stille weg".
     """
     project_services = set(_extract_services(project_data))
     for comp in project_data.get("components", []):
@@ -522,9 +492,9 @@ def _strip_removed_services_from_components(
         comp_services = comp.get("services")
         if not isinstance(comp_services, list):
             continue
-        # Use the canonical helper: the previous local reader ignored the component
-        # ``{reference: X, config: Y}`` two-key record and returned None for it, so a
-        # storage/config-carrying entry was stripped out as "not a project service".
+        # The canonical helper, which resolves the component ``{reference: X, config: Y}``
+        # two-key record too; a local reader returns None for it and strips a
+        # config-carrying entry out as "not a project service".
         comp["services"] = [
             svc
             for svc in comp_services
@@ -533,7 +503,7 @@ def _strip_removed_services_from_components(
 
 
 def _selection_follows_config(service_name: str | None) -> bool:
-    """Of deze dienst zijn componentvermelding zelf draagt (de waarde IS de selectie)."""
+    """Whether this service carries its own component entry, so the value IS the selection."""
     if service_name is None:
         return False
     try:
@@ -542,11 +512,10 @@ def _selection_follows_config(service_name: str | None) -> bool:
         return False
 
 
-# Wire the same component-reconciliation hook onto the create-wizard services
-# step. Defined here (not in the constructor at the top of the file) because
-# the helper is declared below SERVICES_SECTION. Without this, deselecting a
-# project service in the create wizard left orphaned component-level service
-# config until the components step was re-submitted (one navigation late).
+# The same component-reconciliation hook on the create-wizard services step. Wired here and
+# not in the constructor at the top of the file, because the helper is declared below
+# SERVICES_SECTION. Without it, deselecting a project service in the create wizard leaves
+# orphaned component-level service config until the components step is submitted again.
 SERVICES_SECTION.post_merge = _strip_removed_services_from_components
 
 
@@ -561,8 +530,8 @@ SERVICES_EDIT_SECTION = FormSection(
     post_merge=_strip_removed_services_from_components,
 )
 
-# Registry of sections available for detail-page editing.
-# Includes edit-specific sections AND existing config sections.
+# The sections available for detail-page editing: the edit-specific ones and the config
+# sections.
 EDIT_SECTIONS: dict[str, FormSection] = {
     "identity-edit": IDENTITY_EDIT_SECTION,
     "team-edit": TEAM_SECTION,
@@ -572,24 +541,15 @@ EDIT_SECTIONS: dict[str, FormSection] = {
     **{section.section_id: section for section in SERVICE_CONFIG_SECTIONS.values()},
 }
 
-# ---------------------------------------------------------------------------
-# Dynamic section factories (parameterized by deployment index)
-# ---------------------------------------------------------------------------
-
 
 def build_domain_section(deployment_index: int, *, edit_mode: bool = False) -> FormSection:
     """The "Webadres" section for one deployment.
 
-    Delegates to the service, which owns the fields, their display and the step they sit in
-    (RC-60). In edit mode the section triggers a project reprocess on save; in create mode
-    the wizard handles submission as a whole.
+    Delegates to the service, which owns the fields, their display and the step they sit in.
+    In edit mode the section triggers a project reprocess on save; in create mode the wizard
+    handles the submission as a whole.
     """
     return get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section(deployment_index, edit_mode=edit_mode)
-
-
-# ---------------------------------------------------------------------------
-# All sections for easy iteration
-# ---------------------------------------------------------------------------
 
 
 def _prefix_layout_children(items: list, prefix: str) -> list:
@@ -619,10 +579,9 @@ def _prefix_layout_children(items: list, prefix: str) -> list:
                 )
             )
         elif hasattr(item, "children"):
-            # Elke andere knoop die kinderen draagt, zoals de Div van een slot. Op TYPE
-            # afgaan liet die kinderen ongeprefixt achter, waardoor het veld in een modal
-            # in de wortel van het projectbestand ging zoeken in plaats van in dit
-            # component, en dus leeg bleef.
+            # Every other node that carries children, such as the Div of a slot. Going by
+            # TYPE leaves those children unprefixed, and then a field in a modal looks in the
+            # root of the project file instead of in this component and stays empty.
             result.append(dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix)))
         else:
             result.append(item)
@@ -643,14 +602,12 @@ def build_component_edit_section(component_index: int, is_new: bool = False) -> 
 
     editables = [materialize_wildcard_visualizer(e, component_index) for e in (COMPONENTS_SEQUENCE.children or [])]
 
-    # For new components, allow name editing (override readonly_on_edit)
     if is_new:
         for i, vis in enumerate(editables):
             if vis.editable.yaml_path.endswith("/name"):
                 editables[i] = dataclasses.replace(vis, readonly_on_edit=False)
                 break
 
-    # Extract child_layout from the Sequence element in COMPONENTS_SECTION
     child_layout: list = []
     section_layout = COMPONENTS_SECTION.layout
     if isinstance(section_layout, list) and section_layout:
@@ -712,13 +669,12 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
         if not isinstance(selected, list) or not selected:
             return
 
-        # Get the new component's data
         components = project_data.get("components", [])
         if component_index >= len(components):
             return
         component = components[component_index]
         comp_name = component.get("name")
-        # What image means here is undecided; see
+        # What an image means here is not settled; see
         # features/component-image-field-clarification.md.
         comp_image = component.get("image")
         if not comp_name:
@@ -728,7 +684,6 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
         if comp_image:
             ref["image"] = comp_image
 
-        # Build the temp structure for the distributor
         wizard_data["_component_refs"] = [{"name": dep_name, "components": [ref.copy()]} for dep_name in selected]
         distributor(project_data, wizard_data)
 
@@ -751,28 +706,24 @@ def build_deployment_edit_section(
 ) -> FormSection:
     """Build a deployment edit section for editing component images and env vars.
 
-    Takes the DEPLOYMENT_COMPONENTS_SEQ visualizer and replaces the
-    ``deployments[*]`` segment with the concrete deployment index, keeping
-    ``components[*]`` as a sequence wildcard so items are iterable.
+    Takes the DEPLOYMENT_COMPONENTS_SEQ visualizer and replaces the ``deployments[*]`` segment
+    with the concrete deployment index, keeping ``components[*]`` as a sequence wildcard so
+    the items stay iterable.
 
-    Args:
-        deployment_index: Which deployment to edit.
-        component_count: Total number of project-level components.
-            When set, limits the sequence to at most this many items
-            (a deployment cannot have more components than defined).
-        include_environment: When False, omits the environment. De add-flow
-            vraagt het in zijn eigen informatiestap, dus daar zou het dubbel staan.
+    ``component_count`` is the number of project-level components, and caps the sequence: a
+    deployment cannot have more components than are defined. With ``include_environment``
+    False the environment is omitted, which is what the add flow needs: it asks for it in its
+    own info step.
     """
     from opi.forms.editables.reindex import replace_segment_visualizer
 
     old_seg = "deployments[*]"
     new_seg = f"deployments[{deployment_index}]"
 
-    # Build a focused sequence with only the fields we want editable
     ref_vis = replace_segment_visualizer(DEPLOYMENT_COMP_REFERENCE, old_seg, new_seg)
     image_vis = replace_segment_visualizer(DEPLOYMENT_COMP_IMAGE, old_seg, new_seg)
-    # Deployment-component fields the services own (RC-25: user-env-vars), instead of
-    # this function naming them one by one.
+    # The deployment-component fields the services own, instead of this function naming them
+    # one by one.
     service_vis = [
         replace_segment_visualizer(vis, old_seg, new_seg) for vis in deployment_component_service_visualizers()
     ]
@@ -780,7 +731,6 @@ def build_deployment_edit_section(
 
     seq_vis = replace_segment_visualizer(DEPLOYMENT_COMPONENTS_SEQ, old_seg, new_seg)
 
-    # Set max_items to the number of project components
     if component_count is not None:
         seq_ed = dataclasses.replace(seq_vis.editable, max_items=component_count)
         seq_vis = dataclasses.replace(seq_vis, editable=seq_ed)
@@ -854,11 +804,6 @@ def build_domain_cert_section(deployment_index: int) -> FormSection:
     )
 
 
-# ---------------------------------------------------------------------------
-# Backup & Restore sections (modal wizard, no editables - custom templates)
-# ---------------------------------------------------------------------------
-
-
 def _backup_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for backup wizard."""
     dep = data.get("deployment_name", "-")
@@ -916,9 +861,9 @@ RESTORE_TARGET_SECTION = FormSection(
     summary_fn=_restore_target_summary,
 )
 
-# RC-5: the attachments service owns its "Bijlagen" upload section (built by
-# AttachmentsService.config_form_section, incl. the hidden read-only services carrier);
-# re-exported here so flows / tests keep referring to it.
+# The attachments service owns its "Bijlagen" upload section (built by
+# AttachmentsService.config_form_section, including the hidden read-only services carrier);
+# re-exported here so flows and tests keep referring to it.
 ATTACHMENTS_SECTION = _with_service_help(
     get_service(ServiceType.ATTACHMENTS).config_form_section(ConfigLayer.PROJECT), ServiceType.ATTACHMENTS
 )
@@ -960,14 +905,12 @@ def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[For
     """Build sections for the restore-to-new-deployment flow.
 
     Reuses the add-deployment builders (info, components, domain). The clone-from field is
-    replaced by the config source: the backup is always the data source, so the choice here
-    is which deployment's configuration the new one inherits (RC-417).
-    All sections are conditionally visible based on ``restore_mode == "new"``.
+    replaced by the config source: the backup is always the data source, so the choice here is
+    which deployment's configuration the new one inherits. Every section is visible only while
+    ``restore_mode == "new"``.
 
-    Args:
-        deployment_index: Index of the new deployment slot in the
-            deployments list. Set at init time to ``len(deployments)``
-            so it targets an empty slot, not an existing deployment.
+    ``deployment_index`` is the index of the new deployment slot, set at init time to
+    ``len(deployments)`` so it targets an empty slot and not an existing deployment.
     """
     base_info = build_deployment_add_info_section(deployment_index, include_clone_from=False)
     info = dataclasses.replace(
@@ -986,11 +929,6 @@ def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[For
     ]
 
 
-# ---------------------------------------------------------------------------
-# Add deployment sections (multi-step wizard from detail page)
-# ---------------------------------------------------------------------------
-
-
 def build_deployment_add_info_section(
     deployment_index: int,
     *,
@@ -998,17 +936,15 @@ def build_deployment_add_info_section(
 ) -> FormSection:
     """Build the info section for adding a new deployment.
 
-    Overrides readonly_on_edit on the name visualizer so the name field
-    is editable even though the modal wizard uses edit_mode=True.
-
-    Args:
-        include_clone_from: When False, omits the clone-from field (used
-            by the restore flow where the source is already selected).
+    Overrides readonly_on_edit on the name visualizer, so the name field is editable even
+    though the modal wizard runs with edit_mode=True. With ``include_clone_from`` False the
+    clone-from field is omitted, which is what the restore flow needs: its source is already
+    selected.
     """
     visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME, DEPLOYMENT_ENVIRONMENT]
     editables = _materialize_new_deployment_fields(deployment_index, visualizers)
 
-    # The name visualizer has readonly_on_edit=True - override for add flows
+    # The name visualizer carries readonly_on_edit=True, which an add flow overrides.
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
@@ -1061,11 +997,6 @@ def build_deployment_add_domain_section(deployment_index: int) -> FormSection:
     return build_domain_section(deployment_index, edit_mode=True)
 
 
-# ---------------------------------------------------------------------------
-# Admin domain/subdomain approval section
-# ---------------------------------------------------------------------------
-
-
 def _apply_approval_to_project(
     project_data: dict[str, Any],
     wizard_data: dict[str, Any],
@@ -1111,10 +1042,9 @@ def build_backup_schedule_section(deployment_index: int) -> FormSection:
     """
     from opi.forms.editables.reindex import materialize_wildcard_visualizer
 
-    # Transient fields must be processed BEFORE the main schedule field so that
-    # RRuleFrequencyConverter.write() can read time/day/monthday from the result
-    # dict when building the combined RRULE string.
-    # The `layout` list below controls the display order independently.
+    # The transient fields are processed BEFORE the main schedule field, so
+    # RRuleFrequencyConverter.write() can read time, day and monthday from the result dict
+    # while building the combined RRULE. The `layout` list below sets the display order.
     editables = [
         materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_TIME, deployment_index),
         materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_DAY, deployment_index),

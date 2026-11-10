@@ -32,7 +32,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.leden import leden_voor_formulier
+from opi.forms.wizard.members import members_for_form
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -815,11 +815,11 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         )
 
     # De teamvorm rendert alleen de MENSEN en hun rol, dus hij draagt ook alleen die het
-    # formulier in; de tokens en de service accounts zet ``zet_verborgen_leden_terug`` bij
+    # formulier in; de tokens en de service accounts zet ``restore_hidden_members`` bij
     # het opslaan terug.
     owned = _fully_owned_list_keys(flow)
     if "users" in owned:
-        session_data = leden_voor_formulier(session_data)
+        session_data = members_for_form(session_data)
 
     step_data = _split_data_across_sections(flow, session_data)
 

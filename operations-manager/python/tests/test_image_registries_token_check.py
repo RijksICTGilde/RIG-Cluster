@@ -14,7 +14,7 @@ import pytest
 from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
@@ -473,7 +473,7 @@ class TestDeToetsLangsDeOpslagroute:
                     }
                 }
             },
-            GERENDERDE_REEKSEN_VELD: [self.REEKS],
+            RENDERED_SEQUENCES_FIELD: [self.REEKS],
         }
         processor = EditableFormProcessor()
         submitted_yaml, errors = await processor.process_json_submission(

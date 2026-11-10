@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.forms.visualizers.flows import MODAL_EDIT_COMPONENTS_FLOW, build_deployment_edit_flow
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
@@ -246,7 +246,7 @@ async def _save_via_formulier(project: dict[str, Any], getoonde_rijen: list[dict
     )
     state.store_step_data(section.section_id, {"components": copy.deepcopy(project["components"])})
 
-    submitted = {"components": copy.deepcopy(getoonde_rijen), GERENDERDE_REEKSEN_VELD: ["components"]}
+    submitted = {"components": copy.deepcopy(getoonde_rijen), RENDERED_SEQUENCES_FIELD: ["components"]}
     merged, errors = await EditableFormProcessor().process_json_submission(
         submitted,
         section.editables,

@@ -26,119 +26,6 @@
     "opi/core/rrule_utils.py": {
       "dutch-comments": 1
     },
-    "opi/forms/editables/conditions.py": {
-      "dutch-comments": 4
-    },
-    "opi/forms/editables/converters.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 12,
-      "comment-heavy-functions": 1
-    },
-    "opi/forms/editables/editable.py": {
-      "dutch-comments": 1
-    },
-    "opi/forms/editables/enforcers.py": {
-      "dutch-comments": 25
-    },
-    "opi/forms/editables/fields/deployments.py": {
-      "dutch-comments": 5
-    },
-    "opi/forms/editables/fields/identity.py": {
-      "dutch-comments": 2
-    },
-    "opi/forms/editables/fields/team.py": {
-      "dutch-comments": 8
-    },
-    "opi/forms/editables/pipeline.py": {
-      "dutch-comments": 4
-    },
-    "opi/forms/editables/processor.py": {
-      "dutch-comments": 19
-    },
-    "opi/forms/editables/rendered_sequences.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 6
-    },
-    "opi/forms/editables/resolvers.py": {
-      "comment-heavy-functions": 1
-    },
-    "opi/forms/editables/sequence_identity.py": {
-      "dutch-comments": 4
-    },
-    "opi/forms/editables/service_path.py": {
-      "dutch-comments": 4
-    },
-    "opi/forms/editables/validators.py": {
-      "dutch-comments": 7,
-      "comment-heavy-functions": 1
-    },
-    "opi/forms/extractor.py": {
-      "dutch-comments": 2
-    },
-    "opi/forms/layout.py": {
-      "dutch-comments": 2
-    },
-    "opi/forms/lotc_attrs.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 7
-    },
-    "opi/forms/models/project_file.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 11
-    },
-    "opi/forms/renderer.py": {
-      "dutch-comments": 8
-    },
-    "opi/forms/visualizers/bridge.py": {
-      "dutch-comments": 11
-    },
-    "opi/forms/visualizers/fields/components.py": {
-      "dutch-comments": 13
-    },
-    "opi/forms/visualizers/flows.py": {
-      "dutch-comments": 6
-    },
-    "opi/forms/visualizers/providers.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 106
-    },
-    "opi/forms/visualizers/visualizer.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 7
-    },
-    "opi/forms/visualizers/wizard_sections.py": {
-      "dutch-comments": 17
-    },
-    "opi/forms/widgets/__init__.py": {
-      "dutch-comments": 2
-    },
-    "opi/forms/widgets/fields.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 14
-    },
-    "opi/forms/widgets/lotc.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 16,
-      "comment-heavy-functions": 1
-    },
-    "opi/forms/wizard/leden.py": {
-      "dutch-identifiers": 8,
-      "dutch-comments": 7
-    },
-    "opi/forms/wizard/save.py": {
-      "dutch-comments": 9,
-      "comment-heavy-functions": 1
-    },
-    "opi/forms/wizard/secrets.py": {
-      "dutch-comments": 14
-    },
-    "opi/forms/wizard/selection.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 5
-    },
-    "opi/forms/wizard/state.py": {
-      "dutch-comments": 1
-    },
     "opi/generation/manifests.py": {
       "dutch-identifiers": 2,
       "dutch-comments": 21
@@ -236,6 +123,20 @@
     },
     "opi/services/api_token_service.py": {
       "dutch-comments": 1
+    },
+    "opi/services/approvals.py": {
+      "dutch-comments": 5
+    },
+    "opi/services/argocd_operation.py": {
+      "dutch-comments": 20
+    },
+    "opi/services/argocd_overview.py": {
+      "dutch-identifiers": 5,
+      "dutch-comments": 34
+    },
+    "opi/services/audit.py": {
+      "dutch-identifiers": 2,
+      "dutch-comments": 27
     },
     "opi/services/catalog/aliases/overview.py": {
       "dutch-identifiers": 3
@@ -883,7 +784,7 @@
       "dutch-comments": 14
     },
     "tests/forms/test_alleen_bij_bewerken.py": {
-      "dutch-identifiers": 13,
+      "dutch-identifiers": 12,
       "dutch-comments": 3
     },
     "tests/forms/test_auth_wall_wegwijzer.py": {

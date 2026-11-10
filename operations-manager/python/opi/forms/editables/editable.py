@@ -7,16 +7,11 @@ from typing import Any, Protocol, runtime_checkable
 
 #: The two keys a service's configuration can live under, real first.
 #:
-#: ``services`` is where a saved project file keeps it; ``_services-config`` is the
-#: virtual key the wizard posts it under so a config section does not collide with the
-#: selection list it configures. The same configuration, two places, depending only on
-#: whether you are mid-wizard or looking at a project file.
-#:
-#: Declared here -- the leaf of the forms import graph -- so that there is ONE pair.
-#: Thirteen service packages each wrote it out by hand, which is thirteen chances for a
-#: typo that silently turns virtualization off, and one more place to miss when the pair
-#: changes. Service editables use it as their ``virtualize`` value; readers resolve
-#: across it via ``opi.forms.editables.service_path``.
+#: ``services`` is where a saved project file keeps it; ``_services-config`` is the virtual
+#: key the wizard posts it under so a config section does not collide with the selection list
+#: it configures. Service editables use this pair as their ``virtualize`` value, and readers
+#: resolve across it via ``opi.forms.editables.service_path``. There is only this one pair:
+#: a second copy is a chance for a typo that silently turns virtualization off.
 SERVICE_VIRTUALIZE: tuple[str, str] = ("services", "_services-config")
 
 
@@ -24,9 +19,8 @@ SERVICE_VIRTUALIZE: tuple[str, str] = ("services", "_services-config")
 class EditableConverter(Protocol):
     """Sync converter for YAML <-> form <-> display values.
 
-    All methods receive an optional ``context_data`` dict — the full
-    project data (or wizard session state) surrounding the field.
-    Converters that don't need context simply ignore it.
+    All methods receive an optional ``context_data`` dict: the full project data (or wizard
+    session state) surrounding the field. A converter that needs no context ignores it.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
@@ -76,7 +70,7 @@ class EditableEnforcer(Protocol):
     """Sync business rule enforcer."""
 
     def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        """Enforce business rules. Raises ValueError on violation. Returns value."""
+        """Raises ``ValueError`` on a violation, otherwise returns the value."""
         ...
 
 
@@ -124,14 +118,9 @@ class EditableGenerator(Protocol):
 class EditableSummarizer(Protocol):
     """Decides what a field looks like on a summary screen.
 
-    A summary is not a small form: the review page and the edit modal show what
-    was filled in, and not every field should appear there verbatim. A secret is
-    the obvious case -- the field has a value, showing it is the problem.
-
-    ``summarize`` returns the text to display, or None to leave the field out of
-    the summary entirely. It is the summary counterpart of ``EditableConverter``'s
-    ``read``/``write``/``view``, but it lives on its own so a field can control its
-    summary without inventing a converter that also has to answer for storage.
+    The review page and the edit modal show what was filled in, and not every field belongs
+    there verbatim: a secret has a value, and showing it is the problem. ``summarize`` returns
+    the text to display, or None to leave the field out of the summary entirely.
     """
 
     def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
@@ -155,9 +144,8 @@ class TransientValueResolver(Protocol):
 class FormState(Enum):
     """States in the form submission flow.
 
-    The flow engine walks through these states sequentially. Each state
-    can have hooks registered that run at that point. Based on the TAD
-    editable system's state machine pattern.
+    The flow engine walks through these states sequentially. Each state can have hooks
+    registered that run at that point.
 
     Flow: VALIDATE → PRE_SAVE → SAVE → POST_SAVE → COMPLETED
     """
@@ -201,10 +189,8 @@ class EditableHook(Protocol):
 
 
 class WidgetType(StrEnum):
-    """Enumeration of available widget types - no magic strings."""
-
     TEXT = "text"
-    PASSWORD = "password"  # noqa: S105  # naam van het widgettype, geen secret
+    PASSWORD = "password"  # noqa: S105  # the name of the widget type, not a secret
     TEXTAREA = "textarea"
     SELECT = "select"
     CHECKBOX = "checkbox"
@@ -225,11 +211,10 @@ class WidgetType(StrEnum):
 
 @dataclass
 class Editable:
-    """Reusable field logic - pure data, no UI concerns.
+    """Reusable field logic: pure data, no UI concerns.
 
-    Defines *what* the data is: where it lives in YAML, how to validate,
-    convert, enforce, and generate values. Extractable to a standalone
-    package with zero UI dependencies.
+    Defines *what* the data is: where it lives in YAML, how to validate, convert, enforce and
+    generate values.
     """
 
     yaml_path: str
@@ -313,10 +298,6 @@ class Editable:
     - List membership fields (e.g. ``components[*]/uses-components``)
     """
 
-
-# ---------------------------------------------------------------------------
-# Virtualize helpers
-# ---------------------------------------------------------------------------
 
 _SEGMENT_KEY_RE = re.compile(r"^([^\[\{]+)")
 

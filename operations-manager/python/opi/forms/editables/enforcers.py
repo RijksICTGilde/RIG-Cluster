@@ -56,7 +56,7 @@ class FieldWarning(Exception):
 
 
 class AdminRequiredEnforcer:
-    """Minstens een lid met de rol ``admin``; zonder admin beheert niemand de leden nog."""
+    """At least one member with the ``admin`` role; without one nobody can manage members."""
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
@@ -110,20 +110,15 @@ class UniqueReferencesEnforcer:
 def extract_service_names(services: list[Any]) -> list[str]:
     """Extract service names from the mixed services list format.
 
-    Delegates to ``service_entry_name``, which resolves every on-disk format: a bare
-    string, the legacy service-keyed dict ({"keycloak": {...}}), and the uniform record
-    keyed by ``name`` **or** ``reference``.
-
-    Component entries use ``reference``. Falling back to the raw dict keys returned the
-    literal strings "reference" and "config" as service names, which then failed
-    validation as unknown services -- so a component with any configured service could
-    not be saved at all.
+    Goes through ``service_entry_name``, which resolves every on-disk format: a bare string,
+    the legacy service-keyed dict (``{"keycloak": {...}}``), and the uniform record keyed by
+    ``name`` or by ``reference`` (what a component entry uses).
     """
     return [name for name in (service_entry_name(svc) for svc in services) if name is not None]
 
 
 def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val: str) -> None:
-    """Raise FieldError on the limit field if memory request exceeds the limit."""
+    """Raises a ``FieldError`` on the limit field when the request exceeds the limit."""
     try:
         request_mi = parse_k8s_memory_to_mi(str(request_val))
         limit_mi = parse_k8s_memory_to_mi(str(limit_val))
@@ -148,7 +143,6 @@ class ComponentServicesEnforcer:
             if not isinstance(comp, dict):
                 continue
 
-            # Validate services
             if services:
                 comp_services = comp.get("services", [])
                 if isinstance(comp_services, list):
@@ -162,7 +156,6 @@ class ComponentServicesEnforcer:
                             f"Beschikbare services: {', '.join(services)}"
                         )
 
-            # Validate memory request <= limit
             resources = comp.get("resources", {})
             if isinstance(resources, dict):
                 requests = resources.get("requests", {}) or {}
@@ -207,13 +200,12 @@ class DomainConfigEnforcer:
     - custom domain is set when base-domain is the sentinel value
     - subdomain + base-domain combination is available (async DB check)
 
-    ``denied_blocks`` says whether a ``denied`` (sub)domain is a hard failure. It is,
-    for the form: a user picking a rejected domain must be stopped at the field. It is
-    not for the save gate, where the same state also arises the other way round -- an
-    admin revoking an approval on a domain a deployment already uses. Blocking there
-    made the revocation unsaveable, which left the approver unable to act on their own
-    decision. Publication is what enforces it: ``apply_domain_approval_fallback`` moves
-    an unapproved deployment back to the cluster domain on the next process run.
+    ``denied_blocks`` says whether a ``denied`` (sub)domain is a hard failure. It is for the
+    form: a user picking a rejected domain must be stopped at the field. It is not for the save
+    gate, where the same state also arises the other way round, an admin revoking an approval
+    on a domain a deployment already uses; blocking there makes the revocation unsaveable.
+    Publication is what enforces it: ``apply_domain_approval_fallback`` moves an unapproved
+    deployment back to the cluster domain on the next process run.
     """
 
     def __init__(self, deployment_index: int = 0, denied_blocks: bool = True) -> None:
@@ -235,30 +227,23 @@ class DomainConfigEnforcer:
         supported = get_supported_base_domains(cluster)
 
         # The domain this deployment actually asks for. "__custom__" means the wizard's
-        # custom-domain input holds it; an empty base-domain means the cluster-default
-        # URL, which is the platform default and not a user-requested domain, so there
-        # is nothing to validate or approve -- None makes every domain check below skip.
-        # (Previously the empty case picked an arbitrary next(iter(supported)) domain and
-        # ran ITS subdomain restrictions against the deployment, wrongly rejecting
-        # cluster-default PRs with e.g. "subdomein 'pr797' voor 'rijksapp.dev' is op
-        # aanvraag".)
+        # custom-domain input holds it; an empty base-domain means the cluster-default URL,
+        # which is the platform default and not a user-requested domain, so None here makes
+        # every domain check below skip.
         actual_domain = custom_domain if base_domain == "__custom__" else base_domain or None
 
-        # Bare domain, BEFORE the domain-format early return: the rule does not depend on
-        # the format, and since the web address moved under the service the field is
-        # writable through PUT .../services/publish-on-web/deployments/{d}/config, which
-        # can set it without ever setting a domain-format. Behind the early return the
-        # rule was reachable from the wizard only.
+        # Bare domain, BEFORE the domain-format early return: the rule does not depend on the
+        # format, and the field is writable through PUT
+        # .../services/publish-on-web/deployments/{d}/config without ever setting a format.
         #
-        # Dezelfde goedkeuring als de domein- en subdomeinblokken verderop, dus dezelfde
-        # afhandeling. Alleen het platformdomein weigert onvoorwaardelijk: die apex is van
-        # iedereen op het cluster.
+        # Same approval as the domain and subdomain blocks further down, so the same handling.
+        # Only the platform domain refuses unconditionally: that apex belongs to everyone on
+        # the cluster.
         #
-        # Een openstaande aanvraag mag door omdat het CLAIMEN elders wordt tegengehouden
-        # (``is_deployment_domain_approved`` op het publicatiepad). Weigeren had hier geen
-        # uitgang: de aanvraag die het zou oplossen wordt pas bij PRE_SAVE geschreven
-        # (RIG-Cluster#179). De waarschuwing wordt daarom vastgehouden, om dezelfde reden
-        # als ``certificate_note`` hieronder.
+        # An open request passes, because claiming is stopped elsewhere
+        # (``is_deployment_domain_approved`` on the publication path). Refusing has no way out
+        # here: the request that would resolve it is written at PRE_SAVE (RIG-Cluster#179). The
+        # warning is therefore held, for the same reason as ``certificate_note`` below.
         bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_field = domain_setting_path(DomainSetting.BARE_DOMAIN_COMPONENT, self.deployment_index)
         bare_domain_note: str | None = None
@@ -270,7 +255,7 @@ class DomainConfigEnforcer:
                 bare_config = get_project_allowed_domain_config(value, actual_domain)
                 bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
                 if bare_status is None and dep.get("_request-domain"):
-                    pass  # DomainRequestHook schrijft de aanvraag bij het opslaan
+                    pass  # DomainRequestHook writes the request on save
                 elif bare_status == "requested":
                     pass
                 elif bare_status == "denied":
@@ -283,10 +268,9 @@ class DomainConfigEnforcer:
                     )
             await self._check_bare_domain_availability(actual_domain, context, bare_field)
 
-        # Whether this cluster can certify the domain at all, computed here for the same
-        # reason the bare-domain rule sits here: it does not depend on the domain-format,
-        # and the field is writable through PUT .../config without one. Held rather than
-        # raised, so a real FieldError further down still wins over a warning.
+        # Whether this cluster can certify the domain at all, computed here for the same reason
+        # the bare-domain rule sits here. Held rather than raised, so a real FieldError further
+        # down still wins over a warning.
         certificate_note = custom_domain_certificate_note(cluster, actual_domain)
         certificate_field = (
             f"deployments[{self.deployment_index}]/base-domain:custom"
@@ -296,39 +280,31 @@ class DomainConfigEnforcer:
 
         domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
         if not domain_format:
-            # Uitgang voor de vastgehouden waarschuwing, en de enige die de config-PUT
-            # bereikt. Vóór de certificaatnotitie, want hij gaat over het veld dat de
-            # gebruiker zojuist aanvinkte.
+            # The way out for the held warning, and the only one the config PUT reaches. Before
+            # the certificate note, because it is about the field the user just ticked.
             if bare_domain_note:
                 raise FieldWarning(bare_field, bare_domain_note)
             if certificate_note:
                 raise FieldWarning(certificate_field, certificate_note)
             return value
 
-        # When base-domain is "__custom__", user selected custom domain input
-        # Validate that they actually filled it in
         if base_domain == "__custom__" and not custom_domain:
             raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
 
-        # An id that is no template at all used to fall through here as ``""``, which made
-        # every check below vacuous: 'onzin' passed the entire enforcer untouched while the
-        # perfectly valid 'subdomain' was stopped for missing its subdomain. The typo was
-        # the one thing that got through, and it reached a project file.
+        # An id that is no template at all must be refused here: every check below reads the
+        # template, so it would pass the whole enforcer untouched and reach a project file.
         #
-        # The valid set is not restated here. It comes from the field's own values provider
-        # -- the same one that fills the form's select and that the API publishes as
-        # ``x-choices-source`` -- given this deployment's base-domain, so the message names
-        # what this deployment can actually pick rather than all eleven ids. That context is
-        # exactly what the generic ``validate_declared_choices`` gate cannot supply, which is
-        # why this check lives in the enforcer (see DOMAIN_FORMAT_EDITABLE).
+        # The valid set is not restated but asked of the field's own values provider (the one
+        # that fills the select and that the API publishes as ``x-choices-source``) for this
+        # deployment's base-domain, so the message names what this deployment can pick. That
+        # context is what the generic ``validate_declared_choices`` gate cannot supply, which
+        # is why the check lives here (see DOMAIN_FORMAT_EDITABLE).
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
         if template is None:
             # Imported here rather than at module scope, for the same reason
-            # ``project_validation.validate_declared_choices`` does it: this module is
-            # reached from connectors and managers, and pulling the whole visualizer
-            # package in at import time drags the form stack along with it. Measured, not
-            # assumed -- as a top-level import it turned 33 database-backed tests into
-            # errors in the full-suite run while every one of them passed in isolation.
+            # ``project_validation.validate_declared_choices`` does it: this module is reached
+            # from connectors and managers, and pulling the visualizer package in at import
+            # time drags the whole form stack along with it.
             from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 
             offered = [
@@ -341,21 +317,18 @@ class DomainConfigEnforcer:
             )
 
         if "{subdomain}" in template and not subdomain:
-            # Field-level required validation only fires when the field is
-            # rendered. If the user changed domain-format to one that needs a
-            # subdomain but never filled it (or the field was hidden when
-            # processed), surface the error against the subdomain input so it
-            # is visible — not against the parent group path.
+            # Field-level required validation only fires when the field is rendered, so a
+            # subdomain that was never filled in (or whose field was hidden while processing)
+            # is reported here, against the subdomain input instead of the parent group path.
             raise FieldError(
                 domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
                 "Een subdomein is vereist voor het gekozen URL-formaat",
             )
 
-        # Beide (URL-formaat en subdomein) vallen onder dezelfde dots-regel per domein.
+        # Both the URL format and the subdomain fall under the same dots rule per domain.
         supports_dots = False
         if actual_domain:
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
-            # For custom domains not in cluster config, check project-level config
             if not supports_dots and actual_domain.lower() not in supported:
                 custom_config = get_project_allowed_domain_config(value, actual_domain)
                 if custom_config:
@@ -368,8 +341,8 @@ class DomainConfigEnforcer:
                 f"Kies een ander URL-formaat of een ander domein."
             )
 
-        # Dezelfde guard als de reserveringscheck hieronder: een formaat zonder
-        # ``{subdomain}`` gebruikt de waarde niet, en een restwaarde hoort niets te blokkeren.
+        # The same guard as the reservation check below: a format without ``{subdomain}`` does
+        # not use the value, and a leftover value should block nothing.
         if subdomain and "." in subdomain and "{subdomain}" in template and not supports_dots:
             raise FieldError(
                 domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
@@ -377,12 +350,12 @@ class DomainConfigEnforcer:
                 f"geen punten in het subdomein. Kies een subdomein zonder punten of een ander domein.",
             )
 
-        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
-        # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
-        # basisdomein is de clusterstandaard en dus een eigen zone (op ``actual_domain is
-        # None`` afgaan liet 'admin' daar gewoon door), en dit moet VOOR de
-        # goedkeuringscheck hieronder, die bij een domein zonder allowlist-entry een
-        # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
+        # The reservation list hangs off the domain, and only here is the domain known: the
+        # field validator is not given the base domain. Two pitfalls: an empty base domain is
+        # the cluster default and therefore a zone of its own (judging on ``actual_domain is
+        # None`` lets 'admin' through there), and this has to come BEFORE the approval check
+        # below, which on a domain without an allowlist entry raises a non-blocking
+        # FieldWarning and ends the enforcer with it.
         if subdomain and "{subdomain}" in template:
             reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
             is_valid, error_msg = validate_subdomain_for_domain(
@@ -391,21 +364,13 @@ class DomainConfigEnforcer:
             if not is_valid and error_msg:
                 raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
-        # Check domain approval for any non-platform domain (a domain not in the
-        # cluster's supported set), whether it arrived via the wizard's custom
+        # Approval for any non-platform domain, whether it arrived through the wizard's custom
         # input ("__custom__") or as a literal base-domain on an API upsert.
-        # Mirrors the subdomain pattern below: a ticked "Domein aanvragen" checkbox lets
-        # the submission through, an existing "requested" status lets it
-        # through, "denied" hard-fails, and any other unapproved state
-        # surfaces as a non-blocking warning prompting the user to tick the
-        # request checkbox.
         #
-        #
-        # The certificate note rides along on the same warning. Approval and certificate
-        # are two different obstacles on the same value: an approver can grant the first
-        # and never the second, and it is precisely AFTER approval that the certificate
-        # problem starts and the approval notice disappears. One warning is the only way
-        # the user hears both from the field they are filling in.
+        # The certificate note rides along on the same warning. Approval and certificate are
+        # two different obstacles on the same value: it is precisely AFTER approval that the
+        # certificate problem starts and the approval notice disappears, so one warning is the
+        # only way the user hears both from the field they are filling in.
         if actual_domain and actual_domain.lower() not in supported:
             domain_field = certificate_field
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
@@ -414,21 +379,20 @@ class DomainConfigEnforcer:
                 status = domain_config.get("status") if isinstance(domain_config, dict) else None
                 request_checked = bool(dep.get("_request-domain"))
                 if status is None and request_checked:
-                    pass  # User is requesting this domain — allow through
+                    pass  # the user is requesting this domain, so it may pass
                 elif status == "requested":
-                    pass  # Already requested — allow through
+                    pass  # already requested, so it may pass
                 elif status == "denied":
                     if self.denied_blocks:
                         msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
                         raise FieldError(domain_field, msg)
                 else:
-                    # De kaal-domeinmelding wint, want hij noemt dezelfde goedkeuring en
-                    # zegt erbij wat hem tegenhoudt.
+                    # The bare-domain note wins: it names the same approval and says what
+                    # holds it back.
                     warning = bare_domain_note or f"Gebruik van het domein '{actual_domain}' is op aanvraag."
                     field = bare_field if bare_domain_note else domain_field
                     raise FieldWarning(field, f"{warning} {certificate_note}" if certificate_note else warning)
 
-        # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
             subdomain_field = domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index)
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
@@ -436,9 +400,9 @@ class DomainConfigEnforcer:
                 status = get_subdomain_status(value, actual_domain, subdomain)
                 request_checked = dep.get("_request-subdomain")
                 if status is None and request_checked:
-                    pass  # User is requesting this subdomain — allow through
+                    pass  # the user is requesting this subdomain, so it may pass
                 elif status == "requested":
-                    pass  # Already requested — allow through
+                    pass  # already requested, so it may pass
                 elif status == "denied":
                     if self.denied_blocks:
                         raise FieldError(
@@ -450,7 +414,6 @@ class DomainConfigEnforcer:
                         f"Gebruik van een subdomein '{subdomain}' voor het domein '{actual_domain}' is op aanvraag.",
                     )
 
-        # Check subdomain availability for nice-URL formats
         if subdomain and actual_domain and "{subdomain}" in template:
             await self._check_subdomain_availability(
                 subdomain,
@@ -473,23 +436,21 @@ class DomainConfigEnforcer:
         context: dict[str, Any],
         field_path: str,
     ) -> None:
-        """Check if the subdomain + base_domain pair is available.
+        """Check whether the subdomain + base_domain pair is available.
 
-        Skips the check when the current project already owns the registration
-        (edit mode). Raises a FieldError tied to ``field_path`` (the subdomain
-        input) so the message renders at the field instead of on the invisible
-        deployment-group path, and names the project that holds it.
+        Skipped when this project already owns the registration (edit mode). The
+        ``FieldError`` is tied to ``field_path``, the subdomain input, so the message renders
+        at the field instead of on the invisible deployment-group path.
         """
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(subdomain.lower(), base_domain.lower())
 
         if registration is None:
-            return  # Available
+            return
 
-        # On edit: allow if same project owns it
         project_name = context.get("project_name")
         if project_name and registration.get("project_name") == project_name:
-            return  # Owned by this project
+            return
 
         owner = registration.get("project_name")
         owner_suffix = f", in gebruik door project '{owner}'" if owner else ""
@@ -504,21 +465,16 @@ class DomainConfigEnforcer:
         context: dict[str, Any],
         field_path: str,
     ) -> None:
-        """Check if the bare domain is available for registration.
-
-        Skips the check when the current project already owns the registration
-        (edit mode).
-        """
+        """Check whether the bare domain is free; skipped when this project already owns it."""
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain.lower())
 
         if registration is None:
-            return  # Available
+            return
 
-        # On edit: allow if same project owns it
         project_name = context.get("project_name")
         if project_name and registration.get("project_name") == project_name:
-            return  # Owned by this project
+            return
 
         raise FieldError(field_path, f"Het kale domein '{base_domain}' is niet beschikbaar")
 
@@ -553,8 +509,8 @@ class UniqueInviteKeyEnforcer:
     the store, skips this project, and raises a ``FieldError`` on the offending key field.
 
     Only user-provided (non-empty) keys are checked; an empty key is filled with a generated
-    128-bit random key at save time, whose collision odds are negligible. The message never
-    names the other project -- that would leak the existence and ownership of other teams' keys.
+    128-bit random key at save time. The message never names the other project: that would leak
+    the existence and ownership of another team's key.
     """
 
     _MESSAGE = "Deze uitnodigingssleutel is al in gebruik."
@@ -571,14 +527,13 @@ class UniqueInviteKeyEnforcer:
         if not keyed:
             return value
 
-        # Duplicates within this same form.
         seen: dict[str, int] = {}
         for index, key in keyed:
             if key in seen:
                 raise FieldError(f"services/invite/config/active[{index}]/key", self._MESSAGE)
             seen[key] = index
 
-        # Collisions against every OTHER project in the store.
+        # Against every OTHER project in the store.
         own_project = context.get("project_name")
         handler = ProjectFileHandler()
         other_projects = [p for p in get_project_store().get_all() if p.name != own_project]
@@ -590,10 +545,10 @@ class UniqueInviteKeyEnforcer:
 
 
 class UniqueSchemaEnforcer:
-    """Validates the extra-schema list of the postgresql-database service (RC-17).
+    """Validates the extra-schema list of the postgresql-database service.
 
-    Per the plan's "naming fails loudly" invariant, every way a schema list can be
-    unsafe is caught here, at save time, with a ``FieldError`` on the offending postfix:
+    Every way a schema list can be unsafe is caught here, at save time, with a ``FieldError``
+    on the offending postfix:
 
     * a duplicate postfix (two schemas with the same name);
     * a postfix whose ``DATABASE_SCHEMA_{POSTFIX}`` variable collides with one the

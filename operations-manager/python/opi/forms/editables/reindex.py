@@ -68,7 +68,6 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
 
     children = [materialize_wildcard_editable(c, index) for c in ed.children] if ed.children else ed.children
 
-    # Clone generator with updated deployment_index if it has one
     generator = ed.generator
     if generator and hasattr(generator, "deployment_index"):
         import copy
@@ -76,7 +75,6 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
         generator = copy.copy(generator)
         generator.deployment_index = index  # type: ignore[attr-defined]
 
-    # Clone show_when condition with updated deployment_index if it has one
     show_when = ed.show_when
     if show_when and hasattr(show_when, "deployment_index"):
         import copy
@@ -84,10 +82,9 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
         show_when = copy.copy(show_when)
         show_when.deployment_index = index  # type: ignore[attr-defined]
 
-    # Clone enforcer with updated deployment_index if it has one — without this,
-    # group-level enforcers (e.g. DomainConfigEnforcer) keep their default
-    # deployment_index=0 and validate the wrong deployment when editing
-    # deployments[1+].
+    # The deployment_index has to travel to the enforcer too: a group-level enforcer such as
+    # DomainConfigEnforcer otherwise keeps its default 0 and validates the wrong deployment
+    # when editing deployments[1+].
     enforcer = ed.enforcer
     if enforcer and hasattr(enforcer, "deployment_index"):
         import copy

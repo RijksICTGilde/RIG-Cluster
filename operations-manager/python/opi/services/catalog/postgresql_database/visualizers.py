@@ -47,7 +47,7 @@ SCHEMA_MARKED = EditableVisualizer(
     # Not in the create wizard: there a schema is being INVENTED, and the question whether to
     # stop managing it makes no sense then, you simply leave the schema out. The field is about
     # a schema that ALREADY exists, which is exactly the editing case.
-    alleen_bij_bewerken=True,
+    only_when_editing=True,
     help_text=(
         "Aangevinkt stopt het beheer van dit schema en verbergt zijn variabele, maar het schema "
         "en zijn data blijven in de database staan. Verwijderen gebeurt nooit automatisch."

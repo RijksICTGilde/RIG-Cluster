@@ -1,26 +1,22 @@
 """The rule for "absent": a form submission is a mutation, not a replacement.
 
-A form posts what it RENDERS. A collapsed section, a step the user never opened,
-a service the picker does not show, a field the browser refused to submit -- all
-arrive as "not there". Reading that as "the user removed it" is how services
-disappeared from project files on 6 August 2026, four times over.
+A form posts what it RENDERS. A collapsed section, a step the user never opened, a service
+the picker does not show, a field the browser refused to submit: all arrive as "not there".
+Reading that as "the user removed it" is how services disappear from project files.
 
 So the rule, in one place:
 
     A key that is absent from a submission is UNCHANGED.
     A removal is EXPLICIT.
 
-For a scalar field the explicit form already existed: ``CLEARED_FIELD``, the
-tombstone ``_extract_section_data`` stores for a field the form owns and the user
-emptied. This module carries the same rule to SELECTION lists, where it was
-missing and where it cost the most.
+For a scalar field the explicit form is ``CLEARED_FIELD``, the tombstone
+``_extract_section_data`` stores for a field the form owns and the user emptied. This module
+carries the same rule to SELECTION lists.
 
-For a selection the explicit form is "the form offered it and the user did not
-tick it". That is why ``apply_selection_mutation`` needs the OFFERED set: it is
-what separates "unticked" from "never shown". A service the picker never showed
-(``hidden=True``, e.g. ``namespace-postgresql-database``) cannot have been
-unticked, so it survives -- previously it was silently dropped from the project
-by any services-step save.
+For a selection the explicit form is "the form offered it and the user did not tick it". That
+is why ``apply_selection_mutation`` needs the OFFERED set: it is what separates "unticked"
+from "never shown". A service the picker never showed (``hidden=True``, such as
+``namespace-postgresql-database``) cannot have been unticked, so it survives.
 """
 
 from __future__ import annotations
@@ -60,24 +56,22 @@ def offered_selection_values(
 ) -> set[str] | None:
     """The values the section OFFERS for the selection at *yaml_path*.
 
-    Returns None when the section carries no such field at all -- then the
-    submission says nothing about that selection and nothing may be removed
-    from it.
+    Returns None when the section carries no such field at all: the submission then says
+    nothing about that selection and nothing may be removed from it.
 
-    Resolved from the editable's ``values_provider``, the same source the
-    renderer draws the options from, so "offered" means what the user saw. Which is
-    why *context* has to be the same too: a provider that answers differently per
-    project (a replaced service keeps its card only where the project already has it)
-    would otherwise report that card as never shown, and rule 1 below would put the
-    unticked service straight back.
+    Resolved from the editable's ``values_provider``, the same source the renderer draws the
+    options from, so "offered" means what the user saw. Which is why *context* has to be the
+    same too: a provider that answers differently per project (a replaced service keeps its
+    card only where the project already has it) would otherwise report that card as never
+    shown, and rule 1 below would put the unticked service straight back.
     """
     for vis in _walk(editables):
         editable = getattr(vis, "editable", None)
         if editable is None or editable.yaml_path != yaml_path:
             continue
         if not editable.values_provider:
-            # A selection without a provider offers whatever it renders, which we
-            # cannot know here. Treat it as "offers nothing" rather than guess.
+            # A selection without a provider offers whatever it renders, which cannot be
+            # known here, so it counts as "offers nothing" rather than a guess.
             return set()
         options = resolve_options_for_editable(vis, context)
         return {str(option["value"]) for option in options if option.get("value")}
@@ -96,16 +90,13 @@ def apply_selection_mutation(
       unticked: it is removed;
     - a name in *base* that the form did NOT offer is untouched: it survives.
 
-    Entries keep their base form (string or config-carrying dict), so a surviving
-    service keeps its configuration. That sentence used to be a promise the code
-    did not keep: ``result = list(submitted)`` let the checklist's bare name WIN
-    from the base's config record, so config without a form field in the flow
-    (the domain approvals under publish-on-web, a send-email approval) silently
-    fell out of the project on every services-save -- after which an approval
-    hook cheerfully re-requested what had already been approved. The base entry
-    is the configuration carrier; the submission is the selection, plus at most
-    a config overlay (attachments' restored catalog). ``merge_service_lists``
-    folds the two, normalizing record/legacy shape differences along the way.
+    An entry keeps its base form, a string or a config-carrying dict, so a surviving service
+    keeps its configuration. The base entry is the configuration carrier; the submission is
+    the selection, plus at most a config overlay (attachments' restored catalog), and
+    ``merge_service_lists`` folds the two, normalizing record and legacy shape differences
+    along the way. Taking the submission as the result instead lets the checklist's bare name
+    win from the base's config record, and then config without a form field in this flow falls
+    silently out of the project on every services-save.
     """
     base_by_name: dict[str, Any] = {}
     for entry in base:
@@ -137,16 +128,14 @@ def apply_services_mutation(
 ) -> None:
     """Reconcile a submitted project service selection with its base, in place.
 
-    The single home of two rules that used to be duplicated -- and applied under
-    different conditions -- in the wizard router and the modal-edit router:
+    The single home of two rules:
 
     1. absent-is-unchanged for services the form never offered;
     2. a service required by a selected service is added back.
 
-    Rule 2 is what keeps a LOCKED service alive: the card is locked precisely
-    because something else requires it, so the server can put it back without
-    the browser having to send it. That is the whole reason the lock no longer
-    needs a hidden input travelling alongside the checkbox.
+    Rule 2 is what keeps a LOCKED service alive: the card is locked precisely because
+    something else requires it, so the server can put it back without the browser having to
+    send it. That is why the lock needs no hidden input travelling alongside the checkbox.
 
     Does nothing when this section does not SHOW the selection. A processed
     submission is a copy of the merged project data with the submitted fields
@@ -181,10 +170,9 @@ def apply_component_services_mutation(
     The component form's checklist (``components[i]/services``) is the same kind of
     selection as the project-wide one, and follows the same rule: a name the picker
     offered and the submission omits was unticked and goes; a name the picker never
-    showed (a service the project disabled meanwhile, a hidden entry) survives from
-    the base. Does nothing for sections that do not carry the checklist -- a config
-    section speaking only through ``services{X}/...`` paths says nothing about the
-    selection.
+    showed (a service the project disabled meanwhile, a hidden entry) survives from the base.
+    Does nothing for a section that does not carry the checklist: a config section speaking
+    only through ``services{X}/...`` paths says nothing about the selection.
 
     The offered set comes from the same provider the renderer used
     (``FilteredServiceOptionsProvider``), fed with the base's project services, so

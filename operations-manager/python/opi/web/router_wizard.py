@@ -26,7 +26,7 @@ from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
+from opi.forms.wizard.members import members_for_form, restore_hidden_members
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -603,7 +603,7 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     # weggehaald lid naar de rij die zijn plaats inneemt.
     form_data = project_data
     if "users" in _fully_owned_list_keys(flow):
-        form_data = leden_voor_formulier(project_data)
+        form_data = members_for_form(project_data)
     step_data = _split_data_across_sections(flow, form_data)
 
     # Resolve active sections with pre-filled data
@@ -2648,7 +2648,7 @@ async def _save_existing_project(
 
         # Hetzelfde voor de ledenlijst, op dezelfde plek als op de modaalweg: het
         # teamformulier bezit ``users`` als geheel maar rendert alleen de mensen en hun rol.
-        zet_verborgen_leden_terug(existing_data, stored_data)
+        restore_hidden_members(existing_data, stored_data)
 
         ensure_approval_requests(existing_data)
 

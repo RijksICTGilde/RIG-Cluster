@@ -4,11 +4,10 @@ The services list is a selection set keyed by service name. Each entry is either
 bare string (``"publish-on-web"``) or a single-key dict carrying config
 (``{"attachments": {"data": [...]}}``, ``{"keycloak": {"config": {...}}}``).
 
-Wizard sections each contribute a full copy of ``services`` (a section's processed
-result is a deepcopy of the whole project data), so a naive index-merge swapped one
-service for another and duplicated entries whenever the section lists were misaligned
-(e.g. the readonly attachments carrier still holding the pre-edit list). That dropped a
-just-added service and produced a duplicate.
+Every wizard section contributes a full copy of ``services``, since a section's processed
+result is a deepcopy of the whole project data. A naive index-merge therefore swaps one
+service for another and duplicates entries whenever the section lists are misaligned, for
+instance when the readonly attachments carrier still holds the pre-edit list.
 
 Merging by name is order-independent and correct: the same service has its config
 deep-merged, a new service is appended, and a service that no active section carries
@@ -60,11 +59,10 @@ def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:
     current = result[i]
     if isinstance(current, dict) and isinstance(entry, dict):
         # Same service, two shapes: the stored side carries the record form
-        # ({reference: X, config: ...}) while the form side writes the legacy
-        # name-as-key form ({X: {config: ...}}). Deep-merging those as-is fuses
-        # them into one dict carrying BOTH shapes -- which is what landed in a
-        # real project file. Normalize the legacy side to its partner's record
-        # key first; that key being there proves the record form is valid here.
+        # ({reference: X, config: ...}) while the form side writes the legacy name-as-key
+        # form ({X: {config: ...}}). Deep-merging those as they are fuses them into one dict
+        # carrying BOTH shapes, so the legacy side is normalized to its partner's record key
+        # first; that key being there proves the record form is valid here.
         from opi.services.schema_migration import _normalize_service_entry
 
         current_key, entry_key = _record_key(current), _record_key(entry)
@@ -87,13 +85,10 @@ def merge_service_lists(existing: list[Any], incoming: list[Any]) -> list[Any]:
     service in both, config is deep-merged (``incoming`` overlays); a bare string is
     promoted to ``incoming``'s dict form when only ``incoming`` carries the config.
 
-    Folding one entry at a time means a name occurring twice *within* a single list
-    collapses on the same rules. The picker used to post a name twice (a locked service
-    rendered both a disabled checkbox and a hidden input carrying the same value), and
-    nothing downstream would have caught it: the duplicate reached the project file as a
-    config record plus a stray bare string. That hidden input is gone -- a locked
-    checkbox is no longer disabled, so it posts its own value once -- but the collapse
-    stays: a selection is a set keyed by name, and this is where that is enforced.
+    Folding one entry at a time means a name occurring twice *within* a single list collapses
+    on the same rules. Nothing downstream catches such a duplicate: it reaches the project
+    file as a config record plus a stray bare string. A selection is a set keyed by name, and
+    this is where that is enforced.
     """
     result: list[Any] = []
     index: dict[str, int] = {}

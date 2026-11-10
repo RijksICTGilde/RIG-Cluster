@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_LABELS, Role
-from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
+from opi.forms.wizard.members import MemberListRefusedError, guard_member_list
 from opi.http.auth.authz import authorize, may
 from opi.services.api_token_service import (
     DEFAULT_ROLES,
@@ -159,14 +159,14 @@ def test_een_flow_die_users_niet_bezit_mag_hem_niet_wijzigen() -> None:
     """Een inzending die ``users`` meebrengt zonder het formulier ervoor te renderen."""
     opgeslagen = {"users": [{"email": BEHEERDER, "roles": ["admin"]}]}
     ingediend = {"users": [{"email": BEHEERDER, "roles": ["admin"]}, {"email": DEV, "roles": ["admin"]}]}
-    with pytest.raises(LedenlijstGeweigerd, match="bewerkt de projectleden niet"):
-        bewaak_ledenlijst(ingediend, opgeslagen, bezit_users=False)
+    with pytest.raises(MemberListRefusedError, match="bewerkt de projectleden niet"):
+        guard_member_list(ingediend, opgeslagen, owns_users=False)
 
 
 def test_een_flow_die_users_niet_bezit_mag_hem_ongewijzigd_meesturen() -> None:
     """De sessie van de bewerkwizard draagt het hele project; gelijk is niet gewijzigd."""
     opgeslagen = {"users": [{"email": BEHEERDER, "roles": ["admin"]}]}
-    bewaak_ledenlijst({"users": [{"email": BEHEERDER, "roles": ["admin"]}]}, opgeslagen, bezit_users=False)
+    guard_member_list({"users": [{"email": BEHEERDER, "roles": ["admin"]}]}, opgeslagen, owns_users=False)
 
 
 @pytest.mark.parametrize(
@@ -179,8 +179,8 @@ def test_een_flow_die_users_niet_bezit_mag_hem_ongewijzigd_meesturen() -> None:
     ],
 )
 def test_de_wizardweg_weigert_hetzelfde_als_de_servicefunctie(leden: list[Any], melding: str) -> None:
-    with pytest.raises(LedenlijstGeweigerd, match=melding):
-        bewaak_ledenlijst({"users": leden}, {"users": []}, bezit_users=True)
+    with pytest.raises(MemberListRefusedError, match=melding):
+        guard_member_list({"users": leden}, {"users": []}, owns_users=True)
 
 
 # --- het label is los van de sleutel (B13) ----------------------------------
@@ -244,9 +244,9 @@ def test_de_wizard_leest_dezelfde_twee_guards() -> None:
     Zonder dit kan "minstens een admin" of "wat een geldige rol is" opnieuw in de
     formulierlaag landen, en dan lopen de wegen uit elkaar.
     """
-    from opi.forms.wizard import leden
+    from opi.forms.wizard import members
 
-    bron = pathlib.Path(leden.__file__ or "").read_text()
+    bron = pathlib.Path(members.__file__ or "").read_text()
     assert "clean_roles(" in bron, "de wizard toetst de rollen buiten de servicefunctie om"
     assert "require_an_admin(" in bron, "de wizard bouwt de admin-eis zelf na"
     assert f'"{Role.ADMIN.value}"' not in bron, "de wizard toetst de rol admin weer zelf"

@@ -1,13 +1,12 @@
 """The wizard's "Webadres" step: the deployment identity around it, and the group.
 
-The seven domain fields themselves are NOT defined here any more (RC-60). They belong to
-publish-on-web, live in ``opi/services/catalog/publish_on_web/editables.py`` and are
-re-exported below under their familiar names, so flows, visualizers and tests keep one
-place to import from while there is only one definition.
+The domain fields themselves belong to publish-on-web, live in
+``opi/services/catalog/publish_on_web/editables.py`` and are re-exported below under their
+familiar names, so flows, visualizers and tests keep one place to import from while there is
+only one definition. ``DOMAIN_CONFIG_EDITABLE``, the enforced group the step edits as one
+unit, sits with them.
 
-What stays here is what is not the service's: the deployment name the wizard asks for, and
-only the deployment name the wizard asks for; ``DOMAIN_CONFIG_EDITABLE``, the enforced
-group the step edits as one unit, moved to the service with its children.
+What stays here is what is not the service's: the deployment name the wizard asks for.
 """
 
 from __future__ import annotations

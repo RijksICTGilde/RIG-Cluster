@@ -1,8 +1,8 @@
 """The wizard's deployment-name visualizer, and the "Webadres" ones re-exported.
 
-The domain visualizers moved to ``opi/services/catalog/publish_on_web/visualizers.py``
-with the editables they display (RC-60): the service that owns a value owns how it is
-shown. They are re-exported here so flows, sections and tests keep one import path.
+The domain visualizers live in ``opi/services/catalog/publish_on_web/visualizers.py``, with
+the editables they display: the service that owns a value owns how it is shown. They are
+re-exported here so flows, sections and tests keep one import path.
 """
 
 from __future__ import annotations

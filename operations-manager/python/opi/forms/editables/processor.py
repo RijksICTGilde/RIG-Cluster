@@ -1,8 +1,4 @@
-"""
-Form data processor for the editables pipeline.
-
-Handles the reverse flow: form submission -> validation -> YAML update.
-"""
+"""Form data processor for the editables pipeline: submission -> validation -> YAML update."""
 
 from __future__ import annotations
 
@@ -45,10 +41,8 @@ def _validator_accepts_context(validator_type: type) -> bool:
 def _coerce_to_list(value: Any) -> list[Any]:
     """Ensure a value is a list.
 
-    HTMX sends a single string when only one checkbox is checked in a
-    checkbox_group. This helper normalises that to a list so downstream
-    code (e.g. ``parse_services_from_strings``) never iterates over
-    individual characters.
+    HTMX sends a single string when only one checkbox of a checkbox_group is checked, and
+    downstream code would then iterate over its characters.
     """
     if value is None:
         return []
@@ -84,18 +78,18 @@ def _reorder_like(original: Any, merged: Any) -> Any:
 
     Keeps the keys that already existed in ``original`` first, in their original order, then
     the genuinely new keys (present in ``merged`` but not ``original``) in their current
-    order. Recurses into nested dicts.
+    order. Recurses into nested dicts; a non-dict is returned unchanged.
 
-    The prune-then-merge in the sequence processors, and the virtualize re-set, both push
-    managed keys to the end of the item, so without this every modal save rotates the field
-    order and inflates the diff far beyond the actual change. Reordering happens in place -
-    on a ruamel ``CommentedMap`` via ``move_to_end`` so comments and anchors survive;
-    rebuilding a new dict would drop them. Non-dicts are returned unchanged.
+    The prune-then-merge in the sequence processors and the virtualize re-set both push managed
+    keys to the end of the item, so without this every modal save rotates the field order and
+    inflates the diff far beyond the actual change. The reorder is in place, on a ruamel
+    ``CommentedMap`` through ``move_to_end``: rebuilding a new dict would drop its comments and
+    anchors.
     """
     if not isinstance(original, dict) or not isinstance(merged, dict):
         return merged
 
-    # Order nested dicts too, before reordering this level's keys.
+    # Nested dicts first, then this level's keys.
     for key, value in merged.items():
         if key in original:
             _reorder_like(original[key], value)
@@ -203,20 +197,18 @@ if TYPE_CHECKING:
 
 
 def _converter_write(converter: Any, value: Any, context_data: dict[str, Any] | None = None) -> Any:
-    """Call converter.write() with context data."""
+    """Call ``converter.write()`` with the context data."""
     return converter.write(value, context_data=context_data)
 
 
 def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
     """Read a field value from submitted data, respecting virtualize.
 
-    Uses the list-aware ``smart_get_value`` (not plain ``get_value``) so that
-    reads stay symmetric with the writes in ``_write_field`` (which use
-    ``smart_set_value``). This matters on the final wizard pass, where the
-    submitted data is ``get_merged_data()`` with ``services`` devirtualized
-    back into a native list: a plain key like ``services/keycloak/...`` cannot
-    be traversed with ``get_value``, so a checkbox would read ``None`` ->
-    ``False`` and ``remove_when_none`` would silently delete it.
+    Through the list-aware ``smart_get_value``, so the read stays symmetric with the
+    ``smart_set_value`` write in ``_write_field``. That matters on the final wizard pass, where
+    the submitted data is ``get_merged_data()`` with ``services`` devirtualized back into a
+    native list: plain ``get_value`` cannot traverse ``services/keycloak/...``, so a checkbox
+    would read ``None`` -> ``False`` and ``remove_when_none`` would silently delete it.
     """
     virt = ed.virtualize
     read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
@@ -238,13 +230,12 @@ class EditableFormProcessor:
         """The submitted value, or the editable's default when nothing was submitted.
 
         The bridge applies defaults when it RENDERS a field, so a value typed into the form
-        arrives here already filled in. A submission that never carried the field at all
-        (the API, or a section the user did not open) would otherwise reach a required check
-        with nothing in it and be rejected -- while a default for exactly that case exists.
+        arrives here already filled in. A submission that never carried the field at all (the
+        API, or a section the user did not open) would otherwise reach the required check empty.
 
-        Resolved before validation and before the write, so the default is both accepted and
-        stored: validating it but not storing it would save an invite whose page renders
-        blank, which is the failure the required flag is there to prevent.
+        Resolved before validation AND before the write, so the default is both accepted and
+        stored. Validating it without storing it saves a record whose page renders blank, which
+        is what the required flag is there to prevent.
         """
         if value is not None and value != "":
             return value
@@ -285,20 +276,11 @@ class EditableFormProcessor:
         field_errors: dict[str, list[str]] | None = None,
         field_warnings: dict[str, list[str]] | None = None,
     ) -> list[str]:
-        """
-        Run section-level enforcers.
+        """Run the section-level enforcers and return the global error messages.
 
-        Args:
-            enforcer_context: Optional metadata for enforcers (e.g. project_name).
-            field_errors: When provided, ``FieldError`` exceptions are
-                merged into this dict (keyed by field path) instead of
-                appearing in the returned global errors list.
-            field_warnings: When provided, ``FieldWarning`` exceptions are
-                merged into this dict (keyed by field path). Warnings do
-                not block submission.
-
-        Returns:
-            List of global error messages. Empty means all passed.
+        When ``field_errors`` is given, a ``FieldError`` is merged into it under its field path
+        instead of appearing in the returned list; the same for ``FieldWarning`` and
+        ``field_warnings``, which never block a submission.
         """
         from opi.forms.editables.enforcers import FieldError, FieldWarning
 
@@ -325,11 +307,10 @@ class EditableFormProcessor:
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
     ) -> None:
-        """Clear values for editables whose depends_on condition is not met.
+        """Clear the value of every editable whose depends_on no longer holds.
 
-        When a toggle is turned off, dependent fields should have their
-        values removed from the YAML data so they don't persist.
-        Mutates ``yaml_data`` in place.
+        Mutates ``yaml_data`` in place, so a field behind a toggle that was turned off does not
+        persist.
         """
         for vis in editables:
             ed = vis.editable
@@ -346,14 +327,10 @@ class EditableFormProcessor:
         editables: list[Editable],
         yaml_data: dict[str, Any],
     ) -> dict[str, Any]:
-        """Run generators on computed editables and merge results into YAML.
+        """Run the generators on the computed editables, in a new yaml_data dict.
 
-        Generators are executed in list order, so order matters when
-        one generator depends on values produced by a previous one
-        (e.g., encrypted private key depends on the public key).
-
-        Returns:
-            New yaml_data dict with generated values applied.
+        They run in list order, which matters when one generator depends on what an earlier one
+        produced (the encrypted private key on the public key).
         """
         result = copy.deepcopy(yaml_data)
 
@@ -362,7 +339,6 @@ class EditableFormProcessor:
                 value = editable.generator.generate(result)
                 smart_set_value(result, editable.yaml_path, value)
 
-        # Clean up temp data used by generators
         result.pop("_generated", None)
         return result
 
@@ -371,22 +347,19 @@ class EditableFormProcessor:
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
     ) -> None:
-        """Run generators for editables that have both depends_on and a generator.
+        """Run the generators of editables that have both depends_on and a generator.
 
-        These are computed fields whose value is derived from another field
-        (e.g., issuer derived from base-domain). Mutates ``yaml_data`` in
-        place. When the generated value is falsy and ``remove_when_none``
-        is set, the key is removed from the YAML.
+        These are computed fields derived from another field (the issuer from the base-domain).
+        Mutates ``yaml_data`` in place; a falsy value with ``remove_when_none`` removes the key.
 
-        Recurses into GROUP widgets to find nested computed editables.
-        Also walks the editable children tree directly, so computed fields
-        defined in an editable group (without a visualizer) are picked up.
+        Recurses into GROUP widgets and walks the editable children tree directly, so a
+        computed field in an editable group without a visualizer is picked up too.
         """
         for vis in editables:
             ed = vis.editable
             if vis.widget == WidgetType.GROUP:
                 self.apply_dependent_generators(vis.children or [], yaml_data)
-                # Also check editable children that have no visualizer counterpart
+                # Editable children without a visualizer counterpart.
                 self._apply_editable_generators(ed.children or [], yaml_data)
                 continue
             if not ed.generator or not ed.depends_on:
@@ -416,10 +389,6 @@ class EditableFormProcessor:
         elif value is not None:
             smart_set_value(yaml_data, ed.yaml_path, value)
 
-    # ------------------------------------------------------------------
-    # JSON submission pipeline (nested structure, no flat intermediate)
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _write_field(
         editable: Editable,
@@ -429,14 +398,12 @@ class EditableFormProcessor:
     ) -> None:
         """Convert and write a single field value, respecting remove_when_none.
 
-        Centralises the convert-then-write logic so ``remove_when_none``,
-        converter dispatch, and ``smart_set_value`` / ``smart_delete_value``
-        live in exactly one place.
+        The one place where ``remove_when_none``, the converter dispatch and
+        ``smart_set_value`` / ``smart_delete_value`` meet.
 
-        When a converter produces a fresh AGE-encrypted value whose plaintext
-        matches the stored ciphertext (forms post decrypted values back, so
-        untouched fields re-encrypt to different random ciphertext), the
-        stored ciphertext is kept verbatim to avoid churn in the project file.
+        A form posts a decrypted value back, so an untouched field re-encrypts to different
+        random ciphertext. When the fresh AGE block holds the same plaintext as the stored one,
+        the stored ciphertext is kept verbatim, to keep the project file free of churn.
         """
         if value is None:
             return
@@ -459,25 +426,16 @@ class EditableFormProcessor:
         enforcer_context: dict[str, Any] | None = None,
         strip_transients: bool = False,
     ) -> tuple[dict[str, Any], dict[str, list[str]]]:
-        """Process a nested JSON form submission in a single pass.
+        """Process a nested JSON form submission in a single pass, as ``(result_yaml, errors)``.
 
-        Reads values from the nested JSON using plain path traversal
-        (``get_value``), validates them, applies ``converter.write()``,
-        and writes to a deep-copy of *yaml_data* using ``smart_set_value``
-        (which correctly handles the mixed services list format).
+        Values are read from the nested JSON, validated, run through ``converter.write()`` and
+        written into a deep copy of *yaml_data* with ``smart_set_value``, which handles the
+        mixed services list format. A sequence's item count comes from the submitted data, not
+        from session state that may be stale.
 
-        Sequence item counts come from the submitted data (the form's
-        truth), not from stale session state.
-
-        Args:
-            enforcer_context: Optional metadata for enforcers (e.g. project_name).
-            strip_transients: When True, remove transient fields from the
-                output. Use for final project submission; leave False for
-                wizard steps where both parent and transient values must
-                persist in session state.
-
-        Returns:
-            ``(result_yaml, errors)`` tuple.
+        ``strip_transients`` removes the transient fields from the output. That is right for a
+        final project submission, and wrong for a wizard step, where both the parent and the
+        transient value have to stay in session state.
         """
         result = copy.deepcopy(yaml_data)
         errors: dict[str, list[str]] = {}
@@ -491,15 +449,12 @@ class EditableFormProcessor:
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
             if not should_render_editable(vis, result, siblings=editables, edit_mode=edit_mode):
-                # When ``show_when`` no longer holds against the in-progress
-                # ``result`` the field is conceptually hidden; processing it
-                # anyway would let stale form data clobber the now-current
-                # state. The dependency-providing editable is expected to
-                # appear earlier in this list (and has therefore already
-                # written its new value into ``result``), so this check
-                # reflects the user's latest intent — matching the strict
-                # skip that ``_process_sequence_json`` already does at
-                # line 461 for in-sequence children.
+                # A field whose ``show_when`` no longer holds against the in-progress
+                # ``result`` is hidden, and processing it anyway lets stale form data clobber
+                # the now-current state. The editable providing the dependency comes earlier
+                # in this list and has therefore already written its new value into
+                # ``result``, so this reads the user's latest intent. The same skip as
+                # ``_process_sequence_json`` does for its in-sequence children.
                 continue
 
             if vis.widget == WidgetType.GROUP:
@@ -528,11 +483,10 @@ class EditableFormProcessor:
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
             elif vis.widget in (WidgetType.CHECKBOX_GROUP, WidgetType.SERVICE_CARDS):
-                # Een selectie die deze sectie RENDERT is leeg als de inzending er niets
-                # over zegt: een vinkje dat uit staat stuurt niets mee. Zonder de
-                # omzetting naar [] viel de kaartenselectie in de tak hieronder, waar
-                # ``None`` "ongewijzigd" betekent, en bleef de laatst overgebleven dienst
-                # staan: uitvinken lukte alleen zolang er nog een andere dienst aan stond.
+                # A selection this section RENDERS is empty when the submission says nothing
+                # about it: an unticked box sends nothing. The coercion to [] is what keeps it
+                # out of the branch below, where ``None`` means "unchanged" and the last
+                # remaining service would stay selected.
                 value = _coerce_to_list(_read_submitted(submitted, ed))
                 value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
@@ -596,7 +550,6 @@ class EditableFormProcessor:
         if warnings is None:
             warnings = {}
 
-        # Process each child through the same dispatch logic
         group_children = vis.children or []
         for child_vis in group_children:
             child_ed = child_vis.editable
@@ -657,24 +610,22 @@ class EditableFormProcessor:
         ed = vis.editable
         virt = ed.virtualize
         read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
-        # List-aware reads (smart_get_value, not get_value): on the final wizard
-        # submit the merged data is devirtualized, so the virtual read misses and
-        # we fall back to the REAL path. For a project-level service config that
-        # path is ``services/<name>/config/...`` and ``services`` is a mixed list,
-        # which plain get_value cannot traverse -> it returns None and the items
-        # would be overwritten with [] (silent sequence-drop). smart_get_value
-        # walks the services list, matching the scalar reads in _read_submitted.
+        # List-aware reads, like the scalar reads in _read_submitted: on the final wizard
+        # submit the merged data is devirtualized, so the virtual read misses and the REAL
+        # path answers. For a project-level service config that path is
+        # ``services/<name>/config/...``, and ``services`` is a mixed list that plain
+        # get_value cannot traverse, so it would return None and the items would be
+        # overwritten with [].
         items = smart_get_value(submitted, read_path)
         if not isinstance(items, list) and virt and read_path != ed.yaml_path:
             items = smart_get_value(submitted, ed.yaml_path)
         if not isinstance(items, list):
             items = []
 
-        # Niets ingediend EN het formulier heeft deze reeks niet getekend: dan zegt de
-        # inzending er niets over en blijft staan wat er stond. Zonder dit onderscheid
-        # is "de gebruiker haalde de laatste regel weg" niet te scheiden van "deze
-        # sectie ging er niet over", en wist elke opslag de lijst. Zie
-        # ``editables/rendered_sequences.py``.
+        # Nothing submitted AND the form never rendered this sequence: then the submission
+        # says nothing about it and what was stored stays. Without that distinction "the user
+        # removed the last row" cannot be told apart from "this section was not about it", and
+        # every save wipes the list. See ``editables/rendered_sequences.py``.
         if not items and sequence_was_not_drawn(submitted, read_path, ed.yaml_path):
             return
 
@@ -685,7 +636,7 @@ class EditableFormProcessor:
             smart_delete_value(result, ed.yaml_path)
             return
 
-        # Save existing items so we can restore readonly fields after overwriting
+        # Kept so the readonly fields can be restored after the overwrite.
         original_items = smart_get_value(result, ed.yaml_path) or []
 
         # Write the submitted items into result. Each submitted item is merged over its
@@ -703,12 +654,11 @@ class EditableFormProcessor:
         ]
 
         def _managed_rel(idx: int) -> list[str]:
-            """Wat er in rij *idx* van het origineel weg mag voor de overlay.
+            """What may be pruned from row *idx* of the original before the overlay.
 
-            Een genest REEKS-kind dat het formulier voor deze rij niet tekende hoort
-            daar niet bij: het snoeien zou de lijst weghalen, en het kind zelf schrijft
-            hem niet terug (het houdt zich aan dezelfde regel). Samen zou dat de lijst
-            alsnog wissen langs de andere kant.
+            A nested SEQUENCE child the form did not render for this row is not among it:
+            pruning would remove the list, and the child does not write it back either (it
+            follows the same rule), so together they would still wipe it.
             """
             rel = []
             for child in managed_children:
@@ -735,7 +685,7 @@ class EditableFormProcessor:
                 merged_items.append(copy.deepcopy(item))
         smart_set_value(result, ed.yaml_path, merged_items)
 
-        # Strip the virtual key from result so it doesn't leak into YAML
+        # Strip the virtual key from result, so it does not leak into the YAML.
         if virt and read_path != ed.yaml_path:
             virtual_key = virt[1]
             virtual_parts = read_path.split("/")
@@ -770,8 +720,8 @@ class EditableFormProcessor:
         # PERSISTENT_STORAGE_SEQUENCE in the modal-edit-component flow where
         # it is flattened to the top level), propagate that mapping to each
         # non-sequence child so the form submission is read from the virtual
-        # ``_services-config{…}`` path rather than the real ``services{…}``
-        # one — which would collide with the sibling service-selection list.
+        # ``_services-config{…}`` path rather than the real ``services{…}`` one, which
+        # would collide with the sibling service-selection list.
         seq_virt = ed.virtualize
 
         seq_children_json = vis.children or []
@@ -809,16 +759,16 @@ class EditableFormProcessor:
                     virt = child_ed.virtualize or seq_virt
                     read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = get_value(submitted, read_path)
-                    # Fall back to real path when merged data has no virtual key.
-                    # smart_get_value so a service-config real path (services/<name>/...)
-                    # is walked through the mixed services list, not read as a dict key.
+                    # The real path answers when the merged data has no virtual key, through
+                    # smart_get_value so a service-config path is walked through the mixed
+                    # services list instead of read as a dict key.
                     if value is None and virt and read_path != concrete_path:
                         value = smart_get_value(submitted, concrete_path)
                     value = self._effective_value(child_vis, value)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
-                    # Clean up virtual key from result (see _process_nested_sequence_json
-                    # for why this strip is live, not dead: yaml_data can carry the key).
+                    # Clean the virtual key out of result; see _process_nested_sequence_json
+                    # for why this strip is live and not dead code.
                     if virt and read_path != concrete_path:
                         virtual_key = virt[1]
                         virtual_parts = read_path.split("/")
@@ -866,12 +816,10 @@ class EditableFormProcessor:
         real_seq_path = resolve_path(ed.yaml_path, parent_index)
         virtual_seq_path = apply_virtualize(real_seq_path, virt) if virt else real_seq_path
 
-        # Read from virtual path in submitted data.  When virtualize is
-        # active the form POSTs under the virtual key (e.g. _services-config).
-        # However, after a step-level submit the data is already merged into
-        # the real path (services{…}/config).  During the final submit the
-        # merged data no longer has the virtual key, so we must fall back to
-        # reading from the real path to avoid overwriting good data with [].
+        # With virtualize active the form POSTs under the virtual key (e.g.
+        # _services-config), but after a step-level submit the data is already merged into the
+        # real path (services{…}/config). On the final submit the merged data no longer has
+        # the virtual key, so the real path has to answer, or good data is overwritten with [].
         items = get_value(submitted, virtual_seq_path)
         if not isinstance(items, list) and virt:
             # smart_get_value: the real path may be services/<name>/config/... where
@@ -880,47 +828,41 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
-        # Zelfde regel als bij de reeks op het bovenste niveau: een geneste reeks die
-        # het formulier niet tekende, mag hij niet vervangen.
+        # The same rule as for a top-level sequence: a nested sequence the form did not
+        # render may not be replaced.
         if not items and sequence_was_not_drawn(submitted, virtual_seq_path, real_seq_path):
             return
 
         # Capture the pre-edit list as the field-order reference before overwriting it.
         original_nested = smart_get_value(result, real_seq_path)
 
-        # Een converter op de reeks zelf geldt ook hier. Een los veld liep al langs zijn
-        # converter en een reeks niet, dus een converter op een reeks werd stilzwijgend
-        # genegeerd: de invite-rollen schreven een lijst met een lege string zodra je "geen
-        # rol" koos, want de converter die dat eruit haalt kwam nooit aan bod.
+        # A converter on the sequence itself applies here too. Without this call a converter
+        # declared on a sequence is silently ignored, and a row the user left empty reaches
+        # the file as a list holding an empty string.
         if ed.converter is not None:
             items = ed.converter.write(items, result)
             if items is None:
                 items = []
 
-        # Write to real path in result. An empty list follows the same rule a scalar
-        # already does: with ``remove_when_none`` the key goes away instead of being
-        # written empty. Zonder dit schreef een leeg optioneel blok ``[]``, en het schema
-        # kent daar ``minItems: 1`` op -- dus het startcommando van een component maakte
-        # elk project onopslaanbaar zodra je het veld leeg liet, wat de normale keuze is.
+        # Write to the real path in result. An empty list follows the same rule a scalar
+        # already does: with ``remove_when_none`` the key goes away instead of being written
+        # empty. The schema carries ``minItems: 1`` on such a block, so writing ``[]`` makes
+        # the project unsaveable as soon as an optional sequence is left empty.
         if not items and ed.remove_when_none:
             smart_delete_value(result, real_seq_path)
             _prune_empty_ancestors(result, real_seq_path)
         else:
             smart_set_value(result, real_seq_path, copy.deepcopy(items))
 
-        # Strip the virtual key (e.g. _services-config) from result so it
-        # does not leak into step_data or the final project YAML.
-        # (WP3) This is NOT dead: when the incoming yaml_data still carries the virtual
-        # key (the direct process_json_submission path, e.g. tests/test_storage_virtualize
-        # and router_detail_edit which seeds step_data from raw submitted data), ``result``
-        # -- a deepcopy of yaml_data -- inherits it, and this is what removes it. The
-        # ``_devirtualize`` boundary pass covers the callers that pre-merge; both together
-        # guarantee the key never reaches project YAML.
-        # We delete the entire virtual container key from the parent, not
-        # just the leaf - otherwise empty dicts remain.
-        # The virtual key lives under the component dict, so we find the
-        # path segment that starts with the virtual key name and take
-        # everything before it as the parent path.
+        # Strip the virtual key (e.g. _services-config) from result, so it does not leak into
+        # step_data or the final project YAML. This is live, not dead: on the direct
+        # process_json_submission path the incoming yaml_data can still carry the virtual key,
+        # and ``result``, a deepcopy of it, inherits it. The ``_devirtualize`` boundary pass
+        # covers the callers that pre-merge; together they keep the key out of project YAML.
+        #
+        # The whole virtual container key goes, not just the leaf, otherwise empty dicts
+        # remain. It lives under the component dict, so the parent path is everything before
+        # the segment that starts with the virtual key name.
         if virt and virtual_seq_path != real_seq_path:
             virtual_key = virt[1]  # e.g. "_services-config"
             virtual_parts = virtual_seq_path.split("/")
@@ -939,14 +881,12 @@ class EditableFormProcessor:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                # Real path for validation + writing
                 real_child_path = resolve_path(child_ed.yaml_path, parent_index)
                 real_child_path = resolve_path(real_child_path, child_index)
-                # Virtual path for reading from submitted data
                 virtual_child_path = apply_virtualize(real_child_path, virt) if virt else real_child_path
                 value = get_value(submitted, virtual_child_path)
-                # Fall back to real path if virtual path has no data. smart_get_value
-                # so a service-config real path is walked through the services list.
+                # The real path answers when the virtual one has no data, through
+                # smart_get_value so it is walked through the services list.
                 if value is None and virt:
                     value = smart_get_value(submitted, real_child_path)
                 value = self._effective_value(child_vis, value)
@@ -966,10 +906,6 @@ class EditableFormProcessor:
                 ):
                     _reorder_like(originals_nested[idx], res_item)
 
-    # ------------------------------------------------------------------
-    # Deferral and transient field handling
-    # ------------------------------------------------------------------
-
     def _collect_editables_with_paths(
         self,
         editables: list[EditableVisualizer],
@@ -984,7 +920,6 @@ class EditableFormProcessor:
         for vis in editables:
             ed = vis.editable
             if vis.widget == WidgetType.GROUP:
-                # Recurse into group children (no index iteration)
                 result.extend(self._collect_editables_with_paths(vis.children or [], data))
             elif vis.widget == WidgetType.SEQUENCE:
                 items = smart_get_value(data, ed.yaml_path) or []
@@ -1018,7 +953,6 @@ class EditableFormProcessor:
                 continue
             current_value = smart_get_value(data, concrete_path)
 
-            # CENTRALIZED DEFERRAL LOGGING
             logger.debug(
                 "[deferral check] path=%s, current_value=%s, defers_to=%s",
                 concrete_path,
@@ -1027,10 +961,8 @@ class EditableFormProcessor:
             )
 
             if ed.defer_when.check(current_value):
-                # Resolve the deferred path with the same index context
                 deferred_path = ed.defers_to
                 if "[*]" in deferred_path and "[*]" not in concrete_path:
-                    # Extract index from concrete_path and apply to deferred_path
                     import re
 
                     m = re.search(r"\[(\d+)\]", concrete_path)
@@ -1038,7 +970,6 @@ class EditableFormProcessor:
                         deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
                 deferred_value = smart_get_value(data, deferred_path)
 
-                # CENTRALIZED DEFERRAL LOGGING
                 logger.debug(
                     "[deferral execute] %s -> %s (deferred_value=%s)",
                     deferred_path,
@@ -1085,7 +1016,6 @@ class EditableFormProcessor:
         if len(parts) == 1:
             data.pop(parts[0], None)
             return
-        # Navigate to the parent of the leaf
         parent_path = "/".join(parts[:-1])
         parent = smart_get_value(data, parent_path)
         if isinstance(parent, dict):
@@ -1097,14 +1027,10 @@ class EditableFormProcessor:
         result_data: dict[str, Any],
         editables: list[EditableVisualizer],
     ) -> list[str]:
-        """Detect renamed fields and cascade changes to all target references.
+        """Cascade a rename to every target reference; returns the renames, for the log.
 
-        Compares old vs new values for editables with ``rename_targets``.
-        When a rename is detected, walks each target path (which may contain
-        ``[*]`` wildcards) and replaces old_name → new_name in-place.
-
-        Returns:
-            List of human-readable rename descriptions for logging.
+        Compares old against new for every editable with ``rename_targets``, then walks each
+        target path, wildcards included, and replaces the old name in place.
         """
         renames: list[str] = []
         for ed, concrete_path in self._collect_editables_with_paths(editables, result_data):
@@ -1147,14 +1073,13 @@ class EditableFormProcessor:
             seg = segments[depth]
             is_last = depth == len(segments) - 1
 
-            # Parse segment: "key[*]", "key[0]", or plain "key"
             if "[*]" in seg:
                 key = seg.replace("[*]", "")
                 items = current.get(key) if isinstance(current, dict) else None
                 if not isinstance(items, list):
                     return count
                 if is_last:
-                    # The target IS the list itself - replace members
+                    # The target IS the list itself, so replace its members.
                     for i, item in enumerate(items):
                         if item == old_name:
                             items[i] = new_name
@@ -1201,7 +1126,6 @@ class EditableFormProcessor:
             stored_value = smart_get_value(data, concrete_path)
             if not stored_value:
                 continue
-            # Apply converter.view to get the display value (e.g. "__custom__")
             display_value = ed.converter.view(stored_value, context_data=data) if ed.converter else stored_value
             if ed.defer_when.check(display_value):
                 deferred_path = ed.defers_to

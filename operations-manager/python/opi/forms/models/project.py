@@ -1,10 +1,4 @@
-"""
-Project form model with FormMeta annotations.
-
-This module defines the Pydantic models for project creation forms,
-including user and component subforms, with FormMeta annotations
-for dynamic form generation.
-"""
+"""The Pydantic models for the project creation form, with their ``FormMeta`` annotations."""
 
 from typing import Annotated
 
@@ -22,11 +16,7 @@ from opi.forms.schema import FormMeta
 
 
 class UserFormModel(BaseModel):
-    """
-    User form model for project team members.
-
-    Represents a single user with email and role.
-    """
+    """One team member on the project form: an email address and a role."""
 
     email: Annotated[
         str,
@@ -50,11 +40,7 @@ class UserFormModel(BaseModel):
 
 
 class ComponentFormModel(BaseModel):
-    """
-    Component form model for project components.
-
-    Represents a deployable component with its configuration.
-    """
+    """One deployable component on the project form, with its configuration."""
 
     type: Annotated[
         str,
@@ -76,7 +62,7 @@ class ComponentFormModel(BaseModel):
         ),
     ] = Field(default=None, ge=1, le=65535)
 
-    # What image means on a top-level component is undecided; see
+    # What an image means on a top-level component is not settled; see
     # features/component-image-field-clarification.md.
     image: Annotated[
         str,
@@ -151,12 +137,7 @@ class ComponentFormModel(BaseModel):
 
 
 class ProjectFormModel(BaseModel):
-    """
-    Project form model for self-service project creation.
-
-    This model defines all fields needed for creating a new project
-    through the self-service portal.
-    """
+    """Every field the self-service portal needs to create a project."""
 
     # Project Details
     display_name: Annotated[
@@ -239,12 +220,7 @@ class ProjectFormModel(BaseModel):
 
 
 def get_project_form_layout() -> Fieldset:
-    """
-    Get the layout for the project form.
-
-    Returns a hierarchical layout structure defining how fields
-    should be arranged in the form UI.
-    """
+    """The layout for the project form."""
     return Fieldset(
         legend="project.form.title",
         children=[

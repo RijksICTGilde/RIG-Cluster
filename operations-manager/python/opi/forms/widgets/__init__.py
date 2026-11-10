@@ -1,15 +1,10 @@
-"""
-Widget adapters for form rendering.
-
-This package provides abstract and concrete widget adapters
-that translate FormField instances into HTML for specific UI frameworks.
-"""
+"""Widget adapters: they translate a ``FormField`` into HTML for one UI framework."""
 
 from opi.forms.widgets.base import WidgetAdapter
 from opi.forms.widgets.fields import FieldWidgetAdapter
 
 __all__ = ["FieldWidgetAdapter", "WidgetAdapter"]
 
-# LOTCWidgetAdapter staat er BEWUST niet bij: die trekt de templateomgeving mee, en die
-# leunt via de dienstenregistry weer op opi.forms. Importeer hem uit
+# LOTCWidgetAdapter is deliberately NOT exported here: it drags the template environment
+# along, which leans back on opi.forms through the service registry. Import it from
 # opi.forms.widgets.lotc.

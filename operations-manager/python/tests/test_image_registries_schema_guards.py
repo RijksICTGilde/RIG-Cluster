@@ -32,7 +32,7 @@ import pytest
 import yaml
 from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.generation.manifests import ManifestGenerator, render_template
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
@@ -120,7 +120,7 @@ def _inzending(registry: dict[str, Any]) -> dict[str, Any]:
     """Wat de modaal post: de dienstconfig plus de lijst met gerenderde reeksen."""
     return {
         "_services-config": {"image-registries": {"config": {"registries": [registry]}}},
-        GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+        RENDERED_SEQUENCES_FIELD: ["_services-config/image-registries/config/registries"],
     }
 
 
@@ -677,7 +677,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
                     "config": {"registries": [{"name": "eigen", "upstream": "ghcr.io/team", "username": "u"}]}
                 }
             },
-            GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+            RENDERED_SEQUENCES_FIELD: ["_services-config/image-registries/config/registries"],
         }
         project = _project({"name": "eigen", "upstream": "ghcr.io/team", **SECRET})
         project["services"][0]["config"]["registries"] = []

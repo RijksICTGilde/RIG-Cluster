@@ -27,11 +27,10 @@ from typing import Any
 class ListDistributor:
     """Distribute items from a temporary list into matching entries of a target list.
 
-    Args:
-        source_key: Key in the wizard/section data holding the temp list.
-        target_path: Top-level key in the project data (e.g. ``"deployments"``).
-        match_field: Field used to match source items to target items (e.g. ``"name"``).
-        merge_field: Sub-list within each target to append to (e.g. ``"components"``).
+    ``source_key`` names the temp list in the wizard data, ``target_path`` the top-level key
+    in the project data (``"deployments"``), ``match_field`` the field both sides are matched
+    on (``"name"``), and ``merge_field`` the sub-list inside the target that is appended to
+    (``"components"``).
     """
 
     source_key: str
@@ -40,7 +39,7 @@ class ListDistributor:
     merge_field: str
 
     def __call__(self, project_data: dict[str, Any], wizard_data: dict[str, Any]) -> None:
-        """Distribute items into the project data. Mutates project_data in place."""
+        """Distribute the items; mutates *project_data* in place."""
         source_items = wizard_data.get(self.source_key)
         if not isinstance(source_items, list):
             return
@@ -49,7 +48,6 @@ class ListDistributor:
         if not isinstance(targets, list):
             return
 
-        # Build lookup: match_value -> target dict
         target_lookup: dict[str, dict[str, Any]] = {}
         for target in targets:
             if isinstance(target, dict):
@@ -57,7 +55,6 @@ class ListDistributor:
                 if key is not None:
                     target_lookup[str(key)] = target
 
-        # Distribute
         for source in source_items:
             if not isinstance(source, dict):
                 continue

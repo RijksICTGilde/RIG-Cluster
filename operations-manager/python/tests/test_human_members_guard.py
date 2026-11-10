@@ -37,7 +37,7 @@ BEKENDE_LEZERS: dict[str, str] = {
     "manager/bootstrap/keycloak_setup.py": "de users van een Keycloak-sjabloon, niet van een project",
     "forms/i18n.py": "het label van de sectie",
     "forms/models/project.py": "de ledenlijst als formulierveld",
-    "forms/wizard/leden.py": "scheidt de mensen van de service accounts voor het teamformulier",
+    "forms/wizard/members.py": "scheidt de mensen van de service accounts voor het teamformulier",
     "forms/models/project_file.py": "het model van de ledenlijst zelf",
     "manager/bootstrap/keycloak_yaml_handler.py": "de users van een Keycloak-sjabloon",
     "services/api_token_service.py": "rollen en tokens, voor beide soorten",
