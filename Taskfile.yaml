@@ -21,6 +21,10 @@ vars:
   # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
   # eigen ruimte en houdt tegelijk de buildcache vast. Zie sandbox:build-builder.
   SANDBOX_BUILDER_NAME: '{{default "rig-sandbox-builder" .SANDBOX_BUILDER_NAME}}'
+  # Dezelfde naam als tests/conftest.py kiest: in een dclaude-sessie een eigen container,
+  # want die sessies delen de docker-daemon en het hostnetwerk.
+  TEST_PG_CONTAINER:
+    sh: case "${HOSTNAME:-}" in dclaude-*) echo "zad-test-postgres-$HOSTNAME" ;; *) echo zad-test-postgres ;; esac
   # 2 GiB. Gemeten, niet geschat: een KOUDE build (alle drie de apt-rondes, uv sync,
   # skopeo en de tarball-export) piekt op 427 MB in de buildkit-container, een warme op
   # 108 MB. 2 GiB is dus bijna vijf keer de gemeten piek - genoeg marge voor een zwaardere
@@ -3625,13 +3629,13 @@ tasks:
     silent: false
 
   test-db-stop:
-    desc: "Stop and remove the shared test Postgres (zad-test-postgres)"
+    desc: "Stop and remove the test Postgres of this session (zad-test-postgres[-session])"
     summary: |
       The ORM tests share one long-lived Postgres container instead of creating a
       throwaway one per run, so it stays up between runs on purpose. This removes it;
       the next test run creates it again. Safe at any moment when no suite is running.
     cmds:
-      - docker rm -f zad-test-postgres
+      - docker rm -f "{{.TEST_PG_CONTAINER}}"
 
   test-db-reset:
     desc: "Recreate the shared test Postgres from scratch"
@@ -3640,8 +3644,9 @@ tasks:
       ORM test. The fixture stays the only place that knows the image and the port.
     dir: operations-manager/python
     cmds:
-      - docker rm -f zad-test-postgres
-      - uv run pytest tests/test_user_admin_service.py -q
+      - docker rm -f "{{.TEST_PG_CONTAINER}}"
+      # Eigen -m: de ORM-toetsen zitten in de brede laag, die addopts deselecteert.
+      - uv run pytest tests/test_user_admin_service.py -m wide -q
 
   test-authwall:
     desc: "Meet de authorization wall tegen een echte Keycloak + oauth2-proxy"

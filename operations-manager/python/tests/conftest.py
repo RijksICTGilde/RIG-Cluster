@@ -455,31 +455,38 @@ def reset_rate_limiters() -> Any:
 # hangt onder de Docker-daemon en niet onder pytest. Gemeten op 20 augustus 2026 stonden er
 # elf, de oudste 45 uur.
 #
-# Een container die per definitie blijft staan kan dat niet lekken. Er is er één, hij heet
-# altijd hetzelfde, en opruimen is gewoon werk dat een mens doet:
+# Een container die per definitie blijft staan kan dat niet lekken. Er is er één per
+# sessie, zijn naam volgt uit de sessie, en opruimen is gewoon werk dat een mens doet:
 #
-#     task test-db-stop     # docker rm -f zad-test-postgres
+#     task test-db-stop     # docker rm -f <de container van deze sessie>
 #     task test-db-reset    # weg en opnieuw
 #
 # Het lek verhuist daarmee naar de databases IN die server, en dat is een ruil die de
 # moeite waard is: die kosten niets, zijn onzichtbaar, en de veeg hieronder haalt ze weg
 # zodra hun maker dood is.
 
-#: Vaste naam, want daar draait dit hele ontwerp om: wat een mens kan noemen, kan hij
-#: opruimen.
-ZAD_TEST_PG_CONTAINER = "zad-test-postgres"
+#: A fixed name, because that is what this whole design relies on: what a human can name,
+#: a human can clean up. In a dclaude session it gets the session name appended, because
+#: those sessions share the docker daemon and the host network, and a container belongs to
+#: the session that started it.
+_SESSION_HOST = os.environ.get("HOSTNAME", "")
+ZAD_TEST_PG_CONTAINER = os.environ.get("ZAD_TEST_PG_CONTAINER") or (
+    f"zad-test-postgres-{_SESSION_HOST}" if _SESSION_HOST.startswith("dclaude-") else "zad-test-postgres"
+)
 #: Het manifest dat de PostgreSQL van het platform pint.
 PLATFORM_POSTGRES_CLUSTER = "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
 #: Een ORM-toets meet alleen tegen wat productie draait (ZAD_TEST_PG_IMAGE in de omgeving overschrijft dit).
 ZAD_TEST_PG_IMAGE = os.environ.get("ZAD_TEST_PG_IMAGE") or pinned_image(PLATFORM_POSTGRES_CLUSTER)
 ZAD_TEST_PG_PASSWORD = "zadtest"
-#: De CNPG-image start niet zelf; dit script doet wat de operator doet. Zie daar.
+#: The CNPG image does not start on its own; this script does what the operator does. See
+#: there. The text travels as an argument rather than a mount: a session talks to the
+#: host's daemon, and a path from this worktree does not exist there.
 ZAD_TEST_PG_START = REPO_ROOT / "scripts/postgres-standalone-start.sh"
-ZAD_TEST_PG_START_IN_CONTAINER = "/zad/postgres-standalone-start.sh"
-#: Alleen van belang bij het AANMAKEN. Staat de container er al, dan lezen we zijn
-#: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
-#: poort waar niets luistert.
-ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
+#: Only matters when CREATING. If the container already exists, we read its real port
+#: from Docker; that is authoritative, otherwise a second run talks to a port nothing
+#: listens on. Unset means a free port, so two sessions on the same host network do not
+#: collide.
+ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT")
 #: Prefix van de database per run: ``zadtest_<namespace>_<pid>_<epoch>``. De pid maakt een
 #: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
 #: Bewust niet ``zad_test_``: de veeg van oudere takken leest die naam als ``zad_test_<pid>``,
@@ -551,12 +558,11 @@ def _zorg_voor_container() -> str:
             "-e",
             f"POSTGRES_PASSWORD={ZAD_TEST_PG_PASSWORD}",
             "-p",
-            f"{ZAD_TEST_PG_PORT}:5432",
-            "-v",
-            f"{ZAD_TEST_PG_START}:{ZAD_TEST_PG_START_IN_CONTAINER}:ro",
+            f"127.0.0.1:{ZAD_TEST_PG_PORT}:5432" if ZAD_TEST_PG_PORT else "127.0.0.1::5432",
             ZAD_TEST_PG_IMAGE,
             "bash",
-            ZAD_TEST_PG_START_IN_CONTAINER,
+            "-c",
+            ZAD_TEST_PG_START.read_text(),
             check=False,
             timeout=180,
         )
@@ -567,7 +573,7 @@ def _zorg_voor_container() -> str:
         if gemaakt.returncode != 0 and not _container_staat()[0]:
             raise TestPostgresError(
                 f"'{ZAD_TEST_PG_CONTAINER}' kon niet starten: {gemaakt.stderr.strip()}\n"
-                f"Zit poort {ZAD_TEST_PG_PORT} bezet, zet dan ZAD_TEST_PG_PORT."
+                f"Zit poort {ZAD_TEST_PG_PORT or '(vrij gekozen)'} bezet, zet dan ZAD_TEST_PG_PORT."
             )
 
     _wacht_tot_hij_luistert()

@@ -204,16 +204,21 @@ real database, real binaries). `task test-changed` runs what your change touches
 
 The ORM-backed tests (the `orm_db` fixture) are the broad layer, and `tests/conftest.py`
 marks them `wide` on that fixture, so the default run leaves them out. They need a real
-Postgres, and they share **one** long-lived container named `zad-test-postgres` on port
-55432 (`ZAD_TEST_PG_PORT` to change it); each pytest run gets its own database inside it,
-dropped when the run ends.
+Postgres, and they share **one** long-lived container named `zad-test-postgres`, published
+on a free port on 127.0.0.1 (`ZAD_TEST_PG_PORT` pins the port); each pytest run gets its own
+database inside it, dropped when the run ends.
 Databases left by a run that died are swept by a later run.
+
+In a dclaude session the container name gets the session name appended
+(`zad-test-postgres-dclaude-...`, `ZAD_TEST_PG_CONTAINER` to change it). Those sessions share
+the docker daemon and the host network, and a container belongs to the session that started
+it, so one shared container would be pulled out from under another session mid-run.
 
 The container is supposed to stay up between runs -- that is what stops it from ever
 becoming an orphan you have to hunt for. Remove it whenever you like:
 
 ```bash
-task test-db-stop    # docker rm -f zad-test-postgres
+task test-db-stop    # docker rm -f <the container of this session>
 task test-db-reset   # remove it, then let the next run recreate it
 ```
 

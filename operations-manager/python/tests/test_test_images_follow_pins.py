@@ -44,15 +44,17 @@ EXEMPT: dict[str, str] = {
 
 #: De plekken die de PostgreSQL van het platform zelf starten. De CNPG-image heeft geen
 #: ENTRYPOINT, dus elk van hen geeft dit script mee.
-STARTS_PLATFORM_POSTGRES = (
-    "Taskfile.yaml",
-    "docker-compose.dev.yaml",
-    "operations-manager/python/tests/conftest.py",
-)
 PG_START_SCRIPT = "scripts/postgres-standalone-start.sh"
 #: Waar het script in de container hangt. Alleen een echte mount of een echt commando noemt
 #: dit pad, een verwijzing in commentaar niet.
 PG_START_IN_CONTAINER = "/zad/postgres-standalone-start.sh"
+#: Every place that runs the platform PostgreSQL startup script, with the proof per place:
+#: a mount path in docker-compose and Taskfile, a bash -c argument in conftest.
+STARTS_PLATFORM_POSTGRES = {
+    "Taskfile.yaml": PG_START_IN_CONTAINER,
+    "docker-compose.dev.yaml": PG_START_IN_CONTAINER,
+    "operations-manager/python/tests/conftest.py": "ZAD_TEST_PG_START.read_text()",
+}
 
 
 def _module_image_constants() -> dict[str, str]:
@@ -141,7 +143,7 @@ def test_the_platform_postgres_gets_the_opstart_it_needs() -> None:
     """De CNPG-image start niet met een kaal ``docker run``, en dat is stil kapot."""
     assert (REPO_ROOT / PG_START_SCRIPT).is_file(), f"{PG_START_SCRIPT} ontbreekt"
     zonder = [
-        where for where in STARTS_PLATFORM_POSTGRES if PG_START_IN_CONTAINER not in (REPO_ROOT / where).read_text()
+        where for where, bewijs in STARTS_PLATFORM_POSTGRES.items() if bewijs not in (REPO_ROOT / where).read_text()
     ]
     assert not zonder, (
         f"Deze plekken starten de PostgreSQL van het platform zonder {PG_START_SCRIPT}: {zonder}. "
