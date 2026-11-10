@@ -27,6 +27,7 @@ from opi.services.schema_migration import migrate_to_latest
 from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
+from opi.utils.naming import generate_storage_name
 from opi.utils.url_paths import sanitize_path_value
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, load_yaml_round_trip
 
@@ -3573,6 +3574,30 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
                 storage_configs.append(config)
 
     return storage_configs
+
+
+def persistent_storages(component: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The persistent storage entries of *component*, each with the name its PVC carries.
+
+    An entry without a ``name`` is named after its mount path and its position in the
+    component's full storage list, ephemeral entries included: that position is part of
+    the generated name.
+    """
+    named: list[tuple[str, dict[str, Any]]] = []
+    for idx, storage in enumerate(extract_storage_from_component_services(component)):
+        if storage.get("type") != "persistent":
+            continue
+        name = storage.get("name")
+        if not name:
+            mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
+            name = generate_storage_name(mount_path, idx)
+        named.append((name, storage))
+    return named
+
+
+def find_persistent_storage(component: dict[str, Any], storage_name: str) -> dict[str, Any] | None:
+    """The persistent storage entry of *component* called *storage_name*, or None."""
+    return next((storage for name, storage in persistent_storages(component) if name == storage_name), None)
 
 
 _PEM_CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", re.DOTALL)

@@ -240,6 +240,32 @@ class TestHandleCloneDatabase:
         progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_missing_port_calls_fail_project(self):
+        """A host without a port is just as incomplete as no source at all."""
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
+
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "dev",
+            "source_database": "mydb",
+            "source_schema": "public",
+            "source_username": "user",
+            "source_password": "pass",
+            "source_host": "db.example.com",
+        }
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+            await handle_clone_database(payload, progress)
+
+        progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
+        mock_pm.clone_database_from_external_direct.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_tunnel_clone_uses_tunnel_task_name(self):
         from opi.runtime.tasks.task_handlers_operations import handle_clone_database
 
@@ -333,6 +359,30 @@ class TestHandleCloneBucket:
 
         progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_source_calls_fail_project(self):
+        """No host and no port, and no tunnel either: there is nothing to dial."""
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_bucket
+
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "dev",
+            "source_bucket": "mybucket",
+            "source_access_key": "access",
+            "source_secret_key": "secret",
+        }
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+            await handle_clone_bucket(payload, progress)
+
+        progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
+        mock_pm.clone_minio_bucket_from_external_direct.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

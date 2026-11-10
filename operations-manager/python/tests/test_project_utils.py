@@ -5,11 +5,13 @@ import logging
 import pytest
 from opi.services.project_utils import (
     ComponentValidationError,
+    apply_literal_scalars,
     normalize_container_image,
     parse_aliases,
     validate_root_component,
 )
 from opi.utils.yaml_util import dump_yaml_for_go
+from ruamel.yaml.scalarstring import LiteralScalarString
 
 
 class TestNormalizeContainerImage:
@@ -119,3 +121,55 @@ class TestParseAliases:
         # build_component_config writes this mapping back without a public key (0755 -> 755 otherwise).
         source = "RETRY_CODE: 0755\n"
         assert dump_yaml_for_go(parse_aliases(source)) == source
+
+
+class TestApplyLiteralScalars:
+    """AGE-encrypted values carry newlines, and the YAML dumper only keeps those readable
+    as a ``|`` block scalar when the value is wrapped in ``LiteralScalarString``."""
+
+    MULTILINE = "age1...\n-----BEGIN AGE ENCRYPTED FILE-----\nYWJj\n-----END AGE ENCRYPTED FILE-----\n"
+
+    def test_config_keys_with_newlines_become_literal_scalars(self):
+        data = {"config": {"age-private-key": self.MULTILINE, "api-key": self.MULTILINE}}
+        apply_literal_scalars(data)
+        assert isinstance(data["config"]["age-private-key"], LiteralScalarString)
+        assert isinstance(data["config"]["api-key"], LiteralScalarString)
+
+    def test_a_single_line_value_is_left_as_a_plain_str(self):
+        data = {"config": {"api-key": "no-newline-here"}}
+        apply_literal_scalars(data)
+        assert type(data["config"]["api-key"]) is str
+
+    def test_repository_password_with_newlines_becomes_a_literal_scalar(self):
+        data = {"repositories": [{"name": "main", "password": self.MULTILINE}]}
+        apply_literal_scalars(data)
+        assert isinstance(data["repositories"][0]["password"], LiteralScalarString)
+
+    def test_component_user_env_vars_and_aliases_become_literal_scalars(self):
+        data = {"components": [{"name": "web", "user-env-vars": self.MULTILINE, "aliases": self.MULTILINE}]}
+        apply_literal_scalars(data)
+        assert isinstance(data["components"][0]["user-env-vars"], LiteralScalarString)
+        assert isinstance(data["components"][0]["aliases"], LiteralScalarString)
+
+    def test_deployment_component_user_env_vars_becomes_a_literal_scalar(self):
+        data = {
+            "deployments": [{"name": "main", "components": [{"reference": "web", "user-env-vars": self.MULTILINE}]}]
+        }
+        apply_literal_scalars(data)
+        assert isinstance(data["deployments"][0]["components"][0]["user-env-vars"], LiteralScalarString)
+
+    def test_an_empty_project_is_left_untouched(self):
+        data: dict = {}
+        apply_literal_scalars(data)
+        assert data == {}
+
+    def test_a_non_dict_component_or_repository_entry_is_skipped(self):
+        """A caller handing in a project still mid-normalization may have a tombstone or
+        a bare string in these lists; the converter must not raise on it."""
+        data = {
+            "repositories": ["not-a-dict"],
+            "components": [None],
+            "deployments": [{"components": ["not-a-dict"]}],
+        }
+        apply_literal_scalars(data)
+        assert data["repositories"] == ["not-a-dict"]

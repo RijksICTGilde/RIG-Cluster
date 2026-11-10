@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
+from opi.manager.backup.base import ResourceType
 from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 from opi.manager.backup.database_backup import create_database_backup_manager
 from opi.manager.backup.pvc_backup import create_backup_manager
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
-from opi.services.project_file_handler import extract_storage_from_component_services
+from opi.services.project_file_handler import find_persistent_storage
 from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
     generate_database_username,
     generate_pvc_name,
-    generate_storage_name,
     generate_unique_name,
 )
 
@@ -31,7 +32,39 @@ logger = logging.getLogger(__name__)
 TERUGZETTEN_MISLUKT = "Het terugzetten is niet gelukt. Probeer het over een minuut opnieuw."
 
 
-async def _restore_pvc_with_versioning(
+@dataclass
+class GenerationUpdate:
+    """One generation a restore has to write into the project file."""
+
+    deployment: str
+    component: str
+    reference: str
+    resource_type: ResourceType
+    new_generation: int
+
+
+def set_restored_generation(
+    project_file_handler: ProjectFileHandler,
+    project_data: dict[str, Any],
+    update: GenerationUpdate,
+) -> None:
+    """Set generation in project file based on resource type."""
+    match update.resource_type:
+        case ResourceType.PVC:
+            # PVC is component-level
+            project_file_handler.set_storage_generation(
+                project_data, update.deployment, update.component, update.reference, update.new_generation
+            )
+        case ResourceType.DATABASE:
+            # Database is deployment-level; the handler resolves which PostgreSQL service
+            # name the project declares, so the write and the read cannot disagree.
+            project_file_handler.set_database_generation(project_data, update.deployment, update.new_generation)
+        case ResourceType.BUCKET:
+            # Bucket is deployment-level
+            project_file_handler.set_bucket_generation(project_data, update.deployment, update.new_generation)
+
+
+async def restore_pvc_with_versioning(
     project_name: str,
     deployment_name: str,
     component_name: str,
@@ -56,19 +89,7 @@ async def _restore_pvc_with_versioning(
 
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
-    storage_list = extract_storage_from_component_services(base_component)
-
-    target_storage = None
-    for idx, storage in enumerate(storage_list):
-        if storage.get("type") != "persistent":
-            continue
-        s_name = storage.get("name")
-        if not s_name:
-            mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
-            s_name = generate_storage_name(mount_path, idx)
-        if s_name == storage_name:
-            target_storage = storage
-            break
+    target_storage = find_persistent_storage(base_component, storage_name)
 
     storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
     storage_class = get_storage_class_name(deployment_cluster)
@@ -117,7 +138,7 @@ async def _restore_pvc_with_versioning(
     }
 
 
-async def _restore_database_with_versioning(
+async def restore_database_with_versioning(
     project_name: str,
     deployment_name: str,
     component_name: str,
@@ -280,7 +301,7 @@ async def _restore_database_with_versioning(
         }
 
 
-async def _restore_bucket_with_versioning(
+async def restore_bucket_with_versioning(
     project_name: str,
     deployment_name: str,
     component_name: str,

@@ -28,6 +28,7 @@ from opi.api.router import (
     UpdateImageRequest,
     UpsertDeploymentRequest,
     subdomain_check_rate_limiter,
+    validate_upsert_deployment_request,
 )
 from opi.api.task_models import (
     AddComponentResult,
@@ -84,7 +85,6 @@ from opi.api.validation import (
     ADD_COMPONENT_VALIDATORS,
     UPDATE_COMPONENT_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
-    UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
@@ -104,8 +104,6 @@ from opi.http.auth.auth_decorators import get_current_user, requires_step_up
 from opi.http.auth.endpoint_util import (
     default_marking,
     deployment_in_body,
-    eis_doelwitten_uit_de_upsertbody,
-    eis_handeling,
     image_only_upsert,
     marking_in_body,
     validate_api_token,
@@ -1106,35 +1104,7 @@ async def upsert_deployment_v2(
     """
     logger.info("V2 upsert deployment '%s' in project: %s", deployment_data.deploymentName, project_name)
 
-    if not validate_project_name(project_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-        )
-
-    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-    if sanitized_name != deployment_data.deploymentName.lower():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-        )
-
-    await validate_api_payload(
-        deployment_data.model_dump(),
-        UPSERT_DEPLOYMENT_VALIDATORS,
-    )
-    for comp in deployment_data.components:
-        await validate_api_payload(
-            {"newImageUrl": comp.image},
-            UPDATE_IMAGE_VALIDATORS,
-        )
-
-    # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
-    # not in the path, so the route gate cannot weigh it.
-    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
-        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
-
-    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
+    await validate_upsert_deployment_request(request, project_name, deployment_data)
 
     # A reference to a component the catalogue does not hold is the caller's mistake and not
     # a failure, so it answers 400 here instead of a 202 with a task that fails afterwards.

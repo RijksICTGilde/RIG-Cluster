@@ -38,9 +38,9 @@ from opi.services.project_file_handler import (
     remove_component,
 )
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_utils import apply_literal_scalars
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
-from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -48,6 +48,10 @@ if TYPE_CHECKING:
     from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
+
+# Top-level fields no form should ever submit. name=on-disk filename;
+# clusters=not yet editable (see features/futures/cluster-editing.md).
+IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
 
 
 def guard_target_still_points_at_the_same_item(
@@ -325,8 +329,6 @@ async def apply_modal_edit(
     tombstones are removed here, right before the data is handed back for
     saving.
     """
-    from opi.web.router_wizard import _apply_literal_scalars
-
     # The restore below pairs the two structures key by key, so both sides have to spell a
     # service entry the same way. The editables write the legacy name-as-key shape
     # ({keycloak: {config: ...}}) while the stored project carries the uniform record
@@ -434,7 +436,8 @@ async def apply_modal_edit(
     # writing a service block through here produces a file the schema refuses.
     normalize_service_entries(existing_data)
 
-    _apply_literal_scalars(existing_data)
+    # Ensure AGE-encrypted multiline values use literal block scalars
+    apply_literal_scalars(existing_data)
 
     # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
     # above (e.g. via the top-level apply_form_data_to_project path) so they

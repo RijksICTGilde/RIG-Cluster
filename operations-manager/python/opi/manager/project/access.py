@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from opi.services.project_file_handler import ProjectFileHandler
+    from opi.services.project_store import MutationResult
 
 
 class ProjectFileAccess(Protocol):
@@ -25,7 +26,7 @@ class ProjectFileAccess(Protocol):
 
     async def get_deployments(self, cluster_filter: bool = True) -> list[dict[str, Any]]: ...
 
-    async def save_and_commit_project(self, project_data: dict[str, Any], commit_message: str) -> None: ...
+    async def save_and_commit_project(self, project_data: dict[str, Any], commit_message: str) -> MutationResult: ...
 
     async def mutate_and_commit_project(
         self, mutator: Callable[[dict[str, Any]], dict[str, Any] | None], commit_message: str

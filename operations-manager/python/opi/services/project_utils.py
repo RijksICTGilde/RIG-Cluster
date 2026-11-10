@@ -66,6 +66,41 @@ def _apply_web_address_settings(
             set_domain_setting(deployment_config, setting, value)
 
 
+def apply_literal_scalars(data: dict[str, Any]) -> None:
+    """Convert multiline strings to LiteralScalarString for YAML output.
+
+    AGE-encrypted values contain newlines and must be serialized as
+    literal block scalars (``|``) to preserve formatting.
+    """
+
+    def _literalize(d: dict, key: str) -> None:
+        value = d.get(key)
+        if isinstance(value, str) and "\n" in value:
+            d[key] = LiteralScalarString(value)
+
+    config = data.get("config", {})
+    for key in ("age-private-key", "api-key"):
+        _literalize(config, key)
+
+    for repo in data.get("repositories", []):
+        if isinstance(repo, dict):
+            _literalize(repo, "password")
+
+    # Component-level user-env-vars (create flow)
+    for comp in data.get("components", []):
+        if isinstance(comp, dict):
+            _literalize(comp, "user-env-vars")
+            # One AGE block, exactly like user-env-vars above (RC-106).
+            _literalize(comp, "aliases")
+
+    # Deployment-component-level user-env-vars (edit/add flows)
+    for dep in data.get("deployments", []):
+        if isinstance(dep, dict):
+            for comp in dep.get("components", []):
+                if isinstance(comp, dict):
+                    _literalize(comp, "user-env-vars")
+
+
 def validate_root_component(
     root_component_name: str | None,
     deployment_component_names: list[str],

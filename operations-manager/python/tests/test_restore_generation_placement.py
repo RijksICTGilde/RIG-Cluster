@@ -27,7 +27,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.restore_router import restore_router
-from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
+from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult, ResourceType
+from opi.manager.backup.restore import GenerationUpdate, set_restored_generation
 from opi.services.project_file_handler import create_project_file_handler
 from opi.services.schema_migration import relocate_resource_generations_to_deployment
 
@@ -514,3 +515,59 @@ class TestDeploymentServiceGenerationSetter:
         services = data["deployments"][0]["services"]
         assert len(services) == 1, "a second entry for the same service hides the first from the getter"
         assert handler.get_deployment_service_generation(data, DEPLOYMENT, "minio-storage") == 7
+
+
+class TestSetRestoredGeneration:
+    """``set_restored_generation`` dispatches by ``ResourceType`` to the setter that
+    matches where that resource's generation lives (component-level for a PVC,
+    deployment-level for a database or a bucket). Merged from three hand-written copies
+    in ``restore_router.py`` and ``backup_tasks.py`` (RC-472); this pins the dispatch
+    itself so the three ResourceType branches stay distinct."""
+
+    def test_pvc_is_written_at_the_component_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="data",
+                resource_type=ResourceType.PVC,
+                new_generation=3,
+            ),
+        )
+        handler = create_project_file_handler()
+        assert handler.get_storage_generation(data, DEPLOYMENT, "web", "data") == 3
+        assert handler.get_database_generation(data, DEPLOYMENT) is None
+
+    def test_database_is_written_at_the_deployment_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="db",
+                resource_type=ResourceType.DATABASE,
+                new_generation=4,
+            ),
+        )
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) == 4
+
+    def test_bucket_is_written_at_the_deployment_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="bucket",
+                resource_type=ResourceType.BUCKET,
+                new_generation=5,
+            ),
+        )
+        assert create_project_file_handler().get_bucket_generation(data, DEPLOYMENT) == 5
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) is None

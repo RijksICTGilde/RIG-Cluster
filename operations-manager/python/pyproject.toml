@@ -437,8 +437,6 @@ ignore_imports = [
     "opi.forms.renderer -> opi.http.render.templates_lotc",
     "opi.forms.widgets.fields -> opi.http.render.templates_lotc",
     "opi.forms.widgets.lotc -> opi.http.render.templates_lotc",
-    "opi.forms.wizard.save -> opi.web.project_edit_security",
-    "opi.forms.wizard.save -> opi.web.router_wizard",
     "opi.forms.wizard.session -> opi.http.auth.auth_decorators",
     "opi.services.help_text -> opi.http.render.navigation_lotc",
     "opi.services.help_text -> opi.http.render.templates_lotc",

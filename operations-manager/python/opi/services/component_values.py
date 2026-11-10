@@ -18,12 +18,10 @@ entry of a block in place. This module is that round trip, and it is deliberatel
 and a value that announces itself as AGE-encrypted but will not decrypt raises instead
 of being carried through as if it were plaintext.
 
-That is the one thing it does NOT share with ``KeyValueConverter``
-(``opi/forms/editables/converters.py``), which catches broadly and returns the plain
-value with a warning. For a form, where the author is looking at the field and can try
-again, that is defensible. For an API write path it would put a secret in git, so this
-module does not reuse it. The converter is left alone: it is the wizard's read/write
-path and changing its failure mode is a separate change with its own blast radius.
+``KeyValueConverter`` (``opi/forms/editables/converters.py``) refuses a write the same
+way since RC-463: without a public key it raises ``AgeEncryptionError`` instead of
+writing the plain value. Its READ is still forgiving: a value that will not decrypt is
+handed back raw with a warning, because a form shows it to an author who can try again.
 
 Legacy shapes are read, never written: a plain ``KEY=value`` block is parsed, and so is
 a mapping -- both the unencrypted one (which stays a supported shape in the project

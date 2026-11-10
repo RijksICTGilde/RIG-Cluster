@@ -7,22 +7,21 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
-from opi.manager.backup import create_backup_manager
+from opi.manager.backup import ResourceType, create_backup_manager
 from opi.manager.backup.restore import (
-    _restore_bucket_with_versioning,
-    _restore_database_with_versioning,
-    _restore_pvc_with_versioning,
+    GenerationUpdate,
+    restore_bucket_with_versioning,
+    restore_database_with_versioning,
+    restore_pvc_with_versioning,
+    set_restored_generation,
 )
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_file_handler import (
-    create_project_file_handler,
-    extract_storage_from_component_services,
-)
+from opi.services.project_file_handler import create_project_file_handler, find_persistent_storage
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.tasks import progress_steps as steps
-from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
+from opi.utils.naming import generate_pvc_name, generate_unique_name
 
 if TYPE_CHECKING:
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
@@ -230,19 +229,7 @@ async def _pre_restore_pvcs(
         target_pvc_name = generate_pvc_name(target_unique_name, storage_name, 0)
 
         base_component = base_components.get(component_name, {})
-        storage_list = extract_storage_from_component_services(base_component)
-
-        target_storage = None
-        for idx, storage in enumerate(storage_list):
-            if storage.get("type") != "persistent":
-                continue
-            s_name = storage.get("name")
-            if not s_name:
-                mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
-                s_name = generate_storage_name(mount_path, idx)
-            if s_name == storage_name:
-                target_storage = storage
-                break
+        target_storage = find_persistent_storage(base_component, storage_name)
 
         storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
         backup_enabled = target_storage.get("backup", True) if target_storage else True
@@ -357,13 +344,13 @@ async def _restore_single_resource(
     app_namespace: str,
     current_cluster: str,
 ) -> None:
-    """Restore one resource through the restore router's versioning logic, and write the new
-    generation into the project file.
+    """Restore one resource through the versioning restores in ``opi/manager/backup/restore.py``,
+    and write the new generation into the project file.
     """
     project_file_handler = create_project_file_handler()
 
     if resource_type == "pvc":
-        result = await _restore_pvc_with_versioning(
+        result = await restore_pvc_with_versioning(
             project_name=project_name,
             deployment_name=deployment_name,
             component_name=component_name,
@@ -375,7 +362,7 @@ async def _restore_single_resource(
             project_file_handler=project_file_handler,
         )
     elif resource_type == "database":
-        result = await _restore_database_with_versioning(
+        result = await restore_database_with_versioning(
             project_name=project_name,
             deployment_name=deployment_name,
             component_name=component_name,
@@ -387,7 +374,7 @@ async def _restore_single_resource(
             project_file_handler=project_file_handler,
         )
     elif resource_type == "bucket":
-        result = await _restore_bucket_with_versioning(
+        result = await restore_bucket_with_versioning(
             project_name=project_name,
             deployment_name=deployment_name,
             component_name=component_name,
@@ -417,15 +404,17 @@ async def _restore_single_resource(
             project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
             try:
                 project_data = await project_manager.get_contents()
-                if resource_type == "pvc":
-                    project_file_handler.set_storage_generation(
-                        project_data, deployment_name, component_name, reference_name, new_generation
-                    )
-                elif resource_type == "database":
-                    # Deployment-level, the same place the restore router reads it from.
-                    project_file_handler.set_database_generation(project_data, deployment_name, new_generation)
-                elif resource_type == "bucket":
-                    project_file_handler.set_bucket_generation(project_data, deployment_name, new_generation)
+                set_restored_generation(
+                    project_file_handler,
+                    project_data,
+                    GenerationUpdate(
+                        deployment=deployment_name,
+                        component=component_name,
+                        reference=reference_name,
+                        resource_type=ResourceType.from_string(resource_type),
+                        new_generation=new_generation,
+                    ),
+                )
 
                 # Validation off on purpose: the data is already restored into the new
                 # generation, so refusing to record it would leave the project file

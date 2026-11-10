@@ -222,9 +222,9 @@ def _render_section_html(
 
 #: Welke action een modal-wizard-stroom vraagt. De route zelf draagt ``project.read``
 #: als bodem; welk recht de stroom ECHT vraagt hangt af van ``flow_id``, en dat is een
-#: padparameter. Een back-up aanmaken mag elk projectlid; terugzetten overschrijft data
-#: of schrijft een nieuwe deployment, dus dat vraagt de operationele rol (RC-323); elke
-#: andere stroom bewerkt het projectbestand.
+#: padparameter. Een back-up aanmaken en terugzetten staan sinds RC-392 op dezelfde regel
+#: van de matrix: niet-productie is developer, productie is ops; elke andere stroom
+#: bewerkt het projectbestand.
 FLOW_ACTIONS: dict[str, Action] = {
     "modal-backup": Action.BACKUP_CREATE,
     "modal-restore": Action.RESTORE_RUN,

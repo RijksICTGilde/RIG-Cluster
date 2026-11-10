@@ -23,7 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.backup.restore import _restore_database_with_versioning
+from opi.manager.backup.restore import restore_database_with_versioning
 from opi.manager.database_manager import DatabaseManager
 from opi.services.secrets import DatabaseSecret
 
@@ -163,7 +163,7 @@ def restore_environment(server: _FakePostgresServer, kubectl: _FakeKubectlConnec
 async def _run_restore(project_data: dict[str, Any] | None = None) -> dict[str, Any]:
     project_file_handler = MagicMock()
     project_file_handler.get_database_generation = MagicMock(return_value=0)
-    return await _restore_database_with_versioning(
+    return await restore_database_with_versioning(
         project_name=PROJECT,
         deployment_name=DEPLOYMENT,
         component_name="web",

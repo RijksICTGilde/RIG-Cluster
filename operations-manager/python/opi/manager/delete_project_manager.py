@@ -1787,10 +1787,11 @@ class DeleteProjectManager:
         Delete all resources associated with a specific deployment.
 
         This function orchestrates the deletion of:
-        1. Service resources (Keycloak clients, database resources, MinIO resources)
-        2. Application manifests from git repositories
-        3. ArgoCD applications
-        4. Kubernetes namespace (last, after ArgoCD cleanup)
+        1. The ArgoCD Application file in git, with the kustomization rebuilt
+        2. The ArgoCD Application itself, awaited and in force mode swept
+        3. Kubernetes namespace (only once the Application is confirmed gone, or in force mode)
+        4. Service resources (Keycloak clients, database, MinIO, SeaweedFS, mail)
+        5. Application manifests from git repositories (same condition as the namespace)
 
         Args:
             project_name: Name of the project
@@ -3153,10 +3154,8 @@ class DeleteProjectManager:
         elif repository_name and cluster:
             try:
                 repositories = project_data.get("repositories", [])
-                # Also check previous project data repositories
-                prev_repositories = deployment_data.get("_project_repositories", repositories)
                 repo_config = None
-                for repo in repositories or prev_repositories:
+                for repo in repositories:
                     if repo.get("name") == repository_name:
                         repo_config = repo
                         break

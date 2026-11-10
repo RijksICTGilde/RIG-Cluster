@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from opi.services.project_file_handler import (
     ProjectFileHandler,
+    find_persistent_storage,
     is_image_pull_disable_reason,
+    persistent_storages,
 )
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.yaml_util import dump_yaml_for_go
@@ -524,3 +526,81 @@ class TestHelmValuesTextVariantKeepsItsSourceForm:
         result = await getattr(handler, method)(project_data, *args)
 
         assert dump_yaml_for_go(result) == self.SOURCE
+
+
+class TestPersistentStorages:
+    """``persistent_storages`` and ``find_persistent_storage``: the one lookup the four
+    restore and backup call sites shared, each with its own copy, before RC-472."""
+
+    def test_an_explicit_name_is_used_as_is(self) -> None:
+        component = {
+            "services": [{"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}}]
+        }
+        assert persistent_storages(component) == [
+            ("data", {"name": "data", "size": "1Gi", "mount-path": "/data", "type": "persistent"})
+        ]
+
+    def test_an_unnamed_entry_is_named_after_mount_path_and_position(self) -> None:
+        component = {
+            "services": [
+                {
+                    "persistent-storage": {
+                        "config": [
+                            {"size": "1Gi", "mount-path": "/var/lib/data"},
+                        ]
+                    }
+                }
+            ]
+        }
+        from opi.utils.naming import generate_storage_name
+
+        name, storage = persistent_storages(component)[0]
+        assert name == generate_storage_name("/var/lib/data", 0)
+        assert storage["mount-path"] == "/var/lib/data"
+
+    def test_ephemeral_entries_are_excluded(self) -> None:
+        component = {
+            "services": [
+                {"persistent-storage": {"config": [{"name": "data", "size": "1Gi"}]}},
+                {"temp-storage": {"config": [{"name": "scratch", "size": "100Mi"}]}},
+            ]
+        }
+        names = [name for name, _storage in persistent_storages(component)]
+        assert names == ["data"]
+
+    def test_position_in_the_generated_name_counts_ephemeral_entries_too(self) -> None:
+        """The index an unnamed, mount-path-less entry falls back to is its position in
+        the FULL storage list, ephemeral entries included, not just among the persistent
+        ones: ``generate_storage_name`` only uses the index when there is no mount path."""
+        component = {
+            "services": [
+                {"temp-storage": {"config": [{}]}},
+                {"temp-storage": {"config": [{}]}},
+                {"persistent-storage": {"config": [{}]}},
+            ]
+        }
+        [(name, _storage)] = persistent_storages(component)
+        assert name == "storage2"
+
+    def test_a_component_without_storage_has_none(self) -> None:
+        assert persistent_storages({"services": []}) == []
+        assert persistent_storages({}) == []
+
+    def test_find_returns_the_matching_entry(self) -> None:
+        component = {
+            "services": [
+                {
+                    "persistent-storage": {
+                        "config": [
+                            {"name": "data", "size": "1Gi"},
+                            {"name": "logs", "size": "500Mi"},
+                        ]
+                    }
+                }
+            ]
+        }
+        assert find_persistent_storage(component, "logs") == {"name": "logs", "size": "500Mi", "type": "persistent"}
+
+    def test_find_returns_none_when_no_entry_matches(self) -> None:
+        component = {"services": [{"persistent-storage": {"config": [{"name": "data", "size": "1Gi"}]}}]}
+        assert find_persistent_storage(component, "does-not-exist") is None

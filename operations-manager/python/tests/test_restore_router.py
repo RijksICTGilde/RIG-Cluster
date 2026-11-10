@@ -523,7 +523,7 @@ class TestEenMislukteTerugzetActieGeeftNietsPrijs:
             patch("opi.core.cluster_config.get_database_server", return_value="db.intern"),
             patch("opi.connectors.postgres.create_postgres_connector", side_effect=OSError(self.STORING)),
         ):
-            result = await module._restore_database_with_versioning(
+            result = await module.restore_database_with_versioning(
                 project_name=PROJECT,
                 deployment_name="main",
                 component_name="web",

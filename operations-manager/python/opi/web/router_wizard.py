@@ -54,6 +54,7 @@ from opi.services.project_environment import environment_markings, log_productio
 from opi.services.project_file_handler import merge_staged_attachments
 from opi.services.project_roles import CREATOR_ROLES
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.services.project_utils import apply_literal_scalars
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.services.step_up import (
@@ -2729,7 +2730,7 @@ async def _start_project_creation(
     normalize_service_entries(data)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
-    _apply_literal_scalars(data)
+    apply_literal_scalars(data)
 
     # Een nieuw project kan al in een stand worden aangemaakt die een goedkeuring vraagt,
     # dus legt het aanmaken die aanvraag vast, met dezelfde functie als de bewerkwizard.
@@ -2768,39 +2769,3 @@ async def _start_project_creation(
     response = HTMLResponse(content="", status_code=200)
     response.headers["HX-Redirect"] = f"/projects/progress/{task_id}"
     return response
-
-
-def _apply_literal_scalars(data: dict[str, Any]) -> None:
-    """Convert multiline strings to LiteralScalarString for YAML output.
-
-    AGE-encrypted values contain newlines and must be serialized as
-    literal block scalars (``|``) to preserve formatting.
-    """
-    from ruamel.yaml.scalarstring import LiteralScalarString
-
-    def _literalize(d: dict, key: str) -> None:
-        value = d.get(key)
-        if isinstance(value, str) and "\n" in value:
-            d[key] = LiteralScalarString(value)
-
-    config = data.get("config", {})
-    for key in ("age-private-key", "api-key"):
-        _literalize(config, key)
-
-    for repo in data.get("repositories", []):
-        if isinstance(repo, dict):
-            _literalize(repo, "password")
-
-    # Component-level user-env-vars (create flow)
-    for comp in data.get("components", []):
-        if isinstance(comp, dict):
-            _literalize(comp, "user-env-vars")
-            # One AGE block, exactly like user-env-vars above (RC-106).
-            _literalize(comp, "aliases")
-
-    # Deployment-component-level user-env-vars (edit/add flows)
-    for dep in data.get("deployments", []):
-        if isinstance(dep, dict):
-            for comp in dep.get("components", []):
-                if isinstance(comp, dict):
-                    _literalize(comp, "user-env-vars")

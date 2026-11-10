@@ -108,6 +108,9 @@ startup:
         note: >-
           de echte worker pakt elke taak van de groep tasks_live uit de rij en voert hem uit;
           een worker die niet draait laat elk scenario op zijn wachtpunt vallen
+  - step: task_handlers
+    where: lifespan
+    dependencies: {}
   - step: FederationService
     where: lifespan
     dependencies:

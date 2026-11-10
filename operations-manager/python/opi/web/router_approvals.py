@@ -43,10 +43,10 @@ from opi.services.approvals import collect_approval_items
 from opi.services.catalog.publish_on_web.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
+from opi.services.project_utils import apply_literal_scalars
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.yaml_util import dump_yaml_to_string
-from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
 
@@ -495,7 +495,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         existing_data.pop("_admin_email", None)
         existing_data.pop("_approval_items", None)
 
-        _apply_literal_scalars(existing_data)
+        apply_literal_scalars(existing_data)
 
         # Save through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.

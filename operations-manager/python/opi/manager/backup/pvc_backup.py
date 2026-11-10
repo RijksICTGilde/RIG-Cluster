@@ -200,23 +200,11 @@ class PVCBackupManager(BaseBackupManager):
                 if not component_name:
                     continue
 
-                from opi.services.project_file_handler import extract_storage_from_component_services
+                from opi.services.project_file_handler import persistent_storages
 
                 base_component = base_components.get(component_name, {})
-                storages = extract_storage_from_component_services(base_component)
 
-                for idx, storage in enumerate(storages):
-                    # Ephemeral storage has no PVC.
-                    if storage.get("type") != "persistent":
-                        continue
-
-                    storage_name = storage.get("name")
-                    if not storage_name:
-                        from opi.utils.naming import generate_storage_name
-
-                        mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
-                        storage_name = generate_storage_name(mount_path, idx)
-
+                for storage_name, _storage in persistent_storages(base_component):
                     unique_name = generate_unique_name(deployment_name, component_name)
 
                     generation = project_file_handler.get_storage_generation(

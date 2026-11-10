@@ -11,9 +11,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-# Top-level fields no form should ever submit. name=on-disk filename;
-# clusters=not yet editable (see features/futures/cluster-editing.md).
-IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
+from opi.forms.wizard.save import IMMUTABLE_PROJECT_FIELDS
+
+__all__ = ["IMMUTABLE_PROJECT_FIELDS", "apply_form_data_to_project"]
 
 
 def apply_form_data_to_project(

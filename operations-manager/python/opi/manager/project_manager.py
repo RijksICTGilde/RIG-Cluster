@@ -82,7 +82,7 @@ from opi.services.project_file_handler import (
 from opi.services.project_key_secret import ProjectKeySecretHandler
 from opi.services.project_reconciliation_service import record_reconciliation
 from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
-from opi.services.project_store import get_project_store
+from opi.services.project_store import MutationResult, get_project_store
 from opi.services.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
     normalize_container_image,
@@ -927,7 +927,7 @@ class ProjectManager:
         enforce_validation: bool = True,
         base: dict[str, Any] | None = None,
         approval_decision: bool = False,
-    ) -> None:
+    ) -> MutationResult:
         """The ONLY validated way to persist a mutated project file.
 
         Order (fails closed -- steps 1-2 happen before any disk write or commit):
@@ -975,7 +975,7 @@ class ProjectManager:
         # re-validates rather than silently publishing over their change. None when
         # the caller built project_data without reading first (create), which is the
         # one case where there is nothing to lose.
-        await get_project_store().save(
+        result = await get_project_store().save(
             str(project_data.get("name")),
             project_data,
             message=commit_message,
@@ -991,6 +991,7 @@ class ProjectManager:
         # instance compares against what it just wrote instead of against the older
         # read -- which would otherwise look like a concurrent change.
         self.__contents_as_read = copy.deepcopy(project_data)
+        return result
 
     async def mutate_and_commit_project(
         self,

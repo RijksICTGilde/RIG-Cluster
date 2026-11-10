@@ -148,69 +148,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
-            # Register handlers (imported locally to avoid circular imports)
-            from opi.runtime.backup.task_handlers_backup import (  # type: ignore[reportMissingImports]
-                handle_backup,
-                handle_restore,
-            )
-            from opi.runtime.tasks.task_handlers_components import (  # type: ignore[reportMissingImports]
-                handle_add_component,
-                handle_add_component_to_deployment,
-                handle_add_service,
-                handle_configure_service,
-                handle_configure_service_values,
-                handle_delete_component,
-                handle_manage_database_schemas,
-                handle_update_component,
-            )
-            from opi.runtime.tasks.task_handlers_deployment import (  # type: ignore[reportMissingImports]
-                handle_delete_deployment,
-                handle_update_image,
-            )
-            from opi.runtime.tasks.task_handlers_operations import (  # type: ignore[reportMissingImports]
-                handle_clone_bucket,
-                handle_clone_database,
-                handle_refresh_deployment,
-                handle_refresh_project,
-                handle_rotate_credentials,
-                handle_rotate_project_key,
-            )
-            from opi.runtime.tasks.task_handlers_project import (  # type: ignore[reportMissingImports]
-                handle_create_project,
-                handle_delete_project,
-                handle_upsert_deployment,
-            )
-            from opi.services.catalog.attachments.task import (
-                handle_configure_attachment,
-                handle_delete_attachment,
-            )
-            from opi.services.catalog.sleep_mode.task import handle_sleep_transition
+            # Imported locally to avoid circular imports; the list itself is shared with
+            # the standalone worker.
+            from opi.runtime.tasks.handler_registry import task_handlers
 
-            _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
-            _worker_instance.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
-            _worker_instance.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
-            _worker_instance.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
-            _worker_instance.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
-            _worker_instance.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
-            _worker_instance.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
-            _worker_instance.register_handler(TaskType.CONFIGURE_ATTACHMENT, handle_configure_attachment)
-            _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
-            _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
-            _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
-            _worker_instance.register_handler(TaskType.ROTATE_CREDENTIALS, handle_rotate_credentials)
-            _worker_instance.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
-            _worker_instance.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
-            _worker_instance.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
-            _worker_instance.register_handler(TaskType.ROTATE_PROJECT_KEY, handle_rotate_project_key)
-            _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
-            _worker_instance.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
-            _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
-            _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
-            _worker_instance.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
-            _worker_instance.register_handler(TaskType.CONFIGURE_SERVICE_VALUES, handle_configure_service_values)
-            _worker_instance.register_handler(TaskType.MANAGE_DATABASE_SCHEMAS, handle_manage_database_schemas)
-            _worker_instance.register_handler(TaskType.BACKUP, handle_backup)
-            _worker_instance.register_handler(TaskType.RESTORE, handle_restore)
+            for task_type, handler in task_handlers().items():
+                _worker_instance.register_handler(task_type, handler)
 
             # Limit concurrent backup/restore tasks to avoid resource contention
             _worker_instance.set_type_concurrency_limit(TaskType.BACKUP, settings.BACKUP_MAX_CONCURRENT)

@@ -22,6 +22,7 @@ from opi.utils.egress_guard import (
     REFUSED_CLONE_SOURCE_REASON,
     UNREACHABLE_SOURCE_REASON,
     clone_source_refusal,
+    has_direct_clone_source,
     host_is_allowed,
     host_is_public,
 )
@@ -117,6 +118,30 @@ class TestAnUnjudgeableSourceIsRefused:
 @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
 def test_no_cluster_allows_a_private_network(cluster_name: str) -> None:
     assert get_external_clone_allowed_private_networks(cluster_name) == []
+
+
+class TestHasDirectCloneSource:
+    """The one check all four direct-clone entrances share, replacing their own
+    ``not host or not port``."""
+
+    def test_both_present_is_complete(self) -> None:
+        assert has_direct_clone_source("db.publiek.nl", 5432) is True
+
+    def test_missing_host_is_incomplete(self) -> None:
+        assert has_direct_clone_source(None, 5432) is False
+
+    def test_missing_port_is_incomplete(self) -> None:
+        assert has_direct_clone_source("db.publiek.nl", None) is False
+
+    def test_both_missing_is_incomplete(self) -> None:
+        assert has_direct_clone_source(None, None) is False
+
+    def test_an_empty_host_is_incomplete(self) -> None:
+        assert has_direct_clone_source("", 5432) is False
+
+    def test_a_zero_port_is_incomplete(self) -> None:
+        """Port 0 is not a valid dial target either, same as the old ``not port``."""
+        assert has_direct_clone_source("db.publiek.nl", 0) is False
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +315,48 @@ class TestCloneRoutesRefuseANonPublicSource:
             json=_database_body(sourceHost=None, tunnel=_TUNNEL),
         )
         assert response.status_code == 202
+
+
+class TestSyncCloneRouteRequiresBothOrATunnel:
+    """The v1 sync path (``sync=true``) answers the incomplete-source case itself, with an
+    HTTP 400. The async path hands the same ``has_direct_clone_source`` check to the task
+    handler instead (covered in ``test_task_handlers_progress.py``)."""
+
+    @staticmethod
+    def _mock_project_manager() -> AsyncMock:
+        project_manager = AsyncMock()
+        project_manager.close = AsyncMock()
+        return project_manager
+
+    def test_v1_clone_database_without_a_port(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        project_manager = self._mock_project_manager()
+        with patch("opi.api.router.ProjectManager", return_value=project_manager):
+            response = client.post(
+                "/api/projects/test-project/deployments/staging/:clone-database-from-external?sync=true",
+                headers=HEADERS,
+                json=_database_body(sourcePort=None),
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "sourceHost and sourcePort are required when not using tunnel configuration"
+        project_manager.clone_database_from_external_direct.assert_not_called()
+        mock_task_service.create_task.assert_not_called()
+
+    def test_v1_clone_bucket_without_a_host(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        project_manager = self._mock_project_manager()
+        with patch("opi.api.router.ProjectManager", return_value=project_manager):
+            response = client.post(
+                "/api/projects/test-project/deployments/staging/:clone-bucket-from-external?sync=true",
+                headers=HEADERS,
+                json=_bucket_body(sourceHost=None),
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "sourceHost and sourcePort are required when not using tunnel configuration"
+        project_manager.clone_minio_bucket_from_external_direct.assert_not_called()
+        mock_task_service.create_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

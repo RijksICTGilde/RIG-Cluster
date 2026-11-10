@@ -57,7 +57,7 @@ from opi.services.project_utils import (
 )
 from opi.services.step_up import StepUpAction
 from opi.utils.age import encrypt_age_content
-from opi.utils.egress_guard import clone_source_refusal
+from opi.utils.egress_guard import clone_source_refusal, has_direct_clone_source
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_names import validate_project_name
 from opi.utils.yaml_util import load_yaml_from_string
@@ -183,6 +183,47 @@ class UpsertDeploymentRequest(BaseModel):
             }
         }
     }
+
+
+async def validate_upsert_deployment_request(
+    request: Request,
+    project_name: str,
+    deployment_data: UpsertDeploymentRequest,
+) -> None:
+    """The checks both upsert entrances run before the work is handed over.
+
+    Raises HTTPException 400 on a malformed name or payload, and lets the authz guards
+    raise their own refusal.
+    """
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
+    if sanitized_name != deployment_data.deploymentName.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    await validate_api_payload(
+        deployment_data.model_dump(),
+        UPSERT_DEPLOYMENT_VALIDATORS,
+    )
+    for comp in deployment_data.components:
+        await validate_api_payload(
+            {"newImageUrl": comp.image},
+            UPDATE_IMAGE_VALIDATORS,
+        )
+
+    # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
+    # not in the path, so the route gate cannot weigh it.
+    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
+        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
+
+    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
 
 
 class StorageAction(BaseModel):
@@ -862,36 +903,7 @@ async def upsert_deployment(
     """
     logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
 
-    if not validate_project_name(project_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-        )
-
-    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-    if sanitized_name != deployment_data.deploymentName.lower():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-        )
-
-    await validate_api_payload(
-        deployment_data.model_dump(),
-        UPSERT_DEPLOYMENT_VALIDATORS,
-    )
-
-    for comp in deployment_data.components:
-        await validate_api_payload(
-            {"newImageUrl": comp.image},
-            UPDATE_IMAGE_VALIDATORS,
-        )
-
-    # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
-    # not in the path, so the route gate cannot weigh it.
-    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
-        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
-
-    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
+    await validate_upsert_deployment_request(request, project_name, deployment_data)
 
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
@@ -2308,10 +2320,12 @@ async def clone_database_from_external(
                 force_clone=clone_data.forceClone,
             )
         else:
-            if not clone_data.sourceHost or not clone_data.sourcePort:
+            if not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
                 raise HTTPException(
                     status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
                 )
+            assert clone_data.sourceHost is not None  # noqa: S101 - has_direct_clone_source just confirmed it
+            assert clone_data.sourcePort is not None  # noqa: S101 - has_direct_clone_source just confirmed it
 
             logger.info(
                 f"External database clone request (direct): {project_name}/{deployment_name} "
@@ -2461,10 +2475,12 @@ async def clone_bucket_from_external(
                 force_clone=clone_data.forceClone,
             )
         else:
-            if not clone_data.sourceHost or not clone_data.sourcePort:
+            if not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
                 raise HTTPException(
                     status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
                 )
+            assert clone_data.sourceHost is not None  # noqa: S101 - has_direct_clone_source just confirmed it
+            assert clone_data.sourcePort is not None  # noqa: S101 - has_direct_clone_source just confirmed it
 
             logger.info(
                 f"External bucket clone request (direct): {project_name}/{deployment_name} "

@@ -37,6 +37,11 @@ async def host_is_public(host: str) -> bool:
     return await host_is_allowed(host)
 
 
+def has_direct_clone_source(host: str | None, port: int | None) -> bool:
+    """Is a direct clone source complete? Without a host or a port there is nothing to dial."""
+    return bool(host) and bool(port)
+
+
 #: One message for every refused clone source, otherwise the refusal is an oracle itself.
 REFUSED_CLONE_SOURCE_REASON = "de kloonbron moet op een publiek adres staan"
 

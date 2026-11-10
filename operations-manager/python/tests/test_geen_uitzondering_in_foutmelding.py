@@ -360,7 +360,7 @@ class TestDeDrieDeurenErbij:
         "    return render(request, template='bg/_resource-usage.html.j2', context=ctx)\n"
     )
 
-    #: De vorm uit ``_restore_database_with_versioning``: een dict die verderop in een
+    #: De vorm uit ``restore_database_with_versioning``: een dict die verderop in een
     #: 500-body belandt.
     TERUGGEGEVEN_DICT = (
         "def zet_terug():\n"

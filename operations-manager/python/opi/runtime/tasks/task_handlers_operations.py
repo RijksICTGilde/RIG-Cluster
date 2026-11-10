@@ -27,6 +27,7 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     wrap_project_key,
 )
+from opi.utils.egress_guard import has_direct_clone_source
 from opi.utils.key_rotation import ConversionError, rotate_project_key
 from opi.utils.project_names import validate_project_name
 
@@ -102,11 +103,13 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
             source_host: str | None = payload.get("source_host")
             source_port: int | None = payload.get("source_port")
 
-            if not source_host or not source_port:
+            if not has_direct_clone_source(source_host, source_port):
                 error_msg = "source_host and source_port are required when not using tunnel configuration"
                 progress.fail_task(clone_task, error_msg)
                 progress.fail_project(error_msg)
                 raise ValueError(error_msg)
+            assert source_host is not None  # noqa: S101 - has_direct_clone_source just confirmed it
+            assert source_port is not None  # noqa: S101 - has_direct_clone_source just confirmed it
 
             logger.info(
                 "External database clone request (direct): %s/%s <- %s:%s/%s",
@@ -222,11 +225,13 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             source_host: str | None = payload.get("source_host")
             source_port: int | None = payload.get("source_port")
 
-            if not source_host or not source_port:
+            if not has_direct_clone_source(source_host, source_port):
                 error_msg = "source_host and source_port are required when not using tunnel configuration"
                 progress.fail_task(clone_task, error_msg)
                 progress.fail_project(error_msg)
                 raise ValueError(error_msg)
+            assert source_host is not None  # noqa: S101 - has_direct_clone_source just confirmed it
+            assert source_port is not None  # noqa: S101 - has_direct_clone_source just confirmed it
 
             logger.info(
                 "External bucket clone request (direct): %s/%s <- %s:%s/%s",

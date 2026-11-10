@@ -18,6 +18,7 @@ from opi.http.auth.endpoint_util import validate_api_token
 from opi.services.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
+    find_persistent_storage,
 )
 
 if TYPE_CHECKING:
@@ -36,9 +37,11 @@ from opi.manager.backup import (
 )
 from opi.manager.backup.restore import (
     TERUGZETTEN_MISLUKT,
-    _restore_bucket_with_versioning,
-    _restore_database_with_versioning,
-    _restore_pvc_with_versioning,
+    GenerationUpdate,
+    restore_bucket_with_versioning,
+    restore_database_with_versioning,
+    restore_pvc_with_versioning,
+    set_restored_generation,
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
@@ -47,7 +50,6 @@ from opi.services.project_store import get_project_store
 from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from opi.utils.naming import (
     generate_pvc_name,
-    generate_storage_name,
     generate_unique_name,
 )
 from opi.utils.patterns import (
@@ -883,19 +885,7 @@ async def restore_project_pvc(
         if not base_component:
             raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
 
-        storage_list = extract_storage_from_component_services(base_component)
-        target_storage = None
-
-        for idx, storage in enumerate(storage_list):
-            if storage.get("type") != "persistent":
-                continue
-            storage_name = storage.get("name")
-            if not storage_name:
-                mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
-                storage_name = generate_storage_name(mount_path, idx)
-            if storage_name == body.storage_name:
-                target_storage = storage
-                break
+        target_storage = find_persistent_storage(base_component, body.storage_name)
 
         if not target_storage:
             raise HTTPException(
@@ -955,8 +945,16 @@ async def restore_project_pvc(
             )
 
         logger.info(f"Updating project file with generation {next_generation}")
-        project_file_handler.set_storage_generation(
-            project_data, body.deployment_name, body.component_name, body.storage_name, next_generation
+        set_restored_generation(
+            project_file_handler,
+            project_data,
+            GenerationUpdate(
+                deployment=body.deployment_name,
+                component=body.component_name,
+                reference=body.storage_name,
+                resource_type=ResourceType.PVC,
+                new_generation=next_generation,
+            ),
         )
 
         commit_message = (
@@ -1009,17 +1007,6 @@ async def restore_project_pvc(
     except Exception as e:
         logger.exception("Error in project restore for %s", project_name)
         raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-
-@dataclass
-class GenerationUpdate:
-    """One generation a restore has to write into the project file."""
-
-    deployment: str
-    component: str
-    reference: str
-    resource_type: ResourceType
-    new_generation: int
 
 
 async def _restore_snapshot(
@@ -1182,7 +1169,7 @@ async def _restore_database(
     project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a database from snapshot using versioned restore."""
-    result = await _restore_database_with_versioning(
+    result = await restore_database_with_versioning(
         project_name=project_name,
         deployment_name=deployment_name,
         component_name=component_name,
@@ -1233,7 +1220,7 @@ async def _restore_bucket(
     project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a bucket from snapshot using versioned restore."""
-    result = await _restore_bucket_with_versioning(
+    result = await restore_bucket_with_versioning(
         project_name=project_name,
         deployment_name=deployment_name,
         component_name=component_name,
@@ -1270,27 +1257,6 @@ async def _restore_bucket(
     )
 
     return detail, update
-
-
-def _set_generation(
-    project_file_handler: ProjectFileHandler,
-    project_data: dict[str, Any],
-    update: GenerationUpdate,
-) -> None:
-    """Set generation in project file based on resource type."""
-    match update.resource_type:
-        case ResourceType.PVC:
-            # PVC is component-level
-            project_file_handler.set_storage_generation(
-                project_data, update.deployment, update.component, update.reference, update.new_generation
-            )
-        case ResourceType.DATABASE:
-            # Database is deployment-level; the handler resolves which PostgreSQL service
-            # name the project declares, so the write and the read cannot disagree.
-            project_file_handler.set_database_generation(project_data, update.deployment, update.new_generation)
-        case ResourceType.BUCKET:
-            # Bucket is deployment-level
-            project_file_handler.set_bucket_generation(project_data, update.deployment, update.new_generation)
 
 
 @restore_router.post(
@@ -1367,7 +1333,7 @@ async def restore_backup_run(
         project_updated = False
         if generation_updates:
             for upd in generation_updates:
-                _set_generation(project_file_handler, project_data, upd)
+                set_restored_generation(project_file_handler, project_data, upd)
             project_updated = True
 
             restored_names = [d.target_pvc_name for d in restore_details if d.success]
@@ -2059,7 +2025,7 @@ async def restore_deployment_resource(
             raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
         if body.resource_type == "pvc":
-            result = await _restore_pvc_with_versioning(
+            result = await restore_pvc_with_versioning(
                 project_name=project_name,
                 deployment_name=deployment_name,
                 component_name=body.component_name,
@@ -2071,7 +2037,7 @@ async def restore_deployment_resource(
                 project_file_handler=project_file_handler,
             )
         elif body.resource_type == "database":
-            result = await _restore_database_with_versioning(
+            result = await restore_database_with_versioning(
                 project_name=project_name,
                 deployment_name=deployment_name,
                 component_name=body.component_name,
@@ -2083,7 +2049,7 @@ async def restore_deployment_resource(
                 project_file_handler=project_file_handler,
             )
         else:  # minio
-            result = await _restore_bucket_with_versioning(
+            result = await restore_bucket_with_versioning(
                 project_name=project_name,
                 deployment_name=deployment_name,
                 component_name=body.component_name,

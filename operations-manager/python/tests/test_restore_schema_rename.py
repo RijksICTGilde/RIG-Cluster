@@ -368,7 +368,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
     @pytest.mark.asyncio
     async def test_the_previous_generation_database_is_named_as_the_source(self) -> None:
         """The restore into generation N+1 knows exactly which database the dump came from."""
-        from opi.manager.backup.restore import _restore_database_with_versioning
+        from opi.manager.backup.restore import restore_database_with_versioning
 
         backup_manager = MagicMock()
         backup_manager.restore_database = AsyncMock(return_value=MagicMock(success=True, error=None))
@@ -393,7 +393,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
             patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
             patch("opi.services.secrets.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         ):
-            result = await _restore_database_with_versioning(
+            result = await restore_database_with_versioning(
                 project_name="amt",
                 deployment_name="prod",
                 component_name="app",

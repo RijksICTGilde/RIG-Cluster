@@ -152,7 +152,7 @@
 "opi/middleware/server_side_session.py" = ["ANN401", "C901", "PLR0913"]
 "opi/runtime/backup/backup_retention_sweep.py" = ["ANN204"]
 "opi/runtime/backup/backup_scheduler.py" = ["ANN204", "BLE001", "C901", "PLR0912", "PLR0913"]
-"opi/runtime/backup/backup_tasks.py" = ["PLR0913", "PLR0915"]
+"opi/runtime/backup/backup_tasks.py" = ["PLR0913"]
 "opi/runtime/backup/task_handlers_backup.py" = ["C901", "PLR0912", "PLR0915"]
 "opi/runtime/periodic/db_console_reaper.py" = ["ANN001", "ANN204", "BLE001", "PLR0913"]
 "opi/runtime/periodic/git_monitor.py" = ["BLE001"]
