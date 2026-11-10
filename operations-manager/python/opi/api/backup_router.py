@@ -35,12 +35,9 @@ from opi.utils.naming import generate_backup_run_id
 
 logger = logging.getLogger(__name__)
 
-#: Twee takken lopen op hetzelfde uit -- een vergrendeling die geen vergrendeling was,
-#: en alles wat de back-up verder kan breken -- dus zeggen ze de lezer hetzelfde.
-BACKUP_MISLUKT = "De back-up van deze deployment is niet gelukt. Probeer het over een minuut opnieuw."
-
-
-# Request/Response Models
+#: Two branches come out at the same place (a lock that was no lock, and everything else that
+#: can break a backup), so they say the same thing to the reader.
+BACKUP_FAILED = "De back-up van deze deployment is niet gelukt. Probeer het over een minuut opnieuw."
 
 
 class BackupResultModel(BaseModel):
@@ -55,8 +52,6 @@ class BackupResultModel(BaseModel):
 
 
 class BackupStatusResponse(BaseModel):
-    """Response for backup status."""
-
     lock_held: bool = Field(..., description="Whether a backup is currently running")
     current_namespace: str | None = Field(None, description="Namespace being backed up")
     current_pvc: str | None = Field(None, description="PVC being backed up")
@@ -89,8 +84,6 @@ class BackupRun(BaseModel):
 
 
 class BackupRunsResponse(BaseModel):
-    """Response for listing backup runs."""
-
     cluster: str
     namespace: str
     runs: list[BackupRun] = Field(default_factory=list, description="List of backup runs")
@@ -145,12 +138,7 @@ class BackupRunsResponse(BaseModel):
     }
 
 
-# Database Backup Models
-
-
 class DatabaseBackupResultModel(BaseModel):
-    """Result of a database backup operation."""
-
     namespace: str
     reference_name: str
     database_name: str | None = None
@@ -160,12 +148,7 @@ class DatabaseBackupResultModel(BaseModel):
     duration_seconds: float = 0
 
 
-# Bucket Backup Models
-
-
 class BucketBackupResultModel(BaseModel):
-    """Result of a bucket backup operation."""
-
     namespace: str
     reference_name: str
     bucket_name: str | None = None
@@ -176,12 +159,7 @@ class BucketBackupResultModel(BaseModel):
     duration_seconds: float = 0
 
 
-# Deployment Backup Request Model
-
-
 class DeploymentBackupRequest(BaseModel):
-    """Request body for project deployment backup operations."""
-
     resource_types: list[str] = Field(
         default=DEFAULT_BACKUP_RESOURCE_TYPES,
         description="List of resource types to backup: 'pvc', 'database', 'minio'. Defaults to all.",
@@ -196,9 +174,6 @@ class DeploymentBackupRequest(BaseModel):
     }
 
 
-# Combined Deployment Backup Response Models
-
-
 class DeploymentBackupResponse(BaseModel):
     """Response for combined deployment backup operations (PVCs, databases, buckets)."""
 
@@ -211,9 +186,6 @@ class DeploymentBackupResponse(BaseModel):
     bucket_results: list[BucketBackupResultModel] = Field(default_factory=list, description="Bucket backup results")
 
 
-# Router
-
-
 backup_router = APIRouter(
     prefix="/api/v1/backup",
     tags=["backup"],
@@ -223,7 +195,6 @@ backup_router = APIRouter(
 
 
 def _result_to_model(result: BackupResult) -> BackupResultModel:
-    """Convert BackupResult dataclass to Pydantic model."""
     return BackupResultModel(
         namespace=result.namespace,
         pvc_name=result.pvc_name,
@@ -235,7 +206,6 @@ def _result_to_model(result: BackupResult) -> BackupResultModel:
 
 
 def _database_result_to_model(result: DatabaseBackupResult) -> DatabaseBackupResultModel:
-    """Convert DatabaseBackupResult dataclass to Pydantic model."""
     return DatabaseBackupResultModel(
         namespace=result.namespace,
         reference_name=result.reference_name or "",
@@ -248,7 +218,6 @@ def _database_result_to_model(result: DatabaseBackupResult) -> DatabaseBackupRes
 
 
 def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultModel:
-    """Convert BucketBackupResult dataclass to Pydantic model."""
     return BucketBackupResultModel(
         namespace=result.namespace,
         reference_name=result.reference_name or "",
@@ -265,11 +234,7 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 @action(Action.PLATFORM_BACKUP)
 @validate_platform_admin_token
 async def get_backup_status(request: Request) -> BackupStatusResponse:
-    """
-    Get current backup status.
-
-    Returns information about whether a backup is currently running,
-    which namespace/PVC is being backed up, and lock details.
+    """Whether a backup is running right now, on which namespace and PVC, and who holds the lock.
 
     The lock is one per cluster, not one per project, so there is no project to check a
     project key against. Reading it is platform maintenance, so a platform admin signs in
@@ -309,8 +274,7 @@ async def backup_project_deployment(
     deployment_name: DeploymentNamePath,
     body: DeploymentBackupRequest | None = None,
 ) -> JSONResponse:
-    """
-    Trigger backup for resources in a specific project deployment.
+    """Trigger backup for resources in a specific project deployment.
 
     This endpoint backs up selected resource types:
     - PVCs (persistent volumes defined in the project file for this deployment)
@@ -318,13 +282,8 @@ async def backup_project_deployment(
     - MinIO buckets (if deployment uses minio-storage)
 
     The namespace is resolved from the project configuration based on the
-    deployment name and cluster settings.
-
-    Request Body (optional):
-        resource_types: List of types to backup. Default: ["pvc", "database", "minio"]
-
-    Headers:
-        X-API-Key: The API key (required)
+    deployment name and cluster settings. ``resource_types`` in the body picks the types;
+    it defaults to all of them.
 
     Example:
     ```bash
@@ -340,14 +299,12 @@ async def backup_project_deployment(
     ```
     """
     try:
-        # Parse resource types from body (defaults to all)
         resource_types = body.resource_types if body else DEFAULT_BACKUP_RESOURCE_TYPES
         logger.info(
             f"Backup request for project: {project_name}, deployment: {deployment_name}, "
             f"resource_types: {resource_types}"
         )
 
-        # Look up project data
         project = get_project_store().get(project_name)
 
         if not project or not project.data:
@@ -356,7 +313,6 @@ async def backup_project_deployment(
                 detail=f"Project '{project_name}' not found or has no configuration data",
             )
 
-        # Extract deployment namespace and cluster
         project_file_handler = create_project_file_handler()
         raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
         deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, deployment_name)
@@ -373,7 +329,6 @@ async def backup_project_deployment(
                 detail=f"Deployment '{deployment_name}' has no cluster configured",
             )
 
-        # Verify deployment is on the current cluster
         current_cluster = settings.CLUSTER_MANAGER
         if deployment_cluster != current_cluster:
             raise HTTPException(
@@ -383,12 +338,11 @@ async def backup_project_deployment(
                 f"Cannot backup cross-cluster.",
             )
 
-        # Get the actual Kubernetes namespace with cluster prefix
         app_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
         logger.info(f"Resolved application namespace: {app_namespace}")
 
-        # Generate a single backup_run_id for all backups in this run
+        # One backup_run_id for every backup in this run, so a restore can take them together.
         backup_run_id = generate_backup_run_id()
         logger.info(f"Starting backup run {backup_run_id} for {project_name}/{deployment_name}")
 
@@ -396,7 +350,6 @@ async def backup_project_deployment(
         all_results: list[BackupResult] = []
         namespaces_backed_up: list[str] = []
 
-        # Backup PVCs if requested
         if "pvc" in resource_types:
             logger.info(f"Backing up PVCs in application namespace: {app_namespace}")
             app_results = await backup_manager.backup_project_deployment(
@@ -411,12 +364,10 @@ async def backup_project_deployment(
             if app_results:
                 namespaces_backed_up.append(app_namespace)
 
-        # Track database and bucket backup results
         database_results: list[DatabaseBackupResult] = []
         bucket_results: list[BucketBackupResult] = []
         kubectl = create_kubectl_connector()
 
-        # Backup databases if requested and deployment uses database services
         database_service_types = [
             ServiceType.POSTGRESQL_DATABASE.value,
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
@@ -426,12 +377,10 @@ async def backup_project_deployment(
         ):
             logger.info("Deployment uses database service, attempting database backup")
             try:
-                # Get components using database service
                 db_components = project_file_handler.get_components_using_service(
                     project.data, deployment_name, database_service_types
                 )
 
-                # Get database credentials from secret
                 db_secret = await DatabaseSecret.get_data(
                     kubectl_connector=kubectl,
                     namespace=app_namespace,
@@ -440,23 +389,20 @@ async def backup_project_deployment(
                 if db_secret:
                     database_backup_manager = create_database_backup_manager()
 
-                    # Use component info if available, else fallback to deployment-level naming
                     if db_components:
                         component_info = db_components[0]  # Take first component using database
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file. The database is one per
-                        # deployment, so the generation is read per deployment, not per
-                        # component -- the component only names the backup.
+                        # The database is one per deployment, so the generation is read per
+                        # deployment and not per component; the component only names the backup.
                         generation = project_file_handler.get_database_generation(project.data, deployment_name)
                     else:
                         component_name = None
                         reference_name = f"{deployment_name}-database"
                         generation = None
 
-                    # Determine source type based on placement. Dedicated (a project-owned
-                    # cluster) is project-wide: namespace-postgresql-database or
-                    # postgresql-database with scope: project (RC-17).
+                    # Dedicated (a project-owned cluster) is project-wide:
+                    # namespace-postgresql-database, or postgresql-database with scope: project.
                     uses_namespace_db = project_uses_dedicated_postgres(project.data)
                     source_type = "namespace" if uses_namespace_db else "shared"
 
@@ -487,20 +433,17 @@ async def backup_project_deployment(
             except Exception as e:
                 logger.warning(f"Failed to backup database for deployment {deployment_name}: {e}")
 
-        # Backup buckets if requested and the deployment uses an object-storage service
-        # (minio-storage or seaweedfs-storage; both carry the backup_label "minio").
+        # minio-storage and seaweedfs-storage both carry the backup_label "minio".
         minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
         if "minio" in resource_types and project_file_handler.deployment_uses_service(
             project.data, deployment_name, minio_service_types
         ):
             logger.info("Deployment uses an object-storage service, attempting bucket backup")
             try:
-                # Get components using the object-storage service
                 minio_components = project_file_handler.get_components_using_service(
                     project.data, deployment_name, minio_service_types
                 )
 
-                # Get the bucket credentials from the deployment's secret
                 minio_secret = await get_object_storage_secret(
                     kubectl_connector=kubectl,
                     namespace=app_namespace,
@@ -509,13 +452,12 @@ async def backup_project_deployment(
                 if minio_secret:
                     bucket_backup_manager = create_bucket_backup_manager()
 
-                    # Use component info if available, else fallback to deployment-level naming
                     if minio_components:
                         component_info = minio_components[0]  # Take first component using minio
                         component_name = component_info["component_name"]
                         reference_name = component_info["reference_name"]
-                        # Get generation from project file. The bucket is one per deployment,
-                        # so the generation is read per deployment, not per component.
+                        # The bucket is one per deployment, so the generation is read per
+                        # deployment and not per component.
                         generation = project_file_handler.get_bucket_generation(project.data, deployment_name)
                     else:
                         component_name = None
@@ -549,7 +491,6 @@ async def backup_project_deployment(
             except Exception as e:
                 logger.warning(f"Failed to backup MinIO bucket for deployment {deployment_name}: {e}")
 
-        # Determine overall status across all backup types
         all_pvc_success = all(r.success for r in all_results) if all_results else True
         all_db_success = all(r.success for r in database_results) if database_results else True
         all_bucket_success = all(r.success for r in bucket_results) if bucket_results else True
@@ -604,26 +545,22 @@ async def backup_project_deployment(
             logger.warning(f"Backup lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Back-up van %s/%s mislukt", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=BACKUP_MISLUKT) from e
+        raise HTTPException(status_code=500, detail=BACKUP_FAILED) from e
 
     except Exception as e:
         logger.exception("Error backing up project %s deployment %s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=BACKUP_MISLUKT) from e
+        raise HTTPException(status_code=500, detail=BACKUP_FAILED) from e
 
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
 @action(Action.BACKUP_READ)
 @validate_api_token
 async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
-    """
-    List all backup runs for a project deployment.
+    """List all backup runs for a project deployment.
 
     A backup run groups all PVCs that were backed up together in a single operation.
     Each run has a unique backup_run_id (YYYYMMDDHHmmss format) that can be used
     to restore all PVCs to the same point in time.
-
-    Headers:
-        X-API-Key: The API key (required)
 
     Example:
     ```bash
@@ -634,7 +571,6 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
     try:
         logger.info(f"Listing backup runs for project: {project_name}, deployment: {deployment_name}")
 
-        # Look up project data
         project = get_project_store().get(project_name)
 
         if not project or not project.data:
@@ -643,7 +579,6 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
                 detail=f"Project '{project_name}' not found or has no configuration data",
             )
 
-        # Extract deployment namespace and cluster
         project_file_handler = create_project_file_handler()
         raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
         deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, deployment_name)
@@ -660,7 +595,6 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
                 detail=f"Deployment '{deployment_name}' has no cluster configured",
             )
 
-        # Verify deployment is on the current cluster
         current_cluster = settings.CLUSTER_MANAGER
         if deployment_cluster != current_cluster:
             raise HTTPException(
@@ -669,25 +603,22 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
                 f"but this operations-manager runs on cluster '{current_cluster}'.",
             )
 
-        # Get the actual Kubernetes namespace with cluster prefix
         k8s_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
-        # Get all snapshots for the namespace
         backup_manager = create_backup_manager()
         snapshots = await backup_manager.list_snapshots(current_cluster, k8s_namespace, project_name=project_name)
 
-        # Group snapshots by backup_run_id
         runs_map: dict[str, BackupRun] = {}
         for s in snapshots:
             run_id = s.backup_run_id
             if not run_id:
-                # Snapshots without backup_run_id get their own "run" using timestamp
+                # A snapshot without a backup_run_id gets a "run" of its own, named after its
+                # timestamp.
                 run_id = (
                     s.timestamp[:14].replace("-", "").replace("T", "").replace(":", "") if s.timestamp else "unknown"
                 )
 
             if run_id not in runs_map:
-                # Parse timestamp from backup_run_id (YYYYMMDDHHmmss)
                 try:
                     import datetime
 
@@ -718,7 +649,6 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
                 )
             )
 
-        # Sort runs by backup_run_id descending (newest first)
         sorted_runs = sorted(runs_map.values(), key=lambda r: r.backup_run_id, reverse=True)
 
         return BackupRunsResponse(
@@ -738,15 +668,7 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
         ) from e
 
 
-# Database Backup Endpoints
-
-
-# Snapshot Delete Endpoint
-
-
 class DeleteSnapshotResponse(BaseModel):
-    """Response for delete snapshot operations."""
-
     status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     snapshot_id: str = Field(..., description="ID of the deleted snapshot")
@@ -764,20 +686,10 @@ async def delete_snapshot(
     deployment_name: DeploymentNamePath,
     snapshot_id: str,
 ) -> JSONResponse:
-    """
-    Delete a backup snapshot by ID.
+    """Delete a backup snapshot from the Kopia repository by its full id.
 
-    This endpoint deletes a specific snapshot from the Kopia repository.
-    The project and deployment are used for authentication - you can only
-    delete snapshots that belong to the specified project/deployment.
-
-    Args:
-        project_name: Project name for authentication
-        deployment_name: Deployment name for authentication
-        snapshot_id: The full Kopia snapshot ID to delete
-
-    Headers:
-        X-API-Key: The API key (required)
+    The project and the deployment are what authenticate the call: only a snapshot that
+    belongs to them can be deleted.
 
     Example:
     ```bash
@@ -789,7 +701,6 @@ async def delete_snapshot(
     try:
         logger.info(f"Delete snapshot request: {project_name}/{deployment_name}/{snapshot_id}")
 
-        # Look up project data
         project = get_project_store().get(project_name)
 
         if not project or not project.data:
@@ -798,7 +709,6 @@ async def delete_snapshot(
                 detail=f"Project '{project_name}' not found or has no configuration data",
             )
 
-        # Extract deployment namespace and cluster
         project_file_handler = create_project_file_handler()
         raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
         deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, deployment_name)
@@ -815,7 +725,6 @@ async def delete_snapshot(
                 detail=f"Deployment '{deployment_name}' has no cluster configured",
             )
 
-        # Verify deployment is on the current cluster
         current_cluster = settings.CLUSTER_MANAGER
         if deployment_cluster != current_cluster:
             raise HTTPException(
@@ -824,10 +733,8 @@ async def delete_snapshot(
                 f"but this operations-manager runs on cluster '{current_cluster}'.",
             )
 
-        # Get the actual Kubernetes namespace with cluster prefix
         k8s_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
-        # Get SOPS key for this namespace and derive Kopia password
         kubectl = create_kubectl_connector()
         age_key = await kubectl.get_sops_secret_from_namespace(k8s_namespace, SOPS_SECRET_NAME)
 
@@ -837,7 +744,6 @@ async def delete_snapshot(
 
         kopia_password = derive_backup_password(k8s_namespace, age_key)
 
-        # Build Kopia repository config
         backup_config = create_backup_manager().config
         bucket_name = backup_config.get_bucket_name(project_name, current_cluster)
         kopia_config = KopiaRepositoryConfig(
@@ -850,7 +756,6 @@ async def delete_snapshot(
             use_tls=backup_config.s3_use_tls,
         )
 
-        # Get the kopia connector and verify the snapshot exists and belongs to this project
         kopia = create_kopia_connector()
 
         snapshot = await kopia.get_snapshot(kopia_config, snapshot_id)
@@ -860,13 +765,10 @@ async def delete_snapshot(
                 detail=f"Snapshot '{snapshot_id}' not found in repository",
             )
 
-        # Verify the snapshot belongs to this project/deployment (authorization check)
+        # The snapshot has to belong to this project and deployment. An older snapshot
+        # carries no project or deployment tag at all, and is allowed through.
         snapshot_project = snapshot.project_name
         snapshot_deployment = snapshot.deployment_name
-
-        # Allow deletion if:
-        # 1. The snapshot has project/deployment tags that match
-        # 2. Or the snapshot has no project/deployment tags (older snapshots)
         if snapshot_project and snapshot_project != project_name:
             raise HTTPException(
                 status_code=403,
@@ -878,7 +780,6 @@ async def delete_snapshot(
                 detail=f"Snapshot belongs to deployment '{snapshot_deployment}', not '{deployment_name}'",
             )
 
-        # Delete the snapshot
         success = await kopia.delete_snapshot(kopia_config, snapshot_id)
 
         if success:

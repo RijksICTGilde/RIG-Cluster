@@ -23,10 +23,10 @@ federation_router: APIRouter = APIRouter(
 
 
 def _registry_of_404(request: Request) -> FederationRegistry:
-    """De federatieregistry van deze instantie, of een 404 als de federatie uit staat.
+    """This instance's federation registry; raises 404 when federation is switched off.
 
-    Zonder federatie bestaat er hier niets om over te rapporteren, en dat is geen
-    serverfout maar een route die op dit cluster niet bestaat.
+    Without federation there is nothing here to report on, which is a route that does not
+    exist on this cluster rather than a server error.
     """
     fed = getattr(request.app.state, "federation_service", None)
     registry = getattr(fed, "_registry", None)
@@ -73,10 +73,9 @@ async def federation_health(request: Request) -> JSONResponse:
                 entry["status"] = resp.get("status", "ok")
                 entry["healthy"] = True
         except Exception as exc:
-            # foutmelding-gewogen: dit zet de fout van een peer naast de url van diezelfde
-            # peer, die een beheerder zelf heeft ingevoerd, en alleen een platformbeheerder
-            # ziet het. Er komt hier dus niets naar buiten dat de lezer niet al had; en
-            # zonder de reden is "peer meldt zich niet" een health-check zonder waarde.
+            # foutmelding-gewogen: the error of a peer next to that peer's own url, which only
+            # a platform admin sees, so this hands the reader nothing they did not have.
+            # Without the reason, "peer does not answer" is a health check without value.
             entry["status"] = str(exc)
             entry["healthy"] = False
 

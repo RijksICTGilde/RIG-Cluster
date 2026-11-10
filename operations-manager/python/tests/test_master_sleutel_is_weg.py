@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from opi.api.route_herkenning import route_herkenningen
+from opi.api.route_recognition import route_recognitions
 from opi.http.auth import endpoint_util
 from opi.server import app
 
@@ -30,18 +30,18 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.mark.parametrize("sleutel", sorted(BEHEERROUTES), ids=lambda s: f"{s[0]} {s[1]}")
 def test_de_route_vraagt_het_token_van_een_platformbeheerder(sleutel: tuple[str, str]) -> None:
-    gevonden = [route for route in route_herkenningen(app) if route.sleutel == sleutel]
+    gevonden = [route for route in route_recognitions(app) if route.key == sleutel]
 
     assert gevonden, f"{sleutel[0]} {sleutel[1]} is niet geregistreerd; is het pad veranderd?"
     for route in gevonden:
-        assert route.herkenningen == ("platformbeheerder-token",), (
-            f"{route} herkent {list(route.herkenningen)} in plaats van het token van een platformbeheerder"
+        assert route.recognitions == ("platformbeheerder-token",), (
+            f"{route} herkent {list(route.recognitions)} in plaats van het token van een platformbeheerder"
         )
 
 
 def test_post_api_tasks_is_niet_geregistreerd() -> None:
     """De enige aanroeper was de federatie, en een peer heeft nog geen eigen identiteit."""
-    registreerd = [route for route in route_herkenningen(app) if route.sleutel == ("POST", "/api/tasks")]
+    registreerd = [route for route in route_recognitions(app) if route.key == ("POST", "/api/tasks")]
 
     assert not registreerd, f"POST /api/tasks is terug: {registreerd}"
 

@@ -1,9 +1,4 @@
-"""Prometheus metrics endpoint for scraping.
-
-Exposes a /metrics endpoint in standard Prometheus text format.
-This is separate from the existing metrics_router which queries
-an external Prometheus instance for cluster metrics.
-"""
+"""The /metrics endpoint this instance is scraped on, in Prometheus text format."""
 
 import logging
 
@@ -25,11 +20,6 @@ prometheus_router: APIRouter = APIRouter(
 @prometheus_router.get("/metrics", include_in_schema=False)
 @validate_metrics_scrape_token
 async def prometheus_metrics(request: Request) -> Response:
-    """Prometheus scrape endpoint.
-
-    Returns all registered metrics in Prometheus text exposition format.
-    Includes built-in process/GC metrics and custom OPI collectors.
-    """
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,

@@ -200,11 +200,6 @@ v2_router: APIRouter = APIRouter(
 )
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
 def _accepted_response(task: dict, task_type: str) -> JSONResponse:
     """Build a 202 JSONResponse from a created task."""
     task_id = str(task["task_id"])
@@ -247,7 +242,8 @@ class _LiveStatus(NamedTuple):
 
 def _empty_live_status(status: DeploymentStatus) -> _LiveStatus:
     """A sentinel status with nothing live behind it, by keyword so a new field cannot
-    silently land in the wrong slot."""
+    silently land in the wrong slot.
+    """
     return _LiveStatus(
         status=status,
         revision=None,
@@ -268,8 +264,8 @@ def _collapse_argo_status(
     Unknown/novel values fall through to DeploymentStatus.Unknown.
 
     ``fully_disabled`` says the project file has every component of this deployment
-    switched off. Zero replicas is what Argo then sees, and it calls that Healthy -- so
-    the flag replaces exactly that one verdict (RC-31) and ranks below every other. A
+    switched off. Zero replicas is what Argo then sees, and it calls that Healthy, so the
+    flag replaces exactly that one verdict and ranks below every other. A
     deployment that is switched off AND degraded reports Degraded, or turning something
     off would be a way to make a failure disappear.
     """
@@ -302,9 +298,9 @@ def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: 
     return _LiveStatus(
         status=_collapse_argo_status(sync.get("status"), health.get("status"), fully_disabled=fully_disabled),
         revision=sync.get("revision") or None,
-        # Alleen ``finishedAt``, zonder terugval op ``reconciledAt``. Die terugval meldde bij een
-        # lopende sync het moment van de laatste VERGELIJKING, en gaf zo de indruk dat een
-        # wijziging was aangekomen terwijl er niets was uitgerold (RC-250).
+        # Only ``finishedAt``, with no fall back on ``reconciledAt``: during a running sync that
+        # one reports the moment of the last COMPARISON, which reads as a change that arrived
+        # while nothing had been rolled out.
         last_synced_at=operation.finished_at,
         rolled_out_revision=operation.revision,
         running_sync=(
@@ -358,13 +354,13 @@ async def _fetch_one_live_status(
         status_data = None
 
     # Whether the deployment is switched off comes from the project file, never from the
-    # cluster: zero replicas there can also mean something went wrong (RC-31).
+    # cluster: zero replicas there can also mean something went wrong.
     fully_disabled = deployment_disabled_state(project_data, deployment_name).is_disabled
     live = _extract_live_status(status_data, fully_disabled=fully_disabled)
     if live.status not in _PROBLEM_STATUSES:
         return live
 
-    # Disabled components (scaled to zero) must not surface as live errors (WP6).
+    # Disabled components (scaled to zero) must not surface as live errors.
     disabled_components = frozenset(
         ref
         for comp in deployment.get("components", []) or []
@@ -385,9 +381,9 @@ async def _fetch_one_live_status(
         for raw in raw_errors
         for cat, expl in [categorize_error(raw["resource"], raw["message"])]
     ]
-    # Afwijkingen naast fouten: een OutOfSync zonder errors was tot nu toe onverklaard
-    # (bijv. restanten die op opruiming wachten). Agents lezen dit via dezelfde
-    # deploymentlezer als de mens, dus lijst en detail melden hetzelfde.
+    # Deviations next to errors, because an OutOfSync without errors explains itself nowhere
+    # else (leftovers waiting for cleanup, for instance). Through the one deployment reader,
+    # so the list and the detail say the same thing.
     typed_deviations = [
         StatusDeviation(**entry)
         for entry in gather_sync_deviations(
@@ -400,8 +396,8 @@ async def _fetch_one_live_status(
 async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
     """Connect to ArgoCD + kubectl. Raises HTTPException(503) on connection failure.
 
-    This represents the "whole backend is down" case — distinct from a single
-    deployment's fetch failing, which is handled per-call.
+    This is the "whole backend is down" case, distinct from a single deployment's fetch
+    failing, which is handled per call.
     """
     try:
         # Fail fast: a status poll that waits out an ArgoCD restart would hang the page
@@ -521,19 +517,14 @@ def _build_deployment_detail(
         running_sync=live.running_sync,
         errors=live.errors,
         deviations=live.deviations,
-        # Hier en niet alleen in het antwoord op de schrijfactie: een aanvraag loopt
-        # dagen, het antwoord op de PUT is weg zodra de client hem heeft gelezen. Dit is
-        # de ene deploymentlezer, dus lijst, detail en projectoverzicht melden hetzelfde.
+        # Here and not only in the answer to the write: a request runs for days, while the
+        # answer to the PUT is gone the moment the client has read it. Through the one
+        # deployment reader, so list, detail and project overview say the same thing.
         approvals=[
             ApprovalNoticeResponse.model_validate(notice)
             for notice in collect_deployment_approval_notices(project_data, deployment)
         ],
     )
-
-
-# ---------------------------------------------------------------------------
-# Read-only endpoints
-# ---------------------------------------------------------------------------
 
 
 def _project_data_or_404(project_name: str) -> dict[str, Any]:
@@ -545,10 +536,10 @@ def _project_data_or_404(project_name: str) -> dict[str, Any]:
 
 
 def _deployments_of_components(project_name: str, component_names: list[str] | None) -> list[str] | None:
-    """De deployments die deze componenten gebruiken, of None voor projectbreed.
+    """The deployments these components are used in, or None for project-wide.
 
-    Zonder componentnamen, en voor een project dat niet in de store staat, is er niets om
-    op te versmallen: dan blijft de ronde projectbreed, zoals ze was.
+    Without component names, and for a project the store does not hold, there is nothing to
+    narrow down to and the round stays project-wide.
     """
     if not component_names:
         return None
@@ -562,7 +553,7 @@ async def _deployment_details(project_name: str, project_data: dict[str, Any]) -
     """The deployments of this project on the current cluster, with their live status.
 
     The one deployment reader: both ``GET .../deployments`` and the whole-project view
-    go through it, so the two cannot describe the same deployment differently (RC-61).
+    go through it, so the two cannot describe the same deployment differently.
     """
     current_cluster = settings.CLUSTER_MANAGER
     deployments = [
@@ -586,55 +577,44 @@ async def list_clusters_v2(
     request: Request,
     project_name: str,
 ) -> JSONResponse:
-    """De clusters waar dit project op kan draaien, met de domeinen die ze aanbieden.
+    """The clusters this project can run on, with the domains they offer.
 
-    Bestaat om een gat in de documentatie te dichten: ``base-domain`` op een deployment
-    heeft een keuzelijst die per cluster verschilt, dus het OpenAPI-document kan die niet
-    opsommen. Het verwees daarom naar een endpoint, en dat endpoint was er niet.
+    The choices for ``base-domain`` on a deployment differ per cluster, which the OpenAPI
+    document cannot enumerate, so it points at this endpoint.
 
-    ``base-domains`` is geen gesloten verzameling: een eigen domein zet je door de domeinnaam
-    zelf in ``base-domain`` te schrijven, en ``custom-domain-certificates`` zegt wat dat op
-    dit cluster oplevert.
+    ``base-domains`` is not a closed set: a domain of your own goes into ``base-domain`` as
+    the domain name itself, and ``custom-domain-certificates`` says what that yields on this
+    cluster.
 
-    ``default-domain`` staat erbij omdat de lijst zelf niet verraadt welke keuze meteen in
-    gebruik gaat: alleen het domein van het cluster zelf (en een leeg ``base-domain``) gaat
-    zonder goedkeuring, en dat domein kan gewoon als gewone entry in ``base-domains`` staan.
-    Zonder dit veld moest een client het uit het label van de lege optie parsen.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    ``default-domain`` is there because the list itself does not tell which choice takes
+    effect at once: only the cluster's own domain (and an empty ``base-domain``) goes without
+    an approval, and that domain can stand in ``base-domains`` as an ordinary entry.
     """
     from opi.forms.visualizers.providers import CUSTOM_DOMAIN_SENTINEL, ClusterBaseDomainOptionsProvider
 
     _project_data_or_404(project_name)
 
-    # model_validate en niet de constructor: het veld heet in het antwoord "base-domains",
-    # en met een streepje is dat geen geldige parameternaam.
+    # model_validate and not the constructor: the field is called "base-domains" in the
+    # answer, and with a dash that is no valid parameter name.
     clusters = [
         ClusterInfo.model_validate(
             {
                 "name": cluster,
                 "manager": cluster == settings.CLUSTER_MANAGER,
-                # Het domein van het cluster zelf, want dat is de enige waarde die
-                # zonder goedkeuring in gebruik gaat (is_deployment_domain_approved).
-                # Hij stond alleen als vrije tekst in het label van de lege optie, dus
-                # een client kon de twee gevallen niet uit elkaar houden zonder te parsen.
+                # The cluster's own domain, the one value that goes into use without an
+                # approval (is_deployment_domain_approved).
                 "default-domain": get_ingress_postfix(cluster).lstrip("."),
-                # De keuzelijst komt uit dezelfde provider als die van het formulier, zodat
-                # portal en API niet uit elkaar lopen. Op één punt wijken ze af: de sentinel
-                # is een SCHAKELAAR in het formulier ("ik vul zelf een domein in") en geen
-                # waarde die je kunt opslaan. Hij hoort dus niet in een API-antwoord, en de
-                # reden waarom staat hier en niet in de beschrijving: een client kan met een
-                # formulierdetail niets, en een sentinel bij naam noemen nodigt uit om hem
-                # alsnog te sturen. Wat hij WEL moet weten (schrijf de domeinnaam zelf) staat
-                # in de beschrijving van base-domain.
+                # The same provider as the form uses, so the portal and the API cannot drift
+                # apart. They differ on one point: the sentinel is a SWITCH in the form ("I
+                # will type a domain myself") and not a value that can be stored, so it has
+                # no place in an API answer. What a client does need to know (write the domain
+                # name itself) stands in the description of base-domain.
                 "base-domains": [
-                    # model_validate om dezelfde reden als hierboven: het veld heet in het
-                    # antwoord "supports-dots" en met een streepje is dat geen geldige
-                    # parameternaam. De waarde komt uit dezelfde clusterconfiguratie als de
-                    # lijst zelf; zonder dit veld is de regel achter domain-format (punt-
-                    # varianten alleen op een domein dat punten aankan) wel beschreven en
-                    # nergens uit af te leiden.
+                    # model_validate for the same reason as above: the field is called
+                    # "supports-dots" in the answer, and with a dash that is no valid
+                    # parameter name. Without this field the rule behind domain-format (the
+                    # dotted variants only on a domain that takes dots) is described and
+                    # derivable from nothing.
                     ClusterDomainOption.model_validate(
                         {
                             "value": str(option["value"]),
@@ -645,9 +625,9 @@ async def list_clusters_v2(
                     for option in ClusterBaseDomainOptionsProvider(cluster=cluster).get_options()
                     if option["value"] != CUSTOM_DOMAIN_SENTINEL
                 ],
-                # Wat een domein BUITEN die lijst hier oplevert. Zonder dit leest de
-                # __custom__-optie als een gelijkwaardige keuze, terwijl ze op een cluster
-                # zonder uitgifte een deployment zonder geldig certificaat oplevert.
+                # What a domain OUTSIDE that list yields here. Without it the custom option
+                # reads as an equal choice, while on a cluster that issues no certificate it
+                # yields a deployment without a valid one.
                 "custom-domain-certificates": supports_custom_domain_certificates(cluster),
             }
         )
@@ -673,30 +653,24 @@ async def check_subdomain_availability_v2(
     subdomain: str,
     base_domain: str,
 ) -> SubdomainCheckResponse:
-    """Of *subdomain* nog vrij is onder *base_domain*, over alle projecten heen.
+    """Whether *subdomain* is still free under *base_domain*, across every project.
 
-    **Waar de controle wel en niet over gaat.** Hij zegt of deze subdomeinnaam binnen ZAD
-    nog niet vergeven is. Hij zegt niets over eigendom van het basisdomein en niets over
-    DNS: elk syntactisch geldig domein wordt hier geaccepteerd, want een project mag zijn
-    eigen domein meebrengen. Een vrije naam onder een domein dat niet van dit cluster is,
-    is dus nog geen werkend adres. Daarvoor staat ``cluster_domain`` in het antwoord: is
-    die waar, dan bedient dit cluster het domein zelf en kun je de naam meteen gebruiken;
-    is die onwaar, dan moet het domein daarnaast nog aangevraagd en goedgekeurd worden.
+    **What the check does and does not cover.** It says whether this subdomain name is still
+    unclaimed within ZAD. It says nothing about ownership of the base domain and nothing
+    about DNS: every syntactically valid domain is accepted here, because a project may bring
+    a domain of its own. A free name under a domain that is not this cluster's is therefore
+    not yet a working address, which is what ``cluster_domain`` in the answer is for: true
+    means this cluster serves the domain itself and the name can be used at once, false means
+    the domain still has to be requested and approved as well.
 
-    De projectnaam staat in het pad omdat de vraag bij een project hoort: je vraagt dit
-    omdat je het subdomein voor een deployment van dit project wilt claimen, en de
-    reservering wordt per project en deployment vastgelegd.
+    The project name stands in the path because the question belongs to a project: it is
+    asked to claim the subdomain for a deployment of this project, and the reservation is
+    recorded per project and deployment. It is also what ``validate_api_token`` legitimates
+    the key against, so without it every answer is a 401 (see
+    ``opi/http/auth/endpoint_util.py``). That shielding is no formality: without a key this
+    would be a means to probe for subdomains.
 
-    Hij stond er eerder niet in, en dat maakte het endpoint onbereikbaar:
-    ``validate_api_token`` legitimeert de sleutel tegen een project en las die naam uit de
-    routeparameters, dus zonder ``project_name`` was elk antwoord een 401. Zie
-    ``opi/http/auth/endpoint_util.py``. De afscherming zelf is geen formaliteit -- zonder sleutel
-    is dit een middel om subdomeinen af te tasten.
-
-    Beperkt tot 30 aanvragen per minuut per client.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    Limited to 30 requests per minute per client.
 
     Example:
     ```bash
@@ -710,7 +684,7 @@ async def check_subdomain_availability_v2(
 
     safe_subdomain = sanitize_for_log(subdomain)
     safe_base_domain = sanitize_for_log(base_domain)
-    # Het afgeleide client-IP, niet de ruwe header: deze regel wordt als spoor gelezen.
+    # The derived client IP and not the raw header: this line is read as a trail.
     ip = sanitize_for_log(client_ip(request))
     logger.info(
         "AUDIT: Subdomain check - project=%s, subdomain=%s, base_domain=%s, ip=%s",
@@ -722,10 +696,9 @@ async def check_subdomain_availability_v2(
 
     _project_data_or_404(project_name)
 
-    # Of dit cluster het basisdomein zelf bedient. Reist mee in elk antwoord, ook in een
-    # afwijzing: het is een eigenschap van het domein en niet van de uitkomst, en juist bij
-    # "niet beschikbaar" wil een aanroeper weten welk van de twee dingen hij aan het
-    # oplossen is.
+    # Whether this cluster serves the base domain itself. Travels in every answer, a refusal
+    # included: it is a property of the domain and not of the outcome, and on "not available"
+    # above all a caller wants to know which of the two they are solving.
     cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
 
     is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
@@ -738,8 +711,8 @@ async def check_subdomain_availability_v2(
             validation_error=validation_error,
         )
 
-    # Het basisdomein moet er een zijn die het platform kent: anders is dit een manier om
-    # willekeurige domeinen af te tasten in plaats van de eigen uitgifte te bevragen.
+    # The base domain has to be one the platform knows, or this becomes a way to probe
+    # arbitrary domains instead of asking about our own issuing.
     is_valid_domain, domain_error = validate_base_domain(base_domain)
     if not is_valid_domain:
         return SubdomainCheckResponse(
@@ -776,9 +749,6 @@ async def list_deployments_v2(
     """List deployments in a project with components, images, and computed URLs.
 
     Returns only deployments targeting the current cluster.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project_data = _project_data_or_404(project_name)
     current_cluster = settings.CLUSTER_MANAGER
@@ -810,9 +780,6 @@ async def get_deployment_v2(
 
     Returns the current state of a deployment as defined in the project file,
     with computed public URLs for components that have publish-on-web.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -830,23 +797,16 @@ async def get_deployment_v2(
 
     live = await _fetch_one_live_status_strict(project_name, project_data, deployment)
     detail = _build_deployment_detail(deployment, project_name, project_data, live)
-    # Gemeld door de zad-cli (punt 8b): dit antwoord noemde een URL voor een component dat
-    # nog niet was uitgerold, en er stond niets bij waaraan je dat kon zien. Het is het
-    # enige leesantwoord dat gewenste en werkelijke toestand MENGT -- urls uit het
-    # projectbestand, status uit de cluster -- en juist dat antwoord droeg de twee velden
-    # niet die de andere leesendpoints wel dragen.
+    # This is the one read answer that MIXES the wanted and the actual state (urls out of the
+    # project file, status out of the cluster), so without this field it names a URL for a
+    # component that was never rolled out and nothing says so.
     detail.pending_rollout = await _pending_rollout_or_none(request, project_name)
     return JSONResponse(content=detail.model_dump())
 
 
-# ---------------------------------------------------------------------------
-# Mutation endpoints
-# ---------------------------------------------------------------------------
-
-# --- rollout flag (RC-46) ----------------------------------------------------
-# Every endpoint below that normally processes the project accepts ``rollout``.
-# The flag only travels: it is stored in the task payload and read once, in the
-# handler, at the point where it would process. See opi/services/tasks/task_rollout.py.
+# Every endpoint below that normally processes the project accepts ``rollout``. The flag only
+# travels: it is stored in the task payload and read once, in the handler, at the point where
+# it would process. See opi/services/tasks/task_rollout.py.
 
 RolloutQuery = Annotated[
     bool,
@@ -877,7 +837,7 @@ async def _pending_rollout(request: Request, project_name: str) -> PendingRollou
 
     Every read endpoint carries this, not just the dedicated one: an answer that
     describes the project file without saying what is still waiting reads as a
-    description of what runs, and that is exactly what it is not (RC-61).
+    description of what runs, and that is exactly what it is not.
     """
     task_service = getattr(request.app.state, "task_service", None)
     if task_service is None:
@@ -887,13 +847,12 @@ async def _pending_rollout(request: Request, project_name: str) -> PendingRollou
 
 
 async def _pending_rollout_or_none(request: Request, project_name: str) -> PendingRolloutResponse | None:
-    """Hetzelfde, maar het mag ontbreken.
+    """The same, but it may be absent.
 
-    Op de deploymentantwoorden is dit een ETIKET bij een beschrijving die er ook zonder
-    staat. Zou een ontbrekende takenservice hier een 503 opleveren, dan werkt "deployment
-    describe" niet meer op het moment dat die service het niet doet -- terwijl alles wat
-    het commando beschrijft uit het projectbestand en de cluster komt en gewoon te geven
-    is. Op /pending-rollout zelf blijft de 503 staan: daar IS het het antwoord.
+    On a deployment answer this is a LABEL next to a description that stands without it, so a
+    task service that is down may not turn "deployment describe" into a 503: everything that
+    command describes comes out of the project file and the cluster. On /pending-rollout
+    itself the 503 stays, because there it IS the answer.
     """
     if getattr(request.app.state, "task_service", None) is None:
         return None
@@ -915,23 +874,15 @@ async def pending_rollout_v2(request: Request, project_name: ProjectNamePath) ->
     again with ``POST /api/v2/projects/{project_name}/:refresh``, which reconciles the whole
     file at once. Use it to warn before drift becomes invisible: a saved change that nobody
     rolls out is a project quietly out of step.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     return JSONResponse(content=(await _pending_rollout(request, project_name)).model_dump())
 
 
-# ---------------------------------------------------------------------------
-# Reading a project back (RC-61)
-#
-# Three layers, not three alternatives: the service list and the component list are
-# each useful on their own, and the whole-project view is those two plus the existing
-# deployment reader and pending-rollout, composed here without data logic of its own.
-# One source per fact, so the parts and the whole cannot disagree.
-#
-# All of it reads the project file. The collectors live in ``project_read.py``.
-# ---------------------------------------------------------------------------
+# Reading a project back comes in three layers, not three alternatives: the service list and
+# the component list are each useful on their own, and the whole-project view is those two
+# plus the deployment reader and pending-rollout, composed here without data logic of its
+# own. One source per fact, so the parts and the whole cannot disagree. All of it reads the
+# project file; the collectors live in ``project_read.py``.
 
 #: Where the answer comes from. Stated in every read response, because "what is written
 #: down" and "what is running" part company the moment someone saves with rollout=false.
@@ -1020,17 +971,13 @@ async def list_project_services_v2(request: Request, project_name: ProjectNamePa
     of the decrypted content, which is enough to check that what is stored is what was
     uploaded without a byte of it travelling.
 
-
     The answer describes the project file, not the cluster: a change saved with
     ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
     says so.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project_data = _project_data_or_404(project_name)
     # Only a DEFINE-side payload needs opening, so a project without one is not made to
-    # pay an `age` call for it -- and a project without an AGE key at all keeps working.
+    # pay an `age` call for it, and a project without an AGE key at all keeps working.
     private_key = await get_decoded_project_private_key(project_data) if project_defines_anything(project_data) else ""
     return JSONResponse(
         content=ProjectServicesResponse(
@@ -1062,13 +1009,9 @@ async def list_components_v2(request: Request, project_name: ProjectNamePath) ->
     reason to ask) and as ``***`` when it was stored as a secret. Attachments come back as
     the coupling -- which attachment, mounted where -- never the file content.
 
-
     The answer describes the project file, not the cluster: a change saved with
     ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
     says so.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project_data = _project_data_or_404(project_name)
     private_key = await get_decoded_project_private_key(project_data)
@@ -1097,13 +1040,9 @@ async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSO
     per fact. Use it to render ``zad project describe`` in one round trip; use the parts
     when only one of them is needed.
 
-
     The answer describes the project file, not the cluster: a change saved with
     ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
     says so.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project_data = _project_data_or_404(project_name)
     private_key = await get_decoded_project_private_key(project_data)
@@ -1164,9 +1103,6 @@ async def upsert_deployment_v2(
     """Create or update a deployment (async).
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info("V2 upsert deployment '%s' in project: %s", deployment_data.deploymentName, project_name)
 
@@ -1183,7 +1119,6 @@ async def upsert_deployment_v2(
             detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         deployment_data.model_dump(),
         UPSERT_DEPLOYMENT_VALIDATORS,
@@ -1194,18 +1129,17 @@ async def upsert_deployment_v2(
             UPDATE_IMAGE_VALIDATORS,
         )
 
-    # De markering zetten is een eigen recht: ops met step-up (ontwerp paragraaf 7). Hij
-    # staat in de BODY en niet in het pad, dus de routepoort kan hem niet wegen.
+    # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
+    # not in the path, so the route gate cannot weigh it.
     if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
         eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
 
     eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
 
-    # Een verwijzing naar een component dat niet in de catalogus staat is een fout van de
-    # aanroeper, geen storing: dan hoort hier een 400 terug te komen in plaats van een 202
-    # met een taak die daarna alsnog faalt. Dezelfde functie als de taak gebruikt, zodat er
-    # geen tweede bewoording ontstaat. Staat het project niet in de store, dan doet de taak
-    # de controle; hier niets verzinnen.
+    # A reference to a component the catalogue does not hold is the caller's mistake and not
+    # a failure, so it answers 400 here instead of a 202 with a task that fails afterwards.
+    # The same function the task uses, so no second wording can appear. When the store does
+    # not hold the project the task does the check, and nothing is invented here.
     project = get_project_store().get(project_name)
     if project is not None and project.data is not None:
         reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
@@ -1270,16 +1204,13 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     carries no role of its own. Whatever the field carries is a secret: do not log
     this response.
 
-    **The ``api_key`` field is deprecated** and goes away with the key itself. A
-    caller that needs a credential issues a token: ``POST
-    /api/v2/projects/{project_name}/leden/{naam}/tokens``, whose value is returned
+    **The ``api_key`` field is deprecated** and goes away with the key itself. A caller that
+    needs a credential issues a token with
+    ``POST /api/v2/projects/{project_name}/leden/{naam}/tokens``, whose value is returned
     once and never again.
 
     **A platform administrator with a fresh step-up sees every project.** Without one
     they see their own projects, like any other user. See ``POST /api/v2/step-up``.
-
-    Headers:
-        Authorization: Bearer <SSO access token> (required)
     """
     user = get_current_user(request) or {}
     caller_email = str(user.get("email", ""))
@@ -1293,15 +1224,15 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     for project in sorted(store.get_all(), key=lambda p: p.name):
         if not is_user_authorized_for_project(project.name, caller_email, audit=False):
             continue
-        rollen = get_user_roles_for_project(project.name, caller_email)
+        roles = get_user_roles_for_project(project.name, caller_email)
         projects.append(
             ProjectListItem(
                 name=project.name,
                 description=str((project.data or {}).get("description") or ""),
-                roles=rollen,
+                roles=roles,
                 # Same gate as the detail page and as every mutating web route:
                 # the API key grants full project mutation and knows no roles.
-                api_key=project.api_key if has_role(rollen, Role.ADMIN) else None,
+                api_key=project.api_key if has_role(roles, Role.ADMIN) else None,
             )
         )
 
@@ -1352,9 +1283,9 @@ async def get_project_api_key_v2(
         )
 
     if project.api_key is None:
-        # Sinds schemaversie 2.12 heeft een project geen eigen sleutel meer: die is een
-        # token van het service account ``project-api`` geworden. Er is hier dus niets meer
-        # te overhandigen, en een leeg antwoord zou dat verzwijgen.
+        # From schema version 2.12 on a project has no key of its own: it became a token of
+        # the ``project-api`` service account. There is nothing to hand over, and an empty
+        # answer would keep that quiet.
         raise HTTPException(
             status_code=410,
             detail=(
@@ -1407,9 +1338,6 @@ async def create_project_v2(
 
     The response carries the new project's API key. It is shown once, here, and
     is what every later call for this project must present as ``X-API-Key``.
-
-    Headers:
-        Authorization: Bearer <SSO access token> (required)
     """
     user = get_current_user(request) or {}
     owner_email = str(user.get("email", ""))
@@ -1425,7 +1353,7 @@ async def create_project_v2(
     except ValueError as exc:
         # Raised when the display name yields nothing usable (no letters or digits), which
         # is the caller's input. The same error covers running out of variants, but that
-        # needs ~100 taken names built from one display name.
+        # needs some 100 claimed names built from one display name.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info("V2 create project '%s' (from '%s') requested by %s", project_name, display_name, owner_email)
@@ -1494,9 +1422,6 @@ async def refresh_project_v2(
 
     Re-runs provisioning steps for all deployments in the project.
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "refresh_project")
 
@@ -1581,9 +1506,6 @@ async def delete_deployment_v2(
     """Delete a deployment (async).
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "delete_deployment")
 
@@ -1622,13 +1544,9 @@ async def update_image_v2(
     """Update a component image (async).
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info("V2 update image for '%s' in %s/%s", image_data.componentName, project_name, deployment_name)
 
-    # Validate fields using editable validators
     await validate_api_payload(
         image_data.model_dump(),
         UPDATE_IMAGE_VALIDATORS,
@@ -1679,12 +1597,9 @@ async def clone_database_v2(
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
 
-    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
-    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
-    het antwoord 422.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    The source has to stand on a public address: when sourceHost (or, with a tunnel, the host
+    of tunnel.serverUrl) resolves to a private or cluster-internal address, or does not
+    resolve at all, the answer is 422.
     """
     _reject_deferred_rollout(rollout, "clone_database")
 
@@ -1731,12 +1646,9 @@ async def clone_bucket_v2(
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
 
-    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
-    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
-    het antwoord 422.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    The source has to stand on a public address: when sourceHost (or, with a tunnel, the host
+    of tunnel.serverUrl) resolves to a private or cluster-internal address, or does not
+    resolve at all, the answer is 422.
     """
     _reject_deferred_rollout(rollout, "clone_bucket")
 
@@ -1783,9 +1695,6 @@ async def refresh_deployment_v2(
 
     Re-runs provisioning steps for the specified deployment.
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "refresh_deployment")
 
@@ -1813,7 +1722,7 @@ async def refresh_deployment_v2(
 
 
 class RotateCredentialsRequest(BaseModel):
-    """De diensten waarvan het geheim vervangen moet worden."""
+    """The services whose secret is to be replaced."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -1845,13 +1754,10 @@ async def rotate_credentials_v2(
     rotate_data: RotateCredentialsRequest = Body(...),
     rollout: NoDeferQuery = True,
 ) -> JSONResponse:
-    """Vervang het geheim van één of meer diensten van deze deployment.
+    """Replace the secret of one or more services of this deployment.
 
-    OPI maakt de nieuwe waarde en schrijft het Secret. Een dienst die deze deployment
-    niet gebruikt geeft 422 met de diensten die wel kunnen.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    OPI makes the new value and writes the Secret. A service this deployment does not use
+    answers 422, naming the services that can.
     """
     _reject_deferred_rollout(rollout, "rotate_credentials")
 
@@ -1918,9 +1824,6 @@ async def add_component_v2(
     """Add a new component to a project (async).
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info("V2 add component '%s' to project: %s", component_data.name, project_name)
 
@@ -1937,7 +1840,6 @@ async def add_component_v2(
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_VALIDATORS,
@@ -1992,9 +1894,6 @@ async def update_component_v2(
     Only the fields present in the body change; the rest stay as-is. Returns immediately
     with a task ID. Poll /api/tasks/{task_id} for status. Use `ports` to expose multiple
     inbound ports (each becomes a Service port).
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info("V2 update component '%s' in project: %s", component_name, project_name)
 
@@ -2004,7 +1903,6 @@ async def update_component_v2(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         UPDATE_COMPONENT_VALIDATORS,
@@ -2029,8 +1927,8 @@ async def update_component_v2(
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
             "rollout": rollout,
-            # Alleen de deployments die dit component gebruiken; staat het project niet in
-            # de store, dan valt er niets te versmallen en blijft de ronde projectbreed.
+            # Only the deployments this component is used in; with no project in the store
+            # there is nothing to narrow down to and the round stays project-wide.
             "deployment_names": _deployments_of_components(project_name, [component_name]),
         },
     )
@@ -2089,9 +1987,6 @@ async def delete_component_v2(
     a deployment pointing at a component that no longer exists.
 
     Returns 202 with a task id; poll /api/tasks/{task_id} for the result.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "delete_component")
 
@@ -2104,10 +1999,10 @@ async def delete_component_v2(
         )
 
     # Answered here rather than by a task that fails later: a component that is not there,
-    # and a component that cannot go yet, are both facts the caller can act on right now.
-    # The guard in ProjectManager.delete_component is what actually decides -- this reads
-    # the same walk against the same project file, on the fresher of the two answers losing
-    # nothing: a task that gets past this and is refused there still fails loudly.
+    # and a component that cannot go yet, are both facts the caller can act on right now. The
+    # guard in ProjectManager.delete_component is what actually decides; this reads the same
+    # walk against the same project file, so a task that gets past this and is refused there
+    # still fails loudly.
     project_data = _project_data_or_404(project_name)
     if not any(
         isinstance(c, dict) and c.get("name") == component_name for c in project_data.get("components", []) or []
@@ -2169,9 +2064,6 @@ async def add_component_to_deployment_v2(
     """Add an existing component to a deployment (async).
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info(
         "V2 add component '%s' to deployment '%s' in project: %s",
@@ -2193,7 +2085,6 @@ async def add_component_to_deployment_v2(
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -2240,9 +2131,6 @@ async def add_service_v2(
     configure-then-bind works in either order. Per-service config is set separately via
     ``PUT /api/v2/projects/{project}/services/{service}/config/<target>``. Returns
     immediately with a task ID; poll /api/tasks/{task_id}.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     logger.info("V2 add service '%s' to project: %s", service_data.service, project_name)
 
@@ -2261,25 +2149,22 @@ async def add_service_v2(
             "service": service_data.service,
             "components": service_data.components,
             "rollout": rollout,
-            # Met een lijst componenten is de ronde te versmallen tot de deployments die
-            # ze gebruiken. Zonder lijst bindt de dienst aan ELK component van het
-            # project, en dan is projectbreed de waarheid.
+            # With a list of components the round narrows to the deployments they are used
+            # in. Without one the service binds to EVERY component of the project, and then
+            # project-wide is the truth.
             "deployment_names": _deployments_of_components(project_name, service_data.components),
         },
     )
     return _accepted_response(task, "add_service")
 
 
-# ---------------------------------------------------------------------------
-# Unified service-config endpoint (RC-12 follow-up)
+# The unified service-config endpoint
 #
-# One registry-driven surface to configure any service: descriptor GETs
-# (self-describing fields + enums per target), a project-scoped read, and
-# async upsert (PUT) / clear (DELETE). The set of valid targets per service is
-# derived from ``config_api_fields(layer)`` -- the service's own declaration of
-# which layers it accepts config on -- so the API surface stays in lock-step
-# with the models and never hardcodes a service name.
-# ---------------------------------------------------------------------------
+# One registry-driven surface to configure any service: descriptor GETs (self-describing
+# fields + enums per target), a project-scoped read, and async upsert (PUT) / clear (DELETE).
+# The set of valid targets per service is derived from ``config_api_fields(layer)``, the
+# service's own declaration of which layers it accepts config on, so the API surface stays in
+# lock-step with the models and never hardcodes a service name.
 
 
 def _service_or_404(service_name: str):
@@ -2294,29 +2179,24 @@ def _service_or_404(service_name: str):
 def _accepts_config_at(service, layer: ConfigLayer) -> bool:
     """Whether a service accepts a config block at ``layer``.
 
-    Two questions, both answered by the service itself: does it carry config at this
-    layer (``config_layers()`` -- editables, API fields, layout nodes, a modelled
-    payload), and is there a model to validate a write against
-    (``config_model_for(layer)``). Never a hardcoded name list.
-
-    Asking ``config_layers()`` rather than re-deriving the same three hooks here is
-    RC-38's correction: the surface was assembled out of what the *wizard* happened to
-    declare, so a layer with a model and no form field silently had no endpoint, and
-    ``_supported_targets`` (which this feeds) could name a target no route existed for.
-    The registry answers both with one derivation now, and
+    Two questions, both answered by the service itself: does it carry config at this layer
+    (``config_layers()``: editables, API fields, layout nodes, a modelled payload), and is
+    there a model to validate a write against (``config_model_for(layer)``). Never a
+    hardcoded name list, and never a re-derivation of those hooks here, because
+    ``_supported_targets`` feeds on this and would otherwise name a target that has no route.
     ``tests/test_service_config_api.py`` pins that the two stay one.
+
+    A service that owns a plain project-file property (user-env-vars, aliases) has no config
+    block in any ``services:`` list, so this endpoint, which reads and writes exactly that
+    block, has nothing to address there.
     """
     if service.owned_property is not None:
-        # A service that owns a plain project-file property (user-env-vars, aliases) has
-        # no config block in any ``services:`` list, so this endpoint -- which reads and
-        # writes exactly that block -- has nothing to address. Generating a route for it
-        # would let a caller write a config block that nothing ever reads (RC-25).
         return False
     return layer in service.config_layers() and service.config_model_for(layer) is not None
 
 
 def _values_targets(service) -> list[ConfigLayer]:
-    """The layers where this service's owned key/value map has endpoints (RC-55).
+    """The layers where this service's owned key/value map has endpoints.
 
     The single derivation both the catalog and the route generator use, so what a client
     is told exists and what actually exists cannot come apart.
@@ -2469,13 +2349,12 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
     return ServiceCatalogResponse(services=services)
 
 
-# --- describe one service (RC-59) --------------------------------------------
-# The catalog says which services exist; this says what one of them *is*, so a client
-# that has never seen the portal can apply it. Every field is a projection of something
-# the service already declares -- definition, config model, variables, layers. Nothing
-# here is prose written for the API alone: a second documentation system drifts from the
-# behaviour, and a wrong answer is worse than no answer. When something cannot be
-# derived, the declaration is missing that fact and it belongs there.
+# Describing one service. The catalog says which services exist; this says what one of them
+# *is*, so a client that has never seen the portal can apply it. Every field is a projection
+# of something the service already declares: definition, config model, variables, layers.
+# Nothing here is prose written for the API alone, because a second documentation system
+# drifts from the behaviour. When something cannot be derived, the declaration is missing
+# that fact and it belongs there.
 
 
 class ServiceVariableInfo(BaseModel):
@@ -2723,9 +2602,9 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
         for entry in services or []:
             if service_entry_name(entry) == service_name:
                 config = service_entry_config(entry)
-                # A bare selection (no config) is not a configuration -- e.g. the
-                # implicit project-level selection added when config is set on a
-                # component/deployment. Only report entries that carry config.
+                # A bare selection (no config) is not a configuration, such as the implicit
+                # project-level selection added when config is set on a component or a
+                # deployment. Only entries that carry config are reported.
                 if config is None:
                     return []
                 return [{"target": target, **ids, "config": visible(config, ConfigLayer(target))}]
@@ -2788,9 +2667,6 @@ async def get_service_config_v2(
     replace it, which invalidates a link that may already be on its way. The reasoning in
     full is in the module docstring of `opi.services.catalog.invite`. It does not
     generalise: `user-env-vars` values stay unreadable, for reasons of their own.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     service = _service_or_404(service_name)
     project = get_project_store().get(project_name)
@@ -2861,8 +2737,8 @@ async def _enqueue_config_write(
         "component": component,
         "deployment": deployment,
         "rollout": rollout,
-        # De deployments die deze config raakt, hier opgelost zodat de taakscope en de
-        # verwerking dezelfde lijst gebruiken. None = projectbreed (de projectlaag).
+        # The deployments this config touches, resolved here so the task scope and the
+        # processing use the same list. None means project-wide, the project layer.
         "deployment_names": affected_deployments(
             _project_data_or_404(project_name),
             deployment_name=deployment,
@@ -2883,14 +2759,14 @@ async def _enqueue_config_write(
     return _accepted_response(task, "configure_service")
 
 
-# --- typed per-service config routes (generated from the registry) -----------
+# The typed per-service config routes, generated from the registry.
 # Each configurable (service, target) gets its OWN explicit route whose request
 # body IS that service's config model, so the OpenAPI spec documents the fields
 # and enum values per service (a client can be generated from it) instead of a
 # generic config dict resolved only at request time. The path is a predictable
 # pattern: /projects/{project}/services/<service>/config/<target>[/<name>].
-# deployment-component is intentionally omitted -- no service accepts config there
-# today (it is written via the image-update storage actions).
+# deployment-component is intentionally omitted: no service accepts config there today, and
+# what does land there is written via the image-update storage actions.
 
 
 def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
@@ -2911,10 +2787,10 @@ def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
 
 def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:
     """Build the endpoint signature FastAPI introspects: request, project_name, an
-    optional component/deployment name, and (for upsert) the typed config body."""
-    # The shared annotations rather than a bare ``str``: these 38 generated endpoints were
-    # 73 of the 114 parameters in the whole document that carried no description, and they
-    # all come from this one signature.
+    optional component/deployment name, and (for upsert) the typed config body.
+    """
+    # The shared annotations rather than a bare ``str``: every generated endpoint documents
+    # its parameters, and they all come from this one signature.
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
         Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
@@ -2925,7 +2801,7 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
     if body_model is not None:
         params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
     # Writing a service config is a project-file change like any other, so these routes
-    # take the same rollout flag as the hand-written ones (RC-46).
+    # take the same rollout flag as the hand-written ones.
     params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
     return Signature(params, return_annotation=JSONResponse)
 
@@ -3029,7 +2905,7 @@ def _make_upsert_endpoint(
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         # exclude_unset: only write what the caller actually sent, so unset optional
-        # fields leave no key rather than freezing a model default (checklist item 4).
+        # fields leave no key rather than freezing a model default.
         config = kwargs["body"].model_dump(by_alias=True, exclude_unset=True)
         _refuse_platform_managed(service_name, config, managed)
         if singular:
@@ -3088,7 +2964,8 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
 
 class _ListConfigPatch(BaseModel):
     """Shared base for the generated PATCH bodies: at least one operation, so an empty
-    ``{}`` is a 422 instead of a silent no-op across the task machinery."""
+    ``{}`` is a 422 instead of a silent no-op across the task machinery.
+    """
 
     add: list[Any] | None = None
     remove: list[str] | None = None
@@ -3102,7 +2979,8 @@ class _ListConfigPatch(BaseModel):
 
 def _patch_model_name(config_model: type, spec: PatchableList) -> str:
     """``StorageConfigPatch`` for a root list, ``InviteConfigActivePatch`` for a named one
-    -- so the two lists of one model (cross-domain-access) cannot collide in the spec."""
+    -- so the two lists of one model (cross-domain-access) cannot collide in the spec.
+    """
     if spec.name is None:
         return f"{config_model.__name__}Patch"
     part = "".join(word.capitalize() for word in spec.name.replace("_", "-").split("-"))
@@ -3112,7 +2990,8 @@ def _patch_model_name(config_model: type, spec: PatchableList) -> str:
 def _make_patch_body_model(config_model: type, spec: PatchableList) -> type[BaseModel]:
     """The typed PATCH body for one patchable list: whole entries to `add` (upserted by
     key), plain keys to `remove`. A list of plain values takes the values on both sides,
-    because there the value IS the key."""
+    because there the value IS the key.
+    """
     item_type = spec.item_type
     if spec.item_key is None:
         add_description = (
@@ -3132,7 +3011,7 @@ def _make_patch_body_model(config_model: type, spec: PatchableList) -> type[Base
     return create_model(
         _patch_model_name(config_model, spec),
         __base__=_ListConfigPatch,
-        # create_model typeert zijn velddefinities sinds pydantic 2.14 als TypeForm.
+        # From pydantic 2.14 on, create_model types its field definitions as TypeForm.
         add=cast("Any", (list[item_type] | None, Field(default=None, description=add_description))),
         remove=cast("Any", (list[str] | None, Field(default=None, description=remove_description))),
     )
@@ -3351,20 +3230,18 @@ _CONFIG_WRITE_LAYERS = (ConfigLayer.PROJECT, ConfigLayer.COMPONENT, ConfigLayer.
 _register_service_config_routes(v2_router)
 
 
-# --- extra database schemas as their own sub-resource (RC-59) ----------------
-# The extra schemas of `postgresql-database` (RC-17) are the one part of a service
+# The extra database schemas are a sub-resource of their own.
+# The extra schemas of `postgresql-database` are the one part of a service
 # config where "read it, change one entry, write the whole block back" is unsafe.
-# RC-17 decided that a schema leaving the list must NOT take its data with it:
-# removing it marks it, the schema and its contents stay, and only the variable stops
-# being offered. But marking is a field a user ticks in the form -- not a consequence
-# of dropping a line. A client that rewrites the config with one schema fewer loses
-# that protection without ever being told it existed, and an agent that knows only
-# the request schema cannot know the intention behind it.
+# A schema leaving the list must NOT take its data with it: removing it marks it, the schema
+# and its contents stay, and only the variable stops being offered. Marking is a field a user
+# ticks in the form and not a consequence of dropping a line, so a client that rewrites the
+# config with one schema fewer would lose that protection without ever being told it existed.
 #
 # So the schemas get their own routes: one entry is addressed at a time, adding or
 # removing never touches the rest of the config, and removing marks by default.
-# Everything else about a database is still configured through the generic config
-# route -- this is not a second way to configure the service.
+# Everything else about a database is still configured through the generic config route:
+# this is not a second way to configure the service.
 
 _SCHEMAS_SERVICE = ServiceType.POSTGRESQL_DATABASE.value
 _SCHEMAS_PATH = f"/projects/{{project_name}}/services/{_SCHEMAS_SERVICE}/schemas"
@@ -3580,9 +3457,6 @@ async def list_database_schemas_v2(request: Request, project_name: ProjectNamePa
     default one, and gets a 404. An empty list would be the wrong answer here: it reads as
     "this database has no extra schemas", while there is no database. It is also the answer
     the write routes give for the same project, so the sub-resource says one thing.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -3713,11 +3587,7 @@ async def add_database_schema_v2(
     body: AddDatabaseSchemaRequest,
     rollout: RolloutQuery = True,
 ) -> JSONResponse:
-    """Add one extra database schema, and answer with the names it will carry.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
-    """
+    """Add one extra database schema, and answer with the names it will carry."""
     task, project_data = await _enqueue_schema_write(
         request,
         project_name,
@@ -3795,11 +3665,7 @@ async def remove_database_schema_v2(
     ] = False,
     rollout: RolloutQuery = True,
 ) -> JSONResponse:
-    """Mark one extra database schema as no longer wanted, or forget it entirely.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
-    """
+    """Mark one extra database schema as no longer wanted, or forget it entirely."""
     task, _ = await _enqueue_schema_write(
         request,
         project_name,
@@ -3811,10 +3677,10 @@ async def remove_database_schema_v2(
     return _accepted_response(task, "manage_database_schemas")
 
 
-# --- declared per-service actions (RC-38) ------------------------------------
+# The actions a service declares for itself.
 # Beyond "configure this service here", a service may declare actions of its own
 # (opi/services/catalog/actions.py): what it can do that the wizard has no field
-# for. Attachments is the first -- uploading a file is not a config block, and
+# for. Attachments is the first: uploading a file is not a config block, and
 # without it an API client could reference an attachment it had no way to create.
 # Route, multipart signature, per-field documentation and the OpenAPI example are
 # all derived from the declaration; nothing here names a service.
@@ -3948,7 +3814,8 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
     """The signature FastAPI introspects: path params, the upsert flag when the route
     serves both PUT verbs, and the declared fields as one named multipart body -- each
     field carrying its own description, so the OpenAPI document says what every field
-    means."""
+    means.
+    """
     addressed = verbs[0].targets_existing
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
@@ -4012,7 +3879,8 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
 def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
     """The OpenAPI description: what the action does, what each verb on this route
     promises about an id that already exists, which field combinations hold, and a call
-    that works."""
+    that works.
+    """
     lines = [action.description, "", "Verbs on this route:"]
     lines += [
         f"- `{verb.value}`: id bestaat al -> {verb.on_existing}; id bestaat nog niet -> {verb.on_absent}"
@@ -4079,7 +3947,8 @@ async def _enqueue_action_rollout(
 
 def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
     """Build the endpoint for one route: resolve the verb, validate against the service's
-    own editables, then hand the values to the service's handler."""
+    own editables, then hand the values to the service's handler.
+    """
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
@@ -4095,9 +3964,9 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
                 raw = getattr(body, _param_name(action_field.name), None)
                 if action_field.kind is ActionFieldKind.FILE:
                     if raw is not None:
-                        # Met het plafond van het veld mee, zodat een te groot bestand
-                        # afbreekt in plaats van eerst volledig in het geheugen te komen,
-                        # en in het slot dat de gelijktijdige uploads begrenst.
+                        # Capped by the field's own ceiling, so a file that is too large
+                        # breaks off instead of reaching memory in full first, and inside the
+                        # slot that bounds the concurrent uploads.
                         async with upload_slot():
                             content = await read_capped(raw, action_field.max_bytes)
                         if content is None:
@@ -4155,13 +4024,11 @@ def _register_service_action_routes(router: APIRouter) -> None:
 _register_service_action_routes(v2_router)
 
 
-# --- owned key/value routes (RC-55) ------------------------------------------
-# ``user-env-vars`` and ``aliases`` were the only two registered services without a
-# single endpoint. Not an oversight: they own a plain property on a component
-# (``user-env-vars:``, ``aliases:``) instead of a block in a ``services:`` list, so the
-# generic config routes above -- which read and write exactly that block -- have nothing
-# to address, and ``_accepts_config_at`` skips them on purpose. What was missing is an
-# endpoint for the owned-property shape, which is what this section is.
+# The routes for the key/value pairs a service owns.
+# ``user-env-vars`` and ``aliases`` own a plain property on a component (``user-env-vars:``,
+# ``aliases:``) instead of a block in a ``services:`` list, so the generic config routes
+# above, which read and write exactly that block, have nothing to address and
+# ``_accepts_config_at`` skips them on purpose. These routes are the owned-property shape.
 #
 # The unit addressed is one entry, not the whole map: the stored form is encrypted (one
 # block for the set, or one ciphertext per value), so "send me the whole thing back with
@@ -4172,8 +4039,8 @@ _register_service_action_routes(v2_router)
 # endpoints only. That is not an omission but the shape of the project file: the
 # ``deployment-component`` object in ``opi/schemas/project_v2.json`` has
 # ``additionalProperties: false`` and no ``aliases`` property, and putting one there is a
-# schema version bump plus a legacy patch, deliberately not taken (the alias mechanism is
-# on its way out; see features/component-values-api.md).
+# schema version bump plus a legacy patch, deliberately not done (the alias mechanism is on
+# its way out; see features/component-values-api.md).
 
 
 class ServiceValuesPayload(BaseModel):
@@ -4344,8 +4211,8 @@ def _make_values_endpoint(
             keys = [kwargs["value_key"]] if keyed else list(body.keys)
             if keyed:
                 # A name in the PATH gets no pydantic validation, so it is checked here
-                # and turned into the same 422 a name in a body would produce -- not the
-                # 500 an escaping ComponentValuesError would be.
+                # and turned into the same 422 a name in a body would produce, instead of
+                # the 500 an escaping ComponentValuesError would be.
                 try:
                     validate_values_key(keys[0])
                 except ComponentValuesError as error:
@@ -4402,12 +4269,12 @@ class ServiceValuesRead(BaseModel):
 
 
 def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
-    """Build the GET that reads back what the writes on this path put there (RC-66).
+    """Build the GET that reads back what the writes on this path put there.
 
-    Synchronous: it reads the project file, so there is nothing to enqueue. Which values
-    may be shown is the owning service's call (``owned_value_is_secret``), asked per
-    value on the decrypted map -- everything in the file is encrypted, so the stored
-    form cannot tell a secret from a reference.
+    Synchronous: it reads the project file, so there is nothing to enqueue. Which values may
+    be shown is the owning service's call (``owned_value_is_secret``), asked per value on the
+    decrypted map, because everything in the file is encrypted and the stored form cannot
+    tell a secret from a reference.
 
     **The request never gets a say in that, and that is the point.** An env-var value can
     hold a secret, so it is masked, full stop -- no query parameter, no body flag, no
@@ -4587,8 +4454,8 @@ def _register_service_values_routes(router: APIRouter) -> None:
                     description=_values_description(service_name, layer, operation),
                 )
 
-            # The read side of the same path (RC-66, bevinding 3). Without it the values
-            # written here could not be checked at all: the generic config reader has
+            # The read side of the same path. Without it the values written here could not
+            # be checked at all: the generic config reader has
             # nothing to report for a service that owns a plain property, so a client
             # could see THAT a component had variables and never which.
             router.add_api_route(

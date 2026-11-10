@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable  # noqa: TC003 -- staat in een runtime-signatuur
+from collections.abc import Callable  # noqa: TC003  # stands in a runtime signature
 from typing import Any
 from uuid import UUID
 
@@ -21,48 +21,37 @@ from opi.services.project_store import get_project_store
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
-
-
 class TaskListResponse(BaseModel):
     tasks: list[TaskResponse]
     total: int
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 async def _pending_rollout_for(task_service: object, project_name: str | None) -> dict | None:
-    """Hoeveel opgeslagen wijzigingen er nog op het cluster wachten, of ``None``.
+    """How many saved changes are still waiting on the cluster, or ``None``.
 
-    Best effort en met opzet: dit is een ETIKET bij het antwoord over de taak. Werkt de
-    telling niet, dan is het antwoord over die taak nog steeds geldig en zou een fout hier
-    een geslaagde schrijfactie als mislukt laten lezen.
+    Best effort on purpose: this is a LABEL next to the answer about the task. When the count
+    does not work the answer about that task still holds, and a failure here would make a
+    successful write read as a failed one.
     """
     if not project_name:
         return None
-    ophalen = getattr(task_service, "get_deferred_rollouts", None)
-    if ophalen is None:
+    fetch = getattr(task_service, "get_deferred_rollouts", None)
+    if fetch is None:
         return None
     try:
-        pending = await ophalen(project_name)
+        pending = await fetch(project_name)
     except Exception:
         logger.warning("Kon de wachtende wijzigingen van project %s niet tellen", project_name, exc_info=True)
         return None
     if not isinstance(pending, dict):
-        # Een takenservice die dit niet echt beantwoordt (een federatieproxy, een dubbel in
-        # een toets) levert iets anders op. Dan is er geen telling, en dat is een leeg etiket
-        # en geen fout.
+        # A task service that does not really answer this (a federation proxy, a double in a
+        # test) yields something else. There is no count then, which is an empty label and
+        # not a failure.
         return None
     return {"project": project_name, **pending}
 
 
 def _validate_task_id(task_id: str) -> str:
-    """Validate that task_id is a valid UUID string and return it."""
     try:
         UUID(task_id)
     except ValueError:
@@ -71,7 +60,6 @@ def _validate_task_id(task_id: str) -> str:
 
 
 def _get_task_service(request: Request):
-    """Retrieve the task service from application state."""
     task_service = getattr(request.app.state, "task_service", None)
     if task_service is None:
         raise HTTPException(status_code=503, detail="Task service not available")
@@ -88,8 +76,8 @@ async def _caller_started_this_task(request: Request, task: dict) -> bool:
     token that started it is the honest second key: it says who the caller is, and the
     task itself says whether that person may follow it.
 
-    Absence of a token is not an error here - the caller may be presenting an API key
-    instead - so this answers False rather than raising.
+    Absence of a token is not an error here, the caller may be presenting an API key instead,
+    so this answers False rather than raising.
     """
     try:
         token = extract_bearer_token(request)
@@ -107,9 +95,9 @@ async def _validate_task_access(request: Request, task: dict, endpoint: Callable
 
     Two ways in, in this order:
 
-    1. Een ``X-API-Key``: de oude projectsleutel of een token van een lid van het project. Taken
-       dragen hun ``project_name``, dus de handeling van deze route wordt op dat project
-       beslist, langs hetzelfde handhavingspunt als de rest van de API.
+    1. An ``X-API-Key``: the old project key or a token of a member of the project. Tasks
+       carry their ``project_name``, so the handling of this route is decided on that project,
+       along the same enforcement point as the rest of the API.
     2. An ``Authorization: Bearer`` token belonging to the person who started the task.
        This is what makes a create-project task pollable before its project exists.
 
@@ -147,10 +135,6 @@ async def _validate_task_access(request: Request, task: dict, endpoint: Callable
         raise
 
 
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
-
 task_router: APIRouter = APIRouter(
     prefix="/api/tasks",
     tags=["tasks"],
@@ -176,7 +160,7 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     One task cannot be followed that way: the one that creates a project. Its key
     only starts working once the project file it is writing exists, so this route
     also accepts ``Authorization: Bearer <SSO access token>`` from the user who
-    started the task - the same token that was used to create the project.
+    started the task, the same token that was used to create the project.
 
     Returns 202 with Location and Retry-After headers while the task is
     in progress (pending, claimed, or running), and 200 when the task
@@ -189,7 +173,6 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
 
     task = await task_service.get_task(task_id)
     if task is None:
-        # Try federation proxy if available
         federation_service = getattr(request.app.state, "federation_service", None)
         if federation_service:
             task = await federation_service.get_task_status(task_id)
@@ -202,10 +185,9 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     status = task.get("status", "")
 
     if status == "pending":
-        # Waarom deze taak nog niet aan de beurt is. Zonder dit lijkt een geblokkeerde taak
-        # gewoon te hangen, en dat is precies wat we niet willen ruilen voor de fout die we
-        # weghalen: wie een delete start terwijl er een projectbrede taak loopt, moet kunnen
-        # zien dat er niets stuk is.
+        # Why this task is not up yet. Without it a blocked task simply looks like it hangs,
+        # and whoever starts a delete while a project-wide task runs has to be able to see
+        # that nothing is broken.
         blocker = await task_service.find_blocking_task(task_id)
         if blocker:
             task["waiting_for"] = {
@@ -218,12 +200,10 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     response_body = task_response_from_dict(task)
 
     if status not in ("pending", "claimed", "running"):
-        # De teller hoort bij het antwoord dat zegt dat de schrijfactie klaar is, en niet bij
-        # een tweede aanroep erna. Twee gelijktijdige schrijfacties meldden "5" en "4
-        # wachtende wijzigingen" (zad-cli, punt 24): allebei waar op hun eigen moment, want
-        # elke client las de teller zelf op een ander tijdstip. Hier is dat moment vast: de
-        # taak is af, dus zijn eigen wijziging telt mee, en er is geen tweede ronde meer die
-        # ernaast kan zitten.
+        # The count belongs with the answer that says the write is done, and not with a second
+        # call after it: two clients reading the count themselves each read it at their own
+        # moment and reported a different number. Here the moment is fixed, the task is
+        # finished, so its own change counts along.
         response_body["pending_rollout"] = await _pending_rollout_for(task_service, task.get("project_name"))
 
     if status in ("pending", "claimed", "running"):
@@ -257,7 +237,7 @@ async def list_tasks(
     Requires the project's API key (X-API-Key header) and a project_name
     query parameter. Tasks are filtered to the authenticated project.
     """
-    # Herkenning gaat voor alles: naamloze aanroeper krijgt 401, niet 503 of 400.
+    # Recognition goes first: a nameless caller gets a 401 and not a 503 or a 400.
     api_key = request.headers.get("X-API-Key")
     if not api_key:
         raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")

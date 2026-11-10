@@ -29,15 +29,15 @@ class StepUpRequest(BaseModel):
 
 
 class StepUpWindow(BaseModel):
-    """Tot wanneer de step-up geldt, zoals de activering hem teruggeeft."""
+    """Until when the step-up holds, as the activation hands it back."""
 
     valid_until: str = Field(..., description="Einde van het venster in ISO 8601; het schuift niet mee")
 
 
-#: Wat een activeringsroute aan fouten kan geven, zoals een client het in de OpenAPI leest.
-_GEEN_SESSIE = "Dit token heeft geen SSO-sessie om een step-up aan te hangen"
-_ACTIVEER_ANTWOORDEN: dict[int | str, dict[str, object]] = {
-    400: {"description": _GEEN_SESSIE},
+#: The errors an activation route can answer with, as a client reads them in the OpenAPI document.
+_NO_SESSION = "Dit token heeft geen SSO-sessie om een step-up aan te hangen"
+_ACTIVATION_RESPONSES: dict[int | str, dict[str, object]] = {
+    400: {"description": _NO_SESSION},
     403: STEP_UP_403_RESPONSE,
 }
 
@@ -47,12 +47,12 @@ async def _activate(request: Request, code: str, *, project_name: str = "") -> R
     credential = request.state.step_up_credential
     if not credential:
         logger.warning("Step-up refused for %s: the token has no sid claim", email)
-        raise HTTPException(status_code=400, detail=_GEEN_SESSIE)
+        raise HTTPException(status_code=400, detail=_NO_SESSION)
 
-    probleem = await verify_step_up_code(request, code, project_name=project_name)
-    if probleem is not None:
-        await record_step_up_attempt(email, allowed=False, cause=probleem.cause.value, origin=client_ip(request))
-        return step_up_problem_response(probleem)
+    problem = await verify_step_up_code(request, code, project_name=project_name)
+    if problem is not None:
+        await record_step_up_attempt(email, allowed=False, cause=problem.cause.value, origin=client_ip(request))
+        return step_up_problem_response(problem)
 
     valid_until = await ApiStepUpService().record(credential, email)
     await record_step_up_attempt(email, allowed=True, cause=None, origin=client_ip(request))
@@ -71,7 +71,7 @@ async def _end(request: Request) -> Response:
     STEP_UP_PATH.removeprefix("/api/v2"),
     response_model=StepUpWindow,
     response_class=JSONResponse,
-    responses=_ACTIVEER_ANTWOORDEN,
+    responses=_ACTIVATION_RESPONSES,
 )
 @action(Action.STEP_UP_VERIFY)
 @validate_user_token
@@ -96,7 +96,7 @@ async def end_step_up(request: Request) -> Response:
     "/projects/{project_name}/step-up",
     response_model=StepUpWindow,
     response_class=JSONResponse,
-    responses=_ACTIVEER_ANTWOORDEN,
+    responses=_ACTIVATION_RESPONSES,
 )
 @action(Action.TOKEN_STEP_UP)
 @validate_api_token

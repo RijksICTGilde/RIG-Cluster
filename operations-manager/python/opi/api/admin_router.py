@@ -1,15 +1,8 @@
-"""Admin API router for cleanup, reconciliation, and maintenance operations.
+"""The endpoints for cleanup, reconciliation and maintenance of the platform itself.
 
-Provides endpoints for managing resource lifecycle operations that are
-separate from the normal project API. Authenticated with the bearer token of a
-platform admin, and every route that CHANGES something also wants a fresh code in
-a fresh step-up (``POST /api/v2/step-up``); see ``features/platformbeheer-via-de-api.md``.
-
-Endpoints:
-    GET  /api/v2/admin/marked-for-deletion          - List marked resources
-    POST /api/v2/admin/cleanup/trigger               - Trigger cleanup (purge expired)
-    POST /api/v2/admin/reconciliation/trigger         - Trigger full reconciliation
-    DELETE /api/v2/admin/marked-for-deletion/{mark_id} - Remove a specific mark
+Every route here wants the bearer token of a platform admin, and every route that CHANGES
+something also wants a fresh code in a fresh step-up (``POST /api/v2/step-up``); see
+``features/platformbeheer-via-de-api.md``.
 """
 
 import logging
@@ -42,7 +35,6 @@ admin_router: APIRouter = APIRouter(
 
 
 def _get_marked_for_deletion_service() -> MarkedForDeletionService:
-    """Get a MarkedForDeletionService instance (ORM-backed)."""
     return MarkedForDeletionService()
 
 
@@ -130,7 +122,6 @@ async def trigger_reconciliation(
     Reconciliation performs three operations:
     1. Unmarks resources that reappeared in project YAMLs (git revert recovery).
     2. Purges resources that are marked AND past the grace period.
-    3. (Future) Detects newly orphaned resources.
 
     Uses all currently loaded project YAML definitions as the source of truth.
 
@@ -142,7 +133,6 @@ async def trigger_reconciliation(
     """
     from opi.jobs.reconciliation import reconcile
 
-    # Build project YAML list from all loaded projects
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
@@ -318,7 +308,7 @@ async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 
     The store re-reads ``zad-projects`` on a timer, so a file committed to that repo by
-    something other than ZAD -- an import, a hand edit, another cluster -- is invisible
+    something other than ZAD (an import, a hand edit, another cluster) is invisible
     until the next tick. Anything asking for it before then gets "project not found".
     This endpoint does that read on demand.
 

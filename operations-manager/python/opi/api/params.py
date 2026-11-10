@@ -1,18 +1,10 @@
 """Shared declarations for the parameters that recur across the API.
 
-Measured on 2026-08-04: the OpenAPI document carried 178 parameters of which 32 had a
-description. The distribution is extremely concentrated -- ``project_name`` alone appears
-84 times (7 described), ``deployment_name`` 26 times (none described), ``component_name``
-14 times (none) -- so five names cover 134 of the 178.
-
-Writing that text at every endpoint would mean 134 chances to phrase it differently, and a
-generated client shows whichever variant it happened to hit. One definition per concept
-keeps the meaning in a single place, and an endpoint that needs to say something extra can
-still do so on top.
-
-Each name comes in the flavours it actually occurs in: ``project_name`` is a path segment
-on most endpoints but a query parameter on the restore endpoints, and the two cannot share
-one declaration.
+A parameter that several endpoints take is described here once, so a generated client does
+not get a different wording per endpoint. An endpoint that needs to say something extra
+still can, on top of this. Each name comes in the flavours it occurs in: ``project_name`` is
+a path segment on most endpoints but a query parameter on the restore endpoints, and Path
+and Query cannot share one declaration.
 """
 
 from typing import Annotated
@@ -21,7 +13,6 @@ from fastapi import Path, Query
 
 from opi.utils.patterns import DNS1123_LABEL, DNS1123_SUBDOMAIN
 
-#: A project's technical name, as used in the project file and in every path.
 _PROJECT_NAME_DESCRIPTION = (
     "Technical name of the project, as it appears in the project file (e.g. 'wies'). Not the display name."
 )
@@ -38,10 +29,9 @@ DeploymentNameQuery = Annotated[str, Query(description=_DEPLOYMENT_NAME_DESCRIPT
 
 ComponentNamePath = Annotated[str, Path(description=_COMPONENT_NAME_DESCRIPTION)]
 
-#: Path segments that name a Kubernetes resource end up in a generated manifest and, for the
-#: restore endpoints, in the Kopia repository key. The pattern is what Kubernetes itself
-#: accepts, so a value that could never name a resource is refused with a 422 instead of
-#: travelling onwards.
+#: These segments end up in a generated manifest and, on the restore endpoints, in the Kopia
+#: repository key, so the pattern is what Kubernetes itself accepts: a value that could never
+#: name a resource is refused with a 422 instead of travelling onwards.
 ClusterPath = Annotated[
     str,
     Path(
@@ -66,10 +56,9 @@ NamespacePath = Annotated[
     ),
 ]
 
-#: A PVC name or a backup reference name. Both are DNS-1123 subdomains: a PVC name is a
-#: Kubernetes object name, and a reference is either a component service reference or
-#: ``{deployment}-{service prefix}`` (see ``_fallback_reference_names``), so neither
-#: carries an underscore or any other character outside this set.
+#: A PVC name or a backup reference name. A reference is either a component service reference
+#: or ``{deployment}-{service prefix}`` (see ``_fallback_reference_names``), so like a PVC name
+#: it is a DNS-1123 subdomain.
 ResourceNamePath = Annotated[
     str,
     Path(

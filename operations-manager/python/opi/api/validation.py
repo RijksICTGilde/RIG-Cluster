@@ -1,12 +1,8 @@
-"""API validation profiles using the editable validation pipeline.
+"""Per API operation the editable validators it runs, so an endpoint enforces the form rules.
 
-Maps API operations to their relevant Editable validators so that
-API endpoints enforce the same business rules as the web form pipeline.
-
-Every profile below points at the *shared* editable for the field - the same
-object the wizard section renders. Hand-written copies used to sit here
-alongside the shared ones; a rule changed on one side then validated
-differently on the other, and nothing noticed.
+Every profile below points at the *shared* editable for the field, the same object the wizard
+section renders. A hand-written copy next to the shared one would let the same field validate
+differently per entrance.
 """
 
 from __future__ import annotations
@@ -40,17 +36,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Validation profiles - map API field names to Editable instances
-# ---------------------------------------------------------------------------
-
 
 def _required(editable: Editable) -> Editable:
     """The same field, but the API insists on it.
 
-    Whether a field may be left out is the endpoint's business; what the value
-    must look like is the field's. Only the first is overridden here, so the
-    rule itself stays in one place.
+    Only ``required`` is overridden: whether a field may be left out is the endpoint's
+    business, what the value must look like stays the field's.
     """
     return replace(editable, required=True)
 
@@ -75,14 +66,10 @@ ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
 #: judged by one rule no matter which endpoint writes it; all optional here because a
 #: PATCH only carries the fields it changes (an absent value validates clean).
 #:
-#: The two resource limits belong here for a reason that is easy to lose: the platform
-#: ceiling (``max_memory_limit_mi`` / ``max_cpu_limit_m``) used to be enforced twice over
-#: -- once by these editables on the add side and on the form, and once by the auto-tuner,
-#: which clamped anything too generous back on its next sweep. This profile validated
-#: neither limit, so a PATCH with ``{"memory_limit": "64Gi"}`` went straight through and
-#: the tuner put it right that night. Since RC-141 a hand-set value is pinned and the
-#: tuner leaves it alone, so that second line is gone and this profile is the only place
-#: the ceiling still gets checked on this route.
+#: The two resource limits have to stay in this profile: a hand-set value is pinned, so the
+#: auto-tuner no longer clamps anything too generous back, and the platform ceiling
+#: (``max_memory_limit_mi`` / ``max_cpu_limit_m``) is checked here and nowhere else on this
+#: route.
 UPDATE_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "description": COMPONENT_DESCRIPTION_EDITABLE,
     "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
@@ -112,11 +99,6 @@ CREATE_PROJECT_DOMAIN_VALIDATORS: dict[str, Editable] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
 async def validate_api_payload(
     payload: dict[str, Any],
     validators: dict[str, Editable],
@@ -124,24 +106,11 @@ async def validate_api_payload(
     context: dict[str, Any] | None = None,
     convert: bool = False,
 ) -> dict[str, Any]:
-    """Validate an API payload using editable validators.
+    """Validate a payload against a profile; field validation first, then the enforcers.
 
-    Runs field-level validation first, then optional enforcers.
-    Raises ``HTTPException(422)`` with structured field errors on failure.
-
-    Args:
-        payload: The API request data (e.g. from ``model.model_dump()``).
-        validators: Mapping of field names to Editable instances.
-        enforcers: Optional list of business-rule enforcers.
-        context: Optional context dict passed to enforcers.
-        convert: If True, apply converter.write() to values and return
-                 the converted payload. Otherwise return the original.
-
-    Returns:
-        The (optionally converted) payload dict.
-
-    Raises:
-        HTTPException: 422 with ``{"detail": {"field_errors": ..., "errors": ...}}``
+    Raises ``HTTPException(422)`` with ``{"detail": {"field_errors": ..., "errors": ...}}`` when
+    either refuses. With ``convert`` the returned payload holds the converted values instead of
+    the ones that came in.
     """
     field_errors = validate_fields(payload, validators)
 

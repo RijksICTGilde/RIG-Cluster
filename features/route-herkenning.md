@@ -27,18 +27,18 @@ eis uit de route zelf te lezen is in plaats van uit een lijst met paden.
 
 ## Gebruik
 
-De helper staat in `opi/api/route_herkenning.py`:
+De helper staat in `opi/api/route_recognition.py`:
 
 ```python
-from opi.api.route_herkenning import route_herkenningen
+from opi.api.route_recognition import route_recognitions
 from opi.server import app
 
-for route in route_herkenningen(app):
-    print(route.methode, route.pad, route.herkenningen)
+for route in route_recognitions(app):
+    print(route.method, route.path, route.recognitions)
 ```
 
-`route_herkenningen(app)` geeft per route een `RouteHerkenning` met `methode`, `pad`,
-`module`, `herkenningen` en `endpoint` (de handler zelf, zodat een bewaker diens bron kan
+`route_recognitions(app)` geeft per route een `RouteRecognition` met `method`, `path`,
+`module`, `recognitions` en `endpoint` (de handler zelf, zodat een bewaker diens bron kan
 lezen). Websocketroutes krijgen `WEBSOCKET` als methode.
 
 Het staat in `opi/` en niet in de test, omdat meer dan een vraagsteller dezelfde

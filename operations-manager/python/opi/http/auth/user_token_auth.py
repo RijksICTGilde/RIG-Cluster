@@ -241,7 +241,7 @@ REQUIRES_USER_TOKEN = "zad_requires_user_token"  # noqa: S105  # naam van de Ope
 
 
 #: Marker attribute set on a route that wants a bearer token of a platform admin.
-#: Read by ``opi/api/route_herkenning.py`` and by the OpenAPI document, like
+#: Read by ``opi/api/route_recognition.py`` and by the OpenAPI document, like
 #: ``REQUIRES_USER_TOKEN``.
 REQUIRES_PLATFORM_ADMIN_TOKEN = "zad_requires_platform_admin_token"  # noqa: S105  # naam van de marker, geen secret
 

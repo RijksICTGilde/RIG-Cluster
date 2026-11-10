@@ -1,11 +1,4 @@
-"""
-Image upload API router for pushing container images to a remote registry.
-
-Customers upload Docker image tarballs (from `docker save`) via HTTP, and the
-Operations Manager pushes them to the configured registry using skopeo.
-
-Optionally updates a deployment's component image reference after a successful push.
-"""
+"""Upload of a container image: a tarball over HTTP, pushed on to the configured registry."""
 
 import logging
 
@@ -38,19 +31,17 @@ async def push_image(
     deployment: str | None = Query(None, description="Deployment to update with the pushed image"),
     component: str | None = Query(None, description="Component within the deployment to update"),
 ) -> JSONResponse:
-    """
-    Upload a Docker image tarball and push it to the configured container registry.
+    """Upload a Docker image tarball and push it to the configured container registry.
 
-    The tarball should be created with `docker save`. It is streamed to disk in chunks
-    to avoid holding the full image in memory, then pushed via skopeo.
+    The tarball is the one `docker save` writes.
 
     The image lands on a tag that carries the project as its owner
     (`{project_name}_{image_name}-{tag}`), so two projects pushing the same
     `image_name` and `tag` get two different images and neither can overwrite the
     other's. Use the returned `image` reference, not a hand-built one.
 
-    Optionally, provide both `deployment` and `component` to update
-    the deployment's image reference and trigger a redeployment after a successful push.
+    Provide both `deployment` and `component` to update the deployment's image reference
+    and trigger a redeployment after a successful push.
     """
     if (deployment is None) != (component is None):
         raise HTTPException(
@@ -69,7 +60,7 @@ async def push_image(
     except SkopeoValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Zonder registry bestaat dit pad op deze instantie niet; dat is geen serverfout.
+    # Without a registry this path does not exist on this instance, which is not a server error.
     if not settings.REGISTRY_URL:
         raise HTTPException(status_code=404, detail="Not Found")
 

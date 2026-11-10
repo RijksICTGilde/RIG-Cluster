@@ -1,15 +1,9 @@
-"""
-Logs API endpoints for retrieving deployment logs.
-
-This module provides REST API endpoints for querying pod logs from deployments
-running on the current cluster.
+"""The endpoints that read the logs of the deployments on this cluster.
 
 It also holds :func:`resolve_component_pods`, the single answer to "which pods may this
 project read for this component". Both the pod-list endpoint below and the log-streaming
-WebSocket ask it: the endpoint to fill the panel's pod picker, the WebSocket to decide
-whether a pod name the client sent may be followed. Two implementations of that question
-would be two answers, and the one that is wrong is the one that lets a member tail a pod
-of a colleague's deployment in the same namespace.
+WebSocket ask it, so a second implementation would be a second answer, and the wrong one
+lets a member tail a pod of a colleague's deployment in the same namespace.
 """
 
 import logging
@@ -37,13 +31,10 @@ from opi.utils.naming import generate_unique_name
 logger = logging.getLogger(__name__)
 
 #: Upper bound on a pod name coming from a client. Kubernetes object names cap at 253
-#: characters; the same order of magnitude as the component-name bound the WebSocket
-#: already applies, and for the same reason: an unbounded string from a client is memory
-#: someone else chose the size of.
+#: characters, and an unbounded string from a client is memory someone else picks the size of.
 MAX_POD_NAME_LENGTH = 253
 
-#: Same idea for the deployment and component names a client sends along. Kept next to the
-#: bound above so the two live in one place instead of as bare numbers at their use sites.
+#: Same idea for the deployment and component names a client sends along.
 MAX_NAME_LENGTH = 256
 
 
@@ -58,8 +49,8 @@ async def resolve_component_pods(
 
     ``None`` means the question does not apply: this deployment is not in the project, it
     runs on another cluster, or the component is not one of its components. An empty list
-    means the component exists and simply has no pods. Callers need that difference -- one
-    is a 404, the other is an empty picker.
+    means the component exists and simply has no pods. Callers need that difference: one is
+    a 404, the other an empty picker.
 
     The component filter is applied on the ``app`` label rather than by asking kubectl for
     a narrower selector, so this function and the deployment-wide card summary read exactly
@@ -104,17 +95,9 @@ async def get_deployment_logs(
     component: str | None = Query(None, description="Filter by component name"),
     lines: int = Query(10, description="Number of log lines to retrieve", ge=1, le=1000),
 ) -> JSONResponse:
-    """
-    Get the last log lines from deployments for a project on the current cluster.
+    """Get the last log lines from deployments for a project on the current cluster.
 
-    Args:
-        project_name: Project name (required).
-        deployment: Optional deployment name to filter by.
-        component: Optional component name to filter by.
-        lines: Number of log lines to retrieve per deployment (default: 10, max: 1000).
-
-    Returns:
-        JSON response with log lines grouped by deployment/component.
+    The lines come back grouped by deployment and component.
 
     Example:
     ```bash
@@ -130,8 +113,6 @@ async def get_deployment_logs(
 
         results: list[dict] = []
 
-        # Single lookup, not a scan of every project: the store already keys its
-        # cache by name, so get() is the O(1) path.
         project_info = get_project_store().get(project_name)
         if project_info is None:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
@@ -143,32 +124,26 @@ async def get_deployment_logs(
             depl_name = depl.get("name")
             depl_cluster = depl.get("cluster")
 
-            # Only include deployments on current cluster
             if depl_cluster != current_cluster:
                 continue
 
-            # Get namespace with cluster-specific prefix
             namespace = get_prefixed_namespace(current_cluster, project_name)
 
-            # Filter by deployment if specified
             if deployment and depl_name != deployment:
                 continue
 
             if not depl_name:
                 continue
 
-            # Get components for this deployment
             components = depl.get("components", [])
             for comp in components:
                 comp_ref = comp.get("reference")
                 if not comp_ref:
                     continue
 
-                # Filter by component if specified
                 if component and comp_ref != component:
                     continue
 
-                # Use centralized naming utility for k8s deployment name
                 k8s_deployment_name = generate_unique_name(depl_name, comp_ref)
 
                 try:
@@ -190,10 +165,10 @@ async def get_deployment_logs(
                         }
                     )
                 except Exception:
-                    # Wat kubectl hier opgooit gaat over de infrastructuur -- een
-                    # onbereikbare API-server noemt zijn eigen adres -- en dat hoort
-                    # niet in een antwoord. Het veld blijft bestaan, want een client
-                    # leest eraan af dat dit onderdeel geen logs opleverde.
+                    # What kubectl raises here is about the infrastructure (an unreachable
+                    # API server names its own address), which does not belong in an answer.
+                    # The field stays, because a client reads off it that this component
+                    # yielded no logs.
                     logger.exception("Could not get logs for %s", k8s_deployment_name)
                     results.append(
                         {
@@ -242,11 +217,10 @@ async def get_component_pods(
 ) -> JSONResponse:
     """The pods of one component, so the log panel can offer a choice between them.
 
-    Session-authenticated rather than API-key authenticated: this is polled by the log
-    panel in the browser, which carries a session cookie and no project key. The
-    authorization middleware deliberately does not run on ``/api/`` paths (it says so in
-    its own comment), so the check is done here -- the same three steps the log WebSocket
-    does, in the same order.
+    Session-authenticated rather than API-key authenticated: this is polled by the log panel
+    in the browser, which carries a session cookie and no project key. The authorization
+    middleware deliberately does not run on ``/api/`` paths, so the check is done here, in
+    the same three steps and the same order as the log WebSocket.
     """
     user = get_user(request)
     user_email = (user or {}).get("email", "")
@@ -271,9 +245,9 @@ async def get_component_pods(
     if pods is None:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    # De bronvorm van de image, niet de rcr-proxyrewrite: hetzelfde wat de kaart toont.
-    # Met het projectbestand erbij, want alleen dan staan de eigen proxy-organisaties van
-    # dit project in de regellijst.
+    # The source form of the image and not the rcr proxy rewrite, the same as the card shows.
+    # The project file goes along, because only then do this project's own proxy
+    # organisations stand in the rule list.
     project_info = get_project_store().get(project_name)
     project_data = (project_info.data or {}) if project_info else None
     return JSONResponse(
