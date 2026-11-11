@@ -10,6 +10,7 @@
 
 - **Schrijf de gebruiker aan met "je", nooit met "u".** Dat geldt voor alles wat op het scherm komt: bevestigingen, meldingen, labels, hulpteksten en foutmeldingen. Het portaal is een gereedschap voor collega's, geen brief van de overheid aan een burger. Kom je "u" of "uw" tegen in bestaande tekst, zet het om.
 
+- **Docs follow the code.** When you remove, rename or move a function, class or file, `git grep` its name in `features/`, `docs/` and `architecture/` and update every reference to what it is now. A changed behaviour gets the same treatment in the feature document that describes it. History in a post-mortem or an ADR stays as written.
 - Python imports must always be at the top of the file, never inline or local. Use `ruff check --select I --fix` to sort and organize imports, then `ruff format .` to format.
 - **Build fast, test locally.** Run the tests for what you changed, never the whole suite. `task test-changed` picks them for you (on the names in the changed files); naming them yourself with `uv run pytest tests/<file> -x -q --tb=short` is just as good. The layers and when each one runs are in `docs/development/toetsen.md`:
   - **you** run `task test-changed`, and `task test` (the fast layer, a few minutes) when your change is broad;
