@@ -145,7 +145,7 @@ async def _write(change: ServiceConfigChange, project_manager: ProjectManager) -
             deployment_name=change.deployment_name,
         )
     if change.config is None:
-        raise ValueError(f"Upsert of service '{change.service_name}' without config")
+        raise ValueError(f"Upsert van service '{change.service_name}' zonder config")
     return await project_manager.configure_service(
         change.service_name,
         change.target,

@@ -96,7 +96,7 @@ class TestRefusals:
         assert str(refusal.value) == "Unknown error configuring service"
 
     async def test_an_upsert_without_config_is_a_programming_error(self) -> None:
-        with pytest.raises(ValueError, match="without config"):
+        with pytest.raises(ValueError, match="zonder config"):
             await configure_service(_change(config=None), _manager({"success": True}), _progress())
 
 
