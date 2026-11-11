@@ -30,13 +30,17 @@ OWNER = "eigenaar@example.org"
 
 PRODUCTIE_PROJECT = {
     "name": "demo",
-    "deployments": [{"name": "prod", "environment": "productie", "components": [{"reference": "web"}]}],
+    "deployments": [
+        {"name": "prod", "cluster": "local", "environment": "productie", "components": [{"reference": "web"}]}
+    ],
     "components": [{"name": "web"}],
 }
 
 NIET_PRODUCTIE_PROJECT = {
     "name": "demo",
-    "deployments": [{"name": "acc", "environment": "acceptatie", "components": [{"reference": "web"}]}],
+    "deployments": [
+        {"name": "acc", "cluster": "local", "environment": "acceptatie", "components": [{"reference": "web"}]}
+    ],
     "components": [{"name": "web"}],
 }
 
@@ -74,6 +78,7 @@ async def _run(endpoint: Any, path_params: dict[str, str], data: dict[str, Any],
         patch("opi.http.auth.authz.get_project_store", return_value=store),
         patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         patch("opi.web.router.get_project_store", return_value=store),
+        patch("opi.http.task_helpers.get_project_store", return_value=store),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.create_task_and_render_progress", new=AsyncMock(return_value="getaakt")) as create_task,
     ):

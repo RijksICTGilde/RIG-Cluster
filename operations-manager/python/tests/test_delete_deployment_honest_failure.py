@@ -10,6 +10,7 @@ successful, so the caller/cleaner retries (the delete is idempotent).
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.deployment_removal import DeploymentRemovalResult
 from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 
 
@@ -21,7 +22,7 @@ def _progress() -> MagicMock:
 
 def _pm_with_result(result: dict) -> MagicMock:
     pm = MagicMock()
-    pm.delete_deployment = AsyncMock(return_value=result)
+    pm.delete_deployment = AsyncMock(return_value=DeploymentRemovalResult(result))
     pm.close = AsyncMock()
     return pm
 

@@ -70,7 +70,7 @@
     {
      "name": "argo",
      "file": "opi/connectors/argo.py",
-     "uses": 18
+     "uses": 19
     }
    ],
    "services": [],

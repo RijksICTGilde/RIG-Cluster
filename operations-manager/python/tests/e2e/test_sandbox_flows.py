@@ -31,6 +31,7 @@ from tests.e2e.helpers.lifecycle import (
     create_project_via_wizard,
 )
 from tests.e2e.helpers.project_actions import delete_project_via_ui
+from tests.e2e.helpers.step_up import context_with_fresh_step_up
 from tests.e2e.helpers.wizard import unique_project_name
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-    from playwright.sync_api import BrowserContext, Page
+    from playwright.sync_api import Browser, BrowserContext, Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
@@ -258,6 +259,7 @@ def test_delete_component_via_api(
 def test_delete_project_via_ui(
     disposable_project: CreatedProject,
     sandbox_url: str,
+    browser: Browser,
     sandbox_page: Page,
     forgejo: ForgejoClient,
     capture,
@@ -266,10 +268,20 @@ def test_delete_project_via_ui(
 
     Op een EIGEN project (zie ``disposable_project``): deze test maakt zijn onderwerp
     kapot, dus delen zou meten in welke volgorde pytest draait.
+
+    In een EIGEN context met een verse step-up: een project verwijderen vraagt er een
+    (RC-332), en de gedeelde sandbox-context draagt die stempel niet. Zonder dit strandde
+    de verwijdering in de OTP-dialoog en viel de test op zijn eigen wachttijd.
     """
     lifecycle_project = disposable_project
-    delete_project_via_ui(sandbox_page, sandbox_url, lifecycle_project.name)
-    capture(sandbox_page, "delete-started")
+    context = context_with_fresh_step_up(browser, sandbox_url)
+    page = context.new_page()
+    try:
+        delete_project_via_ui(page, sandbox_url, lifecycle_project.name)
+        capture(page, "delete-started")
+    finally:
+        page.close()
+        context.close()
 
     # The authoritative signal is the project file disappearing from Forgejo. The
     # server-side delete of a still-deploying project can take minutes.

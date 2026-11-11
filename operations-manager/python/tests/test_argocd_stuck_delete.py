@@ -41,6 +41,7 @@ from opi.utils.argocd_tracking import (
     may_be_cut_from,
     tracked_resource_from_item,
 )
+from tests.deployment_removal_helper import remove_from_project_file_edit
 
 
 @pytest.fixture(autouse=True)
@@ -1386,6 +1387,7 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm)._cleanup_project_infrastructure(
@@ -1430,6 +1432,7 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm)._cleanup_project_infrastructure(
@@ -1471,6 +1474,7 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm)._cleanup_project_infrastructure(
@@ -1496,7 +1500,9 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
@@ -1524,7 +1530,9 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
@@ -1557,7 +1565,9 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
@@ -1585,7 +1595,9 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
@@ -1602,9 +1614,10 @@ class TestOperationClearedBeforeTheWait:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
-            await DeleteProjectManager(pm).delete_deployment_from_yaml_change("mpfm-w3h", deployment, project_data)
+            await remove_from_project_file_edit(DeleteProjectManager(pm), "mpfm-w3h", deployment, project_data)
 
         assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
         assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
@@ -1618,6 +1631,7 @@ class TestOperationClearedBeforeTheWait:
         results: dict = {"operations": [], "errors": []}
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_argo_namespace", return_value="argocd-test"),
         ):
             await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
@@ -1645,6 +1659,7 @@ class TestOperationClearedBeforeTheWait:
         results: dict = {"operations": [], "errors": []}
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_argo_namespace", return_value="argocd-test"),
         ):
             await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
@@ -1679,7 +1694,9 @@ class TestProjectFileFollowsTheCluster:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
@@ -1700,7 +1717,9 @@ class TestProjectFileFollowsTheCluster:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
@@ -1727,10 +1746,11 @@ class TestProjectFileFollowsTheCluster:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
-            results = await DeleteProjectManager(pm).delete_deployment_from_yaml_change(
-                "mpfm-w3h", deployment, project_data
+            results = await remove_from_project_file_edit(
+                DeleteProjectManager(pm), "mpfm-w3h", deployment, project_data
             )
 
         pm.mutate_and_commit_project.assert_not_awaited()
@@ -1762,7 +1782,9 @@ class TestTheProgressWindowReachesTheRoutes:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
@@ -1776,9 +1798,10 @@ class TestTheProgressWindowReachesTheRoutes:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
-            await DeleteProjectManager(pm).delete_deployment_from_yaml_change("mpfm-w3h", deployment, project_data)
+            await remove_from_project_file_edit(DeleteProjectManager(pm), "mpfm-w3h", deployment, project_data)
 
         assert self._window_of(argo) == DELETION_PROGRESS_BUDGET_SECONDS
 
@@ -1792,6 +1815,7 @@ class TestTheProgressWindowReachesTheRoutes:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm)._cleanup_project_infrastructure(
@@ -1823,7 +1847,9 @@ class TestTheProgressWindowReachesTheRoutes:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
@@ -1851,7 +1877,9 @@ class TestTheProgressWindowReachesTheRoutes:
         async def _twee_deployments_in_een_taak() -> None:
             with (
                 patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+                patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
                 patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+                patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
                 patch("os.path.exists", return_value=False),
             ):
                 manager = DeleteProjectManager(pm)
@@ -1973,8 +2001,11 @@ async def _delete_a_half_swept_deployment(calls: list[str], *, cascade_ends: boo
 
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=project_store),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomains),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomains),
         patch("opi.services.marked_for_deletion_service.MarkedForDeletionService", deferred),
         patch("os.path.exists", side_effect=lambda path: path == MANIFEST_FOLDER),
     ):

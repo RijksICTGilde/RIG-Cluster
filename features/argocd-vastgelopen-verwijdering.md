@@ -61,11 +61,12 @@ finalizer draagt.
    `operation`: `/spec/operation` is een pad dat nooit kan raken.
 
    Dit gebeurt op elke plek waar OPI een Application laat verwijderen die een workload
-   onder zich heeft: de wezenopruiming, de infrastructuur-Application, `delete_deployment`
-   en `delete_deployment_from_yaml_change`. Het werkt ook als de oorzaak buiten ons ligt:
-   een registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
+   onder zich heeft: de wezenopruiming, de infrastructuur-Application en `remove_deployment`
+   (`opi/manager/project/deployment_removal.py`), de ene verwijderweg sinds RC-484. Het werkt
+   ook als de oorzaak buiten ons ligt: een registry die plat gaat, een kapot image, een
+   crashloop bij de gebruiker.
 
-   Drie van die vier verwijderen via GitOps: het manifest gaat uit de
+   Twee van die drie verwijderen via GitOps: het manifest gaat uit de
    argo-applications-repo en ArgoCD ruimt de Application op. De wezenopruiming heeft dat
    manifest per definitie niet meer en verwijdert de Application zelf, met
    `kubectl delete application -n <argo-namespace>`. De cascade komt daar van de
@@ -166,8 +167,7 @@ finalizer draagt.
    wordt op de klok en niet op de uitgedeelde vensters, want een poll kost meer dan zijn
    `retry_delay`: de inventaris was op de sandbox 1,8s op een namespace met 271 resources.
 
-   Het venster staat aan op de infra-Application, `delete_deployment` en
-   `delete_deployment_from_yaml_change`.
+   Het venster staat aan op de infra-Application en op `remove_deployment`.
 
 3. Hangt het daarna nog, en staat `force` aan, dan verwijdert
    `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna, en alleen als
@@ -217,7 +217,7 @@ die elke volgende run leest, dus hij mag niet voorlopen. Op 29 september 2026 la
 delete-commits om 14:42 terwijl de cascade nog liep, en daarna vroeg niets aan beide kanten
 nog om de verwijdering: de deployment was weg uit de file en stond nog op het cluster.
 
-`delete_deployment` haalt de deployment daarom pas uit de project file als de delete op het
+`remove_deployment` haalt de deployment daarom pas uit de project file als de delete op het
 cluster BEVESTIGD is. Is hij dat niet, dan blijft de entry staan, komt de reden als fout in
 `deletion_results["errors"]` en faalt de taak. Dat is een van de twee voorwaarden op die
 stap: de andere, de manifestmap uit git, komt uit RC-254 en staat in
@@ -225,14 +225,14 @@ stap: de andere, de manifestmap uit git, komt uit RC-254 en staat in
 voorwaarde bij en is er met RC-265 af: stap 2 gooit de fout van zijn eigen commit nu door,
 dus deze stap wordt dan niet meer bereikt. Beide staan op dezelfde `if`, en de overgeslagen
 stap meldt met `status: "skipped"` welke van de twee het was. Dat houdt de delete opnieuw aanvraagbaar: de
-taakhandler faalt op een niet-lege errors-lijst en `delete_deployment` is idempotent. De
+taakhandler faalt op een niet-lege errors-lijst en `remove_deployment` is idempotent. De
 manifesten in de deployments-repo hadden deze grendel al, en om een zwaardere reden: de
 resources-finalizer heeft het source-pad nodig om te weten wat hij moet opruimen, dus ze
 weghalen terwijl hij nog loopt is een blijvende deadlock.
 
-`delete_deployment_from_yaml_change` heeft geen tegenhanger van die stap. Daar haalde de
-gebruiker de entry zelf uit de file, dus de file is de INVOER en er is niets terug te
-schrijven.
+Een verwijdering die uit een bewerking van de project file komt
+(`RemovalTrigger.PROJECT_FILE_EDIT`) slaat die stap over. Daar haalde de gebruiker de entry
+zelf uit de file, dus de file is de INVOER en er is niets terug te schrijven.
 
 Dat deletes van dezelfde deployment niet door elkaar lopen is een andere grendel, en die
 zit in de wachtrij: `affects_deployments` naast `_scopes_overlap` in `claim_next_task`

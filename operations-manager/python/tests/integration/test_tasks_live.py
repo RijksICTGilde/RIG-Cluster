@@ -949,8 +949,12 @@ async def test_delete_deployment_leaves_nothing_of_it(
     assert await tasks_live.wait_until(
         lambda: not tasks_live.argo_names_for(kubectl, "application", SECOND_DEPLOYMENT), timeout=CLUSTER_TIMEOUT
     ), "de ArgoCD-Application van de verwijderde deployment staat er nog"
-    assert await tasks_live.databases_of(SECOND_DEPLOYMENT) == set(), "de database van de deployment staat er nog"
-    assert tasks_live.buckets_of(SECOND_DEPLOYMENT) == set(), "de bucket van de deployment staat er nog"
+
+    # Since RC-484 (D1) every removal marks the persistent data first, with a grace period
+    # of seven days, and the purge takes it after that. "Gone" is the mark, not a database
+    # that disappears at once.
+    marked = {kind for kind, _ in await tasks_live.marks_of(SECOND_DEPLOYMENT)}
+    assert {"postgresql_database", "minio_bucket"} <= marked, f"de data is niet gemarkeerd: {marked}"
 
     # De scheiding tussen de twee niveaus: een deployment weghalen raakt niets van het
     # PROJECT. Het realm en de database van de buur horen te blijven staan.
@@ -977,8 +981,9 @@ async def test_delete_project_leaves_nothing_anywhere(
         lambda: not tasks_live.argo_names(kubectl, "application"), timeout=CLUSTER_TIMEOUT
     ), "er staat nog een ArgoCD-Application van dit project"
     assert not tasks_live.argo_names(kubectl, "appproject"), "er staat nog een AppProject van dit project"
-    assert await tasks_live.databases_with_prefix() == set(), "er staat nog een database van dit project"
-    assert await tasks_live.roles_with_prefix() == set(), "er staat nog een rol van dit project"
-    assert tasks_live.buckets_with_prefix() == set(), "er staat nog een bucket van dit project"
-    assert tasks_live.minio_users_with_prefix() == set(), "er staat nog een MinIO-gebruiker van dit project"
+    # The data of the deployments is marked and not wiped (RC-484, D1): deleting a project
+    # is reversible within the grace period, and the purge takes it after that. The database,
+    # the bucket, the MinIO user and the policy all belong to it.
+    marked = {kind for kind, _ in await tasks_live.marks_of(DEPLOYMENT)}
+    assert {"postgresql_database", "postgresql_user", "minio_bucket", "minio_user"} <= marked, marked
     assert not tasks_live.realm_exists(), "het realm van dit project staat er nog"

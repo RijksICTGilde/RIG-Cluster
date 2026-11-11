@@ -9,6 +9,8 @@ from fastapi import HTTPException, Request
 from opi.core.actor import ACTOR_UNKNOWN, get_actor
 from opi.core.config import settings
 from opi.http.auth.auth_decorators import get_current_user
+from opi.manager.project.deployment_removal import find_removable_deployment
+from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,24 @@ def task_actor(request: Request) -> str | None:
     if current is not ACTOR_UNKNOWN:
         return str(current)
     return "API" if request.headers.get("X-API-Key") else None
+
+
+def require_removable_deployment(project_name: str, deployment_name: str) -> None:
+    """404 straight away when this cluster has no such deployment to remove.
+
+    Every entrance of the removal runs this before it queues the work, so an unknown name
+    answers 404 in the request instead of as a task that fails a moment later. The lookup
+    filters on ``CLUSTER_MANAGER``, like the removal itself: a deployment of another cluster
+    is not ours to delete.
+
+    Raises:
+        HTTPException: 404 for an unknown project or deployment.
+    """
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    if find_removable_deployment(project.data or {}, deployment_name) is None:
+        raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' niet gevonden in {project_name}")
 
 
 def get_task_service(request: Request):

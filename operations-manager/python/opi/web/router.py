@@ -37,6 +37,7 @@ from opi.http.render.lotc_switch import (
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import get_navigation
 from opi.http.render.templates_lotc import templates_lotc
+from opi.http.task_helpers import require_removable_deployment
 from opi.services.api_token_service import is_project_admin
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
@@ -444,10 +445,9 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 
     logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
 
-    project = get_project_store().get(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project niet gevonden")
-    _require_deployment(project.data or {}, project_name, deployment_name)
+    # The cluster-filtered check: a name that belongs to another cluster is not ours to
+    # delete, and used to make the task report "was not there (any more)".
+    require_removable_deployment(project_name, deployment_name)
 
     return await create_task_and_render_progress(
         request=request,

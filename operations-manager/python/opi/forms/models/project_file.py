@@ -425,16 +425,6 @@ class DeploymentModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    data_retention_period: Annotated[
-        str | None,
-        FormMeta(
-            label="deployment.data_retention_period",
-            description="deployment.data_retention_period.description",
-            widget="text",
-            placeholder="0h",
-        ),
-    ] = Field(default=None, alias="data-retention-period")
-
 
 #: The rule: features/repository-pad.md; ``$defs/repository/path`` in ``project_v2.json``
 #: carries the same pattern. Without a lookahead and with ``\z``, because pydantic validates

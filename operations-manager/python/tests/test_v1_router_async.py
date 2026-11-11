@@ -84,6 +84,19 @@ def mock_router_project_service() -> Any:
         yield mock_service
 
 
+@pytest.fixture(autouse=True)
+def removable_deployments() -> Any:
+    """The store the removal guard reads: ``test-project`` has a ``staging`` on this cluster."""
+    store = MagicMock(spec=GitProjectStore)
+    store.get.return_value = ProjectSummary(
+        name="test-project",
+        filename="test-project.yaml",
+        data={"name": "test-project", "deployments": [{"name": "staging", "cluster": "local"}]},
+    )
+    with patch("opi.http.task_helpers.get_project_store", return_value=store):
+        yield store
+
+
 @pytest.fixture
 def client(
     mock_settings: Any,
@@ -864,20 +877,84 @@ class TestV1RefreshProject:
 
 
 class TestV1SyncDeleteDeployment:
-    """V1 delete deployment with sync=true (blocking)."""
+    """V1 delete deployment with sync=true: the same task, waited out in the request.
 
-    def test_sync_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
-        mock_pm = _create_mock_project_manager()
+    Since RC-484 ``sync=true`` no longer runs the delete next to the queue: it enqueues the
+    ordinary ``delete_deployment`` task and waits for it, so the task ordering, the dedup,
+    the drain guard and the guard against a rollout that puts the app back hold for it too.
+    The answer shape is unchanged.
+    """
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": API_KEY},
-            )
+    def _finished(self, mock_task_service: AsyncMock, status: str, answer: dict[str, Any]) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+        mock_task_service.get_task.return_value = {
+            **_make_task(task_type="delete_deployment", status=status),
+            "result": answer,
+        }
+
+    def test_sync_returns_200(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        self._finished(
+            mock_task_service,
+            "completed",
+            {"status": "completed", "message": "weg", "deletion_results": {"success": True}},
+        )
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "completed" or data.get("deletion_results", {}).get("success") is True
+        assert data["status"] == "completed"
+        assert data["deletion_results"] == {"success": True}
+        assert mock_task_service.create_task.call_args[1]["task_type"] == "delete_deployment"
+
+    def test_sync_returns_207_on_a_partial_delete(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        self._finished(
+            mock_task_service,
+            "failed",
+            {"status": "failed", "deletion_results": {"success": False, "errors": ["namespace bleef staan"]}},
+        )
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 207
+        assert response.json()["status"] == "partial"
+
+    def test_an_unknown_deployment_is_a_404_and_queues_nothing(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        response = client.delete("/api/projects/test-project/bestaat-niet", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 404
+        mock_task_service.create_task.assert_not_called()
+
+    def test_sync_times_out_while_waiting_answers_504(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """The task keeps going; only this blocking call stops waiting for it."""
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+
+        with patch("opi.api.router.wait_for_task_answer", AsyncMock(side_effect=TimeoutError("te lang"))):
+            response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 504, response.text
+        mock_task_service.create_task.assert_called_once()
+
+    def test_sync_folds_the_task_error_into_deletion_results_when_the_handler_wrote_none(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """A task that failed on an exception never reaches the step that writes its own
+        ``deletion_results``, so the task's ``error_message`` is the only error there is."""
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+        mock_task_service.get_task.return_value = {
+            **_make_task(task_type="delete_deployment", status="failed"),
+            "result": {"status": "failed"},
+            "error_message": "Critical error during deployment deletion: netwerk weg",
+        }
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 207
+        assert response.json()["deletion_results"]["errors"] == [
+            "Critical error during deployment deletion: netwerk weg"
+        ]
 
 
 # ---------------------------------------------------------------------------

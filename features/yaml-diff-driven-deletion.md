@@ -171,7 +171,8 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 | `opi/manager/minio_manager.py` | `handle_service_removal()` for MinIO |
 | `opi/manager/redis_manager.py` | `handle_service_removal()` for Redis |
 | `opi/manager/keycloak_manager.py` | `handle_service_removal()` for Keycloak |
-| `opi/manager/delete_project_manager.py` | `delete_deployment_from_yaml_change()` and `cleanup_removed_services_from_yaml_change()` |
+| `opi/manager/project/deployment_removal.py` | `remove_deployment()`, the one removal path; the YAML edit is `RemovalTrigger.PROJECT_FILE_EDIT` |
+| `opi/manager/delete_project_manager.py` | `cleanup_removed_services_from_yaml_change()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job: compares expected vs marked resources |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
 | `opi/manager/project_manager.py` | Wired deletion + service removal into `process_project_from_git()` |

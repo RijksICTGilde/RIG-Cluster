@@ -81,6 +81,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Env-vars en aliassen via de API](component-values-api.md)
 - [Env-vars en service values: één pad](env-vars-en-service-values-een-pad.md)
 - [Een project wijzigen: één pad](project-wijzigen-een-pad.md)
+- [Een deployment verwijderen: één pad](deployment-verwijderen-een-pad.md)
 - [How the API documents itself](api-documentation-grouping.md)
 - [Je projecten opvragen vanaf de CLI](cli-projecten-opvragen.md)
 - [Platformbeheer via de API](platformbeheer-via-de-api.md)

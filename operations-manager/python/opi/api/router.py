@@ -34,7 +34,13 @@ from opi.http.auth.endpoint_util import (
 )
 from opi.http.auth.step_up_conditions import deployment_environment_change
 from opi.http.rate_limiter import IPRateLimiter
-from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor, wait_for_task_answer
+from opi.http.task_helpers import (
+    build_accepted_response,
+    create_async_task,
+    require_removable_deployment,
+    task_actor,
+    wait_for_task_answer,
+)
 from opi.manager.clone import CLONE_SOURCE_INCOMPLETE
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project.deployment_upsert import (
@@ -2181,65 +2187,76 @@ async def delete_project_deployment(
       -H "X-API-Key: your-project-api-key-here"
     ```
     """
+    require_removable_deployment(project_name, deployment_name)
+    task = await create_async_task(
+        request=request,
+        task_type="delete_deployment",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={"project_name": project_name, "deployment_name": deployment_name},
+    )
+    task_id = str(task["task_id"])
+
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/{deployment_name}
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="delete_deployment",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "delete_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
+    return await _finished_delete_deployment_response(request, task_id, project_name, deployment_name)
+
+
+#: What the blocking delete answers when the task outlives the request.
+DELETE_DEPLOYMENT_STILL_RUNNING = (
+    "De deployment wordt nog verwijderd. Volg /api/tasks/{task_id} voor het resultaat, "
+    "of gebruik /api/v2/projects/{project_name}/{deployment_name}."
+)
+
+
+async def _finished_delete_deployment_response(
+    request: Request, task_id: str, project_name: str, deployment_name: str
+) -> JSONResponse:
+    """The finished delete task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-484), so the delete queues behind another round on the
+    same deployment instead of running next to it, and the rollout guard that looks for open
+    delete tasks sees this one too.
+    """
     try:
-        logger.info(f"Deployment deletion request for: {project_name}/{deployment_name} (project_id: {project_name})")
-
-        project_manager = create_project_manager()
-
-        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
-
-        if deletion_results.get("success", False):
-            status_code = 200
-            message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
-        else:
-            status_code = 207  # Multi-Status - partial success
-            message = f"Deployment '{deployment_name}' deletion completed with some errors"
-
-        content = {
-            "status": "completed" if deletion_results.get("success", False) else "partial",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "deletion_results": deletion_results,
-            "warning": "This deletion is permanent and cannot be undone",
-        }
-
-        logger.info(
-            f"Deployment deletion completed for: {project_name}/{deployment_name} (success: {deletion_results.get('success', False)})"
-        )
-        return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Verwijderen van de deployment mislukt")
+        finished = await wait_for_task_answer(request, task_id, answer_key="status")
+    except TimeoutError as e:
         raise HTTPException(
-            status_code=500, detail="De deployment kon niet worden verwijderd. Probeer het over een minuut opnieuw."
+            status_code=504,
+            detail=DELETE_DEPLOYMENT_STILL_RUNNING.format(
+                task_id=task_id, project_name=project_name, deployment_name=deployment_name
+            ),
         ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+
+    answer = finished.get("result") or {}
+    deletion_results = answer.get("deletion_results") or {}
+    succeeded = finished.get("status") == "completed"
+    if succeeded:
+        message = answer.get("message") or f"Deployment '{deployment_name}' in project '{project_name}' deleted"
+    else:
+        # 207 Multi-Status: the removal ran and left something behind, which is not the same
+        # answer as a request that could not run at all. A task that failed on an exception
+        # wrote no answer, so its error sentence is what this caller gets to see.
+        message = f"Deployment '{deployment_name}' deletion completed with some errors"
+        if not deletion_results.get("errors") and finished.get("error_message"):
+            deletion_results = {**deletion_results, "errors": [finished["error_message"]]}
+
+    content = {
+        "status": "completed" if succeeded else "partial",
+        "message": message,
+        "project": project_name,
+        "deployment": deployment_name,
+        "deletion_results": deletion_results,
+        "warning": "This deletion is permanent and cannot be undone",
+    }
+    logger.info("Deployment deletion completed for: %s/%s (success: %s)", project_name, deployment_name, succeeded)
+    return JSONResponse(content=content, status_code=200 if succeeded else 207)
 
 
 def validate_clone_source_reachable(

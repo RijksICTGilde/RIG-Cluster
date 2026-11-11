@@ -52,6 +52,13 @@ from opi.manager.project.attachment_mutations import AttachmentMutations
 from opi.manager.project.component_mutations import ComponentMutations
 from opi.manager.project.database_schema_mutations import DatabaseSchemaMutations
 from opi.manager.project.deployment_mutations import DeploymentMutations
+from opi.manager.project.deployment_removal import (
+    DeploymentRemoval,
+    DeploymentRemovalResult,
+    RemovalTrigger,
+    marking_service,
+    remove_deployment,
+)
 from opi.manager.project.helm_deployment import (
     HelmDeployment,
 )
@@ -1240,16 +1247,6 @@ class ProjectManager:
         current_yaml = analysis["current_yaml"]
         previous_yaml = analysis["previous_yaml"]
 
-        marked_service = None
-        try:
-            from opi.core.database_pools import get_database_pool
-            from opi.services.marked_for_deletion_service import MarkedForDeletionService
-
-            get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
-            marked_service = MarkedForDeletionService()
-        except KeyError, ValueError:
-            logger.warning("Database pool not available - persistent resources will be deleted immediately")
-
         failures: list[str] = []
         if previous_yaml is not None and deployment_changes["deleted"]:
             logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
@@ -1257,19 +1254,7 @@ class ProjectManager:
             delete_step = self._begin_step(steps.deleted_deployments_cleanup(len(deployment_changes["deleted"])))
             for value in deployment_changes["deleted"].values():
                 if isinstance(value, dict) and "name" in value:
-                    dep_name = value["name"]
-                    logger.info("Deleting resources for removed deployment: %s", dep_name)
-                    try:
-                        await self._delete_project_manager.delete_deployment_from_yaml_change(
-                            project_name=project_name,
-                            deployment_data=value,
-                            project_data=current_yaml,
-                            marked_for_deletion_service=marked_service,
-                            previous_yaml=previous_yaml,
-                        )
-                    except Exception as e:
-                        logger.exception("Failed to delete resources for deployment %s: %s", dep_name, e)
-                        failures.append(f"Failed to delete removed deployment '{dep_name}': {e}")
+                    failures.extend(await self._remove_deployment_from_edit(project_name, value, analysis))
             self._end_step(delete_step, "; ".join(failures) if failures else None)
 
         if previous_yaml is None:
@@ -1280,7 +1265,7 @@ class ProjectManager:
                 project_name=project_name,
                 previous_yaml=previous_yaml,
                 current_yaml=current_yaml,
-                marked_for_deletion_service=marked_service,
+                marked_for_deletion_service=await marking_service(),
             )
             if svc_removal_result.get("services_removed", 0) > 0:
                 logger.info(
@@ -1294,6 +1279,35 @@ class ProjectManager:
             logger.exception("Failed to process service removal cleanup: %s", e)
             failures.append(f"Service removal cleanup failed: {e}")
         return failures
+
+    async def _remove_deployment_from_edit(
+        self, project_name: str, deployment: dict[str, Any], analysis: dict[str, Any]
+    ) -> list[str]:
+        """Remove one deployment that this round's project file no longer declares.
+
+        The result is READ: a removal that left half its resources standing used to end up
+        as a green round, because only an exception reached the caller and the removal
+        catches nearly everything itself (RC-484, kaartje #402).
+        """
+        deployment_name = deployment["name"]
+        logger.info("Deleting resources for removed deployment: %s", deployment_name)
+        request = DeploymentRemoval(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            trigger=RemovalTrigger.PROJECT_FILE_EDIT,
+            deployment=deployment,
+            project_data=analysis["current_yaml"],
+            previous_project_data=analysis["previous_yaml"],
+            force=True,
+        )
+        try:
+            result = await remove_deployment(request, self._delete_project_manager)
+        except Exception as e:
+            logger.exception("Failed to delete resources for deployment %s: %s", deployment_name, e)
+            return [f"Failed to delete removed deployment '{deployment_name}': {e}"]
+        if result.success:
+            return []
+        return [f"Failed to delete removed deployment '{deployment_name}': {result.error_detail}"]
 
     async def process_project_from_git(
         self,
@@ -2578,19 +2592,17 @@ class ProjectManager:
         return result
 
     # Delegation methods for project deletion - delegated to DeleteProjectManager
-    async def delete_deployment(self, project_name: str, deployment_name: str, force: bool = False) -> dict[str, Any]:
-        """
-        Delete all resources associated with a specific deployment.
+    async def delete_deployment(
+        self, project_name: str, deployment_name: str, force: bool = False
+    ) -> DeploymentRemovalResult:
+        """Remove a deployment and everything that belongs to it.
 
-        Args:
-            project_name: Name of the project
-            deployment_name: Name of the deployment to delete
-            force: If True, continues on errors and cleans up stuck resources
-
-        Returns:
-            Dictionary containing deletion results
+        Raises:
+            HTTPException: 404 when the project or the deployment is not there, 500 when the
+                removal broke off. Not under ``force``, which reports in the result.
         """
-        return await self._delete_project_manager.delete_deployment(project_name, deployment_name, force=force)
+        details = await self._delete_project_manager.delete_deployment(project_name, deployment_name, force=force)
+        return DeploymentRemovalResult(details)
 
     async def delete_project(self, project_name: str, force: bool = False) -> dict[str, Any]:
         """

@@ -176,11 +176,13 @@ async def test_een_achtergebleven_namespace_houdt_het_projectbestand(monkeypatch
 
     manager = DeleteProjectManager(pm)
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
 
     subdomain = MagicMock()
     subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     # Precies de uitkomst die rl437-56m gaf: de namespace is niet verwijderd omdat een
     # (nog in het projectbestand staande) andere deployment hem volgens de toets gebruikt.
@@ -356,11 +358,13 @@ async def test_een_projectbrede_verwijdering_ruimt_de_namespace_op(monkeypatch: 
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_deployment = AsyncMock(return_value=0)
     subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
@@ -369,6 +373,7 @@ async def test_een_projectbrede_verwijdering_ruimt_de_namespace_op(monkeypatch: 
     # 'kept its finalizer after a partial sweep' uit de meting van 23-10.
     argo.wait_for_application_deletion = AsyncMock(return_value=False)
     monkeypatch.setattr("opi.manager.delete_project_manager.create_argo_connector", lambda: argo)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.create_argo_connector", lambda: argo)
     monkeypatch.setattr(
         manager,
         "_force_delete_or_await_cascade",

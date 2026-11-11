@@ -805,6 +805,23 @@ async def databases_of(deployment: str) -> set[str]:
     return {name for name in await databases_with_prefix() if deployment.replace("-", "_") in name}
 
 
+async def marks_of(deployment: str) -> set[tuple[str, str]]:
+    """The marks OPI recorded for this deployment, as (type, name).
+
+    Since RC-484 a removal no longer wipes the persistent data at once: it marks, and the
+    purge in ``opi/jobs/reconciliation.py`` takes it after the grace period. "Gone" is
+    therefore measured here and not in Postgres or MinIO.
+    """
+    conn = await postgres_live.admin_connection(settings.DATABASE_NAME)
+    try:
+        rows = await conn.fetch(
+            "SELECT resource_type, resource_name FROM marked_for_deletion WHERE deployment_name = $1", deployment
+        )
+        return {(row["resource_type"], row["resource_name"]) for row in rows}
+    finally:
+        await conn.close()
+
+
 def clone_generation(forgejo: forgejo_live.ForgejoApi, service: str) -> int | None:
     """The generation of this service on the first deployment, as the project file in git has it."""
     return ProjectFileHandler().get_deployment_service_generation(project_file(forgejo) or {}, DEPLOYMENT, service)

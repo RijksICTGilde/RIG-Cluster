@@ -63,7 +63,9 @@ def mock_auth_project_service() -> Any:
                     "name": "main",
                     "cluster": "local",
                     "components": [{"reference": "backend"}, {"reference": "api"}, {"reference": "web"}],
-                }
+                },
+                {"name": "staging", "cluster": "local", "components": [{"reference": "web"}]},
+                {"name": "production", "cluster": "local", "components": [{"reference": "web"}]},
             ],
         },
     )
@@ -77,6 +79,8 @@ def mock_auth_project_service() -> Any:
         patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
         patch("opi.api.v2.router.get_project_store", return_value=mock_service),
+        # The removal guard (RC-484) reads the store from its own module.
+        patch("opi.http.task_helpers.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

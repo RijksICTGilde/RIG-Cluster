@@ -44,7 +44,9 @@ def _test_project_data() -> dict[str, Any]:
                 "name": "main",
                 "cluster": "local",
                 "components": [{"reference": "backend"}, {"reference": "api"}, {"reference": "web"}],
-            }
+            },
+            {"name": "staging", "cluster": "local", "components": [{"reference": "web"}]},
+            {"name": "production", "cluster": "local", "components": [{"reference": "web"}]},
         ],
     }
 
@@ -102,6 +104,8 @@ def mock_auth_project_service() -> Any:
         patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
         patch("opi.api.v2.router.get_project_store", return_value=mock_service),
+        # The removal guard (RC-484) reads the store from its own module.
+        patch("opi.http.task_helpers.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 
@@ -911,6 +915,18 @@ class TestV2DeleteDeployment:
         call_kwargs = mock_task_service.create_task.call_args[1]
         assert call_kwargs["payload"]["project_name"] == "test-project"
         assert call_kwargs["payload"]["deployment_name"] == "production"
+
+    def test_an_unknown_deployment_is_a_404_and_queues_nothing(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """RC-484, D7: every entrance 404's in the request instead of a task that fails later."""
+        response = v2_client.delete(
+            "/api/v2/projects/test-project/bestaat-niet",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        assert response.status_code == 404
+        mock_task_service.create_task.assert_not_called()
 
     def test_missing_api_key_returns_401(self, v2_client: TestClient) -> None:
         response = v2_client.delete("/api/v2/projects/test-project/staging")

@@ -384,10 +384,13 @@ async def _delete(manager: DeleteProjectManager, exists=_niets_bestaat) -> dict[
 
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=exists),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
     ):
         return await manager.delete_deployment("test-project", "pr-42")
 
@@ -431,10 +434,13 @@ async def test_een_mislukte_commit_in_stap_2_wacht_niet_op_argocd() -> None:
     begonnen = time.monotonic()
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=_niets_bestaat),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
         pytest.raises(HTTPException),
     ):
         await manager.delete_deployment("test-project", "pr-42")

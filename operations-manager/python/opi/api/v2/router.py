@@ -112,7 +112,7 @@ from opi.http.auth.endpoint_util import (
 )
 from opi.http.auth.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
 from opi.http.auth.user_token_auth import validate_platform_admin_token, validate_user_token
-from opi.http.task_helpers import build_accepted_response, create_async_task
+from opi.http.task_helpers import build_accepted_response, create_async_task, require_removable_deployment
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.argocd_operation import read_sync_operation
 from opi.services.catalog.actions import (
@@ -1457,6 +1457,7 @@ async def delete_deployment_v2(
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
     """
     _reject_deferred_rollout(rollout, "delete_deployment")
+    require_removable_deployment(project_name, deployment_name)
 
     logger.info("V2 delete deployment: %s/%s", project_name, deployment_name)
 

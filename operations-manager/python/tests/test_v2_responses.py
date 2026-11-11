@@ -48,6 +48,8 @@ def mock_auth_project_service() -> Any:
         api_key=API_KEY,
         filename="test-project.yaml",
         users=[ProjectUser(email="user@example.com", role="Developer")],
+        # The delete route's removal guard (RC-484) needs the deployment it names to exist.
+        data={"name": "test-project", "deployments": [{"name": "staging", "cluster": "local"}]},
     )
 
     def get_project(name: str) -> ProjectSummary | None:
@@ -58,6 +60,7 @@ def mock_auth_project_service() -> Any:
     with (
         patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
+        patch("opi.http.task_helpers.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

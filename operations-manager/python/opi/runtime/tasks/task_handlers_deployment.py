@@ -101,18 +101,15 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     progress.complete_task(init_task)
 
     try:
-        deletion_results = await project_manager.delete_deployment(project_name, deployment_name, force=True)
+        result = await project_manager.delete_deployment(project_name, deployment_name, force=True)
 
-        success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
-        if not success:
-            # Fail the TASK (not just the sub-task) when the delete left errors behind: a
+        if not result.success:
+            # Fail the TASK (not just the sub-task) when the removal left errors behind: a
             # partially-failed delete that reports success leaves stale deployments behind.
-            # delete_deployment is idempotent, so the caller and the nightly cleaner safely
-            # retry until it converges.
-            errors = deletion_results.get("errors", []) if isinstance(deletion_results, dict) else []
-            error_detail = "; ".join(str(e) for e in errors) or "unknown error"
+            # The removal is idempotent, so the caller and the nightly cleaner safely retry
+            # until it converges.
             raise RuntimeError(
-                f"Deployment '{deployment_name}' in project '{project_name}' not fully deleted: {error_detail}"
+                f"Deployment '{deployment_name}' in project '{project_name}' not fully deleted: {result.error_detail}"
             )
 
         # A deleted deployment leaves no OOM tune state behind. Tidiness, not a leak: a
@@ -122,10 +119,9 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
 
         # Both outcomes are success, and the answer says which one it was: in a script
         # "deleted" and "was not there" read the same otherwise (RC-66, bevinding 6).
-        already_absent = bool(deletion_results.get("already_absent")) if isinstance(deletion_results, dict) else False
         message = (
             f"Deployment '{deployment_name}' bestond niet (meer) in project '{project_name}'; er is niets verwijderd"
-            if already_absent
+            if result.already_absent
             else f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
         )
         logger.info(f"Task: deployment deletion completed successfully for {project_name}/{deployment_name}")
@@ -133,11 +129,11 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
         return {
             "status": "completed",
             "message": message,
-            "deleted": not already_absent,
-            "already_absent": already_absent,
+            "deleted": not result.already_absent,
+            "already_absent": result.already_absent,
             "project": project_name,
             "deployment": deployment_name,
-            "deletion_results": deletion_results if isinstance(deletion_results, dict) else {},
+            "deletion_results": result.details,
             "warning": "This deletion is permanent and cannot be undone",
         }
     except Exception as exc:

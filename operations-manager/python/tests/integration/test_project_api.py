@@ -63,6 +63,38 @@ def upsert_succeeded(deployment_name: str, *, created: bool, components: int = 1
     }
 
 
+DELETE_TASK_ID = "550e8400-e29b-41d4-a716-446655440001"
+
+
+@pytest.fixture
+def delete_answered(app_schoon: FastAPI) -> Any:
+    """Give the app a queue whose delete task is already finished, with this answer.
+
+    ``sync=true`` enqueues the ordinary ``delete_deployment`` task and waits for it
+    (RC-484), so these tests set the answer the handler would have written.
+    """
+
+    def answer_with(status: str, answer: dict[str, Any]) -> None:
+        queued = {"task_id": DELETE_TASK_ID, "task_type": "delete_deployment", "status": "pending"}
+        service = AsyncMock()
+        service.create_task.return_value = queued
+        service.get_task.return_value = {**queued, "status": status, "result": answer}
+        app_schoon.state.task_service = service
+
+    return answer_with
+
+
+@pytest.fixture
+def removable_deployments() -> Any:
+    """The store the removal guard reads: ``test-project`` has a ``staging`` on this cluster."""
+    store = MagicMock()
+    store.get.return_value = MagicMock(
+        data={"name": "test-project", "deployments": [{"name": "staging", "cluster": "local"}]}
+    )
+    with patch("opi.http.task_helpers.get_project_store", return_value=store):
+        yield store
+
+
 @pytest.fixture
 def mock_auth_project_service() -> Any:
     """Mock project service for authentication."""
@@ -744,15 +776,16 @@ class TestDeleteDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        delete_answered: Any,
+        removable_deployments: Any,
     ) -> None:
         """Test successfully deleting a deployment."""
-        mock_pm = create_mock_project_manager()
+        delete_answered("completed", {"status": "completed", "deletion_results": {"success": True}})
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = test_client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-            )
+        response = test_client.delete(
+            "/api/projects/test-project/staging?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -763,15 +796,18 @@ class TestDeleteDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        delete_answered: Any,
+        removable_deployments: Any,
     ) -> None:
         """Test delete deployment with partial failure."""
-        mock_pm = create_mock_project_manager(delete_result={"success": False, "errors": ["Some error"]})
+        delete_answered(
+            "failed", {"status": "failed", "deletion_results": {"success": False, "errors": ["Some error"]}}
+        )
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = test_client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-            )
+        response = test_client.delete(
+            "/api/projects/test-project/staging?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
 
         assert response.status_code == 207
 

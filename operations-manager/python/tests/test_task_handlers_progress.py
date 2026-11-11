@@ -8,6 +8,7 @@ process_project_from_git where applicable.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.deployment_removal import DeploymentRemovalResult
 from opi.services.tasks import progress_steps
 
 PM_PATH = "opi.manager.project_manager.ProjectManager"
@@ -110,7 +111,9 @@ class TestHandleDeleteDeployment:
         # De echte set_progress_manager is synchroon; een kale AsyncMock maakt er een
         # coroutine van die niemand afwacht.
         mock_pm.set_progress_manager = MagicMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": True, "namespace": {"success": True}})
+        mock_pm.delete_deployment = AsyncMock(
+            return_value=DeploymentRemovalResult({"success": True, "namespace": {"success": True}})
+        )
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm):
@@ -132,7 +135,9 @@ class TestHandleDeleteDeployment:
 
         mock_pm = AsyncMock()
         mock_pm.set_progress_manager = MagicMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": False, "errors": ["boom"]})
+        mock_pm.delete_deployment = AsyncMock(
+            return_value=DeploymentRemovalResult({"success": False, "errors": ["boom"]})
+        )
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError):
