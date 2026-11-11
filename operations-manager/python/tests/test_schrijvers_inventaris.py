@@ -59,13 +59,10 @@ INVENTARIS: dict[str, Schrijver] = {
         "disabled/disabled-reason op de deploymentcomponent bij het opschonen van kapotte componenten",
         "test_het_uitzetten_van_een_deploymentcomponent_blijft_geldig",
     ),
-    "opi/runtime/backup/backup_tasks.py": Schrijver(
-        "generatienummers per dienst op de deployment, en een hele nieuwe deployment bij een kloon",
+    "opi/manager/backup/restore_run.py": Schrijver(
+        "generatienummers per dienst na een restore, en een hele nieuwe deployment bij een restore naar een nieuwe",
         "test_generatienummers_van_de_backuptaken_blijven_geldig",
-    ),
-    "opi/api/restore_router.py": Schrijver(
-        "generatienummers en de kloonstatus na een restore",
-        "test_de_kloonstatus_blijft_geldig",
+        "Deels: de nieuwe deployment gaat met enforce_validation=True door de save.",
     ),
     "opi/services/catalog/sleep_mode/flow.py": Schrijver(
         "deployments[].sleep: stand, deadline en het versleutelde wektoken",
