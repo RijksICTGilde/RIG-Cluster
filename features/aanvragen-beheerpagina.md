@@ -53,22 +53,44 @@ tabel komt te staan en de teller met de lijst blijft kloppen.
 
 ## Wat een oordeel opnieuw uitrolt
 
-Na het opslaan van een besluit volgt een `create_project`-taak. De scope komt uit
-`_redeploy_scope` (`opi/web/router_approvals.py`):
+De route bepaalt de scope sinds RC-483 niet meer zelf. Het besluit gaat via
+`record_approval_decision` (`opi/manager/project/update.py`), en de uitrol is daarna de taak
+`rollout_project` (`queue_rollout`). De scope die de taak meekrijgt is
+`result.rollout_deployments`, en die komt uit `deployments_touched(before, after)`
+(`opi/services/project_utils.py`): dezelfde ene regel als voor elke andere ingang, zie
+`features/project-wijzigen-een-pad.md` ("De uitrolscope").
 
-- een besluit over een **domein of subdomein** rolt alleen de deployments opnieuw uit die op
-  dat adres publiceren (`find_deployments_for_domain_item`);
-- een besluit over een **waarde in de projectconfig** (het quota van een registry) is aan geen
-  deployment toe te wijzen, dus dan gaat het hele project opnieuw. De projectmanifesten worden
-  namelijk alleen gegenereerd in een ronde die ten minste een deployment doet, en een scope van
-  nul deployments liet zo'n oordeel wel in het projectbestand landen en nooit in het cluster.
+Waar dat op uitkomt hangt af van de laag waarop de dienst zijn goedkeuringsstaat zet, want
+dat bepaalt of het verschil binnen of buiten `deployments` valt. Er zijn twee gevallen:
+
+- **Onder de projectconfig van de dienst: projectbreed.** Zo staat een domein- of
+  subdomeinbesluit onder `services/[publish-on-web]/config/domains`, en het afzenderadres
+  van het project onder de projectconfig van `send-email`. Dat ligt buiten `deployments` en
+  `components`, dus geeft `deployments_touched` hier `None`, en dat betekent projectbreed.
+- **Op de deployment-laag: alleen die ene deployment.** Een `ApprovalSpec` uit
+  `deployment_value_approval` (`opi/services/catalog/approval.py`) zet zijn staat op
+  `deployments[*].services[<dienst>].config/<veld>-approval`, dus binnen `deployments`.
+  `send-email` declareert er twee, het afzenderadres en het dagbudget per deployment, en die
+  staan op dezelfde pagina als de rest. Een oordeel over `dep-a` levert dan de scope
+  `['dep-a']` op.
+
+Wat niet meer bestaat is het versmallen van een domeinbesluit naar de deployments op dat ene
+adres; `find_deployments_for_domain_item` heeft geen aanroeper in de applicatie. Projectbreed
+kost daar alleen tijd, en heeft het voordeel dat de projectmanifesten zeker meegaan: die
+worden alleen gegenereerd in een ronde die ten minste een deployment doet, en een scope van
+nul deployments liet zo'n oordeel wel in het projectbestand landen en nooit in het cluster.
+
+Is elk item overgeslagen, dan is er niets gewijzigd, en start er ook geen ronde
+(`ProjectUpdateResult.needs_rollout`).
 
 ## Een nieuwe dienst met goedkeuring erop
 
 Niets. Een dienst die een `ApprovalSpec` met een `list_items` declareert verschijnt vanzelf
 met een eigen groep; zie `docs/development/services.md` ("Approvals"). Geef het item wel een
-`subject`, anders staat er wat de terugval ervan maakt. Rolt het oordeel iets uit dat niet aan
-een deployment hangt, kijk dan ook naar `_redeploy_scope` hierboven.
+`subject`, anders staat er wat de terugval ervan maakt. Over de uitrol hoeft de dienst niets
+te regelen: de scope volgt uit waar de spec zijn staat zet, projectbreed vanuit de
+projectconfig en alleen die deployment vanaf de deployment-laag, zie "Wat een oordeel
+opnieuw uitrolt" hierboven.
 
 ## De proefopstelling
 

@@ -77,8 +77,9 @@ explicit deletes time out (the 207).
 Robust, safe detection across git diffs of **what is new, what is changed, and what is
 gone**, at the project (and deployment/component) level — and then dispatching each to
 the right manager. Building blocks that already exist:
-- Component-level diffing: `analyze_project_changes` in `opi/connectors/git.py`
-  (file-scoped diff that detects removed components).
+- Component-level diffing: `analyze_project_changes` in
+  `opi/services/project_file_handler.py` (file-scoped diff that detects removed
+  components).
 - Create/update: `process_project`. Delete: `delete_project_manager`.
 - Mark/purge machinery + grace periods in `reconciliation.py`.
 
@@ -125,8 +126,9 @@ carry strong guardrails or it becomes a foot-gun.
   falls back on the 207 of §2.2.
 - How to bound a "catastrophic diff" safely (threshold values; what counts as an
   override; alerting).
-- Single-file vs directory-of-projects monitoring: the current monitor watches one
-  file; full lifecycle needs the whole `zad-projects` tree.
+- Single-file vs directory-of-projects monitoring: there is no monitor at all since
+  RC-483 (§2.1), and the one that was removed watched a single file; full lifecycle needs
+  the whole `zad-projects` tree.
 - Concurrency: the API/UI path is a live writer of the same repo/resources. Git-diff
   reconciliation and interactive edits must not race or double-process.
 - Recovery semantics: `git revert` should cleanly undo a pending deletion (unmark), and

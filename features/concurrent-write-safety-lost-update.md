@@ -42,11 +42,18 @@ delta adresseert lijstitems op index en het component was al weg. De taak faalde
 wijziging, en de uitrol stopte daarop. In de omgekeerde volgorde had dezelfde save de
 patch van de ander juist teruggedraaid.
 
-De oplossing is dat de taak het bestand niet opnieuw schrijft als de aanroeper dat al deed.
-De payload zegt dat met `project_file_already_saved: True`, en de taak leest dan de
-geldende staat uit de store in plaats van de formulierversie te publiceren. Dat geldt voor
-de bewerkmodal (`router_detail_edit._start_deployment`) en voor een domeinbesluit
-(`router_approvals`), de twee paden die eerst opslaan en dan uitrollen.
+De oplossing was dat de taak het bestand niet opnieuw schrijft als de aanroeper dat al deed.
+Dat gold voor de twee paden die eerst opslaan en dan uitrollen: de bewerkmodal
+(`router_detail_edit`) en een goedkeuringsbesluit (`router_approvals`). Zij leenden daarvoor
+de `create_project`-taak met `project_file_already_saved: True` in de payload, waarop de taak
+de geldende staat uit de store leest in plaats van de formulierversie te publiceren.
+
+Sinds RC-483 is die tweede schrijver er niet meer om uit te zetten. Beide paden slaan op door
+de ene use case (`update_project`, voor een besluit `record_approval_decision`, allebei in
+`opi/manager/project/update.py`) en zetten daarna de taak `rollout_project` in de rij
+(`queue_rollout`). Die taak schrijft het projectbestand helemaal niet; hij verwerkt alleen de
+deployments die de wijziging raakte. De vlag zit nog in de handler van `create_project`
+(`opi/runtime/tasks/task_handlers_project.py`), maar geen enkele ingang stuurt hem nog.
 
 Twee andere routes vielen af:
 

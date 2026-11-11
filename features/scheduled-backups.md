@@ -213,7 +213,7 @@ Legacy tasks created before the `trigger` field existed are treated as `schedule
 | `opi/forms/visualizers/wizard_sections.py` | Section builder with processing order |
 | `opi/forms/visualizers/providers.py` | `BackupResourceTypesOptionsProvider`, `BackupDeploymentOptionsProvider` |
 | `opi/forms/editables/converters.py` | `RRuleFrequencyConverter`, `RRuleTimeConverter`, etc. |
-| `opi/utils/rrule_utils.py` | Shared RRULE parsing and formatting |
+| `opi/core/rrule_utils.py` | Shared RRULE parsing and formatting |
 | `static/js/wizard.js` | `data-rerender` JS listener |
 | `tests/test_backup_pipeline.py` | Pipeline tests |
 | `tests/test_backup_schema_bewaking.py` | Metrics and overdue-ERROR tests |
