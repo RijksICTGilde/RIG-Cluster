@@ -232,7 +232,9 @@ class Component:
     database: str = ""  # cnpg-secret: de database waarin de rol leeft
     db_user_fallback: str = ""  # cnpg-secret: als het bestand geen username-veld heeft
     workloads: tuple[str, ...] = ()  # workloads die na de sync-gate herstart worden
-    zad_env: tuple[str, ...] = ()  # env-variabelen in .env-<cluster>.secrets die dezelfde waarde dragen
+    # env-variabelen in .env-<cluster>.secrets die dezelfde waarde dragen: één per veld, of bij
+    # één veld meerdere namen voor dezelfde waarde (zie env_pairs)
+    zad_env: tuple[str, ...] = ()
     # (secret, key) in het cluster waar de HUIDIGE waarde staat, voor componenten zonder
     # template én zonder envbestand-kopie. Dan is dat cluster-secret de enige bron, en hoeft
     # er nergens een tweede exemplaar te staan dat stil kan afwijken.
@@ -447,7 +449,7 @@ COMPONENTS: list[Component] = [
         category="external",
         rotate_fields=("PROJECT_REPO_PASSWORD",),
         workloads=(OPI_DEPLOYMENT,),
-        zad_env=("PROJECT_REPO_PASSWORD",),
+        zad_env=("PROJECT_REPO_PASSWORD", "GIT_PROJECTS_SERVER_PASSWORD", "GIT_ARGO_APPLICATIONS_PASSWORD"),
         note="Aanmaken doe je in de GitHub-console (Settings → Developer settings). De tool "
         "toetst huidige én nieuwe token via de GitHub-API vóór het bestand wordt bijgewerkt. "
         "Daarna zelf: het env-secret regenereren en ZAD herstarten (staat als tekst in de stappen).",
@@ -2636,10 +2638,18 @@ def file_step(component: Component, cluster: Cluster) -> Step:
     )
 
 
+def env_pairs(component: Component) -> list[tuple[str, str]]:
+    """(veld, env-naam) per kopie in het ZAD-envbestand. Eén veld mag meerdere env-namen
+    hebben: de platform-PAT staat er onder drie namen."""
+    if len(component.rotate_fields) == 1:
+        return [(component.rotate_fields[0], name) for name in component.zad_env]
+    return list(zip(component.rotate_fields, component.zad_env, strict=True))
+
+
 def env_step(component: Component, cluster: Cluster) -> Step:
     """De kopie in het ZAD-envbestand meenemen, als dit veld daar een dubbele heeft."""
     path = env_file_for(cluster.name)
-    pairs = list(zip(component.rotate_fields, component.zad_env, strict=True))
+    pairs = env_pairs(component)
 
     def _write(ctx: Ctx) -> str:
         if not path.exists():
@@ -3286,7 +3296,7 @@ def gather_ctx(
         # veldnaam, zodat stappen overal hetzelfde adresseren: current['root-password'] is
         # dan de huidige BACKUP_S3_SECRET_KEY.
         current = dict(values)
-        for field, env_name in zip(component.rotate_fields, component.zad_env, strict=False):
+        for field, env_name in env_pairs(component):
             if field in values:
                 continue
             if env_name in values:

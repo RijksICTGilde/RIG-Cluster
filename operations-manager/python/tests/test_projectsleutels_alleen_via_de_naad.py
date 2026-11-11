@@ -83,6 +83,10 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
         "opi/services/user_otp_service.py",
         "UserOtpService.verify",
     ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
+    (
+        "opi/forms/editables/template.py",
+        "load_project_template",
+    ): "repositories[].password blijft bewust op de platformsleutel",
 }
 
 

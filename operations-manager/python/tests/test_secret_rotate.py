@@ -61,7 +61,7 @@ def test_geroteerde_velden_zijn_te_genereren_bij_interne_componenten() -> None:
 
 def test_zad_env_loopt_gelijk_aan_de_geroteerde_velden() -> None:
     for component in rotate.COMPONENTS:
-        if component.zad_env:
+        if component.zad_env and len(component.rotate_fields) > 1:
             assert len(component.zad_env) == len(component.rotate_fields), component.key
 
 
@@ -706,6 +706,26 @@ def test_secret_key_toont_de_herstart_van_opi_na_de_secret_gate(monkeypatch: pyt
     assert "push" not in fases, "het envsecret heeft geen Argo-eigenaar om naar te pushen"
     assert fases.index("env") < fases.index("manual") < fases.index("sync") < fases.index("restart")
     assert any(rotate.OPI_DEPLOYMENT in line for step in steps for line in step.dry_text)
+
+
+def test_a_pat_round_writes_every_env_name_that_carries_the_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The platform PAT sits in the env file under three names; a round that missed one left
+    OPI pulling with the old token."""
+    path = tmp_path / ".env-odcn-production.secrets"
+    path.write_text(
+        "PROJECT_REPO_PASSWORD=old\nGIT_PROJECTS_SERVER_PASSWORD=old\nGIT_ARGO_APPLICATIONS_PASSWORD=old\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rotate, "env_file_for", lambda _cluster: path)
+    component = rotate.BY_KEY["platform-repo-pat"]
+    step = rotate.env_step(component, _cluster())
+    ctx = _dry_ctx(_dry_kube(monkeypatch), component)
+    ctx.new = {"PROJECT_REPO_PASSWORD": "new"}
+    assert step.run is not None
+    step.run(ctx)
+    assert set(rotate.read_env_file(path).values()) == {"new"}
 
 
 def test_de_handmatige_stap_noemt_de_deploy_task_per_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
