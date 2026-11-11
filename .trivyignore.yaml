@@ -980,6 +980,30 @@ vulnerabilities:
       rebase van de patches in images/argocd-rig/patches en een push naar
       ghcr.io/minbzk/base-images, en is een eigen taak.
     expired_at: 2026-12-01
+  - id: CVE-2026-78661
+    paths:
+      - home/argocd/.config/kustomize/plugin/viaduct.ai/v1/ksops/ksops
+      - home/argocd/.local/share/helm/plugins/helm-diff/bin/diff
+      - usr/local/bin/argocd
+      - usr/local/bin/chisel
+      - usr/local/bin/git-lfs
+      - usr/local/bin/helm
+      - usr/local/bin/helmfile
+      - usr/local/bin/kopia
+      - usr/local/bin/ksops
+      - usr/local/bin/kubectl
+      - usr/local/bin/mc
+      - usr/local/bin/sops
+      - usr/local/bin/weed
+    statement: >-
+      HIGH in golang.org/x/net, opgelost in v0.62.0, via cmp-tools, argocd-base, kopia, mc,
+      sops, chisel, weed en helm en git-lfs in argocd-rig. Gescoped op de binaries van
+      anderen: yq staat op v4.54.3 met de fix, pebble is uit beide ArgoCD-images gehaald, en
+      argocd zelf is in argocd-rig v3.5.6-rig2 gepatcht. Het pad usr/local/bin/argocd geldt
+      ook voor argocd-rig, maar daar houdt de apt-bevinding de gate rood tot de pin op rig2
+      staat. Voor de rest is er nog geen release met x/net v0.62.0; mc komt er nooit
+      (gearchiveerd). Kort geldig, zodat de nieuwe releases worden opgepakt.
+    expired_at: 2026-12-11
   - id: CVE-2026-78667
     statement: >-
       HIGH in stdlib, via argocd-base, argocd-rig, chisel, cmp-tools, kopia, mc, sops. Niet weg

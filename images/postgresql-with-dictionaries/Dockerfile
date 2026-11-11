@@ -3,7 +3,7 @@
 # from the Debian mirror; building pgvector on it fails at apt-get install.
 # De build-datumstempel in de tag is het derde cijfer dat CNPG niet publiceert; hij wijst
 # altijd naar dezelfde build, en de packageRule voor dit image in renovate.json houdt hem bij.
-FROM ghcr.io/cloudnative-pg/postgresql:17.11-202610260819-standard-bookworm@sha256:fef8075b97b11a1fc12b387b9576809dbcda26a8fc68cb9416581f16856920f3
+FROM ghcr.io/cloudnative-pg/postgresql:17.11-202611090810-standard-bookworm@sha256:68b520280153de84b294740b8a96d47918e31e4640cfa93cfb8131289aae3b88
 
 USER root
 

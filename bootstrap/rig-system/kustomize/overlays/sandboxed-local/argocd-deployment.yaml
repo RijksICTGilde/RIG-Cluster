@@ -9,7 +9,7 @@ spec:
   # RIG-eigen image: upstream v3.5.6 + fixes, alle componenten volgen dit (inclusief repo-server).
   # Uit ghcr.io voor GitOps-pull; task load-kind geeft IMAGE_TAG=<anders> voor lokale builds.
   image: ghcr.io/minbzk/base-images/argocd-rig
-  version: v3.5.6-rig1
+  version: v3.5.6-rig2
   # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
   # cmd-params-keys die hier stonden kwamen nooit bij een component aan (RC-250);
   # tests/test_argocd_extra_config_keys.py houdt dit blok daarvan vrij.
