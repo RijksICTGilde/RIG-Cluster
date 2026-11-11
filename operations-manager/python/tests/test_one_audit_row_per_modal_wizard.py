@@ -42,6 +42,9 @@ TASK_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 STORED: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Demo",
+    # Required by the identity form, and since RC-483 P6 every save road validates the whole
+    # flow first: without it the identity edit below is refused instead of saved.
+    "description": "Demo-project",
     "deployments": [{"name": "live", "cluster": "local", "environment": "acceptatie"}],
 }
 
@@ -235,7 +238,7 @@ async def test_an_edit_flow_writes_one_project_edit_row() -> None:
         with (
             patch("opi.manager.project_manager.ProjectManager", return_value=manager),
             patch.object(router_detail_edit, "apply_modal_edit", new=AsyncMock(return_value=bewerkt)),
-            patch.object(router_detail_edit, "ensure_approval_requests"),
+            patch("opi.manager.project.update.ensure_approval_requests"),
         ):
             await _call(confirmed, router_detail_edit.modal_wizard_confirm, "modal-edit-identity")
 

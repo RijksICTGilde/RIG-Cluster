@@ -338,7 +338,6 @@ def _patch_git_settings(patch: pytest.MonkeyPatch, forgejo: forgejo_live.Forgejo
     patch.setattr(settings, "GIT_PROJECTS_SERVER_USERNAME", user)
     patch.setattr(settings, "GIT_PROJECTS_SERVER_PASSWORD", f"plain:{token}")
     patch.setattr(settings, "GIT_PROJECTS_WEB_URL", forgejo_live.base_url())
-    patch.setattr(settings, "GIT_PROJECTS_SERVER_FILE_PATH", f"projects/{PROJECT}.yaml")
     patch.setattr(settings, "GIT_PROJECTS_SERVER_BRANCH", "main")
     patch.setattr(settings, "GIT_ARGO_APPLICATIONS_URL", argo)
     patch.setattr(settings, "GIT_ARGO_APPLICATIONS_USERNAME", user)
@@ -355,7 +354,6 @@ def enable_background_tasks(patch: pytest.MonkeyPatch) -> None:
     zonder fout starten en bij het afsluiten weer netjes stoppen. Een scheduler die niet
     start wordt in ``lifespan`` gelogd en niet geworpen, dus de toets leest ``app.state``.
     """
-    patch.setattr(settings, "ENABLE_GIT_MONITOR", True)
     patch.setattr(settings, "TASK_WORKER_ENABLED", True)
     patch.setattr(settings, "BACKUP_SCHEDULER_ENABLED", True)
     patch.setattr(settings, "RECONCILIATION_SCHEDULER_ENABLED", True)

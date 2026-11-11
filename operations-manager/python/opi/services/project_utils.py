@@ -362,6 +362,54 @@ def affected_deployments(
     return None
 
 
+def deployments_touched(before: dict[str, Any], after: dict[str, Any]) -> list[str] | None:
+    """The deployments a whole-file edit has to reach, or None for a project-wide change.
+
+    The counterpart of :func:`affected_deployments` for an entrance that does not know what
+    it changed: it reads the scope off the two states instead. The narrowing is deliberately
+    conservative, because a scope that is too narrow leaves the cluster behind the project
+    file while one that is too wide only costs time:
+
+    - a difference anywhere outside ``deployments`` and ``components`` is project-wide,
+      because the project-level manifests and every deployment read it;
+    - a REMOVED deployment is project-wide, since a narrowed round cannot take its
+      manifests out;
+    - otherwise: the deployments whose own block changed, plus the deployments using a
+      component whose definition changed.
+
+    Whoever narrows a round with this has to record the same list as the task scope
+    (``opi.services.tasks.task_supersede.scope_of``).
+    """
+    scoped = ("deployments", "components")
+    if {key: value for key, value in before.items() if key not in scoped} != {
+        key: value for key, value in after.items() if key not in scoped
+    }:
+        return None
+
+    names_before = _by_name(before.get("deployments"))
+    names_after = _by_name(after.get("deployments"))
+    if set(names_before) - set(names_after):
+        return None
+
+    touched = {name for name, block in names_after.items() if names_before.get(name) != block}
+    for component_name in _changed_names(before.get("components"), after.get("components")):
+        touched.update(deployments_using_component(after, component_name))
+        touched.update(deployments_using_component(before, component_name))
+    return sorted(touched & set(names_after))
+
+
+def _by_name(items: Any) -> dict[str, Any]:
+    """The named entries of a project list, keyed by name. An unnamed entry is skipped."""
+    return {str(item["name"]): item for item in items or [] if isinstance(item, dict) and item.get("name")}
+
+
+def _changed_names(before: Any, after: Any) -> set[str]:
+    """The names whose entry appeared, disappeared or changed between the two lists."""
+    old = _by_name(before)
+    new = _by_name(after)
+    return {name for name in old.keys() | new.keys() if old.get(name) != new.get(name)}
+
+
 def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The deployment carrying the PROJECT LEVEL of this project, or None.
 

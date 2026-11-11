@@ -12,8 +12,8 @@ verhuist naar het schema van de versie die hem droeg en verdwijnt uit het nieuws
 
 ## Waarom
 
-Het projectschema was één bestand voor de hele 2.x-reeks, en `git_monitor.file_change_handler`
-valideert een bestand rechtstreeks uit git **vóór** enige migratie. Dat laatste is een
+Het projectschema was één bestand voor de hele 2.x-reeks, en de poort op een bestand
+rechtstreeks uit git (`validate_declared_project_schema`) valideert **vóór** enige migratie. Dat laatste is een
 beveiligingsmaatregel (zie hieronder), maar het had een gevolg dat niemand bedoeld had:
 zolang er één bestand op schijf stond dat nog een oude vorm droeg, moest het schema die vorm
 blijven accepteren. Een migratie kon dus wel geschreven worden, maar nooit afgesloten.
@@ -128,9 +128,14 @@ de poort geweigerd worden, maanden later en zonder aanwijsbare oorzaak.
 
 ## De poort is een beveiligingsmaatregel
 
-`git_monitor` valideert nog steeds **vóór** de migratie. Dat is bewust: een vijandig bestand dat
-toevallig schoon migreert zou anders onder de identiteit van de operations manager teruggeschreven
-worden naar `zad-projects` voordat de validatie het afkeurt.
+`validate_declared_project_schema` valideert **vóór** de migratie. Dat is bewust: een vijandig
+bestand dat toevallig schoon migreert zou anders onder de identiteit van de operations manager
+teruggeschreven worden naar `zad-projects` voordat de validatie het afkeurt.
+
+Sinds RC-483 heeft deze poort geen aanroeper in de applicatie meer: `git_monitor` was de enige,
+en die is weg (hij stond in elke overlay uit). De poort en de legacy-schema's blijven staan,
+want ze weghalen is een besluit over de hele legacy-schemaketen en niet over het bewerken van
+een project. Het staat op de PR van RC-483.
 
 De versiedeclaratie komt uit hetzelfde onvertrouwde bestand als de rest, en wordt dus als invoer
 behandeld:
@@ -172,5 +177,5 @@ nog declareert. Dat is meetbaar met de replay uit `features/upgrade-safety-test.
 
 `validate_project_schema(data)` zonder `schema_version` valideert nog steeds tegen het nieuwste
 schema. Dat is wat elke schrijfroute wil: die valideert de **eindtoestand**, en die is gemigreerd.
-Alleen de poort in `git_monitor` kijkt naar de gedeclareerde versie, want alleen die kijkt naar een
-bestand dat nog niet gemigreerd is.
+Alleen `validate_declared_project_schema` kijkt naar de gedeclareerde versie, want alleen die
+kijkt naar een bestand dat nog niet gemigreerd is.

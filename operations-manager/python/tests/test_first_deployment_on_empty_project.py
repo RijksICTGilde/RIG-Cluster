@@ -75,7 +75,7 @@ class TestFirstDeploymentOnEmptyProject:
         project_data = _project_without_deployments()
         save = _wire(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="productie",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -94,7 +94,7 @@ class TestFirstDeploymentOnEmptyProject:
         project_data = _project_without_deployments()
         _wire(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="productie",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -116,7 +116,7 @@ class TestFirstDeploymentOnEmptyProject:
         project_data = _project_without_deployments()
         _wire(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-1",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-1")],

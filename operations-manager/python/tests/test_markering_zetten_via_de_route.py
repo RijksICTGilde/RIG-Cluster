@@ -84,7 +84,7 @@ async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = Fals
         patch("opi.http.auth.authz.get_project_store", return_value=store),
         patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(na))),
-        patch("opi.web.router_detail_edit.ensure_approval_requests"),
+        patch("opi.manager.project.update.ensure_approval_requests"),
         patch("opi.web.router_detail_edit.render_step_up_dialog", new=AsyncMock(return_value="<dialoog>")),
     ):
         await _process_and_save_modal_edit(

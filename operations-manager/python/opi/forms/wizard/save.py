@@ -439,8 +439,7 @@ async def apply_modal_edit(
     # Ensure AGE-encrypted multiline values use literal block scalars
     apply_literal_scalars(existing_data)
 
-    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
-    # above (e.g. via the top-level apply_form_data_to_project path) so they
+    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges above, so they
     # never reach the saved project file.
     _strip_cleared_fields(existing_data)
 

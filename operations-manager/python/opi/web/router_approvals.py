@@ -9,6 +9,7 @@ of the service itself.
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -32,17 +33,20 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.auth.request_authority import RequestAuthority
 from opi.http.render.lotc_switch import render_fragment
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import to_nldd_icon
+from opi.http.task_helpers import queue_rollout
+from opi.manager.project.update import ProjectChange, record_approval_decision
+from opi.manager.project_manager import ProjectManager
 from opi.services.approvals import collect_approval_items
-from opi.services.catalog.publish_on_web.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
 from opi.services.project_utils import apply_literal_scalars
 from opi.services.registry import get_service
+from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
-from opi.utils.yaml_util import dump_yaml_to_string
 
 logger = logging.getLogger(__name__)
 
@@ -364,25 +368,6 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     return await _do_submit(request, wizard_token, user, project_name)
 
 
-def _redeploy_scope(project_data: dict[str, Any], items: list[Any]) -> list[str] | None:
-    """The deployments this verdict has to redeploy; ``None`` means the whole project.
-
-    A decision on a domain or subdomain only affects the deployments publishing on it. A
-    decision on a value in the PROJECT config (a registry quota) belongs to no deployment,
-    and the project manifests are only generated in a round that does at least one
-    deployment: a scope of zero landed such a verdict in the project file and never in the
-    cluster. An empty list still means zero deployments, not all of them.
-    """
-    affected: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict) or item.get("status", "skip") == "skip":
-            continue
-        if item.get("type") not in DOMAIN_ITEM_TYPES:
-            return None
-        affected.update(find_deployments_for_domain_item(project_data, item))
-    return sorted(affected)
-
-
 def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> dict[str, Any]:
     """Rebuild ``_approval_items`` from the project, keeping the submitted verdicts.
 
@@ -432,84 +417,77 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    # Read fresh from Git, not the cache, so the approval merges onto current state and a
-    # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
-    from opi.manager.project_manager import ProjectManager
-
-    # Explicitly close the ProjectManager so its temp git clone is cleaned up,
-    # on every exit path including the validation-error re-render below.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    try:
-        existing_data = await project_manager.get_contents()
+    def apply(existing_data: dict[str, Any]) -> dict[str, Any]:
+        stored = copy.deepcopy(existing_data)
         existing_data.update(merged_data)
+
+        # The bulk copy above writes everything the session carried, so a manipulated
+        # session could put a realm password or another service's approval state in the
+        # file. Guarded here and not through EditGuard.PLATFORM_FIELDS: the approval state
+        # is itself platform-managed, so guarding AFTER the verdict below would restore it
+        # and throw the decision away. The verdict is written by the platform's own writer,
+        # which is exactly the exception the guard documents.
+        ServiceAdapter.enforce_platform_managed_fields(existing_data, stored)
 
         # post_merge maps ``_approval_items`` back onto the domains structure.
         for section in active_sections:
             if section.post_merge:
                 section.post_merge(existing_data, merged_data)
 
-        deployment_names = _redeploy_scope(existing_data, merged_data.get("_approval_items", []))
-
         # Transient keys that must not reach the YAML.
         existing_data.pop("_admin_email", None)
         existing_data.pop("_approval_items", None)
 
         apply_literal_scalars(existing_data)
+        return existing_data
 
-        # Save through the single validated path: schema + structural integrity
-        # validation, canonical dumper, commit + push, and cache refresh in one shot.
-        # A validation failure re-renders the approval step with the message instead
-        # of 500ing (e.g. pre-existing structural drift surfaced by the full check).
-        try:
-            await project_manager.save_and_commit_project(
-                existing_data,
-                f"Update project {project_name} (domain approval)",
-                # This route is the only place that may set an approval decision.
-                approval_decision=True,
-            )
-        # ConflictError belongs in the same row as the validation errors; without it, it
-        # falls through as a bare 500.
-        except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
-            logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
-            first_section = active_sections[0]
-            render_data = _reseed_approval_items(state.get_merged_data(), project_name)
-            step_html = _render_section_html(first_section, render_data)
-            # ConflictError goes through as-is; validation errors get an intro ("het project is daarna niet geldig").
-            if isinstance(e, ConflictError):
-                message = str(e)
-            else:
-                message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
-            rendered = _render_modal_step(
-                request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
-            )
-            return HTMLResponse(content=rendered)
+    change = ProjectChange(
+        project_name=project_name,
+        apply=apply,
+        commit_message=f"Update project {project_name} (domain approval)",
+        # A platform admin decides here, so none of the guards an ordinary edit runs apply.
+        # This is also the one write that may set an approval status; see P7 and P8 of RC-483.
+        guards=frozenset(),
+    )
+    # Closed explicitly, so its temp git clone is cleaned up on every exit path.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        result = await record_approval_decision(change, RequestAuthority(request, project_name), project_manager)
+    # A validation failure re-renders the approval step with the message instead of 500ing
+    # (e.g. pre-existing structural drift surfaced by the full check). ConflictError belongs
+    # in the same row; without it, it falls through as a bare 500.
+    except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+        logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
+        first_section = active_sections[0]
+        render_data = _reseed_approval_items(state.get_merged_data(), project_name)
+        step_html = _render_section_html(first_section, render_data)
+        # ConflictError goes through as-is; a validation error gets an intro.
+        if isinstance(e, ConflictError):
+            message = str(e)
+        else:
+            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
+        rendered = _render_modal_step(
+            request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
+        )
+        return HTMLResponse(content=rendered)
     finally:
         await project_manager.close()
     logger.info("Project %s domains updated via admin approval (by %s)", project_name, user.get("email"))
 
-    yaml_content = dump_yaml_to_string(existing_data)
+    if not result.needs_rollout:
+        # Every item skipped: nothing was written, so there is nothing to reconcile and no
+        # progress to follow.
+        logger.info("Approval for %s decided nothing, so no round was started", project_name)
+        clear_modal_state_by_token(wizard_token)
+        return HTMLResponse(content=render_fragment(request, template="bg/_modal-wizard-success.html.j2", context={}))
 
-    from opi.http.task_helpers import create_async_task
-
-    task = await create_async_task(
-        request=request,
-        task_type="create_project",
-        project_name=project_name,
-        payload={
-            "project_name": project_name,
-            "yaml_content": yaml_content,
-            "deployment_names": deployment_names,
-            # The verdict is already saved; the task must not rewrite it.
-            "project_file_already_saved": True,
-        },
-        max_attempts=1,
-    )
+    deployment_names = result.rollout_deployments
+    task_id = await queue_rollout(request, project_name, deployment_names)
     logger.info(
         "Approval for %s scoped redeploy to deployment(s): %s",
         project_name,
-        "(whole project)" if deployment_names is None else deployment_names or "(none affected)",
+        "(whole project)" if deployment_names is None else deployment_names,
     )
-    task_id = str(task["task_id"])
 
     rendered = render_fragment(
         request,

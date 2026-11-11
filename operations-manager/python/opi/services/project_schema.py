@@ -90,7 +90,7 @@ class ProjectIntegrityError(Exception):
 
 #: A schema version as text: MAJOR, or MAJOR.MINOR. The number of digits is bounded because
 #: int() raises ValueError above 4300 digits, and this path has to raise ProjectSchemaError
-#: always: the gate in git_monitor catches only that one, and the value comes from a project
+#: always: the declared-version gate catches only that one, and the value comes from a project
 #: file.
 _VERSION_TEXT = re.compile(r"^(\d{1,9})(?:\.(\d{1,9}))?$")
 

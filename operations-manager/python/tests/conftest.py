@@ -4,18 +4,11 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
+# LOTC_STRICT and ENVIRONMENT are set in the root conftest.py: this one is too late for a
+# run that collects security_tests beside tests, because that directory's conftest imports
+# opi.core.config first.
+
 import os
-
-# Voor elke import van opi: setup_components leest LOTC_STRICT tijdens het importeren van
-# opi.http.render.templates_lotc, dus na die import zetten doet niets meer. Strict weigert een
-# onbekende attribuutWAARDE in plaats van hem stil te renderen, en staat daarom in de
-# tests en in CI en niet in de productie-image.
-os.environ.setdefault("LOTC_STRICT", "1")
-
-# ENVIRONMENT valt zonder instelling terug op "production", en dan registreert create_app
-# de proef- en testroutes niet. De tests meten die routes, dus hier expliciet "local".
-os.environ.setdefault("ENVIRONMENT", "local")
-
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -203,7 +196,6 @@ def mock_settings() -> Any:
         mock_settings.DEBUG = True
         mock_settings.SECRET_KEY = "test-secret-key-for-testing-only"
         mock_settings.OIDC_DISABLED = True
-        mock_settings.ENABLE_GIT_MONITOR = False
         mock_settings.KEYCLOAK_URL = ""
         mock_settings.PROMETHEUS_EXTERNAL_URL = ""
         mock_settings.PROMETHEUS_URL = ""

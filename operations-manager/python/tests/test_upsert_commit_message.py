@@ -74,7 +74,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
@@ -89,7 +89,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="worker", image="ghcr.io/org/worker:v1")],
@@ -104,7 +104,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -131,7 +131,7 @@ class TestUpsertConflictRetry:
         # Conflict once (another writer landed first), then succeed on the fresh re-read.
         save.side_effect = [ConflictError("gewijzigd sinds u begon"), None]
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
@@ -148,7 +148,7 @@ class TestUpsertConflictRetry:
 
         save.side_effect = ConflictError("gewijzigd sinds u begon")  # never resolves
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],

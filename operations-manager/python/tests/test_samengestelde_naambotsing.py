@@ -190,7 +190,7 @@ class TestSchrijfguard:
 
         with (
             patch("opi.manager.project_manager.get_project_store", return_value=schrijver),
-            patch("opi.manager.project.deployment_mutations.ensure_domain_requests"),
+            patch("opi.manager.project.deployment_mutations.ensure_approval_requests"),
         ):
             result = await manager.upsert_deployment(
                 deployment_name=EIGEN_DEPLOYMENT,

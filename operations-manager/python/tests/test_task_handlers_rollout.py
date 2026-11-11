@@ -21,10 +21,11 @@ def _progress() -> MagicMock:
     return progress
 
 
-def _manager(*, processed: bool = True, error: str | None = None) -> MagicMock:
+def _manager(*, processed: bool = True, error: str | None = None, deployments: list[str] | None = None) -> MagicMock:
     pm = AsyncMock()
     pm.process_project_from_git = AsyncMock(return_value=processed)
     pm.get_processing_error = MagicMock(return_value=error)
+    pm.get_deployments = AsyncMock(return_value=[{"name": name} for name in deployments or ["prod"]])
     pm.close = AsyncMock()
     return pm
 
@@ -77,3 +78,82 @@ async def test_a_failed_processing_reports_failure_and_still_closes() -> None:
         "processing": {"status": "failed", "error": "argocd zei nee"},
     }
     pm.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_oom_state_of_the_rolled_out_deployments_is_cleared_first() -> None:
+    """A user-started round is a new workload, so its budget starts at zero.
+
+    Before the round, not after: the sync wait inside it tunes and records which pod
+    generation it answered, and clearing afterwards would throw that away.
+    """
+    from opi.runtime.tasks.task_handlers_rollout import handle_rollout_project
+
+    pm = _manager(processed=True, deployments=["prod"])
+    order: list[str] = []
+    pm.process_project_from_git = AsyncMock(side_effect=lambda *a, **k: order.append("rollout") or True)
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch(
+            "opi.runtime.tasks.task_handlers_rollout.reset_oom_tune_attempts",
+            side_effect=lambda *a: order.append(f"reset {a[1]}"),
+        ),
+    ):
+        await handle_rollout_project({"project_name": "demo", "deployment_names": ["prod"]}, _progress())
+
+    assert order == ["reset prod", "rollout"]
+
+
+@pytest.mark.asyncio
+async def test_a_project_wide_round_clears_every_deployment() -> None:
+    """Without a scope the round does all of them, so all of them start clean."""
+    from opi.runtime.tasks.task_handlers_rollout import handle_rollout_project
+
+    pm = _manager(processed=True, deployments=["prod", "staging"])
+    cleared: list[str] = []
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch(
+            "opi.runtime.tasks.task_handlers_rollout.reset_oom_tune_attempts",
+            side_effect=lambda *a: cleared.append(a[1]),
+        ),
+    ):
+        await handle_rollout_project({"project_name": "demo"}, _progress())
+
+    assert cleared == ["prod", "staging"]
+    assert pm.get_deployments.await_args.kwargs["deployment_names"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_successful_rollout_arms_the_oom_watcher_for_each_deployment() -> None:
+    """A user-started round watches for an OOM kill, the same as the other entrances."""
+    from opi.runtime.tasks.task_handlers_rollout import handle_rollout_project
+
+    pm = _manager(processed=True, deployments=["prod", "staging"])
+    armed: list[str] = []
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch("opi.services.oom_watcher.schedule_oom_check", side_effect=lambda project, name: armed.append(name)),
+    ):
+        await handle_rollout_project({"project_name": "demo"}, _progress())
+
+    assert armed == ["prod", "staging"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rollout_does_not_arm_the_oom_watcher() -> None:
+    """A round that did not reach the cluster has nothing to watch for an OOM kill on."""
+    from opi.runtime.tasks.task_handlers_rollout import handle_rollout_project
+
+    pm = _manager(processed=False, error="argocd zei nee", deployments=["prod"])
+
+    with (
+        patch(PM_PATH, return_value=pm),
+        patch("opi.services.oom_watcher.schedule_oom_check") as schedule,
+    ):
+        await handle_rollout_project({"project_name": "demo"}, _progress())
+
+    schedule.assert_not_called()

@@ -52,7 +52,7 @@ async def _besluit_met(fout: Exception) -> tuple[Any, list[str]]:
         patch("opi.web.router_approvals.load_modal_state_for", return_value=state),
         patch("opi.web.router_approvals.get_flow", return_value=flow),
         patch("opi.web.router_approvals.get_project_store", return_value=MagicMock()),
-        patch("opi.manager.project_manager.ProjectManager", return_value=_project_manager(fout)),
+        patch("opi.web.router_approvals.ProjectManager", return_value=_project_manager(fout)),
         patch("opi.web.router_approvals._render_section_html", return_value="sectie"),
         patch("opi.web.router_approvals._render_modal_step", side_effect=_stap),
     ):

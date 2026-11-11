@@ -114,7 +114,6 @@ kubectl apply -f examples/configmap-config.yaml
 - `GIT_PROJECTS_SERVER_USERNAME`: Username for Git projects server authentication
 - `GIT_PROJECTS_SERVER_PASSWORD`: Password for Git projects server authentication (can be SOPS encrypted)
 - `GIT_PROJECTS_SERVER_BRANCH`: Default branch to use
-- `ENABLE_GIT_MONITOR`: Enable Git file monitoring (true/false)
 
 ### OIDC Settings
 - `OIDC_CLIENT_ID`: OpenID Connect client ID

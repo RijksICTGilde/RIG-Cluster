@@ -250,17 +250,14 @@ class Settings(BaseSettings):
     ALLOWED_EMAILS: str | None = None  # Comma-separated list of allowed email addresses
     ADMIN_EMAILS: str | None = None  # Comma-separated list of admin emails (can view all projects)
 
-    # Git projects server settings - for monitoring and retrieving project files
-    ENABLE_GIT_MONITOR: bool = False
+    # Git projects server settings - the repository that holds the project files
     GIT_PROJECTS_SERVER_URL: str = "git://localhost:9090/"
     GIT_PROJECTS_SERVER_USERNAME: str | None = None  # Username for Git projects server authentication
     GIT_PROJECTS_SERVER_PASSWORD: str | None = None  # Password for Git projects server (can be SOPS encrypted)
     # Web address of the projects repo, for commit links in the audit tab.
     GIT_PROJECTS_WEB_URL: str = ""
     GIT_PROJECTS_SERVER_REPO_PATH: str = "/"
-    GIT_PROJECTS_SERVER_FILE_PATH: str = "projects/simple-example.yaml"
     GIT_PROJECTS_SERVER_BRANCH: str = "main"
-    GIT_PROJECTS_SERVER_POLL_INTERVAL: int = 120  # seconds
     # Fallback poll for edits made outside ZAD (by hand, or from another cluster).
     # Bounds how long an out-of-band revocation (member removed, invite key revoked
     # by pushing to zad-projects directly) can keep working on this instance.

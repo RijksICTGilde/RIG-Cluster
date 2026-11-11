@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from opi.core.actor import Actor, get_actor
@@ -20,9 +20,6 @@ from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
 from opi.utils.yaml_util import YAMLError, load_yaml_safe
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -2048,180 +2045,6 @@ class GitConnector:
                 f"Closing GitConnector {self.name} for project {self.project_name}; removing temporary directory: {self.__working_dir}"
             )
             shutil.rmtree(self.__working_dir, ignore_errors=True)
-
-
-async def poll_for_changes(
-    connector: GitConnector,
-    file_path: str,
-    interval: int = 10,
-    callback: Callable[[str, dict], Coroutine[Any, Any, None]] | None = None,
-    stop_event: asyncio.Event | None = None,
-) -> None:
-    """Poll one file in the repository until ``stop_event`` is set.
-
-    ``callback`` is called as ``async fn(file_path, current_content)`` on every change.
-    """
-    logger.info(f"Starting to poll for changes to {file_path} every {interval} seconds")
-    logger.debug(
-        f"Monitoring branch: {connector.branch}, Repo URL: {_obfuscate_git_command(connector.repo_url_with_path)}"
-    )
-
-    # 1. On startup: Clone the repository and do initial load
-    try:
-        # Clone the repository
-        logger.info("Cloning repository and checking out the branch")
-        await connector.ensure_repo_cloned()
-        logger.debug("Repository successfully cloned")
-
-        # Get the local commit hash from the checked out repository
-        local_hash = await connector.get_local_commit_hash()
-        logger.info(f"Current commit hash: {local_hash}")
-
-        # Process the file initially if callback is provided
-        if callback:
-            # Read the file directly from the filesystem
-            content = await connector.read_file_content(file_path)
-
-            # Parse YAML content
-            parsed_content = await connector.parse_yaml_content(content)
-
-            # Call the callback with the initial content
-            logger.info("Calling callback with initial file content")
-            await callback(file_path, parsed_content)
-    except Exception as e:
-        logger.error(f"Failed to initialize repository monitoring: {e}")
-        logger.debug(f"Initialization error details: {e!s}", exc_info=True)
-        # If we can't initialize, we can't continue
-        return
-
-    # Main polling loop
-    try:
-        while True:
-            if stop_event and stop_event.is_set():
-                logger.info("Stop event received, ending polling")
-                break
-
-            try:
-                # 2. Check for remote changes using ls-remote
-                remote_hash = await connector.get_latest_commit_hash()
-
-                # If remote has changes
-                if remote_hash != local_hash:
-                    logger.info(f"Remote hash changed: {remote_hash} (was {local_hash})")
-
-                    # First fetch the changes to make both commits available locally
-                    logger.debug("Fetching changes before diff")
-                    await connector._fetch_latest()
-
-                    # Check if our file changed
-                    file_changed = await connector.file_changed_between_commits(file_path, local_hash, remote_hash)
-
-                    if file_changed:
-                        logger.info(f"File {file_path} changed between commits")
-
-                        # Pull the changes to update the working directory
-                        logger.debug("Pulling changes to update working directory")
-                        await connector._pull_latest()
-
-                        # Process the file and notify callback
-                        if callback:
-                            # Read the updated file directly from the filesystem
-                            content = await connector.read_file_content(file_path)
-
-                            # Parse YAML content
-                            parsed_content = await connector.parse_yaml_content(content)
-
-                            # Call the callback with the updated content
-                            logger.info("Calling callback with updated file content")
-                            await callback(file_path, parsed_content)
-                    else:
-                        logger.debug(f"File {file_path} did not change despite commit changes")
-
-                    # Update local hash
-                    local_hash = remote_hash
-                else:
-                    logger.debug("No remote changes detected")
-
-            except Exception as e:
-                logger.error(f"Error during polling cycle: {e}")
-                logger.debug(f"Polling error details: {e!s}", exc_info=True)
-
-            # Sleep for the interval
-            await asyncio.sleep(interval)
-    finally:
-        # Clean up resources
-        logger.debug("Polling loop ended, cleaning up resources")
-        await connector.close()
-
-
-async def start_file_monitoring(
-    repo_url: str,
-    file_path: str,
-    branch: str = "main",
-    interval: int = 10,
-    repo_path: str | None = None,
-    working_dir: str | None = None,
-    callback: Callable[[str, dict], Coroutine[Any, Any, None]] | None = None,
-    stop_event: asyncio.Event | None = None,
-    ssh_key_path: str | None = None,
-    password: str | None = None,
-    username: str | None = None,
-) -> None:
-    """Monitor one YAML file for changes, with a connector built from these parameters."""
-    logger.debug(f"Starting file monitoring for {file_path} in {repo_url} (branch: {branch})")
-    logger.debug(f"Repository path: {repo_path}, Poll interval: {interval}s")
-
-    connector = GitConnector(repo_url, repo_path, working_dir, branch, ssh_key_path, password, username)
-    await poll_for_changes(connector, file_path, interval, callback, stop_event)
-
-
-# FastAPI Integration Functions
-
-
-async def start_monitoring_task(
-    repo_url: str,
-    file_path: str,
-    branch: str = "main",
-    interval: int = 10,
-    repo_path: str | None = None,
-    working_dir: str | None = None,
-    callback: Callable[[str, dict], Coroutine[Any, Any, None]] | None = None,
-    ssh_key_path: str | None = None,
-    password: str | None = None,
-    username: str | None = None,
-) -> asyncio.Task:
-    """The monitoring of :func:`start_file_monitoring` as a task, to store and cancel later."""
-    logger.debug(f"Creating monitoring task for {file_path} in {repo_url}")
-    stop_event = asyncio.Event()
-
-    async def _monitoring_wrapper():
-        try:
-            logger.debug("Starting monitoring wrapper")
-            await start_file_monitoring(
-                repo_url,
-                file_path,
-                branch,
-                interval,
-                repo_path,
-                working_dir,
-                callback,
-                stop_event,
-                ssh_key_path,
-                password,
-                username,
-            )
-        except asyncio.CancelledError:
-            logger.debug("Monitoring task cancel requested")
-            stop_event.set()
-            logger.info("Monitoring task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Error in monitoring task: {e}")
-            raise
-
-    task = asyncio.create_task(_monitoring_wrapper())
-    logger.debug(f"Monitoring task created: {task.get_name()}")
-    return task
 
 
 async def create_git_connector_from_repo_config(

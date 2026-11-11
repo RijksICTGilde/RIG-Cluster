@@ -207,7 +207,6 @@ def patch_settings(
         patch, forgejo, platform_private_key=platform_private_key, platform_public_key=platform_public_key
     )
     patch.setattr(settings, "DATABASE_NAME", OWN_DATABASE)
-    patch.setattr(settings, "GIT_PROJECTS_SERVER_FILE_PATH", f"projects/{PROJECT}.yaml")
     patch.setattr(settings, "ALLOWED_EMAILS", ADMIN_EMAIL)
     patch.setattr(settings, "ADMIN_EMAILS", ADMIN_EMAIL)
     patch.setattr(settings, "FIXED_PROJECT_POSTFIX", POSTFIX)

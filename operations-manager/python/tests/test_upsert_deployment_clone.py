@@ -92,7 +92,7 @@ class TestUpsertDeploymentClone:
         project_data = _project_with_scheduled_source()
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
@@ -110,7 +110,7 @@ class TestUpsertDeploymentClone:
         project_data = _project_with_scheduled_source()
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
@@ -153,7 +153,7 @@ class TestUpsertDeploymentClone:
         }
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr857",
                 components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
@@ -192,7 +192,7 @@ class TestUpsertDeploymentClone:
         }
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr884",
                 components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr884")],
@@ -240,7 +240,7 @@ class TestUpsertDeploymentClone:
         }
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr857",
                 components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
@@ -280,7 +280,7 @@ class TestUpsertDeploymentClone:
         }
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr-123")],
@@ -315,7 +315,7 @@ class TestUpsertDeploymentClone:
         }
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             await pm.upsert_deployment(
                 deployment_name="pr857",
                 components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
@@ -330,7 +330,7 @@ class TestUpsertDeploymentClone:
         project_data = _project_with_scheduled_source()
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
@@ -356,7 +356,7 @@ class TestUpsertDeploymentClone:
         source["sleep"] = {"state": "sleeping", "wake-token": "-----BEGIN AGE ENCRYPTED FILE-----"}
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
@@ -383,7 +383,7 @@ class TestUpsertDeploymentClone:
         ]
         _wire_create_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
@@ -409,7 +409,7 @@ class TestUpsertDeploymentClone:
         _wire_create_mocks(pm, project_data)
         injected_reference = "x')] | $.deployments[?(@.name=='production"
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-123",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],

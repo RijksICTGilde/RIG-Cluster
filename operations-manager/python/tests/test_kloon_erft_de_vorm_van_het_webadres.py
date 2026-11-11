@@ -110,7 +110,7 @@ async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857", **req
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
     pm.save_and_commit_project = AsyncMock()
 
-    with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+    with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
         result = await pm.upsert_deployment(
             deployment_name=clone_name,
             components=[

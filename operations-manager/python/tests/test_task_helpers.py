@@ -18,6 +18,7 @@ from opi.http.task_helpers import (
     build_accepted_response,
     create_async_task,
     get_task_service,
+    queue_rollout,
     task_actor,
     wait_for_task_answer,
     wait_for_task_completion,
@@ -258,6 +259,65 @@ class TestCreateAsyncTask:
         call_kwargs = mock_service.create_task.call_args[1]
         assert call_kwargs["payload"] == {}
         assert call_kwargs["deployment_name"] is None
+
+
+class TestQueueRollout:
+    """``queue_rollout``: the ``rollout_project`` task every portal save now enqueues.
+
+    The singular ``deployment_name`` kwarg exists for the routing and display a single
+    deployment gets elsewhere (federation, the progress fragment); the scope dedup itself
+    reads the plural ``deployment_names`` in the payload (``task_supersede.scope_of``).
+    """
+
+    def _request(self, service: AsyncMock) -> MagicMock:
+        request = MagicMock()
+        request.app.state.task_service = service
+        request.app.state.federation_service = None
+        request.state.user = {"email": "dev@example.com"}
+        return request
+
+    @pytest.mark.asyncio
+    async def test_a_single_deployment_names_both_the_scope_and_the_singular_field(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            task_id = await queue_rollout(self._request(mock_service), "demo", ["live"])
+
+        assert task_id == SAMPLE_TASK_ID
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "rollout_project"
+        assert call_kwargs["deployment_name"] == "live"
+        assert call_kwargs["payload"] == {"project_name": "demo", "deployment_names": ["live"]}
+        assert call_kwargs["max_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_several_deployments_carry_no_singular_field(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            await queue_rollout(self._request(mock_service), "demo", ["live", "test"])
+
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["deployment_name"] is None
+        assert call_kwargs["payload"]["deployment_names"] == ["live", "test"]
+
+    @pytest.mark.asyncio
+    async def test_a_project_wide_round_carries_none_in_the_payload_too(self) -> None:
+        """None means project-wide, as ``task_supersede.scope_of`` reads it: not an empty list."""
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            await queue_rollout(self._request(mock_service), "demo", None)
+
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["deployment_name"] is None
+        assert call_kwargs["payload"]["deployment_names"] is None
 
 
 # ---------------------------------------------------------------------------

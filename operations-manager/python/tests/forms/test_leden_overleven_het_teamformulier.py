@@ -27,11 +27,11 @@ from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.members import members_for_form, restore_hidden_members
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
+from opi.forms.wizard.write_set import apply_write_paths
 from opi.http.auth.principal import NotRecognised, recognise_principal
 from opi.services.project_members import hash_of
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
-from opi.web.project_edit_security import apply_form_data_to_project
 from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections
 
@@ -166,7 +166,7 @@ async def _teamstap(flow_id: str, *, modaal: bool) -> dict[str, Any]:
             state=state,
             project_name=PROJECT,
         )
-    resultaat = apply_form_data_to_project(copy.deepcopy(opgeslagen), {"users": final.get("users")})
+    resultaat = apply_write_paths(copy.deepcopy(opgeslagen), {"users": final.get("users")}, ["users"])
     restore_hidden_members(resultaat, opgeslagen)
     return resultaat
 

@@ -42,7 +42,7 @@ async def _verlaag(actor: str | None, *, save_weigert: bool = False) -> None:
     if save_weigert:
         save.side_effect = ProjectSchemaError("het schema weigert dit")
 
-    with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+    with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
         await pm.upsert_deployment(
             deployment_name="pr-1",
             components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],

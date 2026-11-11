@@ -72,7 +72,7 @@ class TestForceCloneSourceGuard:
         project_data = _project()
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -91,7 +91,7 @@ class TestForceCloneSourceGuard:
         project_data = _project()
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],

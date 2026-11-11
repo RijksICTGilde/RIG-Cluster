@@ -343,7 +343,6 @@ def _assert_the_background_tasks_run(app: FastAPI, *, step: str) -> None:
         "db_console_reaper",
         "image_pull_observer",
         "sleep_mode_scheduler",
-        "git_monitor_tasks",
     ):
         assert getattr(app.state, name, None) is not None, f"{step}: {name} is niet gestart"
     # De reconcile-poll staat niet in app.state, maar in zijn eigen module.

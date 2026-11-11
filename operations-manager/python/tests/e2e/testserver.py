@@ -692,7 +692,6 @@ def create_test_app():
             # timeout van 10 s, en die is er hier niet of praat met geen cluster.
             patch("opi.server.warm_connector_singletons", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
-            patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
                 "opi.services.persistence.subdomain_registry.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,

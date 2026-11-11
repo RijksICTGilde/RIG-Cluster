@@ -842,7 +842,7 @@ class TestV2UpsertDeployment:
 
     def test_unknown_component_returns_400(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         """Een verwijzing naar een onbekend component is een fout van de aanroeper, geen taak."""
-        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+        with patch("opi.api.router.get_project_store", return_value=_store_with_components(["web"])):
             response = v2_client.post(
                 "/api/v2/projects/test-project/:upsert-deployment",
                 headers={"X-API-Key": API_KEY},
@@ -859,7 +859,7 @@ class TestV2UpsertDeployment:
     def test_known_component_still_returns_202(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
-        with patch("opi.api.v2.router.get_project_store", return_value=_store_with_components(["web"])):
+        with patch("opi.api.router.get_project_store", return_value=_store_with_components(["web"])):
             response = v2_client.post(
                 "/api/v2/projects/test-project/:upsert-deployment",
                 headers={"X-API-Key": API_KEY},

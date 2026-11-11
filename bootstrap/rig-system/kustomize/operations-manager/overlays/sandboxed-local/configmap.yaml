@@ -13,7 +13,6 @@ data:
     # random key minten). Niet-internet-facing dev cluster, plaintext is OK.
     SECRET_KEY=sandbox-dev-secret-key-fixed-for-stable-sessions-32min
 
-    ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
     # De kloon-URL hierboven is een clusteradres; de commitlinks in het audit-tabblad
     # hebben de hostnaam nodig die een browser bereikt.
@@ -21,9 +20,7 @@ data:
     GIT_PROJECTS_SERVER_USERNAME=rig-admin
     GIT_PROJECTS_SERVER_PASSWORD=plain:admin1234
     GIT_PROJECTS_SERVER_REPO_PATH=/
-    GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
     GIT_PROJECTS_SERVER_BRANCH=main
-    GIT_PROJECTS_SERVER_POLL_INTERVAL=120
 
     GIT_ARGO_APPLICATIONS_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
     GIT_ARGO_APPLICATIONS_USERNAME=rig-admin

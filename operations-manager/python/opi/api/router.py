@@ -37,7 +37,12 @@ from opi.http.rate_limiter import IPRateLimiter
 from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor, wait_for_task_answer
 from opi.manager.clone import CLONE_SOURCE_INCOMPLETE
 from opi.manager.clone_validation import validate_clone_readiness
+from opi.manager.project.deployment_upsert import (
+    INVALID_PROJECT_NAME,
+    invalid_deployment_name,
+)
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.manager.project_validation import validate_component_references
 from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
 from opi.services.catalog.image_registries.config_model import (
     REGISTRY_NAME_PATTERN,
@@ -52,11 +57,7 @@ from opi.services.catalog.publish_on_web.subdomain import (
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_environment import Omgeving
 from opi.services.project_store import get_project_store
-from opi.services.project_utils import (
-    RESERVED_PROJECT_NAME_MESSAGE,
-    generate_self_service_project_yaml,
-    normalize_container_image,
-)
+from opi.services.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
 from opi.services.step_up import StepUpAction
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal, has_direct_clone_source
@@ -201,21 +202,15 @@ async def validate_upsert_deployment_request(
 ) -> None:
     """The checks both upsert entrances run before the work is handed over.
 
-    Raises HTTPException 400 on a malformed name or payload, and lets the authz guards
-    raise their own refusal.
+    Raises HTTPException 400 on a malformed name, a malformed payload or a component
+    reference the project does not hold, and lets the authz guards raise their own refusal.
     """
     if not validate_project_name(project_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-        )
+        raise HTTPException(status_code=400, detail=INVALID_PROJECT_NAME)
 
-    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-    if sanitized_name != deployment_data.deploymentName.lower():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-        )
+    refusal = invalid_deployment_name(deployment_data.deploymentName)
+    if refusal is not None:
+        raise HTTPException(status_code=400, detail=refusal)
 
     await validate_api_payload(
         deployment_data.model_dump(),
@@ -226,6 +221,17 @@ async def validate_upsert_deployment_request(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
+
+    # A reference to a component the catalogue does not hold is the caller's mistake and not
+    # a failure, so it answers 400 here instead of a task that fails afterwards. The same
+    # function the use case runs again when the task starts, so no second wording can appear.
+    # When the store does not hold the project the use case does the check, and nothing is
+    # invented here.
+    project = get_project_store().get(project_name)
+    if project is not None and project.data is not None:
+        reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
+        if not reference_result["success"]:
+            raise HTTPException(status_code=400, detail=reference_result["error"])
 
     # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
     # not in the path, so the route gate cannot weigh it.
@@ -914,121 +920,121 @@ async def upsert_deployment(
 
     await validate_upsert_deployment_request(request, project_name, deployment_data)
 
-    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
+    task = await create_async_task(
+        request=request,
+        task_type="upsert_deployment",
+        project_name=project_name,
+        deployment_name=deployment_data.deploymentName,
+        payload=upsert_task_payload(request, project_name, deployment_data),
+    )
+    task_id = str(task["task_id"])
+
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="upsert_deployment",
-            project_name=project_name,
-            deployment_name=deployment_data.deploymentName,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_data.deploymentName,
-                "components": [c.model_dump() for c in deployment_data.components],
-                "cloneFrom": deployment_data.cloneFrom,
-                "forceClone": deployment_data.forceClone,
-                "domain_format": deployment_data.domain_format,
-                "subdomain": deployment_data.subdomain,
-                "base_domain": deployment_data.base_domain,
-                "environment": deployment_data.environment,
-                "actor": task_actor(request),
-            },
-        )
-        task_id = str(task["task_id"])
+        # Deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
         return JSONResponse(
             content=build_accepted_response(task_id, "upsert_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
+    return await _finished_upsert_response(request, task_id, project_name, deployment_data)
 
-    # Sync path (backward compatibility)
-    project_manager = None
+
+def upsert_task_payload(
+    request: Request, project_name: str, deployment_data: UpsertDeploymentRequest, *, rollout: bool = True
+) -> dict[str, Any]:
+    """The task payload both upsert entrances build, so neither can leave a field out."""
+    return {
+        "project_name": project_name,
+        "deployment_name": deployment_data.deploymentName,
+        "components": [c.model_dump() for c in deployment_data.components],
+        "cloneFrom": deployment_data.cloneFrom,
+        "forceClone": deployment_data.forceClone,
+        "domain_format": deployment_data.domain_format,
+        "subdomain": deployment_data.subdomain,
+        "base_domain": deployment_data.base_domain,
+        "environment": deployment_data.environment,
+        "actor": task_actor(request),
+        "rollout": rollout,
+    }
+
+
+#: What the blocking upsert answers when the failure is not attributable. The sentence this
+#: route has always given for an unexpected failure, so it stays as it stands.
+UPSERT_NOT_ATTRIBUTABLE = "De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+
+#: What the blocking upsert answers when the task outlives the request.
+UPSERT_STILL_RUNNING = (
+    "De deployment wordt nog bijgewerkt. Volg /api/tasks/{task_id} voor het resultaat, "
+    "of gebruik /api/v2/projects/{project_name}/:upsert-deployment."
+)
+
+
+async def _finished_upsert_response(
+    request: Request, task_id: str, project_name: str, deployment_data: UpsertDeploymentRequest
+) -> JSONResponse:
+    """The finished upsert task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-483), so the upsert queues behind another round on the
+    same deployment instead of running next to it, and the drain guard, the federation
+    routing and the task dedup apply to it as well.
+    """
+    # ``status`` and not ``deployment``: a refused upsert carries no deployment, and waiting
+    # for a key only the successful answer has would add the whole grace window to it.
     try:
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-
-        result = await project_manager.upsert_deployment(
-            deployment_name=deployment_data.deploymentName,
-            components=deployment_data.components,
-            clone_from=deployment_data.cloneFrom,
-            force_clone=deployment_data.forceClone,
-            domain_format=deployment_data.domain_format,
-            subdomain=deployment_data.subdomain,
-            base_domain=deployment_data.base_domain,
-            environment=deployment_data.environment,
-            actor=task_actor(request),
-        )
-
-        if result["success"]:
-            processing_result = await project_manager.process_project_from_git(
-                f"projects/{project_name}.yaml",
-                deployment_name=deployment_data.deploymentName,
-                force_clone=deployment_data.forceClone,
-            )
-
-            status_code = 201 if result.get("created") else 200
-            action = "created" if result.get("created") else "updated"
-
-            urls: dict[str, dict[str, Any]] = {}
-            deployment_results = project_manager.get_deployment_results(deployment_data.deploymentName)
-            for dep_name, dep_result in deployment_results.items():
-                urls[dep_name] = {
-                    "cluster": dep_result.cluster,
-                    "urls": dep_result.urls,
-                }
-
-            content: dict[str, Any] = {
-                "status": "success",
-                "message": f"Deployment '{deployment_data.deploymentName}' {action} successfully",
-                "deployment": {
-                    "name": deployment_data.deploymentName,
-                    "project": project_name,
-                    "components": [
-                        {"reference": c.reference, "image": normalize_container_image(c.image)[0]}
-                        for c in deployment_data.components
-                    ],
-                    "forceClone": deployment_data.forceClone,
-                    "created": result.get("created", False),
-                },
-                "urls": urls,
-                "processing": {
-                    "status": "completed" if processing_result else "failed",
-                    **(
-                        {"error": project_manager.get_processing_error()}
-                        if not processing_result and project_manager.get_processing_error()
-                        else {}
-                    ),
-                },
-            }
-            if result.get("warnings"):
-                content["warnings"] = result["warnings"]
-            return JSONResponse(content=content, status_code=status_code)
-        else:
-            error_status_codes = {
-                "invalid_component_references": 400,  # Bad Request
-                "ambiguous_repository": 400,  # Bad Request
-                "no_repositories": 422,  # Unprocessable Entity
-                "internal_error": 500,  # Internal Server Error
-            }
-            status_code = error_status_codes.get(result.get("error_type", ""), 400)
-
-            content = {
-                "status": "failed",
-                "message": f"Failed to upsert deployment '{deployment_data.deploymentName}'",
-                "error": result["error"],
-                "error_type": result["error_type"],
-            }
-            return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Bijwerken van de deployment mislukt")
+        finished = await wait_for_task_answer(request, task_id, answer_key="status")
+    except TimeoutError as e:
         raise HTTPException(
-            status_code=500, detail="De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+            status_code=504,
+            detail=UPSERT_STILL_RUNNING.format(task_id=task_id, project_name=project_name),
         ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+
+    answer = finished.get("result") or {}
+    if answer.get("status") == "superseded":
+        # The project file is committed and only the rollout moved to a wider task, so this
+        # is in flight and not a failure. Not the success shape either: a hand-over carries
+        # no deployment and no urls, and 200 with both empty asserts a state nobody verified.
+        content = build_accepted_response(task_id, "upsert_deployment")
+        content["message"] = answer.get("message", "")
+        content["superseded_by"] = answer.get("superseded_by")
+        return JSONResponse(content=content, status_code=202, headers={"Location": f"/api/tasks/{task_id}"})
+
+    if answer.get("status") == "success":
+        content = {
+            "status": "success",
+            "message": answer.get("message", ""),
+            "deployment": answer.get("deployment", {}),
+            "urls": answer.get("urls", {}),
+            "approvals": answer.get("approvals", []),
+            "processing": answer.get("processing", {}),
+        }
+        if answer.get("warnings"):
+            content["warnings"] = answer["warnings"]
+        return JSONResponse(content=content, status_code=201 if answer.get("deployment", {}).get("created") else 200)
+
+    error_type = str(answer.get("error_type") or finished.get("error_type") or "internal_error")
+    content = {
+        "status": "failed",
+        "message": f"Failed to upsert deployment '{deployment_data.deploymentName}'",
+        "error": answer.get("error") or finished.get("error_message") or UPSERT_NOT_ATTRIBUTABLE,
+        "error_type": error_type,
+    }
+    if answer.get("processing"):
+        content["processing"] = answer["processing"]
+    return JSONResponse(content=content, status_code=UPSERT_ERROR_STATUS.get(error_type, 400))
+
+
+#: What an upsert refusal means on the wire. Every type the use case can raise is in here, so
+#: a refusal never lands as a bare 400 that says nothing about which side made the mistake.
+UPSERT_ERROR_STATUS: dict[str, int] = {
+    "invalid_component_references": 400,
+    "validation_error": 400,
+    "ambiguous_repository": 400,
+    "domain_validation": 400,
+    "conflict": 409,
+    "no_repositories": 422,
+    "processing_failed": 500,
+    "internal_error": 500,
+}
 
 
 class UpdateComponentRequest(BaseModel):

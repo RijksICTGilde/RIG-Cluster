@@ -97,6 +97,24 @@ async def create_async_task(
     )
 
 
+async def queue_rollout(request: Request, project_name: str, deployment_names: list[str] | None) -> str:
+    """Queue the rollout of a change this request already saved. Returns the task id.
+
+    ``deployment_names`` None means the whole project. The scope travels in the payload
+    because that is where ``opi.services.tasks.task_supersede.scope_of`` reads it for this
+    task type, so a waiting task is only superseded by a round that really covers it.
+    """
+    task = await create_async_task(
+        request=request,
+        task_type="rollout_project",
+        project_name=project_name,
+        deployment_name=deployment_names[0] if deployment_names and len(deployment_names) == 1 else None,
+        payload={"project_name": project_name, "deployment_names": deployment_names},
+        max_attempts=1,
+    )
+    return str(task["task_id"])
+
+
 async def wait_for_task_completion(
     request: Request,
     task_id: str,

@@ -39,6 +39,14 @@ CLIENT_ERROR_TYPES = frozenset(
     {
         "validation_error",
         "invalid_component_references",
+        # The upsert refuses on these four as well: an ambiguous or missing repository, a
+        # domain the project may not have, and a concurrent edit that could not be merged.
+        # The synchronous route has always answered 4xx for them, so the asynchronous one
+        # must not log them as an outage.
+        "ambiguous_repository",
+        "no_repositories",
+        "domain_validation",
+        "conflict",
         NOT_FOUND_ERROR_TYPE,
         INVALID_REQUEST_ERROR_TYPE,
     }

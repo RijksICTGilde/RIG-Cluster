@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import copy
 import html
 import logging
 import re
@@ -26,7 +25,7 @@ from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
-from opi.forms.wizard.members import members_for_form, restore_hidden_members
+from opi.forms.wizard.members import members_for_form
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -40,29 +39,24 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 from opi.http.auth.auth_decorators import get_current_user, requires_sso
 from opi.http.auth.authz import authorize, authorized_project
+from opi.http.auth.request_authority import RequestAuthority
 from opi.http.render.lotc_switch import render
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
 from opi.http.render.templates_lotc import templates_lotc
+from opi.manager.project.update import ProjectChange, StepUpRequiredError, update_project
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
-from opi.services.members import member_list_changed
-from opi.services.project_environment import environment_markings, log_production_downgrades
 from opi.services.project_file_handler import merge_staged_attachments
 from opi.services.project_roles import CREATOR_ROLES
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.services.project_store import ConflictError
 from opi.services.project_utils import apply_literal_scalars
 from opi.services.schema_migration import normalize_service_entries
-from opi.services.services import ServiceAdapter
-from opi.services.step_up import (
-    has_fresh_step_up,
-    log_step_up_refusal,
-    production_marking_change,
-    save_requires_step_up,
-)
 from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
 
@@ -2319,7 +2313,9 @@ async def _do_submit(
         await run_hooks(FormState.PRE_SAVE, all_with_system, final_data, hook_context)
 
         if state.project_name:
-            return await _save_existing_project(request, state.project_name, final_data)
+            return await _save_existing_project(
+                request, state.project_name, final_data, active_sections=active_sections
+            )
         else:
             # Create mode: the staged uploads go into the project-level attachments catalog
             # before the generators run, because the combine generator encrypts them once the
@@ -2333,11 +2329,12 @@ async def _do_submit(
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)
             return await _start_project_creation(request, final_data)
-    except (ProjectSchemaError, ProjectIntegrityError) as e:
-        # Re-render the wizard with the validation message instead of a 500.
+    except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+        # Re-render the wizard with the refusal instead of a 500. A ConflictError carries no
+        # field and no reason: its own message explains what to do, as it does in the modal.
         field_path = getattr(e, "field_path", None)
         message = _validation_message_without_values(e)
-        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", message)
+        logger.warning("Wizard save refused for %s: %s", state.project_name or "(new)", message)
         located = _locate_schema_error(active_sections, field_path) if field_path else None
         if located is not None:
             error_section, editable_path = located
@@ -2381,82 +2378,59 @@ async def _save_existing_project(
     request: Request,
     project_name: str,
     data: dict[str, Any],
+    *,
+    active_sections: list[Any],
 ) -> HTMLResponse:
     """Save updated data to an existing project."""
     from opi.manager.project_manager import ProjectManager
-    from opi.web.project_edit_security import apply_form_data_to_project
+    from opi.web.project_edit_security import refuse_immutable_changes
 
     # TOCTOU recheck on the mutating request.
     authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
-    # Read fresh from Git and not from the cache, so the form merges onto the current state and
-    # a lagging cache is never committed back over newer Git data. Closed explicitly, so its
-    # temp git clone is cleaned up.
+    # Only the paths this flow's editables declare, as the modal save does: the session was
+    # seeded when the wizard opened, and a shallow merge of that snapshot reverted whatever
+    # landed in git since. The flow declares ``clusters`` and may submit it unchanged, so the
+    # immutable fields are guarded on the VALUE and not on the declaration.
+    write_paths = flow_write_paths(active_sections)
+
+    def apply(stored: dict[str, Any]) -> dict[str, Any]:
+        refuse_immutable_changes(stored, data)
+        return apply_write_paths(stored, data, write_paths)
+
+    change = ProjectChange(
+        project_name=project_name,
+        apply=apply,
+        commit_message=f"Update project {project_name} via wizard",
+    )
+    # Closed explicitly, so its temp git clone is cleaned up.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        stored_data = await project_manager.get_contents()
-        environment_before = environment_markings(stored_data)
-        existing_data = apply_form_data_to_project(copy.deepcopy(stored_data), data)
-
-        # The form path bypasses set_service_config, so the platform fields are guarded here.
-        ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
-
-        # The same for the member list, in the same place as on the modal path: the team form
-        # owns ``users`` as a whole but renders only the people and their role.
-        restore_hidden_members(existing_data, stored_data)
-
-        ensure_approval_requests(existing_data)
-
-        # The role gate on the members, on the same boundary as the Team card and the role
-        # route: this wizard carries ``project.edit``, which a developer also has on a project
-        # without production, and the step-up below only checks FRESHNESS and not the role.
-        if member_list_changed(stored_data, existing_data):
-            authorize(request, action=Action.MEMBER_MANAGE, project_name=project_name)
-
-        # The same gate as on the modal path, for the same reason: the step-up below only
-        # checks FRESHNESS, so without this a developer sets the marking to production with a
-        # step-up they fetched themselves.
-        if production_marking_change(environment_before, environment_markings(existing_data)):
-            authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
-
+        result = await update_project(change, RequestAuthority(request, project_name), project_manager)
+    except StepUpRequiredError as refusal:
         # A bare 403 and not the step-up dialog: that one hangs on the shared modal of the
         # project page, which the full-page wizard does not have.
-        handeling = save_requires_step_up(stored_data, existing_data)
-        if handeling is not None and not has_fresh_step_up(request):
-            refusal_text = log_step_up_refusal(
-                handeling,
-                project_name=project_name,
-                actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"{refusal_text} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
-            )
-
-        # The complete file only exists after the merge with the stored project, because the
-        # form writes a subset. The same check the store makes, one step earlier, so a
-        # rejection lands in the wizard with the field named instead of in the save.
-        _validate_finished_project(existing_data, project_name=project_name)
-
-        # Persist through the single validated path: schema and structural integrity
-        # validation, canonical dumper, commit, push and cache refresh in one.
-        await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
-        log_production_downgrades(
-            environment_before,
-            environment_markings(existing_data),
-            project_name=project_name,
-            actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
-        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"{refusal} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
+        ) from refusal
     finally:
         await project_manager.close()
 
     clear_wizard_state(request)
     logger.info("Project %s updated via wizard", project_name)
 
+    target = f"/projects/{project_name}/details"
+    if result.needs_rollout:
+        from opi.http.task_helpers import queue_rollout
+
+        task_id = await queue_rollout(request, project_name, result.rollout_deployments)
+        target = f"/projects/progress/{task_id}"
+
     # HX-Redirect, so HTMX does a full-page navigation instead of swapping the redirect
     # target into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
-    response.headers["HX-Redirect"] = f"/projects/{project_name}/details"
+    response.headers["HX-Redirect"] = target
     return response
 
 

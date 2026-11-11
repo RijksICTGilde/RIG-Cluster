@@ -138,7 +138,6 @@ OPERATIONS MANAGER STARTING UP
 Boot Time: {boot_time}
 Environment: {os.environ.get("ENVIRONMENT", "production")}
 Debug Mode: {os.environ.get("DEBUG", "false")}
-Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
 {"=" * 80}
 """
 

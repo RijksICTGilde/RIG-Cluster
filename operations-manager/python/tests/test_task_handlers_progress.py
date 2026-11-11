@@ -667,13 +667,13 @@ class TestHandleUpsertDeployment:
         ):
             result = await handle_upsert_deployment(payload, progress)
 
-        # Verify progress passed to process_project_from_git
+        # The progress reaches the processing, and the scope travels as ``deployment_names``:
+        # the shared rollout step takes a list, which is also the task scope.
         mock_pm.process_project_from_git.assert_called_once_with(
             "projects/test-project.yaml",
             task_progress_manager=progress,
-            deployment_name="dev",
+            deployment_names=["dev"],
             force_clone=False,
-            argocd_resources_changed=True,
         )
 
         # Web addresses reported
@@ -713,6 +713,59 @@ class TestHandleUpsertDeployment:
         progress.fail_task.assert_not_called()
         progress.fail_project.assert_called()
         assert result["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_from_the_use_case_is_a_client_error(self, payload):
+        """An invalid deployment name is the caller's mistake, not an outage (RC-483).
+
+        The use case already fails the step and the project on this refusal; the handler
+        only turns it into the task's answer, without adding a second failed step of its own.
+        """
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
+
+        progress = _make_progress()
+        payload = {**payload, "deployment_name": "Not Valid!"}
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(PM_PATH, return_value=mock_pm):
+            result = await handle_upsert_deployment(payload, progress)
+
+        assert result["status"] == "failed"
+        assert result["error_type"] == "validation_error"
+        progress.fail_task.assert_called_once()
+        assert progress.fail_task.call_args.kwargs.get("client_error") is True
+        mock_pm.upsert_deployment.assert_not_awaited()
+        mock_pm.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_error_is_a_permanent_task_failure_not_a_raise(self, payload):
+        """RC-483 regression: moving the upsert into a use case let an unexpected error fly
+        past the handler and into the worker, which retries a failure dict never would.
+        """
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
+
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.upsert_deployment = AsyncMock(side_effect=RuntimeError("argocd onbereikbaar"))
+        mock_pm.close = AsyncMock()
+
+        with (
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
+            patch("opi.utils.naming.sanitize_kubernetes_name", return_value="dev"),
+            patch(PM_PATH, return_value=mock_pm),
+        ):
+            result = await handle_upsert_deployment(payload, progress)
+
+        assert result == {
+            "deployment_name": "dev",
+            "status": "failed",
+            "error": "Error upserting deployment: argocd onbereikbaar",
+            "error_type": "internal_error",
+        }
+        mock_pm.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

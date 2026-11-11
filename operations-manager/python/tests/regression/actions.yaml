@@ -74,11 +74,6 @@ startup:
       forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
       kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
       mail: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-  - step: start_git_monitoring
-    where: lifespan
-    dependencies:
-      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-      forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: start_reconcile_poll
     where: lifespan
     dependencies:
@@ -190,9 +185,6 @@ startup:
     where: lifespan
     dependencies: {}
   - step: begin_drain
-    where: lifespan
-    dependencies: {}
-  - step: stop_git_monitoring
     where: lifespan
     dependencies: {}
   - step: stop_reconcile_poll

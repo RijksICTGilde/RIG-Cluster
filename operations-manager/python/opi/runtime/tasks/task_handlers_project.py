@@ -13,7 +13,7 @@ from typing import Any
 from opi.core.cluster_config import is_reserved_project_name
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.tasks import progress_steps as steps
-from opi.services.tasks.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
+from opi.services.tasks.task_errors import platform_failure_fields
 from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.utils.yaml_util import load_yaml_from_string
 
@@ -331,197 +331,58 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
 
 async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
-    """Handle async upsert deployment task."""
+    """Handle async upsert deployment task.
+
+    A translator: the payload becomes a :class:`DeploymentUpsert`, and the outcome or the
+    refusal becomes the answer this task has always given.
+    """
+    from types import SimpleNamespace
+
+    from opi.manager.project.deployment_upsert import DeploymentUpsert, upsert_deployment
+    from opi.manager.project.errors import ProjectChangeError
     from opi.manager.project_manager import ProjectManager
-    from opi.services.project_utils import normalize_container_image
-    from opi.utils.naming import sanitize_kubernetes_name
-    from opi.utils.project_names import validate_project_name
+    from opi.services.tasks.task_rollout import rollout_requested
 
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
     components: list[dict[str, str]] = payload["components"]
-    clone_from: str | None = payload.get("clone_from") or payload.get("cloneFrom")
-    force_clone: bool = payload.get("force_clone") or payload.get("forceClone", False)
-    domain_format: str | None = payload.get("domain_format")
-    subdomain: str | None = payload.get("subdomain")
-    base_domain: str | None = payload.get("base_domain")
-    environment: str | None = payload.get("environment")
-    actor: str | None = payload.get("actor")
+
+    change = DeploymentUpsert(
+        project_name=project_name,
+        deployment_name=deployment_name,
+        components=[SimpleNamespace(reference=c["reference"], image=c["image"]) for c in components],
+        clone_from=payload.get("clone_from") or payload.get("cloneFrom"),
+        force_clone=payload.get("force_clone") or payload.get("forceClone", False),
+        domain_format=payload.get("domain_format"),
+        subdomain=payload.get("subdomain"),
+        base_domain=payload.get("base_domain"),
+        environment=payload.get("environment"),
+        actor=payload.get("actor"),
+        rollout=rollout_requested(payload),
+    )
 
     # Clear OOM state at start, and outside the OOM_WATCHER_ENABLED guard: see
     # handle_create_project.
     reset_oom_tune_attempts(project_name, deployment_name)
 
-    project_manager: ProjectManager | None = None
-
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        validate_task = progress.add_task(steps.NAMES_CHECK)
-
-        if not validate_project_name(project_name):
-            error_msg = (
-                "Invalid project name format. Must start with lowercase letter, "
-                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
-            )
-            progress.fail_task(validate_task, error_msg, client_error=True)
-            progress.fail_project(error_msg)
-            return {
-                "deployment_name": deployment_name,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": "validation_error",
-            }
-
-        sanitized_name = sanitize_kubernetes_name(deployment_name)
-        if sanitized_name != deployment_name.lower():
-            error_msg = (
-                f"Invalid deployment name. Use lowercase letters, numbers, and "
-                f"hyphens only. Suggested: {sanitized_name}"
-            )
-            progress.fail_task(validate_task, error_msg, client_error=True)
-            progress.fail_project(error_msg)
-            return {
-                "deployment_name": deployment_name,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": "validation_error",
-            }
-
-        progress.complete_task(validate_task)
-
-        upsert_task = progress.add_task(steps.DEPLOYMENT_SAVE, subject=deployment_name)
-
-        project_file_relative_path = f"projects/{project_name}.yaml"
-        project_manager = ProjectManager(
-            project_file_relative_path=project_file_relative_path,
-        )
-
-        # Build component dicts in the shape expected by project_manager
-        from types import SimpleNamespace
-
-        component_objects = [SimpleNamespace(reference=c["reference"], image=c["image"]) for c in components]
-
-        result = await project_manager.upsert_deployment(
-            deployment_name=deployment_name,
-            components=component_objects,
-            clone_from=clone_from,
-            force_clone=force_clone,
-            domain_format=domain_format,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            environment=environment,
-            actor=actor,
-        )
-
-        if not result["success"]:
-            error_msg = result.get("error", "Unknown upsert error")
-            error_type = result.get("error_type", "unknown")
-            progress.fail_task(upsert_task, error_msg, client_error=error_type in CLIENT_ERROR_TYPES)
-            progress.fail_project(error_msg)
-            return {
-                "deployment_name": deployment_name,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": error_type,
-            }
-
-        progress.complete_task(upsert_task)
-
-        # ArgoCD Application/AppProject resources only change when a new
-        # deployment is created.  Image updates don't touch ArgoCD resources.
-        is_new_deployment = result.get("created", False)
-        action = "created" if is_new_deployment else "updated"
-
-        urls: dict[str, dict[str, Any]] = {}
-
-        if not rollout_requested(payload):
-            note_rollout_skipped(progress)
-            succeeded = True
-            processing: dict[str, Any] = skipped_processing()
-        else:
-            processing_result = await project_manager.process_project_from_git(
-                project_file_relative_path,
-                task_progress_manager=progress,
-                deployment_name=deployment_name,
-                force_clone=force_clone,
-                argocd_resources_changed=is_new_deployment,
-            )
-
-            # Collect URLs from deployment results
-            deployment_results = project_manager.get_deployment_results(deployment_name)
-            for dep_name, dep_result in deployment_results.items():
-                urls[dep_name] = {
-                    "cluster": dep_result.cluster,
-                    "urls": dep_result.urls,
-                }
-                # Report web addresses for each component URL
-                for url_name, url_value in (dep_result.urls or {}).items():
-                    progress.update_component_web_address(url_name, url_value)
-
-            if processing_result:
-                # Schedule fire-and-forget OOM watcher
-                from opi.core.config import settings
-                from opi.services.oom_watcher import schedule_oom_check
-
-                if settings.OOM_WATCHER_ENABLED:
-                    oom_attempt = payload.get("oom_watch_attempt", 1)
-                    schedule_oom_check(
-                        project_name,
-                        deployment_name,
-                        attempt=oom_attempt,
-                    )
-            else:
-                processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-                progress.fail_project(processing_error)
-
-            succeeded = bool(processing_result)
-            processing = {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **(
-                    {"component_failures": component_failures}
-                    if (component_failures := project_manager.get_component_failures())
-                    else {}
-                ),
-            }
-
-        response: dict[str, Any] = {
-            "status": "success" if succeeded else "failed",
-            "message": (
-                f"Deployment '{deployment_name}' {action} successfully"
-                if succeeded
-                else (project_manager.get_processing_error() or f"Deployment '{deployment_name}' processing failed")
-            ),
-            "deployment": {
-                "name": deployment_name,
-                "project": project_name,
-                "components": [
-                    {
-                        "reference": c["reference"],
-                        "image": normalize_container_image(c["image"])[0],
-                    }
-                    for c in components
-                ],
-                "forceClone": force_clone,
-                "created": result.get("created", False),
-            },
-            "urls": urls,
-            # A deployment with a domain that is not approved does run, but on the default
-            # cluster address. So that is in "urls" too, and without this field there is
-            # nothing that says why a different address than the one asked for is there.
-            "approvals": result.get("approvals", []),
-            "processing": processing,
+        result = await upsert_deployment(change, project_manager, progress)
+    except ProjectChangeError as refusal:
+        # The use case already failed the step it refused on and the task as a whole; this
+        # only turns the refusal into the answer.
+        return {
+            "deployment_name": deployment_name,
+            "status": "failed",
+            "error": str(refusal),
+            "error_type": refusal.error_type,
         }
-        if result.get("warnings"):
-            response["warnings"] = result["warnings"]
-        return response
-
     except Exception as exc:
+        # The outermost boundary of this task. A failure dict and not a raise, so the worker
+        # does not retry what may well fail the same way again; that is what this handler has
+        # always answered.
         error_msg = f"Error upserting deployment: {exc}"
-        logger.error(error_msg)
+        logger.exception(error_msg)
         progress.fail_project(error_msg)
         return {
             "deployment_name": deployment_name,
@@ -530,8 +391,50 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "error_type": "internal_error",
         }
     finally:
-        if project_manager:
-            await project_manager.close()
+        await project_manager.close()
+
+    if result.succeeded and change.rollout:
+        _schedule_oom_check(project_name, deployment_name, payload.get("oom_watch_attempt", 1))
+    return _upsert_answer(change, result)
+
+
+def _upsert_answer(change: Any, result: Any) -> dict[str, Any]:
+    """The answer every upsert entrance has always given, built from the use case's result."""
+    action = "created" if result.created else "updated"
+    failure = result.processing.get("error")
+    answer: dict[str, Any] = {
+        "status": "success" if result.succeeded else "failed",
+        "message": (
+            f"Deployment '{change.deployment_name}' {action} successfully"
+            if result.succeeded
+            else (failure or f"Deployment '{change.deployment_name}' processing failed")
+        ),
+        "deployment": {
+            "name": change.deployment_name,
+            "project": change.project_name,
+            "components": result.components_answer(change),
+            "forceClone": change.force_clone,
+            "created": result.created,
+        },
+        "urls": result.urls,
+        # A deployment with a domain that is not approved does run, but on the default
+        # cluster address. So that is in "urls" too, and without this field there is
+        # nothing that says why a different address than the one asked for is there.
+        "approvals": result.approvals,
+        "processing": result.processing,
+    }
+    if result.warnings:
+        answer["warnings"] = result.warnings
+    return answer
+
+
+def _schedule_oom_check(project_name: str, deployment_name: str, attempt: int) -> None:
+    """Arm the OOM watcher for the deployment this round touched."""
+    from opi.core.config import settings
+    from opi.services.oom_watcher import schedule_oom_check
+
+    if settings.OOM_WATCHER_ENABLED:
+        schedule_oom_check(project_name, deployment_name, attempt=attempt)
 
 
 async def handle_delete_project(payload: dict, progress: Any) -> dict:

@@ -28,6 +28,7 @@ from opi.api.router import (
     UpdateImageRequest,
     UpsertDeploymentRequest,
     subdomain_check_rate_limiter,
+    upsert_task_payload,
     validate_clone_source_reachable,
     validate_upsert_deployment_request,
 )
@@ -111,8 +112,7 @@ from opi.http.auth.endpoint_util import (
 )
 from opi.http.auth.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
 from opi.http.auth.user_token_auth import validate_platform_admin_token, validate_user_token
-from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor
-from opi.manager.project_validation import validate_component_references
+from opi.http.task_helpers import build_accepted_response, create_async_task
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.argocd_operation import read_sync_operation
 from opi.services.catalog.actions import (
@@ -1107,34 +1107,12 @@ async def upsert_deployment_v2(
 
     await validate_upsert_deployment_request(request, project_name, deployment_data)
 
-    # A reference to a component the catalogue does not hold is the caller's mistake and not
-    # a failure, so it answers 400 here instead of a 202 with a task that fails afterwards.
-    # The same function the task uses, so no second wording can appear. When the store does
-    # not hold the project the task does the check, and nothing is invented here.
-    project = get_project_store().get(project_name)
-    if project is not None and project.data is not None:
-        reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
-        if not reference_result["success"]:
-            raise HTTPException(status_code=400, detail=reference_result["error"])
-
     task = await create_async_task(
         request=request,
         task_type="upsert_deployment",
         project_name=project_name,
         deployment_name=deployment_data.deploymentName,
-        payload={
-            "project_name": project_name,
-            "deployment_name": deployment_data.deploymentName,
-            "components": [c.model_dump() for c in deployment_data.components],
-            "cloneFrom": deployment_data.cloneFrom,
-            "forceClone": deployment_data.forceClone,
-            "domain_format": deployment_data.domain_format,
-            "subdomain": deployment_data.subdomain,
-            "base_domain": deployment_data.base_domain,
-            "environment": deployment_data.environment,
-            "actor": task_actor(request),
-            "rollout": rollout,
-        },
+        payload=upsert_task_payload(request, project_name, deployment_data, rollout=rollout),
     )
     return _accepted_response(task, "upsert_deployment")
 

@@ -16,11 +16,15 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.forms.visualizers.flows import get_flow
 from opi.http.auth.auth_decorators import requires_step_up
 from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 
 OWNER_EMAIL = "eigenaar@example.org"
 TOKEN = "wt-123"
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _productieproject() -> dict[str, Any]:
@@ -90,7 +94,7 @@ async def _modal_edit(
         patch("opi.web.router_detail_edit.render_step_up_dialog", new=dialoog),
         patch("opi.web.router_detail_edit.step_up_dialog_response", side_effect=lambda html: html),
     ):
-        _, response = await _process_and_save_modal_edit(
+        response = await _process_and_save_modal_edit(
             request=_request(verse_step_up=verse_step_up),
             project_manager=manager,
             project_name="demo",
@@ -155,7 +159,7 @@ async def test_modal_edit_met_verse_step_up_slaat_de_verlaging_wel_op() -> None:
 
     response = await _modal_edit(na_wijziging=verlaagd, verse_step_up=True, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -173,7 +177,7 @@ async def test_modal_edit_needs_nothing_for_a_switch_outside_production() -> Non
 
     response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -190,7 +194,7 @@ async def test_modal_edit_zonder_markeringswijziging_vraagt_niets() -> None:
 
     response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -249,12 +253,15 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
 
     with (
         patch("opi.web.router_wizard.authorize"),
+        patch("opi.http.auth.request_authority.authorize"),
         _patch_wizard_manager(stored, opslag),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.services.step_up"),
         pytest.raises(HTTPException) as excinfo,
     ):
-        await _save_existing_project(_request(verse_step_up=False), "demo", {"deployments": verlaagd})
+        await _save_existing_project(
+            _request(verse_step_up=False), "demo", {"deployments": verlaagd}, active_sections=EDIT_SECTIONS
+        )
 
     assert excinfo.value.status_code == 403
     assert "verse code uit je 2-factor" in excinfo.value.detail

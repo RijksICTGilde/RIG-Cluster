@@ -20,17 +20,17 @@ footprint should disappear too. Today that invariant holds for create/update but
 
 ## 2. Current state (with evidence)
 
-### 2.1 Git monitoring does not process the full lifecycle
-- `opi/runtime/periodic/git_monitor.py` → `file_change_handler(file_path, content)` reacts only to
-  a *changed* file and merely ensures namespaces (`check_and_create_namespaces`).
-  There is **no branch for a removed project file**, and no full processing
-  (DB/bucket/argo/manifests) — that is all it does.
-- `start_git_monitoring` passes only a single change-callback; nothing observes
-  deletions.
-- Defaults make it a demo, not the real processor: `ENABLE_GIT_MONITOR = False`, and
-  `GIT_PROJECTS_SERVER_FILE_PATH = "projects/simple-example.yaml"` — it watches **one
-  file**, not a directory of projects. Verified on the running sandbox: its configmap
-  sets `ENABLE_GIT_MONITOR=false`.
+### 2.1 Git monitoring is gone (RC-483)
+The git monitor described here was removed in opschoonronde 8d. What it was:
+`file_change_handler(file_path, content)` reacted only to a *changed* file and merely
+ensured namespaces, with no branch for a removed project file and no full processing
+(DB/bucket/argo/manifests). It watched **one** file (`projects/simple-example.yaml`),
+not a directory of projects, and `ENABLE_GIT_MONITOR` was false in every overlay, so it
+never ran anywhere. Its namespace creation duplicated
+`Infrastructure.check_and_create_namespaces`, which is on the path that does run.
+
+So the gap below is unchanged by the removal: nothing reconciles a project file edited
+outside ZAD except the store's fallback reconcile poll, which updates the cache.
 
 ### 2.2 Full processing and deletion live on the API/UI path
 - Full project processing happens via the wizard/API (`process_project_background` →

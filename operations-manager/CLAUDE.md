@@ -74,7 +74,7 @@ opi/
 |   |-- startup/           #   Initialization tasks (startup.py and friends)
 |   |-- tasks/             #   Task worker and its task handlers
 |   |-- backup/            #   Backup scheduler, backup tasks, retention sweep
-|   +-- periodic/          #   Watchers and reconcilers (git_monitor.py, ...)
+|   +-- periodic/          #   Watchers and reconcilers
 |
 |-- generation/            # Kubernetes manifest generation
 |   +-- manifests.py       #   Jinja2 template rendering

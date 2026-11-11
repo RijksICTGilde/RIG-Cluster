@@ -25,6 +25,8 @@ class RolloutRequest:
     deployment_names: list[str] | None
     changed: bool
     requested: bool
+    #: Clone into a target whose resources already exist, instead of leaving them alone.
+    force_clone: bool = False
 
 
 async def roll_out(
@@ -43,6 +45,7 @@ async def roll_out(
         # concrete class, which a use case must not depend on.
         task_progress_manager=cast("PersistentTaskProgressManager", progress),
         deployment_names=request.deployment_names,
+        force_clone=request.force_clone,
     )
     if succeeded:
         return {"status": "completed"}

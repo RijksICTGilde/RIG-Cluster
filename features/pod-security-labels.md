@@ -60,8 +60,7 @@ krijgen:
 2. **bij elke verwerking**, in dezelfde `kubectl label`-call die
    `argocd.argoproj.io/managed-by` zet (`apply_labels_to_resource` op de
    KubectlConnector). De lijst staat op één plek, `namespace_labels()` in
-   `opi/core/cluster_config.py`, en wordt gebruikt door zowel de ProjectManager als de
-   git-monitor.
+   `opi/core/cluster_config.py`, en wordt gebruikt door de ProjectManager.
 
 Dit geldt ook voor de infrastructuurnamespace van een project (de namespace met het
 eigen CNPG-cluster): die loopt door dezelfde twee functies.

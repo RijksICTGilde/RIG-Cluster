@@ -22,10 +22,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 from opi.api.restore_router import _require_namespace_owned_by_project
-from opi.core.cluster_config import get_pod_security_labels, get_prefixed_namespace, namespace_labels
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.manager.backup import RestoreResult
 from opi.manager.project_manager import ProjectManager
-from opi.runtime.periodic import git_monitor
 
 
 def _make_manager(project_data: dict) -> ProjectManager:
@@ -116,94 +115,6 @@ class TestNamespacePinning:
 
         with pytest.raises(ValueError, match="victim-project"):
             await pm.get_deployments(cluster_filter=True)
-
-
-class _SpyKubectl:
-    """Records every namespace write the git-monitor path attempts."""
-
-    def __init__(self):
-        self.namespace_exists = AsyncMock(return_value=False)
-        self.apply_manifest = AsyncMock(return_value=None)  # success = no raise
-        self.apply_labels_to_resource = AsyncMock(return_value=True)
-
-
-class TestGitMonitorNamespacePinning:
-    """VULN 1, git-monitor path: a project committed directly to git must
-    not be able to create or label another tenant's namespace.
-
-    Regression guard for the bypass where ``git_monitor`` reads the project
-    file directly and never goes through ``ProjectManager.get_deployments``,
-    so the chokepoint pin alone would not protect this path.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _spy_kubectl(self, monkeypatch):
-        self.kubectl = _SpyKubectl()
-        monkeypatch.setattr(
-            "opi.runtime.periodic.git_monitor.create_kubectl_connector",
-            lambda *a, **k: self.kubectl,
-        )
-
-    @pytest.mark.asyncio
-    async def test_foreign_namespace_is_rejected_and_nothing_created(self, monkeypatch):
-        """A foreign namespace must raise and never touch kubectl."""
-        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
-        project_data = {
-            "name": "attacker-project",
-            "deployments": [
-                {
-                    "name": "evil",
-                    "cluster": "local",
-                    "namespace": "victim-project",
-                }
-            ],
-        }
-
-        with pytest.raises(ValueError, match="victim-project"):
-            await git_monitor.check_and_create_namespaces(project_data)
-
-        self.kubectl.namespace_exists.assert_not_called()
-        self.kubectl.apply_manifest.assert_not_called()
-        self.kubectl.apply_labels_to_resource.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_absent_namespace_defaults_to_project_name(self, monkeypatch):
-        """An absent namespace must be pinned to the project name, so the
-        namespace acted on derives from the project, not attacker input."""
-        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
-        monkeypatch.setattr(
-            "opi.runtime.periodic.git_monitor.get_prefixed_namespace",
-            lambda cluster, ns: ns,
-        )
-        monkeypatch.setattr(
-            "opi.runtime.periodic.git_monitor.get_argo_namespace",
-            lambda cluster: "argocd",
-        )
-        project_data = {
-            "name": "my-project",
-            "deployments": [{"name": "web", "cluster": "local"}],
-        }
-
-        result = await git_monitor.check_and_create_namespaces(project_data)
-
-        assert result is True
-        manifest_variables = self.kubectl.apply_manifest.await_args.args[1]
-        assert manifest_variables["namespace"] == "my-project"
-        assert manifest_variables["pod_security_labels"] == get_pod_security_labels("local"), (
-            "RC-316: the manifest must get the same Pod Security labels as the label-apply call"
-        )
-        applied_labels = self.kubectl.apply_labels_to_resource.await_args.kwargs["labels"]
-        assert applied_labels == namespace_labels("local")
-
-
-# ---------------------------------------------------------------------------
-# GAT 3 (review augmentation): extract_deployment_namespace enforces the pin
-#
-# Eight callsites (3 in backup_router, 2 in restore_router, 3 in backup_tasks,
-# 1 in router_detail_edit) read the namespace via this helper without going
-# through enforce_namespace_pin. The helper itself now enforces the same
-# invariant: declared namespace must equal project name; default when absent.
-# ---------------------------------------------------------------------------
 
 
 class TestExtractDeploymentNamespacePinned:

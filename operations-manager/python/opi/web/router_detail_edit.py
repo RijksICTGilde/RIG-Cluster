@@ -58,16 +58,25 @@ from opi.http.auth.authz import (
     require_clone_source_access,
     require_on_any_deployment,
 )
+from opi.http.auth.request_authority import RequestAuthority
 from opi.http.auth.restore_guard import require_restore_source_access
 from opi.http.auth.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 from opi.http.render.lotc_switch import render_fragment
 from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.http.render.templates_lotc import templates_lotc
+from opi.http.task_helpers import queue_rollout
 from opi.manager.clone_validation import build_restore_target_deployment
-from opi.services.approvals import ensure_approval_requests
+from opi.manager.project.update import (
+    ALL_GUARDS,
+    EditGuard,
+    ProjectChange,
+    ProjectUpdateResult,
+    StepUpRequiredError,
+    update_project,
+)
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project import Project
-from opi.services.project_environment import environment_markings, log_production_downgrades
+from opi.services.project_environment import environment_markings
 from opi.services.project_file_handler import extract_attachment_catalog
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
@@ -78,7 +87,6 @@ from opi.services.step_up import (
     save_requires_step_up,
 )
 from opi.utils.csrf import reject_misfired_form_get
-from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -598,53 +606,6 @@ async def _validate_modal_flow_for_review(
         or ["Er zijn nog verplichte velden leeg. Vul deze stap aan voordat je naar de samenvatting gaat."],
     )
     return HTMLResponse(content=rendered)
-
-
-def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
-    """The name of the deployment this flow writes to, if it targets one.
-
-    Returns None for project-wide flows (components, services, etc.), which
-    process the whole project rather than one deployment.
-    """
-    target = flow.target
-    if target is None or target.list_key != "deployments":
-        return None
-    deployments = project_data.get("deployments", [])
-    if target.index < len(deployments):
-        name = deployments[target.index].get("name")
-        if name:
-            return name
-    return None
-
-
-async def _start_deployment(
-    request: Request,
-    project_name: str,
-    result_yaml: dict[str, Any],
-    deployment_name: str | None = None,
-) -> str:
-    """Create a V2 async task for deployment processing. Returns task_id.
-
-    project_file_already_saved tells the task not to rewrite: the modal already saved.
-    """
-    from opi.http.task_helpers import create_async_task
-
-    yaml_content = dump_yaml_to_string(result_yaml)
-
-    task = await create_async_task(
-        request=request,
-        task_type="create_project",
-        project_name=project_name,
-        deployment_name=deployment_name,
-        payload={
-            "project_name": project_name,
-            "yaml_content": yaml_content,
-            "deployment_name": deployment_name,
-            "project_file_already_saved": True,
-        },
-        max_attempts=1,
-    )
-    return str(task["task_id"])
 
 
 @detail_edit_router.post("/{project_name}/edit/{section_id}/sequence", response_class=HTMLResponse)
@@ -1436,6 +1397,15 @@ async def _modal_do_submit(
     if action in ("trigger_backup", "trigger_restore"):
         return await _handle_backup_restore_submit(request, wizard_token, project_name, flow_id, action, state)
 
+    # Every road to the save validates the whole flow first: a step validates only its own
+    # fields, skip validated nothing at all, and the jump to the review is a road a flow
+    # without one never takes.
+    refusal = await _validate_modal_flow_for_review(
+        request, wizard_token, state, flow_id, project_name, active_sections
+    )
+    if refusal is not None:
+        return refusal
+
     # Keep the CLEARED_FIELD tombstones, so the merge into the stored project, which cannot
     # express a deleted key by absence, can honour cleared fields; ``apply_modal_edit`` removes
     # the tombstones before the result is saved.
@@ -1452,7 +1422,7 @@ async def _modal_do_submit(
     # Closed explicitly, so its temp git clone is cleaned up on every exit path.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        existing_data, render_response = await _process_and_save_modal_edit(
+        outcome = await _process_and_save_modal_edit(
             request,
             project_manager,
             project_name,
@@ -1465,29 +1435,19 @@ async def _modal_do_submit(
     finally:
         await project_manager.close()
 
-    if render_response is not None:
-        return render_response
+    if isinstance(outcome, HTMLResponse):
+        return outcome
     logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
 
-    if action == "process_project":
-        # A flow that declares a deployment target deploys only that deployment.
-        target_deployment_name = _targeted_deployment_name(flow, existing_data)
-        task_id = await _start_deployment(
-            request,
+    if action == "process_project" and outcome.needs_rollout:
+        task_id = await queue_rollout(request, project_name, outcome.rollout_deployments)
+        logger.info(
+            "Rolling out %s (task=%s, flow=%s, deployments=%s)",
             project_name,
-            existing_data,
-            deployment_name=target_deployment_name,
+            task_id,
+            flow_id,
+            "(whole project)" if outcome.rollout_deployments is None else outcome.rollout_deployments,
         )
-        if target_deployment_name:
-            logger.info(
-                "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
-                project_name,
-                target_deployment_name,
-                task_id,
-                flow_id,
-            )
-        else:
-            logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
 
         rendered = render_fragment(
             request,
@@ -1524,37 +1484,24 @@ async def _process_and_save_modal_edit(
     merged_data: dict,
     active_sections,
     state,
-) -> tuple[dict, HTMLResponse | None]:
-    """Read, merge the modal-edit form into the project, and persist it.
+) -> ProjectUpdateResult | HTMLResponse:
+    """Merge the modal-edit form into the project and persist it through the use case.
 
-    Returns ``(existing_data, render_response)``. ``render_response`` is non-None only when
-    validation rejected the save and the caller should return it, the review re-render. The
-    caller owns the ProjectManager and closes it once this returns.
+    Returns the result of the write, or the answer that refuses it: the review re-render, or
+    the step-up dialog. The caller owns the ProjectManager and closes it once this returns.
     """
-    existing_data = await project_manager.get_contents()
 
-    # The OTAP markings from before this edit. Here and not in the store: only the request
-    # knows WHO makes the change, and that is what such a notice has to name.
-    environment_before = environment_markings(existing_data)
-
-    # The state from before the merge, to read a removal or a downgrade off.
-    before_data = copy.deepcopy(existing_data)
-
-    # Capture existing attachments' encrypted content before the form merge: the wizard
-    # strips it from the session (see _strip_attachment_content), so it is re-attached at
-    # save by PreserveAttachmentContentHook keyed by id.
-    original_attachment_content = {
-        att_id: entry.get("content")
-        for att_id, entry in extract_attachment_catalog(existing_data).items()
-        if isinstance(entry, dict) and entry.get("content")
-    }
-
-    # The merge belongs in the same row as the save below: it too can REFUSE the edit, when
-    # the target of an index flow no longer points at the same deployment. The refusal carries
-    # the explanation for the user, so it must not fall through as a bare 500.
-    try:
-        existing_data = await apply_modal_edit(
-            existing_data,
+    async def apply(stored: dict[str, Any]) -> dict[str, Any]:
+        # Captured BEFORE the form merge: the wizard strips the encrypted content from the
+        # session (see _strip_attachment_content), so PreserveAttachmentContentHook
+        # re-attaches it by id at save.
+        original_attachment_content = {
+            att_id: entry.get("content")
+            for att_id, entry in extract_attachment_catalog(stored).items()
+            if isinstance(entry, dict) and entry.get("content")
+        }
+        return await apply_modal_edit(
+            stored,
             merged_data,
             flow=flow,
             active_sections=active_sections,
@@ -1562,37 +1509,18 @@ async def _process_and_save_modal_edit(
             project_name=project_name,
             original_attachment_content=original_attachment_content,
         )
-    except ProjectIntegrityError as e:
-        logger.warning("Modal wizard merge rejected for %s (flow=%s): %s", project_name, flow.flow_id, e)
-        return existing_data, _render_modal_review(
-            request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
-        )
 
-    # A state that asks for an approval records its request here, as the edit wizard does. On
-    # the save path and not in the merge, which must let an empty edit change nothing.
-    ensure_approval_requests(existing_data)
-
-    # The marking is not an ordinary edit of the project file: it decides what "production"
-    # is, and with that what every other rule enforces. Which flow the user opened for it does
-    # not matter, so the gate sits on the WRITE PATH and not on the route; ``environment`` can
-    # be set in a restore flow too. After the merge, because only then is there an AFTER state
-    # to read the downgrade or the removal off, and before the save, so a refusal leaves
-    # nothing behind.
-    if production_marking_change(environment_before, environment_markings(existing_data)):
-        authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
-
-    # A clone-from reads the database and the buckets of the SOURCE, so that source weighs
-    # separately. On the write path and not on the route, for the same reason as the marking
-    # above: more than one flow can set a clone-from. The same gate as on the upsert.
-    require_clone_source_access(request, project_name, before_data, existing_data)
-
-    handeling = save_requires_step_up(before_data, existing_data)
-    if handeling is not None and not has_fresh_step_up(request):
-        log_step_up_refusal(
-            handeling,
-            project_name=project_name,
-            actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
-        )
+    change = ProjectChange(
+        project_name=project_name,
+        apply=apply,
+        commit_message=f"Update {project_name} ({flow.flow_id})",
+        # apply_modal_edit restores the hidden members on the form view, before the
+        # write-path merge, which is the only place that can tell them apart.
+        guards=ALL_GUARDS - {EditGuard.HIDDEN_MEMBERS},
+    )
+    try:
+        result = await update_project(change, RequestAuthority(request, project_name), project_manager)
+    except StepUpRequiredError as refusal:
         # The repeat goes to /confirm and not to the path of this request: a flow without a
         # review arrives here through the step route, which demands a JSON body the bodyless
         # repeat does not have. /confirm is the tail of both roads and reads everything from
@@ -1600,11 +1528,10 @@ async def _process_and_save_modal_edit(
         vervolg = f"/projects/{project_name}/modal-wizard/{flow.flow_id}/confirm"
         if wizard_token:
             vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
-        dialog = await render_step_up_dialog(request, vervolg=vervolg, handeling=handeling, vervolg_token=wizard_token)
-        return existing_data, step_up_dialog_response(dialog)
-
-    try:
-        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
+        dialog = await render_step_up_dialog(
+            request, vervolg=vervolg, handeling=refusal.handeling, vervolg_token=wizard_token
+        )
+        return step_up_dialog_response(dialog)
     except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
         logger.warning(
             "Modal wizard save rejected for %s (flow=%s, %s): %s",
@@ -1613,17 +1540,11 @@ async def _process_and_save_modal_edit(
             type(e).__name__,
             e,
         )
-        return existing_data, _render_modal_review(
+        return _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
 
-    log_production_downgrades(
-        environment_before,
-        environment_markings(existing_data),
-        project_name=project_name,
-        actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
-    )
-    return existing_data, None
+    return result
 
 
 async def _authorize_restore(

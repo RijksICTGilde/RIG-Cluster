@@ -16,9 +16,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.forms.visualizers.flows import get_flow
 from opi.services.step_up import STEP_UP_SESSION_KEY
 
 OWNER_EMAIL = "eigenaar@example.org"
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _productieproject(name: str = "demo") -> dict[str, Any]:
@@ -57,7 +61,26 @@ def _request_for(email: str, project: str = "demo") -> Any:
         state=SimpleNamespace(user={"email": email}),
         session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
         path_params={"project_name": project},
+        app=_task_queue(),
     )
+
+
+def _task_queue() -> Any:
+    """A queue that accepts the rollout task a wizard save now starts (RC-483 P1).
+
+    One instance for every fake request, so two requests built the same way still compare
+    equal.
+    """
+    return _TASK_QUEUE
+
+
+def _build_task_queue() -> Any:
+    service = MagicMock()
+    service.create_task = AsyncMock(return_value={"task_id": "rollout-1"})
+    return SimpleNamespace(state=SimpleNamespace(task_service=service))
+
+
+_TASK_QUEUE = _build_task_queue()
 
 
 def _patch_markeringsrecht(stored: dict[str, Any]):
@@ -88,13 +111,16 @@ async def test_wizard_edit_meldt_een_verlaging_met_de_echte_gebruiker(
 
     with (
         patch("opi.web.router_wizard.authorize"),
+        patch("opi.http.auth.request_authority.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
         verlaagd = copy.deepcopy(stored["deployments"])
         verlaagd[0]["environment"] = "test"
-        await _save_existing_project(_request_for(OWNER_EMAIL), stored["name"], {"deployments": verlaagd})
+        await _save_existing_project(
+            _request_for(OWNER_EMAIL), stored["name"], {"deployments": verlaagd}, active_sections=EDIT_SECTIONS
+        )
 
     meldingen = [record.getMessage() for record in caplog.records]
     assert any("deployment 'd'" in m and "project 'demo'" in m and OWNER_EMAIL in m for m in meldingen)
@@ -108,11 +134,14 @@ async def test_wizard_edit_meldt_niets_als_productie_blijft(caplog: pytest.LogCa
 
     with (
         patch("opi.web.router_wizard.authorize"),
+        patch("opi.http.auth.request_authority.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.services.project_environment"),
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), stored["name"], {"display-name": "Andere naam"})
+        await _save_existing_project(
+            _request_for(OWNER_EMAIL), stored["name"], {"display-name": "Andere naam"}, active_sections=EDIT_SECTIONS
+        )
 
     assert caplog.records == []
 

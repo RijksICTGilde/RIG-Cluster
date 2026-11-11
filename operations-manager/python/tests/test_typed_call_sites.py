@@ -19,47 +19,6 @@ from opi.forms.editables.editable import Editable
 from opi.forms.editables.processor import _validator_accepts_context
 
 
-class TestGitMonitorClusterCheck:
-    """``file_change_handler`` called ``has_deployments_for_current_cluster(content)``.
-
-    That method takes no arguments and is a coroutine function, so every project file
-    with deployments raised ``TypeError`` before the namespace check below it could run.
-    """
-
-    @pytest.fixture
-    def project_content(self) -> dict[str, Any]:
-        return {
-            "name": "demo",
-            "deployments": [{"name": "prod", "cluster": "my-cluster", "namespace": "demo"}],
-        }
-
-    async def test_deployment_for_this_cluster_reaches_the_namespace_check(
-        self, project_content: dict[str, Any]
-    ) -> None:
-        from opi.runtime.periodic import git_monitor
-
-        with (
-            patch.object(git_monitor.settings, "CLUSTER_MANAGER", "my-cluster"),
-            patch.object(git_monitor, "validate_declared_project_schema"),
-            patch.object(git_monitor, "check_and_create_namespaces", new=AsyncMock(return_value=True)) as check,
-        ):
-            await git_monitor.file_change_handler("projects/demo.yaml", project_content)
-
-        check.assert_awaited_once_with(project_content)
-
-    async def test_deployment_for_another_cluster_is_skipped(self, project_content: dict[str, Any]) -> None:
-        from opi.runtime.periodic import git_monitor
-
-        with (
-            patch.object(git_monitor.settings, "CLUSTER_MANAGER", "other-cluster"),
-            patch.object(git_monitor, "validate_declared_project_schema"),
-            patch.object(git_monitor, "check_and_create_namespaces", new=AsyncMock(return_value=True)) as check,
-        ):
-            await git_monitor.file_change_handler("projects/demo.yaml", project_content)
-
-        check.assert_not_awaited()
-
-
 class TestBootstrapContextPublicHost:
     """``_build_context`` called ``generate_public_url`` with four positional arguments.
 

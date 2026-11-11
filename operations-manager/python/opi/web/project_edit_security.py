@@ -1,7 +1,8 @@
 """What a form may and may not write into the project file.
 
-Merging submitted form data onto the stored project, with the fields no form may set. The role
-gate is not here: it runs through ``decide()`` in :mod:`opi.http.auth.authz`.
+The fields no form may set, checked against the submission. The merge itself is
+``apply_write_paths`` (:mod:`opi.forms.wizard.write_set`), and the role gate runs through
+``decide()`` in :mod:`opi.http.auth.authz`.
 """
 
 from __future__ import annotations
@@ -12,19 +13,15 @@ from fastapi import HTTPException
 
 from opi.forms.wizard.save import IMMUTABLE_PROJECT_FIELDS
 
-__all__ = ["IMMUTABLE_PROJECT_FIELDS", "apply_form_data_to_project"]
+__all__ = ["IMMUTABLE_PROJECT_FIELDS", "refuse_immutable_changes"]
 
 
-def apply_form_data_to_project(
-    existing_data: dict[str, Any],
-    submitted_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Merge submitted form data onto the stored project data; returns a new dict.
+def refuse_immutable_changes(existing_data: dict[str, Any], submitted_data: dict[str, Any]) -> None:
+    """Raise ``HTTPException`` 400 when the submission CHANGES an immutable project field.
 
-    Raises ``HTTPException`` 400 when the submission CHANGES an ``IMMUTABLE_PROJECT_FIELDS``
-    entry. A submission that carries such a field unchanged is allowed: the edit wizard submits
-    its whole project, seeded from the stored state, so equal to what is already there counts
-    as "not changed".
+    A submission that carries such a field unchanged is allowed: the edit wizard submits its
+    whole project, seeded from the stored state, so equal to what is already there counts as
+    "not changed". ``name`` is the on-disk filename and ``clusters`` is not editable yet.
     """
     offending = [
         field
@@ -36,4 +33,3 @@ def apply_form_data_to_project(
             status_code=400,
             detail=f"Submitted form data contains immutable project fields: {', '.join(offending)}",
         )
-    return {**existing_data, **submitted_data}

@@ -582,7 +582,7 @@ class TestDeploymentToevoegenMetCloneFromViaDeModalOpslag:
                 "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
             ),
             patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(na))),
-            patch("opi.web.router_detail_edit.ensure_approval_requests"),
+            patch("opi.manager.project.update.ensure_approval_requests"),
         ):
             await _process_and_save_modal_edit(_rights_request(email), manager, PROJECT_NAME, flow, None, {}, [], None)
         return manager

@@ -6,13 +6,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from opi.core.config import settings
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
 from opi.manager.project.notices import approval_notices, certificate_warnings
 from opi.manager.project_validation import validate_component_references
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
-from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 from opi.services.project import Project
 from opi.services.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.services.project_store import ConcurrencyError, ConflictError
@@ -405,7 +404,10 @@ class DeploymentMutations:
                 [component.reference for component in request.components],
             )
 
-        ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
+        # The whole catalog walk and not publish-on-web alone: send-email declares two
+        # approvals at deployment level, which an upsert can introduce directly or copy in
+        # with a clone-from. It is the same function the portal's save paths run.
+        ensure_approval_requests(project_data)
 
         commit_message = _update_commit_message(request, project_name, change_parts)
 
@@ -458,7 +460,10 @@ class DeploymentMutations:
             return domain_error
         normalized_warnings_create.extend(certificate_notes)
 
-        ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
+        # The whole catalog walk and not publish-on-web alone: send-email declares two
+        # approvals at deployment level, which an upsert can introduce directly or copy in
+        # with a clone-from. It is the same function the portal's save paths run.
+        ensure_approval_requests(project_data)
 
         # Run on a create as well: there is no earlier state to clear, but a service also
         # sets here what a rollout implies, such as sleep-mode starting its clock (RC-37).

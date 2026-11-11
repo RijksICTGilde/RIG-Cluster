@@ -58,7 +58,6 @@ from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
-from opi.runtime.periodic.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.runtime.startup.startup import run_startup_tasks, warm_connector_singletons
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
@@ -111,14 +110,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Run startup tasks (non-fatal: failed services retry in background)
     await run_startup_tasks(app)
-
-    # Start Git monitoring service
-    if settings.ENABLE_GIT_MONITOR:
-        try:
-            await start_git_monitoring(app)
-            logger.info("Git monitoring service started successfully")
-        except Exception as e:
-            logger.error(f"Failed to start Git monitoring service: {e}")
 
     # Start the project-store fallback reconcile poll: bounds how long an
     # out-of-band edit to zad-projects (member removed, invite key revoked by a
@@ -414,14 +405,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Stop the project-store fallback reconcile poll
     stop_reconcile_poll()
-
-    # Stop Git monitoring service
-    if settings.ENABLE_GIT_MONITOR:
-        try:
-            await stop_git_monitoring()
-            logger.info("Git monitoring service stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping Git monitoring service: {e}")
 
     # Close database connection pools
     try:

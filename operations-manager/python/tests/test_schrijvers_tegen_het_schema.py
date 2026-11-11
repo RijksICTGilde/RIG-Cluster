@@ -671,6 +671,60 @@ async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> Non
 
 
 # ---------------------------------------------------------------------------
+# A project change from the portal: what update_project writes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_project_change_writes_a_valid_file() -> None:
+    """Since RC-483 the wizard, the edit modal and the approval route all write here.
+
+    The real use case, with the merge the edit wizard uses: the flow's write paths on a
+    fresh read. The guards ``update_project`` runs are part of the result, so they run too;
+    only the weighing of the caller is stubbed.
+    """
+    from types import SimpleNamespace
+
+    from opi.forms.wizard.write_set import apply_write_paths
+    from opi.manager.project.update import ProjectChange, update_project
+
+    project = _basis_project()
+    submitted = {
+        "display-name": "Andere naam",
+        "description": "Een andere omschrijving",
+        "components": copy.deepcopy(project["components"]),
+    }
+    submitted["components"][0]["description"] = "De api van dit project"
+
+    offered: dict[str, Any] = {}
+
+    async def save(project_data: dict[str, Any], _message: str, **_kwargs: Any) -> None:
+        nonlocal offered
+        offered = project_data
+
+    manager = _manager()
+    manager.get_contents = AsyncMock(side_effect=lambda **_kw: copy.deepcopy(project))
+    manager.save_and_commit_project = AsyncMock(side_effect=save)
+
+    change = ProjectChange(
+        project_name=project["name"],
+        apply=lambda stored: apply_write_paths(stored, submitted, ["display-name", "description", "components"]),
+        commit_message="Update via de wizard",
+    )
+    authority = SimpleNamespace(
+        require=lambda *_a, **_k: None,
+        step_up_is_fresh=lambda: True,
+        actor="admin@rijksoverheid.nl",
+    )
+
+    await update_project(change, authority, manager)
+
+    assert offered, "the writer saved nothing, so this test measures nothing"
+    assert offered["display-name"] == "Andere naam"
+    poorten(offered)
+
+
+# ---------------------------------------------------------------------------
 # Mailaccounts: wat de mailmanager onder de dienst send-email wegschrijft
 # ---------------------------------------------------------------------------
 

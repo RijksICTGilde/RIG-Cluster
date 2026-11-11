@@ -22,16 +22,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
+from opi.forms.visualizers.flows import get_flow
 from opi.http.auth.authz import authorize
 from opi.services.project_service import ProjectService, ProjectUser
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
-from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, apply_form_data_to_project
+from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, refuse_immutable_changes
 from opi.web.router_wizard import _save_existing_project
 
 PROJECT_NAME = "takeover-target"
@@ -62,6 +63,9 @@ STORED_DATA: dict[str, Any] = {
     },
     "components": [{"name": "frontend", "image": "nginx:latest"}],
 }
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _patch_project_manager(captured: dict[str, Any]):
@@ -125,7 +129,25 @@ def _request_for(email: str, *, verse_step_up: bool = False) -> Any:
     sessie: dict[str, Any] = {}
     if verse_step_up:
         sessie["step_up_at"] = datetime.now(UTC).isoformat()
-    return SimpleNamespace(state=SimpleNamespace(user={"email": email}), session=sessie)
+    return SimpleNamespace(state=SimpleNamespace(user={"email": email}), session=sessie, app=_task_queue())
+
+
+def _task_queue() -> Any:
+    """A queue that accepts the rollout task a wizard save now starts (RC-483 P1).
+
+    One instance for every fake request, so two requests built the same way still compare
+    equal.
+    """
+    return _TASK_QUEUE
+
+
+def _build_task_queue() -> Any:
+    service = MagicMock()
+    service.create_task = AsyncMock(return_value={"task_id": "rollout-1"})
+    return SimpleNamespace(state=SimpleNamespace(task_service=service))
+
+
+_TASK_QUEUE = _build_task_queue()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +202,9 @@ async def test_member_rejected_on_save(project_service: ProjectService) -> None:
         patch("opi.web.router_detail_edit.get_current_user", return_value={"email": MEMBER_EMAIL}),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(MEMBER_EMAIL), PROJECT_NAME, malicious_payload)
+        await _save_existing_project(
+            _request_for(MEMBER_EMAIL), PROJECT_NAME, malicious_payload, active_sections=EDIT_SECTIONS
+        )
     assert exc.value.status_code == 403
 
     # Stored project must be untouched.
@@ -206,7 +230,7 @@ async def test_owner_save_rejects_immutable_field_in_payload(project_service: Pr
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS)
     assert exc.value.status_code == 400
     assert "name" in exc.value.detail
     # The forbidden payload must be rejected before anything is persisted.
@@ -228,7 +252,7 @@ async def test_owner_save_rejects_clusters_in_payload(project_service: ProjectSe
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS)
     assert exc.value.status_code == 400
     assert "clusters" in exc.value.detail
     # The forbidden payload must be rejected before anything is persisted.
@@ -255,7 +279,9 @@ async def test_developer_kan_zichzelf_geen_admin_maken_via_de_wizard(project_ser
         patch("opi.web.router_wizard.clear_wizard_state"),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(DEVELOPER_EMAIL, verse_step_up=True), PROJECT_NAME, payload)
+        await _save_existing_project(
+            _request_for(DEVELOPER_EMAIL, verse_step_up=True), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert exc.value.status_code == 403
     assert "data" not in captured, "het bestand mag niet veranderen"
@@ -280,7 +306,9 @@ async def test_developer_save_zonder_ledenwijziging_vraagt_geen_member_manage(
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
-        response = await _save_existing_project(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, payload)
+        response = await _save_existing_project(
+            _request_for(DEVELOPER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert response.status_code == 200
     assert captured["data"]["users"] == STORED_DATA["users"]
@@ -311,7 +339,9 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
-        response = await _save_existing_project(_request_for(OWNER_EMAIL, verse_step_up=True), PROJECT_NAME, payload)
+        response = await _save_existing_project(
+            _request_for(OWNER_EMAIL, verse_step_up=True), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert response.status_code == 200
     saved = captured["data"]
@@ -389,21 +419,21 @@ async def test_wizard_edit_page_poort_weigert_een_lid(project_service: ProjectSe
 
 
 # ---------------------------------------------------------------------------
-# Central helper: apply_form_data_to_project
+# Central helper: refuse_immutable_changes
 # ---------------------------------------------------------------------------
 
 
-def test_apply_form_data_raises_on_immutable_field() -> None:
+def test_refuse_immutable_changes_raises_on_a_changed_field() -> None:
     """Submitted data containing a CHANGED immutable field is rejected loudly."""
     existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
     for field in IMMUTABLE_PROJECT_FIELDS:
         with pytest.raises(HTTPException) as exc:
-            apply_form_data_to_project(existing, {field: "anything", "display-name": "X"})
+            refuse_immutable_changes(existing, {field: "anything", "display-name": "X"})
         assert exc.value.status_code == 400
         assert field in exc.value.detail
 
 
-def test_apply_form_data_allows_an_unchanged_immutable_field() -> None:
+def test_refuse_immutable_changes_allows_an_unchanged_field() -> None:
     """Merged wizard data always carries the stored immutable fields; that is not a write.
 
     De bewerkwizard zaaide zijn sessie uit het projectbestand, dus ``clusters`` zit er
@@ -412,48 +442,7 @@ def test_apply_form_data_allows_an_unchanged_immutable_field() -> None:
     sandbox: elke no-op save eindigde in een 400, RC-388).
     """
     existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
-    merged = apply_form_data_to_project(existing, {"name": "real-name", "clusters": ["odcn"], "display-name": "Nieuw"})
-    assert merged["display-name"] == "Nieuw"
-    assert merged["name"] == "real-name"
-    assert merged["clusters"] == ["odcn"]
-
-
-def test_apply_form_data_passes_non_immutable_fields_through() -> None:
-    """Users/config/components/display-name go through; immutable fields stay."""
-    existing = {
-        "name": "real-name",
-        "clusters": ["odcn"],
-        "users": [{"email": "a@x", "roles": ["admin", "ops"]}],
-        "config": {"age-public-key": "age1oud"},
-        "display-name": "Old",
-    }
-    submitted = {
-        "users": [{"email": "a@x", "roles": ["admin", "ops"]}, {"email": "b@x", "roles": ["viewer"]}],
-        "config": {"age-public-key": "age1nieuw"},
-        "display-name": "New",
-        "components": [{"name": "frontend"}],
-    }
-    merged = apply_form_data_to_project(existing, submitted)
-
-    assert merged["users"] == submitted["users"]
-    assert merged["config"] == submitted["config"]
-    assert merged["display-name"] == "New"
-    assert merged["components"] == submitted["components"]
-    # Immutable fields are re-derived from the stored project.
-    assert merged["name"] == "real-name"
-    assert merged["clusters"] == ["odcn"]
-
-
-def test_apply_form_data_returns_new_dict() -> None:
-    """The helper must not mutate either input dict."""
-    existing = {"users": [{"email": "owner@x"}]}
-    submitted = {"users": [{"email": "attacker@x"}], "display-name": "X"}
-    merged = apply_form_data_to_project(existing, submitted)
-
-    assert merged is not existing
-    assert merged is not submitted
-    assert existing == {"users": [{"email": "owner@x"}]}
-    assert submitted == {"users": [{"email": "attacker@x"}], "display-name": "X"}
+    refuse_immutable_changes(existing, {"name": "real-name", "clusters": ["odcn"], "display-name": "Nieuw"})
 
 
 def test_immutable_fields_constant_covers_the_documented_set() -> None:

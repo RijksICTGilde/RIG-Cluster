@@ -127,21 +127,10 @@ INVENTARIS: dict[str, Schrijver] = {
         None,
         "Zelfde blok als de keycloak-manager, en dezelfde reden.",
     ),
-    "opi/web/router_wizard.py": Schrijver(
-        "het hele bestand zoals het formulier het oplevert",
-        "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
-    ),
-    "opi/web/router_detail_edit.py": Schrijver(
-        "het deel van het bestand dat de bewerkte stroom beslaat",
-        None,
-        "De formulierstromen valideren hun eigen resultaat via tests/forms/; de schrijfweg zelf is enforce=True, "
-        "dus een schemafout hier blokkeert de bewerking in plaats van stil te landen.",
-    ),
-    "opi/web/router_approvals.py": Schrijver(
-        "de goedkeuringsstaat van domeinen en subdomeinen onder publish-on-web",
-        None,
-        "De goedkeuringsblokken hebben hun eigen modeltests in tests/test_domain_approval*.py; de schrijfweg is "
-        "enforce=True.",
+    "opi/manager/project/update.py": Schrijver(
+        "het hele bestand zoals de merge van de ingang het oplevert: de wizard, de drie wegen van een "
+        "bewerkmodal en het goedkeuringsbesluit (RC-483)",
+        "test_a_project_change_writes_a_valid_file",
     ),
     "opi/runtime/tasks/task_handlers_project.py": Schrijver(
         "het projectbestand zoals de aanmaaktaak het opbouwt",
