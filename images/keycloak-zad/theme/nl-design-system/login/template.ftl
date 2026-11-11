@@ -112,7 +112,7 @@
                kcSanitize laat opmaak staan, en in een attribuutwaarde komt die als
                letterlijke tekst in beeld. -->
           <nldd-banner variant="<#if message.type = 'error'>critical<#elseif message.type = 'warning'>warning<#elseif message.type = 'success'>success<#else>accent</#if>">
-            <nldd-rich-text>${kcSanitize(message.summary)?no_esc}</nldd-rich-text>
+            <nldd-rich-text><p>${kcSanitize(message.summary)?no_esc}</p></nldd-rich-text>
           </nldd-banner>
         </#if>
 
