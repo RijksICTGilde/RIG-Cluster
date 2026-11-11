@@ -38,11 +38,12 @@ realms:
       - UPDATE_PASSWORD
     removeFromDefaultRoles:
       - account:manage-account
-    # Een nieuw lokaal account stelt zijn authenticator-app bij de eerste login in. De
-    # verplichte OTP-stap in de flow hieronder vraagt daar zelf ook om, dus dit is de
-    # tweede weg naar dezelfde uitkomst; hij geldt ook waar de stap niet langskomt.
+    # Uit, en dat is bewust: Keycloak hangt een default action ook aan een gebruiker die via
+    # SSO binnenkomt (first broker login), die zo om een authenticator-app werd gevraagd. Een
+    # nieuw lokaal account stelt zijn app toch in, want de verplichte OTP-stap in de flow
+    # hieronder zet CONFIGURE_TOTP zelf zodra er geen OTP-credential is.
     requiredActionDefaults:
-      CONFIGURE_TOTP: true
+      CONFIGURE_TOTP: false
 
 # De flow wordt door OPI GEBOUWD en niet hier beschreven: de blauwdruklezer kent alleen
 # platte executions met een setAsBrowserFlow-redirector (_process_authentication_flows) en

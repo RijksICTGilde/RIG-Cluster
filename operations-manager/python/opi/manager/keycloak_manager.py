@@ -1656,7 +1656,7 @@ class KeycloakManager:
         await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
 
         # Switching to sso-support-otp: set CONFIGURE_TOTP on existing accounts without OTP.
-        # SSO users and service accounts are unaffected.
+        # Service accounts are unaffected, and SSO users lose a CONFIGURE_TOTP they carry.
         if template_name == SSO_SUPPORT_OTP_TEMPLATE:
             await keycloak.ensure_configure_totp_required(realm_name)
 

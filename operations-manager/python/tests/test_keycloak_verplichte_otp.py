@@ -81,10 +81,14 @@ def test_de_blauwdruk_noemt_dezelfde_flow_als_de_connector_bouwt() -> None:
     assert eigen["authenticationFlows"][0]["requireOtp"] is True
 
 
-def test_een_nieuw_lokaal_account_stelt_zijn_app_bij_de_eerste_login_in() -> None:
+def test_the_otp_template_does_not_hang_configure_totp_on_new_users() -> None:
+    """Keycloak hangs a default action on brokered users too, so SSO users got asked for an app.
+
+    A new local account still configures its app: the REQUIRED OTP step sets the action itself.
+    """
     eigen = YAML().load((BLAUWDRUK_MAP / f"{SSO_SUPPORT_OTP_TEMPLATE}.yaml").read_text())
 
-    assert eigen["realms"][0]["requiredActionDefaults"] == {CONFIGURE_TOTP: True}
+    assert eigen["realms"][0]["requiredActionDefaults"] == {CONFIGURE_TOTP: False}
 
 
 @pytest.mark.parametrize("naam", [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE])
@@ -383,6 +387,17 @@ async def test_alleen_het_lokale_account_krijgt_de_required_action() -> None:
     assert admin.required_actions[CONFIGURE_TOTP]["enabled"] is True, (
         "een requiredAction die geen gebruiker vraagt om hem in te stellen, doet niets"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_federated_user_loses_a_pending_configure_totp() -> None:
+    connector, admin = _users_connector(
+        [{"id": "u1", "username": "via-sso", "requiredActions": ["VERIFY_EMAIL", CONFIGURE_TOTP]}]
+    )
+    admin.social["u1"] = [{"identityProvider": "rig-platform-oidc"}]
+
+    assert await connector.ensure_configure_totp_required("proj-odcn-production") == []
+    assert _acties(admin, "via-sso") == ["VERIFY_EMAIL"]
 
 
 @pytest.mark.asyncio
