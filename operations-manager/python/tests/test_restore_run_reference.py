@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.manager.backup.base import SnapshotInfo
-from opi.manager.backup.runs import backup_run_items, clone_backup_items
+from opi.manager.backup.runs import (
+    backup_run_items,
+    backup_run_items_for_restore,
+    backup_run_source_deployments,
+    clone_backup_items,
+)
 from opi.services import CloneFromType
 from opi.services.project_schema import validate_project_schema
 
@@ -102,7 +107,7 @@ def snapshots() -> Any:
 
 
 class TestTheSavedProjectFile:
-    """Wat ``_create_deployment_from_source`` in het projectbestand zet."""
+    """Wat ``create_deployment_for_restore`` in het projectbestand zet."""
 
     @pytest.fixture
     def saved(self) -> Any:
@@ -114,8 +119,8 @@ class TestTheSavedProjectFile:
         manager.save_and_commit_project = AsyncMock()
         manager.close = AsyncMock()
         with (
-            patch("opi.runtime.backup.backup_tasks.get_project_store") as store,
-            patch("opi.runtime.backup.backup_tasks.ProjectManager", return_value=manager),
+            patch("opi.manager.backup.restore_run.get_project_store") as store,
+            patch("opi.manager.backup.restore_run.ProjectManager", return_value=manager),
         ):
             store.return_value.get.return_value = project
             yield {"project_data": project_data, "save": manager.save_and_commit_project}
@@ -123,9 +128,13 @@ class TestTheSavedProjectFile:
     @pytest.mark.asyncio
     async def test_the_saved_file_names_the_run_and_validates_against_the_schema(self, saved: Any) -> None:
         """De toets die het oude pad had moeten vangen: door de echte schemavalidatie heen."""
-        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
+        from opi.manager.backup.restore_run import NewDeploymentRestore, create_deployment_for_restore
 
-        await _create_deployment_from_source(PROJECT, TARGET, SOURCE, backup_run_id=RUN)
+        await create_deployment_for_restore(
+            NewDeploymentRestore(
+                project_name=PROJECT, target_deployment=TARGET, source_deployment=SOURCE, backup_run_id=RUN
+            )
+        )
 
         clone_from = saved["project_data"]["deployments"][1]["clone-from"]
         assert clone_from == {
@@ -141,7 +150,7 @@ class TestTheSavedProjectFile:
     async def test_the_wizard_service_shape_is_normalized_before_the_save(self, saved: Any) -> None:
         """Staging, wies-6z3: the restore wizard hands publish-on-web over in the name-as-key
         shape, and the schema's deployment-service envelope refused the whole file."""
-        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
+        from opi.manager.backup.restore_run import NewDeploymentRestore, create_deployment_for_restore
 
         deployment_config = {
             "name": TARGET,
@@ -149,7 +158,15 @@ class TestTheSavedProjectFile:
             "services": [{"publish-on-web": {"config": {"subdomain": "herstel"}}}],
         }
 
-        await _create_deployment_from_source(PROJECT, TARGET, SOURCE, deployment_config, backup_run_id=RUN)
+        await create_deployment_for_restore(
+            NewDeploymentRestore(
+                project_name=PROJECT,
+                target_deployment=TARGET,
+                source_deployment=SOURCE,
+                backup_run_id=RUN,
+                deployment_config=deployment_config,
+            )
+        )
 
         services = saved["project_data"]["deployments"][1]["services"]
         assert services == [{"reference": "publish-on-web", "config": {"subdomain": "herstel"}}]
@@ -158,9 +175,13 @@ class TestTheSavedProjectFile:
     @pytest.mark.asyncio
     async def test_the_file_is_saved_with_validation_on(self, saved: Any) -> None:
         """Een ongeldig bestand hoort de restore te stoppen voordat er iets is aangemaakt."""
-        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
+        from opi.manager.backup.restore_run import NewDeploymentRestore, create_deployment_for_restore
 
-        await _create_deployment_from_source(PROJECT, TARGET, SOURCE, backup_run_id=RUN)
+        await create_deployment_for_restore(
+            NewDeploymentRestore(
+                project_name=PROJECT, target_deployment=TARGET, source_deployment=SOURCE, backup_run_id=RUN
+            )
+        )
 
         assert saved["save"].await_args.kwargs.get("enforce_validation", True) is True
 
@@ -214,6 +235,53 @@ class TestLookingUpTheRun:
                 {"name": TARGET},
                 {"type": "backup", "reference": "van-een-ander-project", "run": RUN},
             )
+
+
+class TestTheRunLookedUpOnItsIdAlone:
+    """``backup_run_items_for_restore`` and ``backup_run_source_deployments`` (RC-482): the
+    backup-run restore route names the TARGET deployment, not the one the run came from, so
+    these look the run up by id alone within the namespace -- a run of ANY deployment of the
+    project is restorable into it."""
+
+    @pytest.mark.asyncio
+    async def test_the_items_of_the_run_regardless_of_which_deployment_made_it(self, snapshots: Any) -> None:
+        items = await backup_run_items_for_restore(PROJECT, "local", f"rig-{PROJECT}", RUN)
+
+        assert [(item["resource_type"], item["snapshot_id"]) for item in items] == [
+            ("database", "snap-db"),
+            ("bucket", "snap-bucket"),
+            ("pvc", "snap-pvc"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_older_runs_snapshot_is_not_included(self, snapshots: Any) -> None:
+        items = await backup_run_items_for_restore(PROJECT, "local", f"rig-{PROJECT}", RUN)
+
+        assert "snap-oud" not in [item["snapshot_id"] for item in items]
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_run_is_an_error_not_an_empty_list(self, snapshots: Any) -> None:
+        """An empty list would let the restore pass while nothing came back."""
+        with pytest.raises(ValueError, match="20261030084848"):
+            await backup_run_items_for_restore(PROJECT, "local", f"rig-{PROJECT}", "20261030084848")
+
+    @pytest.mark.asyncio
+    async def test_the_source_deployment_of_the_run(self, snapshots: Any) -> None:
+        sources = await backup_run_source_deployments(PROJECT, "local", f"rig-{PROJECT}", RUN)
+
+        assert sources == [SOURCE]
+
+    @pytest.mark.asyncio
+    async def test_the_older_runs_deployment_is_not_a_source_of_this_one(self, snapshots: Any) -> None:
+        """The older run belongs to the same source deployment here; this pins that only RUN counts."""
+        sources = await backup_run_source_deployments(PROJECT, "local", f"rig-{PROJECT}", RUN)
+
+        assert sources.count(SOURCE) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_run_has_no_source_either(self, snapshots: Any) -> None:
+        with pytest.raises(ValueError, match="20261030084848"):
+            await backup_run_source_deployments(PROJECT, "local", f"rig-{PROJECT}", "20261030084848")
 
 
 class TestTheItemsReachTheRightManager:
@@ -356,16 +424,19 @@ class TestTheItemsReachTheRightManager:
         }
         _thb = "opi.runtime.backup.task_handlers_backup"
         with (
-            patch(f"{_thb}._create_deployment_from_source", AsyncMock()) as create,
-            patch(f"{_thb}._pre_restore_pvcs", AsyncMock()) as pre_restore,
+            patch(f"{_thb}.create_deployment_for_restore", AsyncMock()) as create,
+            patch(f"{_thb}.pre_restore_pvcs", AsyncMock()) as pre_restore,
             patch(f"{_thb}._provision_deployment_infrastructure", AsyncMock()),
         ):
             result = await handle_restore(payload, _progress())
 
         assert result["success"] is True
         create.assert_awaited_once()
-        assert create.await_args.kwargs["backup_run_id"] == RUN
-        assert pre_restore.await_args.kwargs["pvc_items"] == [payload["backup_items"][1]]
+        (restore,) = create.await_args.args
+        assert restore.backup_run_id == RUN
+        _new_deployment, pvc_items, _progress_manager, _task = pre_restore.await_args.args
+        assert [item.snapshot_id for item in pvc_items] == ["snap-pvc"]
+        assert [item.reference_name for item in pvc_items] == ["data"]
 
 
 class TestAnUnknownRunCreatesNothing:
@@ -384,8 +455,8 @@ class TestAnUnknownRunCreatesNothing:
         }
         _thb = "opi.runtime.backup.task_handlers_backup"
         with (
-            patch(f"{_thb}._create_deployment_from_source", AsyncMock()) as create,
-            patch(f"{_thb}._pre_restore_pvcs", AsyncMock()) as pre_restore,
+            patch(f"{_thb}.create_deployment_for_restore", AsyncMock()) as create,
+            patch(f"{_thb}.pre_restore_pvcs", AsyncMock()) as pre_restore,
             patch(f"{_thb}._provision_deployment_infrastructure", AsyncMock()) as provision,
         ):
             result = await handle_restore(payload, _progress())

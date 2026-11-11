@@ -44,6 +44,8 @@ from opi.manager.backup.pvc_backup import (
 )
 from opi.manager.backup.runs import (
     backup_run_items,
+    backup_run_items_for_restore,
+    backup_run_source_deployments,
     clone_backup_items,
     group_snapshots_into_runs,
 )
@@ -67,6 +69,8 @@ __all__ = [
     "RestoreResult",
     "SnapshotInfo",
     "backup_run_items",
+    "backup_run_items_for_restore",
+    "backup_run_source_deployments",
     "clone_backup_items",
     "create_backup_manager",
     "create_bucket_backup_manager",

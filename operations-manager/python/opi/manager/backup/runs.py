@@ -51,17 +51,67 @@ def group_snapshots_into_runs(
         run["resource_count"] += 1
         if resource_type not in run["resource_types"]:
             run["resource_types"].append(resource_type)
-        run["items"].append(
-            {
-                "snapshot_id": snapshot.snapshot_id,
-                "resource_type": resource_type,
-                "component_name": snapshot.component_name,
-                "storage_name": snapshot.storage_name,
-                "reference_name": snapshot.storage_name or snapshot.pvc_name,
-                "generation": snapshot.generation,
-            }
-        )
+        run["items"].append(snapshot_run_item(snapshot))
     return runs
+
+
+def snapshot_run_item(snapshot: SnapshotInfo) -> dict[str, Any]:
+    """One snapshot as a restore item: what putting it back needs to know about it.
+
+    A database or bucket snapshot carries no ``storage`` tag, so its ``pvc_name`` already
+    holds the reference the restore accepts (see ``KopiaSnapshot.restore_reference``).
+    """
+    return {
+        "snapshot_id": snapshot.snapshot_id,
+        "resource_type": snapshot.resource_type or "pvc",
+        "component_name": snapshot.component_name,
+        "storage_name": snapshot.storage_name,
+        "reference_name": snapshot.storage_name or snapshot.pvc_name,
+        "generation": snapshot.generation,
+    }
+
+
+async def backup_run_source_deployments(
+    project_name: str,
+    cluster: str,
+    namespace: str,
+    run_id: str,
+) -> list[str]:
+    """The deployments whose data this backup run holds: what restoring it READS.
+
+    What the restore weighs on, and at the same time the proof that the run still exists.
+
+    Raises:
+        ValueError: when no snapshot carries this run id.
+    """
+    snapshots = await BackupManager().list_snapshots(cluster, namespace, project_name=project_name)
+    of_this_run = [s for s in snapshots if s.backup_run_id == run_id]
+    if not of_this_run:
+        raise ValueError(f"No snapshots found for backup run '{run_id}'")
+    return list(dict.fromkeys(s.deployment_name for s in of_this_run if s.deployment_name))
+
+
+async def backup_run_items_for_restore(
+    project_name: str,
+    cluster: str,
+    namespace: str,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """The items of this backup run, whichever deployment of the project made them.
+
+    The restore routes name the TARGET deployment in their path, and a run of another
+    deployment of the same project is restorable into it, so the run is looked up on its id
+    alone. A namespace holds one project per cluster, so this reaches no other project.
+
+    Raises:
+        ValueError: when the run no longer exists. Returning an empty list would let an
+            empty restore end as a success.
+    """
+    snapshots = await BackupManager().list_snapshots(cluster, namespace, project_name=project_name)
+    items = [snapshot_run_item(s) for s in snapshots if s.backup_run_id == run_id]
+    if not items:
+        raise ValueError(f"No snapshots found for backup run '{run_id}'")
+    return items
 
 
 async def backup_run_items(

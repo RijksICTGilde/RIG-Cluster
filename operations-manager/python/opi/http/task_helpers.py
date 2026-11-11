@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from fastapi import HTTPException, Request
 
@@ -128,6 +129,36 @@ async def wait_for_task_completion(
         elapsed += poll_interval
 
     raise TimeoutError(f"Task {task_id} did not complete within {timeout_seconds} seconds")
+
+
+#: How long a blocking endpoint waits for the worker to add its answer to a task that
+#: already reads as finished. See :func:`wait_for_task_answer`.
+TASK_ANSWER_GRACE_SECONDS = 15.0
+
+
+async def wait_for_task_answer(request: Request, task_id: str, answer_key: str) -> dict:
+    """The finished task, with the answer its handler wrote.
+
+    A terminal status is written twice: the progress manager stamps the task done without an
+    answer, and the worker adds the handler's answer right after. In between the task reads
+    as finished while its answer is not there yet, and this waits that window out.
+    ``answer_key`` is a field the handler's answer always carries.
+
+    Raises:
+        TimeoutError: when the task itself does not finish in time.
+    """
+    task = await wait_for_task_completion(request, task_id=task_id)
+    if answer_key in (task.get("result") or {}):
+        return task
+
+    task_service = get_task_service(request)
+    deadline = time.monotonic() + TASK_ANSWER_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.5)
+        fresh = await task_service.get_task(task_id)
+        if fresh and answer_key in (fresh.get("result") or {}):
+            return fresh
+    return task
 
 
 def build_accepted_response(task_id: str, task_type: str) -> dict:

@@ -523,7 +523,7 @@ class TestRestoreTargetSummary:
 
 
 class TestCreateDeploymentFromSource:
-    """Tests for _create_deployment_from_source structure logic."""
+    """Tests for create_deployment_for_restore structure logic."""
 
     def test_clone_exclude_keys(self) -> None:
         """Verify the correct keys are excluded when copying deployment config."""
@@ -709,7 +709,7 @@ class TestRestoreTargetTemplate:
 
 
 class TestPreRestorePvcNaming:
-    """Tests for PVC name calculation used in _pre_restore_pvcs."""
+    """Tests for PVC name calculation used in pre_restore_pvcs."""
 
     def test_source_pvc_name_gen0(self) -> None:
         """Source PVC name with generation 0 has no version suffix."""

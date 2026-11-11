@@ -1,276 +1,21 @@
-"""The helpers the backup and restore task handlers in task_handlers_backup.py share."""
+"""The provisioning the restore task handler runs, with its steps on the task."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
-from opi.core.config import settings
-from opi.manager.backup import ResourceType, create_backup_manager
-from opi.manager.backup.restore import (
-    GenerationUpdate,
-    restore_bucket_with_versioning,
-    restore_database_with_versioning,
-    restore_pvc_with_versioning,
-    set_restored_generation,
-)
-from opi.manager.clone_validation import build_restore_target_deployment
-from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_file_handler import create_project_file_handler, find_persistent_storage
-from opi.services.project_store import get_project_store
-from opi.services.schema_migration import normalize_service_entries
-from opi.services.tasks import progress_steps as steps
-from opi.utils.naming import generate_pvc_name, generate_unique_name
+from opi.manager.project_manager import create_project_manager
 
 if TYPE_CHECKING:
+    from opi.manager.backup.restore_run import DeploymentRefresh
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
 
-async def restore_items_with_progress(
-    backup_items: list[dict[str, Any]],
-    project_name: str,
-    target_deployment: str,
-    project_data: dict[str, Any],
-    app_namespace: str,
-    current_cluster: str,
-    progress: PersistentTaskProgressManager,
-    restore_task_id: str,
-) -> bool:
-    """Restore a list of backup items, one subtask per item.
-
-    Returns False when at least one item did not restore.
-    """
-    all_success = True
-
-    for item in backup_items:
-        resource_type = item.get("resource_type", "unknown")
-        component_name = item.get("component_name", "")
-        snapshot_id = item.get("snapshot_id", "")
-        reference_name = item.get("storage_name") or item.get("reference_name", "")
-
-        label = f"{resource_type.upper()}: {component_name or reference_name}"
-        subtask = progress.add_subtask(restore_task_id, steps.RESTORE_ITEM, subject=label)
-
-        try:
-            await _restore_single_resource(
-                project_name=project_name,
-                deployment_name=target_deployment,
-                resource_type=resource_type,
-                snapshot_id=snapshot_id,
-                component_name=component_name,
-                reference_name=reference_name,
-                project_data=project_data,
-                app_namespace=app_namespace,
-                current_cluster=current_cluster,
-            )
-            progress.complete_subtask(subtask)
-        except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-            all_success = False
-            progress.fail_subtask(subtask, str(e))
-            logger.exception("Failed to restore %s for %s/%s", label, project_name, target_deployment)
-
-    return all_success
-
-
-async def _create_deployment_from_source(
-    project_name: str,
-    target_deployment: str,
-    source_deployment: str,
-    deployment_config: dict[str, Any] | None = None,
-    backup_run_id: str = "",
-    config_source: str | None = None,
-) -> None:
-    """Create the restore-target deployment and persist it.
-
-    Saved here and not by the modal wizard: ``_pre_restore_pvcs`` has to fill the PVCs
-    before ArgoCD syncs the project, and a save from the wizard starts the processing right
-    away.
-
-    ``config_source`` is the deployment whose config (images and env vars included) the new
-    one inherits, or None for an empty deployment.
-    """
-    project = get_project_store().get(project_name)
-    if not project or not project.data:
-        msg = f"Project '{project_name}' niet gevonden"
-        raise ValueError(msg)
-
-    # Read fresh from Git (not the read-only cache) so the mutation merges onto
-    # current state and persists through the single validated save path.
-    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    try:
-        await _build_and_save_restore_deployment(
-            project_manager,
-            project_name,
-            target_deployment,
-            source_deployment,
-            deployment_config,
-            backup_run_id,
-            config_source,
-        )
-    finally:
-        await project_manager.close()
-
-
-async def _build_and_save_restore_deployment(
-    project_manager: ProjectManager,
-    project_name: str,
-    target_deployment: str,
-    source_deployment: str,
-    deployment_config: dict[str, Any] | None,
-    backup_run_id: str,
-    config_source: str | None = None,
-) -> None:
-    """Build the restore-target deployment and persist it via the validated save path.
-
-    The ProjectManager (and its temp git clone cleanup) is owned by the caller.
-    """
-    project_data = await project_manager.get_contents()
-
-    new_deployment = build_restore_target_deployment(
-        project_data,
-        target_deployment=target_deployment,
-        backup_source=source_deployment,
-        backup_run_id=backup_run_id,
-        config_source=config_source,
-        wizard_config=deployment_config,
-    )
-
-    project_data.setdefault("deployments", []).append(new_deployment)
-    # The wizard editables write service config in the name-as-key shape, which the
-    # schema's deployment-service envelope rejects; the other wizard save paths normalize too.
-    normalize_service_entries(project_data)
-
-    # Persist through the single validated path (schema + structural validation,
-    # canonical dumper, commit + push, cache refresh).
-    await project_manager.save_and_commit_project(
-        project_data,
-        f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')",
-    )
-    logger.info(
-        "Created deployment '%s' in project '%s' (restore from '%s', config from '%s')",
-        target_deployment,
-        project_name,
-        source_deployment,
-        config_source or "(leeg)",
-    )
-
-
-async def _pre_restore_pvcs(
-    project_name: str,
-    source_deployment: str,
-    target_deployment: str,
-    pvc_items: list[dict[str, Any]],
-    task_progress: PersistentTaskProgressManager,
-    pvc_task_id: str,
-) -> None:
-    """Pre-create PVCs with backup data before the infrastructure is provisioned.
-
-    For a restore into a new deployment this creates the namespace and restores the PVC data
-    before process_project_from_git runs. When ArgoCD later syncs the generated manifests, it
-    adopts the existing (already filled) PVCs through Replace=false.
-    """
-    project = get_project_store().get(project_name)
-    if not project or not project.data:
-        msg = f"Project '{project_name}' niet gevonden"
-        raise ValueError(msg)
-
-    project_data = project.data
-    project_file_handler = create_project_file_handler()
-
-    raw_namespace = project_file_handler.extract_deployment_namespace(project_data, target_deployment)
-    deployment_cluster = project_file_handler.extract_deployment_cluster(project_data, target_deployment)
-
-    if not raw_namespace or not deployment_cluster:
-        msg = f"Namespace of cluster niet gevonden voor deployment '{target_deployment}'"
-        raise ValueError(msg)
-
-    current_cluster = settings.CLUSTER_MANAGER
-    if deployment_cluster != current_cluster:
-        msg = (
-            f"Deployment '{target_deployment}' is op cluster '{deployment_cluster}', "
-            f"maar deze operations-manager draait op '{current_cluster}'"
-        )
-        raise ValueError(msg)
-
-    app_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
-
-    # Create namespace using existing ProjectManager method (idempotent)
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    try:
-        await project_manager.check_and_create_namespaces(target_deployment)
-    finally:
-        await project_manager.close()
-
-    base_components = {c.get("name"): c for c in project_data.get("components", [])}
-
-    backup_manager = create_backup_manager()
-    storage_class = get_storage_class_name(deployment_cluster)
-    access_modes = get_storage_access_modes(deployment_cluster)
-
-    for item in pvc_items:
-        component_name = item.get("component_name", "")
-        storage_name = item.get("storage_name") or item.get("reference_name", "")
-        snapshot_id = item.get("snapshot_id", "")
-        source_generation = item.get("generation", 0)
-
-        label = f"PVC: {component_name}/{storage_name}"
-        subtask = task_progress.add_subtask(pvc_task_id, steps.RESTORE_ITEM, subject=label)
-
-        # Source PVC name: from original deployment (what the backup was tagged with)
-        source_unique_name = generate_unique_name(source_deployment, component_name)
-        source_pvc_name = generate_pvc_name(source_unique_name, storage_name, source_generation)
-
-        # Target PVC name: gen 0 for new deployment
-        target_unique_name = generate_unique_name(target_deployment, component_name)
-        target_pvc_name = generate_pvc_name(target_unique_name, storage_name, 0)
-
-        base_component = base_components.get(component_name, {})
-        target_storage = find_persistent_storage(base_component, storage_name)
-
-        storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
-        backup_enabled = target_storage.get("backup", True) if target_storage else True
-
-        logger.info(
-            "Pre-restoring PVC %s -> %s (source gen %s) in %s",
-            source_pvc_name,
-            target_pvc_name,
-            source_generation,
-            app_namespace,
-        )
-
-        result = await backup_manager.restore_to_project_pvc(
-            cluster=deployment_cluster,
-            namespace=app_namespace,
-            source_pvc_name=source_pvc_name,
-            target_pvc_name=target_pvc_name,
-            storage_size=storage_size,
-            storage_class=storage_class,
-            access_modes=access_modes,
-            snapshot_id=snapshot_id,
-            backup_enabled=backup_enabled,
-            project_name=project_name,
-        )
-
-        if not result.success:
-            task_progress.fail_subtask(subtask, f"PVC restore mislukt: {result.error}")
-            msg = f"PVC restore mislukt voor {source_pvc_name} -> {target_pvc_name}: {result.error}"
-            raise RuntimeError(msg)
-
-        task_progress.complete_subtask(subtask)
-        logger.info(
-            "Pre-restored PVC %s -> %s in %s",
-            source_pvc_name,
-            target_pvc_name,
-            app_namespace,
-        )
-
-
 async def _provision_deployment_infrastructure(
-    project_name: str,
+    project_file_path: str,
     target_deployment: str,
     task_progress: PersistentTaskProgressManager,
 ) -> None:
@@ -278,9 +23,11 @@ async def _provision_deployment_infrastructure(
 
     Because the clone-from type is "backup", the managers skip cloning live data and create
     empty resources instead.
+
+    Raises:
+        RuntimeError: when the processing did not complete.
     """
     project_manager = create_project_manager()
-    project_file_path = f"projects/{project_name}.yaml"
     success = await project_manager.process_project_from_git(
         project_file_path,
         task_progress_manager=task_progress,
@@ -290,114 +37,22 @@ async def _provision_deployment_infrastructure(
         msg = f"Infrastructuur aanmaken mislukt voor deployment '{target_deployment}'"
         raise RuntimeError(msg)
 
-    logger.info(
-        "Infrastructure provisioned for deployment '%s' in project '%s'",
-        target_deployment,
-        project_name,
-    )
+    logger.info("Infrastructure provisioned for deployment '%s' (%s)", target_deployment, project_file_path)
 
 
-async def _restore_single_resource(
-    project_name: str,
-    deployment_name: str,
-    resource_type: str,
-    snapshot_id: str,
-    component_name: str,
-    reference_name: str,
-    project_data: dict[str, Any],
-    app_namespace: str,
-    current_cluster: str,
-) -> None:
-    """Restore one resource through the versioning restores in ``opi/manager/backup/restore.py``,
-    and write the new generation into the project file.
+def refresh_deployment_with_progress(task_progress: PersistentTaskProgressManager) -> DeploymentRefresh:
+    """The refresh the restore use case runs, reporting its steps on this task.
+
+    Regenerating is what points the deployment at the restored generation, and a new
+    versioned database carries a new password, so the secrets are rewritten here too.
     """
-    project_file_handler = create_project_file_handler()
 
-    if resource_type == "pvc":
-        result = await restore_pvc_with_versioning(
-            project_name=project_name,
-            deployment_name=deployment_name,
-            component_name=component_name,
-            storage_name=reference_name,
-            snapshot_id=snapshot_id,
-            deployment_cluster=current_cluster,
-            namespace=app_namespace,
-            project_data=project_data,
-            project_file_handler=project_file_handler,
-        )
-    elif resource_type == "database":
-        result = await restore_database_with_versioning(
-            project_name=project_name,
-            deployment_name=deployment_name,
-            component_name=component_name,
-            reference_name=reference_name,
-            snapshot_id=snapshot_id,
-            deployment_cluster=current_cluster,
-            namespace=app_namespace,
-            project_data=project_data,
-            project_file_handler=project_file_handler,
-        )
-    elif resource_type == "bucket":
-        result = await restore_bucket_with_versioning(
-            project_name=project_name,
-            deployment_name=deployment_name,
-            component_name=component_name,
-            reference_name=reference_name,
-            snapshot_id=snapshot_id,
-            deployment_cluster=current_cluster,
-            namespace=app_namespace,
-            project_data=project_data,
-            project_file_handler=project_file_handler,
-        )
-    else:
-        msg = f"Onbekend resource type: {resource_type}"
-        raise ValueError(msg)
+    async def refresh(project_file_path: str, deployment_name: str) -> str | None:
+        try:
+            await _provision_deployment_infrastructure(project_file_path, deployment_name, task_progress)
+        except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
+            logger.exception("Failed to re-provision after restore for %s", deployment_name)
+            return str(e)
+        return None
 
-    if not result.get("success"):
-        error = result.get("error", "Onbekende fout")
-        msg = f"Herstel mislukt voor {resource_type}: {error}"
-        raise RuntimeError(msg)
-
-    new_generation = result.get("new_generation")
-    if new_generation is not None:
-        project = get_project_store().get(project_name)
-        if project and project.data:
-            # Read fresh from Git (not the read-only cache) and persist through the
-            # single validated save path.
-            # Explicitly close the ProjectManager so its temp git clone is cleaned up.
-            project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-            try:
-                project_data = await project_manager.get_contents()
-                set_restored_generation(
-                    project_file_handler,
-                    project_data,
-                    GenerationUpdate(
-                        deployment=deployment_name,
-                        component=component_name,
-                        reference=reference_name,
-                        resource_type=ResourceType.from_string(resource_type),
-                        new_generation=new_generation,
-                    ),
-                )
-
-                # Validation off on purpose: the data is already restored into the new
-                # generation, so refusing to record it would leave the project file
-                # pointing at the old resource with no way back.
-                await project_manager.save_and_commit_project(
-                    project_data,
-                    f"Restore {resource_type} for {project_name}/{deployment_name} (gen {new_generation})",
-                    enforce_validation=False,
-                )
-            finally:
-                await project_manager.close()
-
-    logger.info(
-        "Restored %s for %s/%s: %s -> %s (gen %s -> %s)",
-        resource_type,
-        project_name,
-        deployment_name,
-        result.get("old_resource_name"),
-        result.get("new_resource_name"),
-        result.get("old_generation"),
-        result.get("new_generation"),
-    )
+    return refresh

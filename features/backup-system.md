@@ -320,7 +320,9 @@ resource the deployment owns — PVCs, databases, MinIO buckets — in one run.
 |--------|----------|-------------|
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}` | List snapshots for namespace |
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}` | List snapshots for specific PVC |
-| `POST` | `/api/v1/restore/project/{project_name}` | Restore for a RIG-managed project (auto-updates project file via generation versioning) |
+| `POST` | `/api/v1/restore/project/{project_name}` | Restore one PVC of a RIG-managed project (auto-updates project file via generation versioning) |
+| `POST` | `/api/v1/restore/project/{project_name}/deployment/{deployment_name}` | Restore one resource (`pvc`, `database`, `minio`) of a deployment |
+| `POST` | `/api/v1/restore/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}` | Restore every resource of one backup run |
 | `POST` | `/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}` | Manual PVC restore to new or existing PVC |
 | `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
 | `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
@@ -329,6 +331,38 @@ All `{cluster}/{namespace}` endpoints require a `project_name` query parameter m
 `X-API-Key`, and `{namespace}` must be that project's own prefixed namespace
 (`rig-{project}` in sandbox, `rig-prd-{project}` in production). Any other namespace is
 rejected with `403` — a project can only list or restore its own backups.
+
+### Restoring goes through the queue too, and still answers synchronously
+
+The three `project/...` restores queue a restore task and wait for it, the same way the
+backup endpoint does, so they run the same path as the wizard: the ordering and the
+deduplication per deployment apply, and a restore no longer runs next to a deploy or a
+backup of the same deployment. Two things follow from the wait:
+
+- `409` when another backup or restore holds the cluster-wide backup lock and nothing came
+  back;
+- `504` when the restore outlasts what the request can wait for. Nothing is lost; the task
+  keeps going and `GET /api/tasks/{id}` says how it ended.
+
+What the steps are no longer differs per entrance: all three run `restore_deployment` in
+`opi/manager/backup/restore_run.py`. That means for all three:
+
+- the generation of a resource is committed right after that resource came back, so a
+  half-finished run leaves a project file that matches what is on the cluster;
+- a deployment on another cluster than this operations-manager is refused with `400`
+  instead of being restored into thin air;
+- a backup run whose data belongs to ANOTHER deployment is weighed on that deployment as
+  well: restoring production into your own deployment reads production, and needs the role
+  for it.
+
+### Restoring into a destination you name yourself
+
+The database and bucket restore take a destination of your own (`target_database_*`,
+`target_minio_*`). That destination has to resolve to a public address, or to one of the
+private networks this cluster allows, exactly as a clone source does. Anything else is
+refused with `422`, with one message that says no more than that. The project's OWN
+database or bucket (omit the target fields) is not weighed: the platform picks that one,
+and it is cluster-internal by definition.
 
 ### Request body
 
@@ -453,9 +487,14 @@ That is reported, not hidden in the OPI log:
 | Restored, applying it failed | `partial` | `207` | `true` | `false` |
 | Restored, no refresh asked for (`update_deployment: false`) | `success` | `200` | `false` | `null` |
 | The restore itself failed | `failed` | `500` | `false` | `false` |
+| Part of a run restored, applying it failed | `partial` | `207` | `true` | `false` |
 
 On `partial` the message says so as well. The restored data is in place; retry the
 restore or trigger a project refresh once the cause is cleared.
+
+A run in which SOME resources came back is refreshed as well: the project file then already
+points at the new generation of those resources, and leaving the deployment on the old
+manifests would be the worse of the two halves.
 
 ### Restoring a database keeps the deployment's credentials
 

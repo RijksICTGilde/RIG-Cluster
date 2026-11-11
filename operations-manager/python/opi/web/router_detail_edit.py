@@ -58,6 +58,7 @@ from opi.http.auth.authz import (
     require_clone_source_access,
     require_on_any_deployment,
 )
+from opi.http.auth.restore_guard import require_restore_source_access
 from opi.http.auth.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 from opi.http.render.lotc_switch import render_fragment
 from opi.http.render.navigation_lotc import to_nldd_icon
@@ -1647,7 +1648,8 @@ async def _authorize_restore(
             is not a deployment of this project, 403 when the roles open too little.
     """
     # The source first: the cheapest role weighing, and it does not need the AFTER state.
-    require_action(request, Action.RESTORE_RUN, project_name, deployment=source_deployment)
+    # Shared with the backup-run route of the API, which reads the same data (RC-482, R8).
+    require_restore_source_access(request, project_name, source_deployment)
 
     project = get_project_store().get(project_name)
     if project is None or not project.data:
@@ -1771,13 +1773,12 @@ async def _handle_backup_restore_submit(
         restore_mode = merged_data.get("restore_mode", RestoreMode.EXISTING.value)
         create_new_deployment = restore_mode == RestoreMode.NEW.value
 
-        # The chosen run decides the source: the deployment the backup came from.
+        # The chosen run decides the source: the deployment the backup came from. Its items
+        # are NOT sent along; the task reads them when it starts (RC-482, decision R11).
         source_deployment = ""
-        backup_items: list[Any] = []
         if state.base_data:
             for run in state.base_data.get("_backup_runs", []):
                 if run.get("backup_run_id") == backup_run_id:
-                    backup_items = run.get("items", [])
                     source_deployment = run.get("deployment_name", "")
                     break
 
@@ -1818,7 +1819,6 @@ async def _handle_backup_restore_submit(
                 "project_name": project_name,
                 "backup_run_id": backup_run_id,
                 "target_deployment": target_deployment,
-                "backup_items": backup_items,
                 "create_new_deployment": create_new_deployment,
                 "source_deployment": source_deployment,
                 "deployment_config": deployment_config,
@@ -1828,12 +1828,11 @@ async def _handle_backup_restore_submit(
         task_id = task["task_id"]
 
         logger.info(
-            "Starting restore for %s/%s from run %s (task=%s, items=%d, new=%s)",
+            "Starting restore for %s/%s from run %s (task=%s, new=%s)",
             project_name,
             target_deployment,
             backup_run_id,
             task_id,
-            len(backup_items),
             create_new_deployment,
         )
 

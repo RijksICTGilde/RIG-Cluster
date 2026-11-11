@@ -281,6 +281,17 @@ class _FakeStore:
         return self._project if project_name == PROJECT else None
 
 
+@pytest.fixture(autouse=True)
+def allow_the_caller_named_target() -> Any:
+    """Let the egress guard on the destination through; test_restore_external_target_egress.py measures it.
+
+    The destinations here (``*.invalid``) do not resolve, and since RC-482 the guard refuses
+    that with a 422 before the manager gets its turn. These tests are about what happens after.
+    """
+    with patch("opi.api.restore_router.external_target_refusal", AsyncMock(return_value=None)):
+        yield
+
+
 @pytest.fixture
 def client() -> TestClient:
     app = FastAPI()
@@ -293,7 +304,7 @@ def mock_store() -> Any:
     store = _FakeStore(_project_file())
     with (
         patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.restore_router.get_project_store", return_value=store),
+        patch("opi.manager.backup.restore_targets.get_project_store", return_value=store),
     ):
         yield store
 
@@ -312,7 +323,7 @@ def mock_kubectl() -> Any:
     }
     kubectl = MagicMock()
     kubectl.get_secret = AsyncMock(side_effect=lambda name, namespace: secrets.get(name))
-    with patch("opi.api.restore_router.create_kubectl_connector", return_value=kubectl):
+    with patch("opi.manager.backup.restore_targets.create_kubectl_connector", return_value=kubectl):
         yield kubectl
 
 

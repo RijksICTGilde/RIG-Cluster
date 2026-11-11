@@ -11,6 +11,8 @@ import pytest
 from opi.services.tasks import progress_steps
 
 PM_PATH = "opi.manager.project_manager.ProjectManager"
+#: The clone use case owns the ProjectManager the clone handlers drive (RC-482).
+CLONE_PM_PATH = "opi.manager.clone.ProjectManager"
 CREATE_PM_PATH = "opi.manager.project_manager.create_project_manager"
 
 
@@ -191,7 +193,7 @@ class TestHandleCloneDatabase:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             result = await handle_clone_database(payload, progress)
 
         assert progress.add_task.call_count == 2
@@ -210,7 +212,7 @@ class TestHandleCloneDatabase:
         mock_pm.clone_database_from_external_direct = AsyncMock(return_value={"success": False, "errors": ["timeout"]})
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Database clone failed"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Database clone failed"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -233,7 +235,7 @@ class TestHandleCloneDatabase:
         mock_pm = AsyncMock()
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -258,7 +260,7 @@ class TestHandleCloneDatabase:
         mock_pm = AsyncMock()
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -292,7 +294,7 @@ class TestHandleCloneDatabase:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             await handle_clone_database(payload, progress)
 
         progress.add_task.assert_any_call(progress_steps.DATABASE_CLONE, subject="mydb via een Chisel-tunnel")
@@ -333,7 +335,7 @@ class TestHandleCloneBucket:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             result = await handle_clone_bucket(payload, progress)
 
         assert progress.add_task.call_count == 2
@@ -354,7 +356,7 @@ class TestHandleCloneBucket:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Bucket clone failed"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Bucket clone failed"):
             await handle_clone_bucket(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -377,7 +379,7 @@ class TestHandleCloneBucket:
         mock_pm = AsyncMock()
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
             await handle_clone_bucket(payload, progress)
 
         progress.fail_task.assert_called_once()

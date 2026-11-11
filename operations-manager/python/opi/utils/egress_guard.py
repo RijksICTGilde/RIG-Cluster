@@ -45,6 +45,9 @@ def has_direct_clone_source(host: str | None, port: int | None) -> bool:
 #: One message for every refused clone source, otherwise the refusal is an oracle itself.
 REFUSED_CLONE_SOURCE_REASON = "de kloonbron moet op een publiek adres staan"
 
+#: Same, for a destination the caller named for a restore.
+REFUSED_EXTERNAL_TARGET_REASON = "het doel moet op een publiek adres staan"
+
 #: One message for every failed clone source connection: unreachable, unknown source and
 #: wrong password must not be distinguishable from outside.
 UNREACHABLE_SOURCE_REASON = "de bron is niet bereikbaar of weigerde de verbinding"
@@ -60,9 +63,37 @@ async def clone_source_refusal(direct_host: str | None, tunnel_server_url: str |
         return None
 
     host = urlparse(tunnel_server_url).hostname if tunnel_server_url else direct_host
-    allowed = get_external_clone_allowed_private_networks(settings.CLUSTER_MANAGER)
     # No host means refused (safer than letting it through); str() because the schema allows integers.
-    if host and await host_is_allowed(str(host), allowed):
+    if await _host_may_be_reached(str(host) if host else None):
         return None
     logger.warning("Externe kloonbron geweigerd: %r resolvet niet of niet naar een toegestaan adres", host)
     return REFUSED_CLONE_SOURCE_REASON
+
+
+async def external_target_refusal(endpoint: str | None) -> str | None:
+    """The message for an external destination we may not write to, otherwise None.
+
+    Same rule as for a clone source: the pod has to dial a public address, or one inside a
+    network this cluster allows. ``endpoint`` may be a URL, a host with a port, or a bare
+    host, which is how the restore endpoints take a target.
+    """
+    if endpoint is None:
+        return None
+
+    host = endpoint_host(endpoint)
+    if await _host_may_be_reached(host):
+        return None
+    logger.warning("Extern terugzetdoel geweigerd: %r resolvet niet of niet naar een toegestaan adres", host)
+    return REFUSED_EXTERNAL_TARGET_REASON
+
+
+def endpoint_host(endpoint: str) -> str | None:
+    """The hostname out of an endpoint: a URL, a host with a port, or a bare host."""
+    return urlparse(endpoint if "//" in endpoint else f"//{endpoint}").hostname
+
+
+async def _host_may_be_reached(host: str | None) -> bool:
+    """Whether this cluster may dial ``host``. No host at all is refused."""
+    if not host:
+        return False
+    return await host_is_allowed(host, get_external_clone_allowed_private_networks(settings.CLUSTER_MANAGER))

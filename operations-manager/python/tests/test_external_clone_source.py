@@ -317,10 +317,52 @@ class TestCloneRoutesRefuseANonPublicSource:
         assert response.status_code == 202
 
 
+class TestIncompleteSourceIsRejectedBeforeQueueing:
+    """Neither a host/port nor a tunnel is not an unreachable source (RC-482, decision C1):
+    the egress guard lets it through with no refusal, so every clone route checks
+    ``has_direct_clone_source`` itself, with a 400, before a task is ever created."""
+
+    def test_v1_async_clone_database_without_a_host(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        response = client.post(
+            "/api/projects/test-project/deployments/staging/:clone-database-from-external",
+            headers=HEADERS,
+            json=_database_body(sourceHost=None),
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "sourceHost and sourcePort are required when not using tunnel configuration"
+        mock_task_service.create_task.assert_not_called()
+
+    def test_v2_clone_database_without_a_port(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        response = client.post(
+            "/api/v2/projects/test-project/deployments/staging/:clone-database",
+            headers=HEADERS,
+            json=_database_body(sourcePort=None),
+        )
+        assert response.status_code == 400
+        mock_task_service.create_task.assert_not_called()
+
+    def test_v2_clone_bucket_without_a_host(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        response = client.post(
+            "/api/v2/projects/test-project/deployments/staging/:clone-bucket",
+            headers=HEADERS,
+            json=_bucket_body(sourceHost=None),
+        )
+        assert response.status_code == 400
+        mock_task_service.create_task.assert_not_called()
+
+
 class TestSyncCloneRouteRequiresBothOrATunnel:
     """The v1 sync path (``sync=true``) answers the incomplete-source case itself, with an
-    HTTP 400. The async path hands the same ``has_direct_clone_source`` check to the task
-    handler instead (covered in ``test_task_handlers_progress.py``)."""
+    HTTP 400, same as the async and v2 routes do now (``TestIncompleteSourceIsRejectedBefore
+    Queueing``, RC-482 decision C1). The handler raises the same error independently
+    (covered in ``test_task_handlers_progress.py``), as the second line of defense for a
+    caller who reaches it some other way."""
 
     @staticmethod
     def _mock_project_manager() -> AsyncMock:
@@ -359,6 +401,88 @@ class TestSyncCloneRouteRequiresBothOrATunnel:
         mock_task_service.create_task.assert_not_called()
 
 
+class TestSyncCloneRouteAwaitsTheTask:
+    """A complete source goes through the task queue even with ``sync=true`` (RC-482,
+    decision C2): the route queues the same task the async path does, and blocks on it
+    instead of calling a manager directly. The status codes this has always answered with
+    (200 on success, 500 on failure, 504 when the wait itself times out) do not change.
+    """
+
+    def test_a_successful_database_clone_answers_200_with_its_source(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        mock_task_service.get_task.return_value = {
+            "task_id": SAMPLE_TASK_ID,
+            "status": "completed",
+            "result": {"source": {"host": "db.publiek.nl"}, "target": {"database": "appdb"}},
+        }
+
+        response = client.post(
+            "/api/projects/test-project/deployments/staging/:clone-database-from-external?sync=true",
+            headers=HEADERS,
+            json=_database_body(),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["source"] == {"host": "db.publiek.nl"}
+        mock_task_service.create_task.assert_called_once()
+
+    def test_a_failed_database_clone_answers_500_with_the_task_error(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        mock_task_service.get_task.return_value = {
+            "task_id": SAMPLE_TASK_ID,
+            "status": "failed",
+            "error_message": "Database clone failed: bron niet bereikbaar",
+            "result": {},
+        }
+
+        response = client.post(
+            "/api/projects/test-project/deployments/staging/:clone-database-from-external?sync=true",
+            headers=HEADERS,
+            json=_database_body(),
+        )
+
+        assert response.status_code == 500, response.text
+        data = response.json()
+        assert data["status"] == "failed"
+        assert "bron niet bereikbaar" in data["message"]
+
+    def test_a_successful_bucket_clone_answers_200_with_its_source(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        mock_task_service.get_task.return_value = {
+            "task_id": SAMPLE_TASK_ID,
+            "status": "completed",
+            "result": {"source": {"host": "minio.publiek.nl"}, "target": {"bucket": "data"}},
+        }
+
+        response = client.post(
+            "/api/projects/test-project/deployments/staging/:clone-bucket-from-external?sync=true",
+            headers=HEADERS,
+            json=_bucket_body(),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "success"
+
+    def test_a_clone_still_running_when_the_wait_gives_up_answers_504(
+        self, client: TestClient, mock_task_service: AsyncMock, age_keys: tuple[str, str]
+    ) -> None:
+        """The task keeps going; only this blocking call stops waiting for it."""
+        with patch("opi.api.router.wait_for_task_answer", AsyncMock(side_effect=TimeoutError("te lang"))):
+            response = client.post(
+                "/api/projects/test-project/deployments/staging/:clone-database-from-external?sync=true",
+                headers=HEADERS,
+                json=_database_body(),
+            )
+
+        assert response.status_code == 504, response.text
+        mock_task_service.create_task.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Route naar handler: de vorm van de payload en de versleutelde geheimen
 # ---------------------------------------------------------------------------
@@ -389,7 +513,7 @@ class TestPayloadFromRouteToHandler:
                 "operations": [{"type": "clone", "status": "success"}],
             }
         )
-        with patch("opi.manager.project_manager.ProjectManager", return_value=project_manager):
+        with patch("opi.manager.clone.ProjectManager", return_value=project_manager):
             result = await handle_clone_database(payload, MagicMock())
 
         assert result == {"source": {}, "target": {}}
@@ -418,7 +542,7 @@ class TestPayloadFromRouteToHandler:
                 "operations": [{"type": "clone", "status": "success"}],
             }
         )
-        with patch("opi.manager.project_manager.ProjectManager", return_value=project_manager):
+        with patch("opi.manager.clone.ProjectManager", return_value=project_manager):
             result = await handle_clone_bucket(payload, MagicMock())
 
         assert result == {"source": {}, "target": {}}

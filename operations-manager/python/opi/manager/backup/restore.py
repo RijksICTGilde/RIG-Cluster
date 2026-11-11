@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 TERUGZETTEN_MISLUKT = "Het terugzetten is niet gelukt. Probeer het over een minuut opnieuw."
 
+#: The data came back but its generation did not reach the project file, so the deployment
+#: still points at the previous resource.
+GENERATION_NOT_RECORDED = (
+    "Het terugzetten is gelukt, maar het projectbestand kon niet worden bijgewerkt. "
+    "Probeer het over een minuut opnieuw."
+)
+
 
 @dataclass
 class GenerationUpdate:

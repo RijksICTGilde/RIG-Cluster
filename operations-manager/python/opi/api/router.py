@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -33,7 +34,8 @@ from opi.http.auth.endpoint_util import (
 )
 from opi.http.auth.step_up_conditions import deployment_environment_change
 from opi.http.rate_limiter import IPRateLimiter
-from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor
+from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor, wait_for_task_answer
+from opi.manager.clone import CLONE_SOURCE_INCOMPLETE
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
@@ -63,6 +65,13 @@ from opi.utils.project_names import validate_project_name
 from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
+
+#: The clone is still running when a synchronous call gives up waiting for it. Nothing was
+#: lost; the task keeps going and ``GET /api/tasks/{id}`` shows how it ended.
+CLONE_STILL_RUNNING = (
+    "Het klonen loopt nog en duurt langer dan deze aanvraag kan wachten. "
+    "Het gaat door op de achtergrond; vraag de taakstatus op voor het resultaat."
+)
 
 
 subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
@@ -2227,6 +2236,18 @@ async def delete_project_deployment(
             await project_manager.close()
 
 
+def validate_clone_source_reachable(
+    clone_data: CloneDatabaseFromExternalRequest | CloneBucketFromExternalRequest,
+) -> None:
+    """Refuse a direct clone source that names no host or no port, before anything runs.
+
+    Raises:
+        HTTPException: 400, naming the two fields that belong together.
+    """
+    if clone_data.tunnel is None and not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
+        raise HTTPException(status_code=400, detail=CLONE_SOURCE_INCOMPLETE)
+
+
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
 @action(Action.DATABASE_CLONE)
 @validate_api_token
@@ -2272,114 +2293,83 @@ async def clone_database_from_external(
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
-    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
+    task = await create_async_task(
+        request=request,
+        task_type="clone_database",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            **await clone_data.to_task_payload(),
+        },
+    )
+    task_id = str(task["task_id"])
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="clone_database",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-                **await clone_data.to_task_payload(),
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "clone_database"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
+    return await _finished_clone_response(
+        request,
+        task_id,
+        _CloneOutcome(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source=f"{clone_data.sourceHost}:{clone_data.sourcePort}",
+            subject="Database",
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _CloneOutcome:
+    """What the synchronous clone answer says about the clone it waited for."""
+
+    project_name: str
+    deployment_name: str
+    source: str
+    subject: str
+
+
+async def _finished_clone_response(request: Request, task_id: str, outcome: _CloneOutcome) -> JSONResponse:
+    """The finished clone task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-482), so the clone queues behind a deploy or another
+    clone of the same deployment instead of running next to it.
+    """
     try:
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        finished = await wait_for_task_answer(request, task_id, answer_key="source")
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=CLONE_STILL_RUNNING) from e
 
-        if clone_data.tunnel:
-            logger.info(
-                f"External database clone request via Chisel tunnel: {project_name}/{deployment_name} "
-                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceDatabase} "
-                f"(via {clone_data.tunnel.serverUrl})"
-            )
-
-            clone_result = await project_manager.clone_database_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_database=clone_data.sourceDatabase,
-                source_schema=clone_data.sourceSchema,
-                source_username=clone_data.sourceUsername,
-                source_password=clone_data.sourcePassword,
-                tunnel_server_url=clone_data.tunnel.serverUrl,
-                tunnel_username=clone_data.tunnel.username,
-                tunnel_password=clone_data.tunnel.password,
-                tunnel_remote_host=clone_data.tunnel.remoteHost,
-                tunnel_remote_port=clone_data.tunnel.remotePort,
-                force_clone=clone_data.forceClone,
-            )
-        else:
-            if not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
-                raise HTTPException(
-                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
-                )
-            assert clone_data.sourceHost is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-            assert clone_data.sourcePort is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-
-            logger.info(
-                f"External database clone request (direct): {project_name}/{deployment_name} "
-                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceDatabase}"
-            )
-
-            clone_result = await project_manager.clone_database_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=clone_data.sourceHost,
-                source_port=clone_data.sourcePort,
-                source_database=clone_data.sourceDatabase,
-                source_schema=clone_data.sourceSchema,
-                source_username=clone_data.sourceUsername,
-                source_password=clone_data.sourcePassword,
-                force_clone=clone_data.forceClone,
-            )
-
-        if clone_result["success"]:
-            status_code = 200
-            message = (
-                f"Database cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
-                f"to {project_name}/{deployment_name}"
-            )
-        else:
-            status_code = 500
-            message = f"Database clone failed: {', '.join(clone_result.get('errors', []))}"
-
-        content = {
-            "status": "success" if clone_result["success"] else "failed",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-            "operations": clone_result["operations"],
-            "errors": clone_result.get("errors", []),
-        }
-
-        logger.info(
-            f"External database clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
+    answer = finished.get("result") or {}
+    succeeded = "source" in answer
+    if succeeded:
+        message = (
+            f"{outcome.subject} cloned successfully from {outcome.source} "
+            f"to {outcome.project_name}/{outcome.deployment_name}"
         )
-        return JSONResponse(content=content, status_code=status_code)
+    else:
+        message = f"{outcome.subject} clone failed: {finished.get('error_message') or 'onbekende fout'}"
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Klonen van de externe database mislukt")
-        raise HTTPException(
-            status_code=500, detail="De database kon niet worden gekloond. Probeer het over een minuut opnieuw."
-        ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+    return JSONResponse(
+        content={
+            "status": "success" if succeeded else "failed",
+            "message": message,
+            "project": outcome.project_name,
+            "deployment": outcome.deployment_name,
+            "source": answer.get("source", {}),
+            "target": answer.get("target", {}),
+            "operations": answer.get("operations", []),
+            "errors": answer.get("errors", []),
+        },
+        status_code=200 if succeeded else 500,
+    )
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
@@ -2427,114 +2417,37 @@ async def clone_bucket_from_external(
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
-    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
+    task = await create_async_task(
+        request=request,
+        task_type="clone_bucket",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            **await clone_data.to_task_payload(),
+        },
+    )
+    task_id = str(task["task_id"])
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="clone_bucket",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-                **await clone_data.to_task_payload(),
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "clone_bucket"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
-    try:
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-
-        if clone_data.tunnel:
-            logger.info(
-                f"External bucket clone request via Chisel tunnel: {project_name}/{deployment_name} "
-                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceBucket} "
-                f"(via {clone_data.tunnel.serverUrl})"
-            )
-
-            clone_result = await project_manager.clone_minio_bucket_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_bucket=clone_data.sourceBucket,
-                source_access_key=clone_data.sourceAccessKey,
-                source_secret_key=clone_data.sourceSecretKey,
-                tunnel_server_url=clone_data.tunnel.serverUrl,
-                tunnel_username=clone_data.tunnel.username,
-                tunnel_password=clone_data.tunnel.password,
-                tunnel_remote_host=clone_data.tunnel.remoteHost,
-                tunnel_remote_port=clone_data.tunnel.remotePort,
-                source_secure=clone_data.sourceSecure,
-                force_clone=clone_data.forceClone,
-            )
-        else:
-            if not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
-                raise HTTPException(
-                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
-                )
-            assert clone_data.sourceHost is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-            assert clone_data.sourcePort is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-
-            logger.info(
-                f"External bucket clone request (direct): {project_name}/{deployment_name} "
-                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceBucket}"
-            )
-
-            clone_result = await project_manager.clone_minio_bucket_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=clone_data.sourceHost,
-                source_port=clone_data.sourcePort,
-                source_bucket=clone_data.sourceBucket,
-                source_access_key=clone_data.sourceAccessKey,
-                source_secret_key=clone_data.sourceSecretKey,
-                source_secure=clone_data.sourceSecure,
-                force_clone=clone_data.forceClone,
-            )
-
-        if clone_result["success"]:
-            status_code = 200
-            message = (
-                f"Bucket cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
-                f"to {project_name}/{deployment_name}"
-            )
-        else:
-            status_code = 500
-            message = f"Bucket clone failed: {', '.join(clone_result.get('errors', []))}"
-
-        content = {
-            "status": "success" if clone_result["success"] else "failed",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-            "operations": clone_result["operations"],
-            "errors": clone_result.get("errors", []),
-        }
-
-        logger.info(
-            f"External bucket clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
-        )
-        return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Klonen van de externe bucket mislukt")
-        raise HTTPException(
-            status_code=500, detail="De bucket kon niet worden gekloond. Probeer het over een minuut opnieuw."
-        ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+    return await _finished_clone_response(
+        request,
+        task_id,
+        _CloneOutcome(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source=f"{clone_data.sourceHost}:{clone_data.sourcePort}",
+            subject="Bucket",
+        ),
+    )
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")

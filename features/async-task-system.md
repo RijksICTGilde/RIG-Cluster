@@ -532,7 +532,7 @@ class TaskResponse(BaseModel):
 
 ## 6. API Endpoint Conversion
 
-Each blocking endpoint changes to return `202 Accepted` immediately. The `?sync=true` query param preserves old behavior during migration.
+Each blocking endpoint changes to return `202 Accepted` immediately. The `?sync=true` query param preserves old behavior during migration, except on the clone endpoints: there it creates the same task as without the flag and waits for it, so one path does the cloning (RC-482). The answer is unchanged, apart from a `504` when the clone outlasts what the request can wait for; the task keeps going.
 
 ### Before (blocks 5-30 min)
 

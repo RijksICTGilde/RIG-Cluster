@@ -811,7 +811,7 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
     sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
     with (
         patch("opi.http.task_helpers.get_task_service", return_value=MagicMock()),
-        patch("opi.web.router_detail_edit.require_action", side_effect=sentinel) as gate,
+        patch("opi.http.auth.restore_guard.require_action", side_effect=sentinel) as gate,
         pytest.raises(HTTPException) as exc,
     ):
         await _handle_backup_restore_submit(
@@ -906,3 +906,54 @@ async def test_handle_backup_restore_submit_refuses_an_unknown_resource_type() -
 
     assert exc.value.status_code == 422
     task_service.create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_reads_the_source_from_the_run_and_omits_its_items() -> None:
+    """RC-482, decision R11: the submit still derives the SOURCE deployment from the chosen
+    run (needed for the authorization weighing above), but no longer carries the run's
+    items along -- the task reads them fresh from the backup store when it starts."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
+
+    task_service = MagicMock()
+    task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {
+        "backup_run_id": "20261103020000",
+        "restore_mode": "existing",
+        "target_deployment": "staging",
+    }
+    state.base_data = {
+        "_backup_runs": [
+            {
+                "backup_run_id": "20261103020000",
+                "deployment_name": "productie",
+                "items": [{"resource_type": "pvc", "snapshot_id": "snap-1"}],
+            }
+        ]
+    }
+
+    with (
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.web.router_detail_edit._authorize_restore", AsyncMock(return_value=None)),
+        patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
+        patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+    ):
+        response = await _handle_backup_restore_submit(
+            request=_request_for(DEVELOPER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-restore",
+            action="trigger_restore",
+            state=state,
+        )
+
+    assert response.status_code == 200
+    payload = task_service.create_task.call_args.kwargs["payload"]
+    assert payload["source_deployment"] == "productie"
+    assert payload["target_deployment"] == "staging"
+    assert payload["backup_run_id"] == "20261103020000"
+    assert "backup_items" not in payload

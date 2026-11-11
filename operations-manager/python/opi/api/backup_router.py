@@ -1,8 +1,6 @@
 """API router for PVC, database, and bucket backup operations."""
 
-import asyncio
 import logging
-import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -19,7 +17,7 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.http.auth.endpoint_util import validate_api_token
 from opi.http.auth.user_token_auth import validate_platform_admin_token
-from opi.http.task_helpers import create_async_task, get_task_service, wait_for_task_completion
+from opi.http.task_helpers import create_async_task, wait_for_task_answer
 from opi.manager.backup import create_backup_manager
 from opi.manager.backup.base import derive_backup_password
 from opi.manager.backup.run import (
@@ -39,10 +37,6 @@ logger = logging.getLogger(__name__)
 #: Two branches come out at the same place (a lock that was no lock, and everything else that
 #: can break a backup), so they say the same thing to the reader.
 BACKUP_FAILED = "De back-up van deze deployment is niet gelukt. Probeer het over een minuut opnieuw."
-
-#: How long this route waits for the worker to add its answer to a task that already reads
-#: as finished. See :func:`_finished_backup_task`.
-BACKUP_RESULT_GRACE_SECONDS = 15.0
 
 #: The backup is still running when this call gives up waiting for it. Nothing was lost; the
 #: task keeps going and ``GET /api/tasks/{id}`` shows how it ended.
@@ -332,33 +326,12 @@ async def backup_project_deployment(
     task_id = str(task["task_id"])
 
     try:
-        finished = await _finished_backup_task(request, task_id)
+        finished = await wait_for_task_answer(request, task_id, answer_key="backup_run_id")
     except TimeoutError as e:
         logger.warning("Backup task %s for %s/%s is still running", task_id, project_name, deployment_name)
         raise HTTPException(status_code=504, detail=BACKUP_STILL_RUNNING) from e
 
     return _backup_run_response(finished, deployment_name)
-
-
-async def _finished_backup_task(request: Request, task_id: str) -> dict[str, Any]:
-    """The finished backup task, with the answer its handler wrote.
-
-    A terminal status is written twice: the progress manager stamps the task done without an
-    answer, and the worker adds the handler's answer right after. In between the task reads
-    as finished while its answer is not there yet, and this waits that window out.
-    """
-    task = await wait_for_task_completion(request, task_id=task_id)
-    if "backup_run_id" in (task.get("result") or {}):
-        return task
-
-    task_service = get_task_service(request)
-    deadline = time.monotonic() + BACKUP_RESULT_GRACE_SECONDS
-    while time.monotonic() < deadline:
-        await asyncio.sleep(0.5)
-        fresh = await task_service.get_task(task_id)
-        if fresh and "backup_run_id" in (fresh.get("result") or {}):
-            return fresh
-    return task
 
 
 async def _refuse_unresolvable_target(project_name: str, deployment_name: str) -> None:

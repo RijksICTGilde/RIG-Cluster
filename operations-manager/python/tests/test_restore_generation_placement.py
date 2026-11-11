@@ -96,7 +96,11 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
     manager.get_contents = AsyncMock(return_value=project_data)
     manager.save_and_commit_project = AsyncMock()
     manager.process_project_from_git = AsyncMock(return_value=True)
-    with patch("opi.api.restore_router.ProjectManager", return_value=manager):
+    manager.close = AsyncMock()
+    with (
+        patch("opi.manager.backup.restore_run.ProjectManager", return_value=manager),
+        patch("opi.runtime.backup.backup_tasks.create_project_manager", return_value=manager),
+    ):
         yield manager
 
 
@@ -105,9 +109,31 @@ def mock_store(project_data: dict[str, Any]) -> Any:
     store = _FakeStore(project_data)
     with (
         patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.restore_router.get_project_store", return_value=store),
+        patch("opi.manager.backup.restore_targets.get_project_store", return_value=store),
+        patch("opi.manager.backup.run.get_project_store", return_value=store),
     ):
         yield store
+
+
+@pytest.fixture(autouse=True)
+def inline_task() -> Any:
+    """Run the restore task the route queues inline; the routes answer through the queue."""
+    from opi.runtime.backup.task_handlers_backup import handle_restore
+
+    answers: dict[str, Any] = {}
+
+    async def create(request: Any, task_type: str, project_name: str, deployment_name: str, payload: Any) -> Any:
+        answers["result"] = await handle_restore(payload, MagicMock())
+        return {"task_id": "restore-task"}
+
+    async def finished(request: Any, task_id: str, answer_key: str) -> Any:
+        return {"task_id": task_id, "status": "completed", "result": answers.get("result")}
+
+    with (
+        patch("opi.api.restore_router.create_async_task", side_effect=create),
+        patch("opi.api.restore_router.wait_for_task_answer", side_effect=finished),
+    ):
+        yield answers
 
 
 @pytest.fixture
@@ -153,9 +179,10 @@ def restore_environment(postgres_connector: Any, minio_connector: Any) -> Any:
         patch("opi.connectors.minio_mc.create_minio_connector", return_value=minio_connector),
         patch("opi.core.cluster_config.get_database_server", return_value="postgres.local"),
         patch("opi.api.restore_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
-        patch("opi.api.restore_router.create_kubectl_connector", return_value=MagicMock()),
+        patch("opi.manager.backup.run.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
+        patch("opi.manager.backup.restore_targets.create_kubectl_connector", return_value=MagicMock()),
         patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
-        patch("opi.api.restore_router.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
+        patch("opi.manager.backup.restore.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         patch("opi.api.restore_router.create_database_backup_manager", return_value=database_backup_manager),
         patch("opi.manager.backup.restore.create_database_backup_manager", return_value=database_backup_manager),
         patch("opi.api.restore_router.create_bucket_backup_manager", return_value=bucket_backup_manager),

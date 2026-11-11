@@ -69,7 +69,7 @@ the backup run.
 
 That builder runs twice on the same input: in the confirmation request on a copy of the
 project, to weigh the rights and the step-up against the state it would produce, and in the
-restore task, to save it. The task saves and not the wizard, because `_pre_restore_pvcs` has
+restore task, to save it. The task saves and not the wizard, because `pre_restore_pvcs` has
 to fill the PVCs before ArgoCD syncs the project.
 
 ## Who may restore
@@ -167,6 +167,15 @@ clone-from:
 ```
 
 `run` names the backup run, and `run` only: which snapshots that run holds is runtime state at Kopia, not project data. Each manager looks the run up itself through `clone_backup_items` (`opi/manager/backup/runs.py`) and picks the item for its own resource type. A run that no longer exists is an error naming the run and the source deployment, not an empty restore that reports success.
+
+### The items of the run are read when the task starts
+
+The wizard writes the chosen `backup_run_id` into the task, and not the snapshots of that
+run. The task reads them itself, through `backup_run_items` (`opi/manager/backup/runs.py`),
+when it starts: between choosing a run and running the task the retention sweep can have
+removed it, and a list from the session would then restore from something that no longer
+exists. A run that is gone fails the task with its name in the message, instead of being an
+empty restore that reports success.
 
 ## Scope
 

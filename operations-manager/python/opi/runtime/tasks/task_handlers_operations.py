@@ -8,7 +8,7 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.connectors.git_repo import sync_platform_repos
 from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
@@ -16,6 +16,15 @@ from opi.core.actor import get_actor
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import format_age_key_file, settings
 from opi.manager.backup.base import BaseBackupManager
+from opi.manager.clone import (
+    BucketCloneRequest,
+    ChiselTunnel,
+    CloneSourceIncompleteError,
+    DatabaseCloneRequest,
+    ExternalSource,
+    clone_bucket_from_external,
+    clone_database_from_external,
+)
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ProjectStoreError, get_project_store
@@ -27,9 +36,11 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     wrap_project_key,
 )
-from opi.utils.egress_guard import has_direct_clone_source
 from opi.utils.key_rotation import ConversionError, rotate_project_key
 from opi.utils.project_names import validate_project_name
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +52,7 @@ def terminated_sync_fields(project_manager: Any) -> dict[str, list[str]]:
 
 
 async def handle_clone_database(payload: dict, progress: Any) -> dict:
-    """Clone a PostgreSQL database from an external source into a deployment, over a direct
-    connection or through a Chisel tunnel.
+    """Clone a PostgreSQL database from an external source into a deployment.
 
     The payload holds ``project_name``, ``deployment_name``, ``source_database``,
     ``source_schema``, ``source_username`` and ``source_password`` (AGE-encrypted in the task
@@ -50,121 +60,30 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
     ``source_port`` for a direct connection, or ``tunnel`` with the Chisel config
     (``server_url``, ``username``, ``password``, ``remote_host``, ``remote_port``).
     """
-    from opi.manager.project_manager import ProjectManager
+    init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
+    request = DatabaseCloneRequest(
+        project_name=payload["project_name"],
+        deployment_name=payload["deployment_name"],
+        source=await _external_source(payload),
+        database=payload["source_database"],
+        schema=payload["source_schema"],
+        username=payload["source_username"],
+        password=await decrypt_password_smart_auto(payload["source_password"]),
+        force_clone=payload.get("force_clone", False),
+    )
+    progress.complete_task(init_task)
 
-    project_name: str = payload["project_name"]
-    deployment_name: str = payload["deployment_name"]
-    source_database: str = payload["source_database"]
-    source_schema: str = payload["source_schema"]
-    source_username: str = payload["source_username"]
-    source_password: str = await decrypt_password_smart_auto(payload["source_password"])
-    force_clone: bool = payload.get("force_clone", False)
-    tunnel: dict | None = payload.get("tunnel")
-
-    project_manager: ProjectManager | None = None
-    try:
-        # Task 1: Initialize project manager
-        init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-        progress.complete_task(init_task)
-
-        # Task 2: Clone database
-        clone_method = "via een Chisel-tunnel" if tunnel else "via een directe verbinding"
-        clone_task = progress.add_task(steps.DATABASE_CLONE, subject=f"{source_database} {clone_method}")
-
-        if tunnel:
-            # Chisel tunnel-based connection
-            logger.info(
-                "External database clone request via Chisel tunnel: %s/%s <- %s:%s/%s (via %s)",
-                project_name,
-                deployment_name,
-                tunnel["remote_host"],
-                tunnel["remote_port"],
-                source_database,
-                tunnel["server_url"],
-            )
-
-            clone_result = await project_manager.clone_database_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_database=source_database,
-                source_schema=source_schema,
-                source_username=source_username,
-                source_password=source_password,
-                tunnel_server_url=tunnel["server_url"],
-                tunnel_username=tunnel["username"],
-                tunnel_password=await decrypt_password_smart_auto(tunnel["password"]),
-                tunnel_remote_host=tunnel["remote_host"],
-                tunnel_remote_port=tunnel["remote_port"],
-                force_clone=force_clone,
-            )
-        else:
-            # Direct connection
-            source_host: str | None = payload.get("source_host")
-            source_port: int | None = payload.get("source_port")
-
-            if not has_direct_clone_source(source_host, source_port):
-                error_msg = "source_host and source_port are required when not using tunnel configuration"
-                progress.fail_task(clone_task, error_msg)
-                progress.fail_project(error_msg)
-                raise ValueError(error_msg)
-            assert source_host is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-            assert source_port is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-
-            logger.info(
-                "External database clone request (direct): %s/%s <- %s:%s/%s",
-                project_name,
-                deployment_name,
-                source_host,
-                source_port,
-                source_database,
-            )
-
-            clone_result = await project_manager.clone_database_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=source_host,
-                source_port=source_port,
-                source_database=source_database,
-                source_schema=source_schema,
-                source_username=source_username,
-                source_password=source_password,
-                force_clone=force_clone,
-            )
-
-        if not clone_result["success"]:
-            errors = ", ".join(clone_result.get("errors", []))
-            error_msg = f"Database clone failed: {errors}"
-            progress.fail_task(clone_task, error_msg)
-            progress.fail_project(error_msg)
-            raise RuntimeError(error_msg)
-
-        progress.complete_task(clone_task)
-        logger.info(
-            "External database clone completed: %s/%s (success: %s)",
-            project_name,
-            deployment_name,
-            clone_result["success"],
-        )
-
-        return {
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-        }
-
-    except Exception as exc:
-        # Ensure fail_project is called for unexpected errors not already handled
-        if not isinstance(exc, ValueError | RuntimeError):
-            progress.fail_project(str(exc))
-        raise
-    finally:
-        if project_manager:
-            await project_manager.close()
+    clone_task = progress.add_task(steps.DATABASE_CLONE, subject=f"{request.database} {_clone_method(request.source)}")
+    return await _cloned_or_failed(
+        run_clone=lambda: clone_database_from_external(request),
+        progress=progress,
+        clone_task=clone_task,
+        failure="Database clone failed",
+    )
 
 
 async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
-    """Clone a MinIO bucket from an external source into a deployment, over a direct connection
-    or through a Chisel tunnel.
+    """Clone a MinIO bucket from an external source into a deployment.
 
     The payload holds ``project_name``, ``deployment_name``, ``source_bucket``,
     ``source_access_key`` and ``source_secret_key`` (AGE-encrypted in the task payload), plus
@@ -173,114 +92,79 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
     or ``tunnel`` with the Chisel config (``server_url``, ``username``, ``password``,
     ``remote_host``, ``remote_port``).
     """
-    from opi.manager.project_manager import ProjectManager
+    init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
+    request = BucketCloneRequest(
+        project_name=payload["project_name"],
+        deployment_name=payload["deployment_name"],
+        source=await _external_source(payload),
+        bucket=payload["source_bucket"],
+        access_key=payload["source_access_key"],
+        secret_key=await decrypt_password_smart_auto(payload["source_secret_key"]),
+        secure=payload.get("source_secure", False),
+        force_clone=payload.get("force_clone", False),
+    )
+    progress.complete_task(init_task)
 
-    project_name: str = payload["project_name"]
-    deployment_name: str = payload["deployment_name"]
-    source_bucket: str = payload["source_bucket"]
-    source_access_key: str = payload["source_access_key"]
-    source_secret_key: str = await decrypt_password_smart_auto(payload["source_secret_key"])
-    source_secure: bool = payload.get("source_secure", False)
-    force_clone: bool = payload.get("force_clone", False)
-    tunnel: dict | None = payload.get("tunnel")
+    clone_task = progress.add_task(steps.BUCKET_CLONE, subject=request.bucket)
+    return await _cloned_or_failed(
+        run_clone=lambda: clone_bucket_from_external(request),
+        progress=progress,
+        clone_task=clone_task,
+        failure="Bucket clone failed",
+    )
 
-    project_manager: ProjectManager | None = None
-    try:
-        # Task 1: Initialize project manager
-        init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-        progress.complete_task(init_task)
 
-        # Task 2: Clone bucket
-        clone_task = progress.add_task(steps.BUCKET_CLONE, subject=source_bucket)
-
-        if tunnel:
-            # Chisel tunnel-based connection
-            logger.info(
-                "External bucket clone request via Chisel tunnel: %s/%s <- %s:%s/%s (via %s)",
-                project_name,
-                deployment_name,
-                tunnel["remote_host"],
-                tunnel["remote_port"],
-                source_bucket,
-                tunnel["server_url"],
+async def _external_source(payload: dict) -> ExternalSource:
+    """The source out of the payload: a chisel tunnel, or a direct host and port."""
+    tunnel = payload.get("tunnel")
+    if tunnel:
+        return ExternalSource(
+            tunnel=ChiselTunnel(
+                server_url=tunnel["server_url"],
+                username=tunnel["username"],
+                password=await decrypt_password_smart_auto(tunnel["password"]),
+                remote_host=tunnel["remote_host"],
+                remote_port=tunnel["remote_port"],
             )
-
-            clone_result = await project_manager.clone_minio_bucket_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_bucket=source_bucket,
-                source_access_key=source_access_key,
-                source_secret_key=source_secret_key,
-                tunnel_server_url=tunnel["server_url"],
-                tunnel_username=tunnel["username"],
-                tunnel_password=await decrypt_password_smart_auto(tunnel["password"]),
-                tunnel_remote_host=tunnel["remote_host"],
-                tunnel_remote_port=tunnel["remote_port"],
-                source_secure=source_secure,
-                force_clone=force_clone,
-            )
-        else:
-            # Direct connection
-            source_host: str | None = payload.get("source_host")
-            source_port: int | None = payload.get("source_port")
-
-            if not has_direct_clone_source(source_host, source_port):
-                error_msg = "source_host and source_port are required when not using tunnel configuration"
-                progress.fail_task(clone_task, error_msg)
-                progress.fail_project(error_msg)
-                raise ValueError(error_msg)
-            assert source_host is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-            assert source_port is not None  # noqa: S101 - has_direct_clone_source just confirmed it
-
-            logger.info(
-                "External bucket clone request (direct): %s/%s <- %s:%s/%s",
-                project_name,
-                deployment_name,
-                source_host,
-                source_port,
-                source_bucket,
-            )
-
-            clone_result = await project_manager.clone_minio_bucket_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=source_host,
-                source_port=source_port,
-                source_bucket=source_bucket,
-                source_access_key=source_access_key,
-                source_secret_key=source_secret_key,
-                source_secure=source_secure,
-                force_clone=force_clone,
-            )
-
-        if not clone_result["success"]:
-            errors = ", ".join(clone_result.get("errors", []))
-            error_msg = f"Bucket clone failed: {errors}"
-            progress.fail_task(clone_task, error_msg)
-            progress.fail_project(error_msg)
-            raise RuntimeError(error_msg)
-
-        progress.complete_task(clone_task)
-        logger.info(
-            "External bucket clone completed: %s/%s (success: %s)",
-            project_name,
-            deployment_name,
-            clone_result["success"],
         )
+    return ExternalSource(host=payload.get("source_host"), port=payload.get("source_port"))
 
-        return {
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-        }
 
-    except Exception as exc:
-        if not isinstance(exc, ValueError | RuntimeError):
-            progress.fail_project(str(exc))
+def _clone_method(source: ExternalSource) -> str:
+    """How the clone reaches its source, for the step the user follows."""
+    return "via een Chisel-tunnel" if source.tunnel else "via een directe verbinding"
+
+
+async def _cloned_or_failed(
+    run_clone: Callable[[], Awaitable[dict[str, Any]]],
+    progress: Any,
+    clone_task: str,
+    failure: str,
+) -> dict:
+    """Run the clone and report it; the source and target it produced.
+
+    Raises:
+        CloneSourceIncompleteError: when the source names no host and no tunnel.
+        RuntimeError: when the clone itself did not succeed.
+    """
+    try:
+        clone_result = await run_clone()
+    except CloneSourceIncompleteError as e:
+        progress.fail_task(clone_task, str(e))
+        progress.fail_project(str(e))
         raise
-    finally:
-        if project_manager:
-            await project_manager.close()
+
+    if not clone_result["success"]:
+        error_msg = f"{failure}: {', '.join(clone_result.get('errors', []))}"
+        progress.fail_task(clone_task, error_msg)
+        progress.fail_project(error_msg)
+        raise RuntimeError(error_msg)
+
+    progress.complete_task(clone_task)
+    return {
+        "source": clone_result["source"],
+        "target": clone_result.get("target", {}),
+    }
 
 
 async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects: bool = False) -> None:

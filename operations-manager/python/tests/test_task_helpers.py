@@ -19,6 +19,7 @@ from opi.http.task_helpers import (
     create_async_task,
     get_task_service,
     task_actor,
+    wait_for_task_answer,
     wait_for_task_completion,
 )
 
@@ -418,3 +419,77 @@ class TestWaitForTaskCompletion:
 
         assert result["status"] == "completed"
         assert result["result"]["from"] == "federation"
+
+
+# ---------------------------------------------------------------------------
+# wait_for_task_answer
+# ---------------------------------------------------------------------------
+
+
+def _request_with(task_service: AsyncMock) -> MagicMock:
+    request = MagicMock()
+    request.app.state.task_service = task_service
+    request.app.state.federation_service = None
+    return request
+
+
+class TestWaitForTaskAnswer:
+    """The write-up of what a synchronous V1 endpoint is left waiting for after it hands a
+    restore or a clone to the task queue (RC-482): a terminal task whose handler's answer
+    may still be a beat behind the status flip to 'completed'."""
+
+    @pytest.mark.asyncio
+    async def test_the_answer_already_on_the_terminal_task_is_returned_immediately(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {
+            "task_id": SAMPLE_TASK_ID,
+            "status": "completed",
+            "result": {"source": {"host": "db.publiek.nl"}},
+        }
+
+        result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["result"]["source"]["host"] == "db.publiek.nl"
+        mock_service.get_task.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_lands_just_after_the_terminal_status_is_picked_up(self) -> None:
+        """The progress manager stamps the task done before the worker adds the answer, so
+        the first read of a just-finished task can still be missing it."""
+        mock_service = AsyncMock()
+        mock_service.get_task.side_effect = [
+            {"task_id": SAMPLE_TASK_ID, "status": "completed", "result": {}},
+            {"task_id": SAMPLE_TASK_ID, "status": "completed", "result": {"source": {"host": "db.publiek.nl"}}},
+        ]
+
+        with patch("opi.http.task_helpers.asyncio.sleep", AsyncMock()):
+            result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["result"]["source"]["host"] == "db.publiek.nl"
+        assert mock_service.get_task.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_never_lands_gives_back_the_terminal_task_without_it(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {"task_id": SAMPLE_TASK_ID, "status": "failed", "result": {}}
+
+        with (
+            patch("opi.http.task_helpers.asyncio.sleep", AsyncMock()),
+            patch("opi.http.task_helpers.TASK_ANSWER_GRACE_SECONDS", 0.01),
+        ):
+            result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["status"] == "failed"
+        assert "source" not in (result.get("result") or {})
+
+    @pytest.mark.asyncio
+    async def test_the_task_itself_timing_out_still_raises(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {"task_id": SAMPLE_TASK_ID, "status": "running"}
+        request = _request_with(mock_service)
+
+        with (
+            patch("opi.http.task_helpers.wait_for_task_completion", side_effect=TimeoutError("niet klaar")),
+            pytest.raises(TimeoutError, match="niet klaar"),
+        ):
+            await wait_for_task_answer(request, SAMPLE_TASK_ID, answer_key="source")

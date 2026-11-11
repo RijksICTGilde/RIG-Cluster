@@ -1,58 +1,54 @@
 """API router for PVC, database, and bucket restore operations."""
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, model_validator
 
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
-from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
-from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.errors import ErrorCategory, reference_for, with_reference
 from opi.http.auth.endpoint_util import validate_api_token
-from opi.services.project_file_handler import (
-    create_project_file_handler,
-    extract_storage_from_component_services,
-    find_persistent_storage,
-)
-
-if TYPE_CHECKING:
-    from opi.services.project_file_handler import ProjectFileHandler
-from pydantic import BaseModel, Field, model_validator
-
+from opi.http.auth.restore_guard import require_restore_source_access
+from opi.http.task_helpers import create_async_task, wait_for_task_answer
 from opi.manager.backup import (
     BucketRestoreResult,
     DatabaseRestoreResult,
     ResourceType,
     RestoreResult,
     SnapshotInfo,
+    backup_run_source_deployments,
     create_backup_manager,
     create_bucket_backup_manager,
     create_database_backup_manager,
 )
-from opi.manager.backup.restore import (
-    TERUGZETTEN_MISLUKT,
-    GenerationUpdate,
-    restore_bucket_with_versioning,
-    restore_database_with_versioning,
-    restore_pvc_with_versioning,
-    set_restored_generation,
+from opi.manager.backup.restore import TERUGZETTEN_MISLUKT
+from opi.manager.backup.restore_run import RefreshPolicy
+from opi.manager.backup.restore_targets import (
+    BucketTarget,
+    DatabaseTarget,
+    NoSuchReferenceError,
+    RestoreTargetError,
+    require_project_data,
+    resolve_own_bucket_target,
+    resolve_own_database_target,
 )
-from opi.manager.project_manager import ProjectManager
-from opi.services import ServiceType
+from opi.manager.backup.run import (
+    DeploymentNotFoundError,
+    DeploymentOnOtherClusterError,
+    DeploymentWithoutClusterError,
+    ProjectNotFoundError,
+    resolve_deployment_target,
+)
 from opi.services.project import Project
-from opi.services.project_store import get_project_store
-from opi.services.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
-from opi.utils.naming import (
-    default_service_reference,
-    generate_pvc_name,
-    generate_unique_name,
-)
+from opi.services.project_file_handler import find_persistent_storage
+from opi.services.tasks.async_task_service import TaskType
+from opi.utils.egress_guard import external_target_refusal
 from opi.utils.patterns import (
     DNS1123_SUBDOMAIN,
     ENDPOINT_URL_OR_HOST_PORT,
@@ -642,6 +638,106 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
     )
 
 
+#: The restore is still running when this call gives up waiting for it. Nothing was lost;
+#: the task keeps going and ``GET /api/tasks/{id}`` shows how it ended.
+RESTORE_STILL_RUNNING = (
+    "Het terugzetten loopt nog en duurt langer dan deze aanvraag kan wachten. "
+    "Het gaat door op de achtergrond; vraag de taakstatus op voor het resultaat."
+)
+
+
+async def _restore_target_or_refusal(project_name: str, deployment_name: str) -> tuple[str, str]:
+    """The namespace and cluster of the restore target, or this route's refusal.
+
+    The lookup is the one the restore task runs too; only the answer shape is the route's own.
+    """
+    try:
+        _project, _project_data, namespace, cluster = await resolve_deployment_target(project_name, deployment_name)
+    except ProjectNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found or has no data loaded") from e
+    except DeploymentNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
+        ) from e
+    except DeploymentWithoutClusterError as e:
+        raise HTTPException(
+            status_code=404, detail=f"Deployment '{deployment_name}' not found or has no cluster configured"
+        ) from e
+    except DeploymentOnOtherClusterError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Deployment '{deployment_name}' is on cluster '{e.cluster}', but this "
+                f"operations-manager runs on cluster '{e.current_cluster}'. Cannot restore cross-cluster."
+            ),
+        ) from e
+    return namespace, cluster
+
+
+async def _run_restore_task(
+    request: Request, project_name: str, deployment_name: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Queue the restore as a task, wait for it, and return the answer its handler wrote.
+
+    Through the queue and not inline, so a restore queues behind a deploy or another restore
+    of the same deployment instead of running next to it.
+    """
+    task = await create_async_task(
+        request=request,
+        task_type=TaskType.RESTORE,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload=payload,
+    )
+    task_id = str(task["task_id"])
+    try:
+        finished = await wait_for_task_answer(request, task_id, answer_key="restored_items")
+    except TimeoutError as e:
+        logger.warning("Restore task %s for %s/%s is still running", task_id, project_name, deployment_name)
+        raise HTTPException(status_code=504, detail=RESTORE_STILL_RUNNING) from e
+
+    answer = finished.get("result") or {}
+    if "restored_items" not in answer:
+        # The task never reached its items: the resolve broke, the worker died, or a newer
+        # task took it over. There is no per-item outcome to report.
+        logger.error("Restore task %s ended without items: %s", task_id, finished.get("error_message"))
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT)
+
+    lock_error = answer.get("lock_error")
+    if lock_error and not any(item.get("success") for item in answer["restored_items"]):
+        logger.warning("Restore lock conflict: %s", lock_error)
+        raise HTTPException(status_code=409, detail=str(lock_error))
+    return answer
+
+
+def _restore_payload(
+    project_name: str,
+    deployment_name: str,
+    items: list[dict[str, Any]] | None,
+    refresh: RefreshPolicy = RefreshPolicy.ON_ANY_SUCCESS,
+) -> dict[str, Any]:
+    """The RESTORE task payload for a restore into an existing deployment.
+
+    ``items`` names the resources to put back; None leaves that to the task, which then
+    reads the backup run named in ``backup_run_id``.
+    """
+    payload: dict[str, Any] = {
+        "project_name": project_name,
+        "target_deployment": deployment_name,
+        "backup_run_id": "",
+        "create_new_deployment": False,
+        "refresh": refresh.value,
+    }
+    if items is not None:
+        payload["backup_items"] = items
+    return payload
+
+
+def _only_restored_item(answer: dict[str, Any]) -> dict[str, Any]:
+    """The single item of a one-item restore."""
+    return answer["restored_items"][0]
+
+
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
 @action(Action.RESTORE_READ)
 @validate_api_token
@@ -837,427 +933,100 @@ async def restore_project_pvc(
       }'
     ```
     """
-    try:
-        logger.info(
-            f"Project restore request for {project_name}: "
-            f"{body.deployment_name}/{body.component_name}/{body.storage_name}"
+    logger.info(
+        "Project restore request for %s: %s/%s/%s",
+        project_name,
+        body.deployment_name,
+        body.component_name,
+        body.storage_name,
+    )
+
+    namespace, _cluster = await _restore_target_or_refusal(project_name, body.deployment_name)
+    _require_component_storage(project_name, body)
+
+    answer = await _run_restore_task(
+        request,
+        project_name,
+        body.deployment_name,
+        _restore_payload(
+            project_name,
+            body.deployment_name,
+            [
+                {
+                    "resource_type": ResourceType.PVC.value,
+                    "component_name": body.component_name,
+                    "reference_name": body.storage_name,
+                    "snapshot_id": body.snapshot_id or "",
+                }
+            ],
+        ),
+    )
+    return _project_restore_response(answer, namespace, body.snapshot_id)
+
+
+def _require_component_storage(project_name: str, body: ProjectRestoreRequest) -> None:
+    """Refuse a component or storage this project does not have, before a task is queued."""
+    project_data = require_project_data(project_name)
+    deployment = Project(project_data).find("deployments", name=body.deployment_name)
+    # A deployment component points at its base component with "reference".
+    if not Project.locate((deployment or {}).get("components") or [], reference=body.component_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Component '{body.component_name}' not found in deployment '{body.deployment_name}'",
         )
 
-        project = get_project_store().get(project_name)
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-        if not project.data:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no data loaded")
-
-        project_file_handler = create_project_file_handler()
-        deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, body.deployment_name)
-        if not deployment_cluster:
-            raise HTTPException(
-                status_code=404, detail=f"Deployment '{body.deployment_name}' not found or has no cluster configured"
-            )
-
-        # Read through the manager that saves later on: that records the compare-and-swap
-        # base, so the commit after a long restore merges with whatever landed in between
-        # instead of overwriting it.
-        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
-        try:
-            project_data = await restore_project_manager.get_contents()
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
-
-        base_components = {c.get("name"): c for c in project_data.get("components", [])}
-        target_deployment = Project(project_data).find("deployments", name=body.deployment_name)
-        # A deployment component points at its base component with "reference".
-        target_component_ref = Project.locate(
-            (target_deployment or {}).get("components") or [], reference=body.component_name
+    # The storage definitions stand on the base component, not on the reference.
+    base_component = next((c for c in project_data.get("components", []) if c.get("name") == body.component_name), None)
+    if not base_component:
+        raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
+    if not find_persistent_storage(base_component, body.storage_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Storage '{body.storage_name}' not found in component '{body.component_name}'",
         )
 
-        if not target_deployment:
-            raise HTTPException(status_code=404, detail=f"Deployment '{body.deployment_name}' not found in project")
-        if not target_component_ref:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Component '{body.component_name}' not found in deployment '{body.deployment_name}'",
-            )
 
-        # The storage definitions stand on the base component, not on the reference.
-        base_component = base_components.get(body.component_name)
-        if not base_component:
-            raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
-
-        target_storage = find_persistent_storage(base_component, body.storage_name)
-
-        if not target_storage:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Storage '{body.storage_name}' not found in component '{body.component_name}'",
-            )
-
-        # No generation recorded means the storage was never restored before: generation 0.
-        current_generation = (
-            project_file_handler.get_storage_generation(
-                project_data, body.deployment_name, body.component_name, body.storage_name
-            )
-            or 0
-        )
-        next_generation = current_generation + 1
-
-        unique_name = generate_unique_name(body.deployment_name, body.component_name)
-        source_pvc_name = generate_pvc_name(unique_name, body.storage_name, current_generation)
-        target_pvc_name = generate_pvc_name(unique_name, body.storage_name, next_generation)
-
-        raw_namespace = target_deployment.get("namespace", project_name)
-        namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
-        storage_size = target_storage.get("size", "10Gi")
-        storage_class = get_storage_class_name(deployment_cluster)
-        access_modes = get_storage_access_modes(deployment_cluster)
-
-        logger.info(
-            f"Restoring {source_pvc_name} -> {target_pvc_name} "
-            f"(generation {current_generation} -> {next_generation}) in {namespace}"
-        )
-
-        backup_manager = create_backup_manager()
-        result = await backup_manager.restore_to_project_pvc(
-            cluster=deployment_cluster,
-            namespace=namespace,
-            source_pvc_name=source_pvc_name,
-            target_pvc_name=target_pvc_name,
-            storage_size=storage_size,
-            storage_class=storage_class,
-            access_modes=access_modes,
-            snapshot_id=body.snapshot_id,
-            backup_enabled=target_storage.get("backup", True),
-            project_name=project_name,
-        )
-
-        if not result.success:
-            return JSONResponse(
-                content={
-                    "status": "failed",
-                    "message": f"Restore failed: {result.error}",
-                    "result": _result_to_model(result).model_dump() if result else None,
-                    "new_generation": None,
-                    "project_updated": False,
-                    "refresh_triggered": False,
-                },
-                status_code=500,
-            )
-
-        logger.info(f"Updating project file with generation {next_generation}")
-        set_restored_generation(
-            project_file_handler,
-            project_data,
-            GenerationUpdate(
-                deployment=body.deployment_name,
-                component=body.component_name,
-                reference=body.storage_name,
-                resource_type=ResourceType.PVC,
-                new_generation=next_generation,
-            ),
-        )
-
-        commit_message = (
-            f"Restore PVC {source_pvc_name} to {target_pvc_name}\n\n"
-            f"Project: {project_name}\n"
-            f"Deployment: {body.deployment_name}\n"
-            f"Component: {body.component_name}\n"
-            f"Storage: {body.storage_name}\n"
-            f"Generation: {current_generation} -> {next_generation}"
-        )
-        await restore_project_manager.save_and_commit_project(project_data, commit_message)
-        logger.info("Project file committed and pushed")
-
-        logger.info(f"Triggering project refresh for {project_name}, deployment: {body.deployment_name}")
-        project_manager = ProjectManager()
-        refresh_succeeded = await project_manager.process_project_from_git(
-            f"projects/{project.filename}",
-            deployment_name=body.deployment_name,
-            force_clone=True,
-        )
-
-        status, message, status_code = _restore_outcome(
-            f"Restored {source_pvc_name} to {target_pvc_name}",
-            refresh_triggered=True,
-            refresh_succeeded=refresh_succeeded,
-        )
+def _project_restore_response(answer: dict[str, Any], namespace: str, snapshot_id: str | None) -> JSONResponse:
+    """The answer of a one-PVC project restore as this route's body."""
+    item = _only_restored_item(answer)
+    result = RestoreResultModel(
+        namespace=namespace,
+        pvc_name=item["old_resource_name"],
+        success=item["success"],
+        target_pvc_name=item["new_resource_name"] or None,
+        snapshot_id=snapshot_id,
+        error=item["error"],
+    )
+    if not item["success"]:
         return JSONResponse(
             content={
-                "status": status,
-                "message": message,
-                "result": _result_to_model(result).model_dump(),
-                "new_generation": next_generation,
-                "project_updated": True,
-                "refresh_triggered": True,
-                "refresh_succeeded": refresh_succeeded,
+                "status": "failed",
+                "message": f"Restore failed: {item['error']}",
+                "result": result.model_dump(),
+                "new_generation": None,
+                "project_updated": False,
+                "refresh_triggered": False,
             },
-            status_code=status_code,
+            status_code=500,
         )
 
-    except HTTPException:
-        raise
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Restore lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-    except Exception as e:
-        logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-
-async def _restore_snapshot(
-    snapshot: SnapshotInfo,
-    project_name: ProjectNamePath,
-    deployment_name: str,
-    deployment_cluster: str,
-    namespace: str,
-    project_data: dict[str, Any],
-    project_file_handler: ProjectFileHandler,
-    backup_manager: Any,
-) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
-    """Restore one snapshot: its detail, and the generation to write when it succeeded."""
-
-    component_name = snapshot.component_name
-    resource_type = ResourceType.from_string(snapshot.resource_type)
-    reference_name = snapshot.reference_name
-    current_gen = snapshot.generation or 0
-
-    if not component_name or not reference_name:
-        logger.warning(f"Skipping snapshot {snapshot.snapshot_id}: missing component or reference name")
-        return (
-            PVCRestoreDetail(
-                pvc_name=snapshot.pvc_name,
-                source_pvc_name=snapshot.pvc_name,
-                target_pvc_name="",
-                component_name=component_name,
-                storage_name=reference_name,
-                old_generation=current_gen,
-                new_generation=current_gen,
-                success=False,
-                error=f"Missing component or reference name in {resource_type.value} snapshot",
-            ),
-            None,
-        )
-
-    match resource_type:
-        case ResourceType.PVC:
-            return await _restore_pvc(
-                snapshot,
-                component_name,
-                reference_name,
-                deployment_name,
-                deployment_cluster,
-                namespace,
-                project_data,
-                project_file_handler,
-                backup_manager,
-                project_name=project_name,
-            )
-        case ResourceType.DATABASE:
-            return await _restore_database(
-                snapshot,
-                component_name,
-                reference_name,
-                project_name,
-                deployment_name,
-                deployment_cluster,
-                namespace,
-                project_data,
-                project_file_handler,
-            )
-        case ResourceType.BUCKET:
-            return await _restore_bucket(
-                snapshot,
-                component_name,
-                reference_name,
-                project_name,
-                deployment_name,
-                deployment_cluster,
-                namespace,
-                project_data,
-                project_file_handler,
-            )
-
-
-async def _restore_pvc(
-    snapshot: SnapshotInfo,
-    component_name: str,
-    storage_name: str,
-    deployment_name: str,
-    deployment_cluster: str,
-    namespace: str,
-    project_data: dict[str, Any],
-    project_file_handler: ProjectFileHandler,
-    backup_manager: Any,
-    project_name: str | None = None,
-) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
-    """Restore a PVC into the next generation of its name."""
-    file_generation = (
-        project_file_handler.get_storage_generation(project_data, deployment_name, component_name, storage_name) or 0
+    status, message, status_code = _restore_outcome(
+        f"Restored {item['old_resource_name']} to {item['new_resource_name']}",
+        refresh_triggered=answer["refresh_triggered"],
+        refresh_succeeded=bool(answer["refresh_succeeded"]),
     )
-    next_generation = file_generation + 1
-
-    unique_name = generate_unique_name(deployment_name, component_name)
-    source_pvc_name = snapshot.pvc_name
-    target_pvc_name = generate_pvc_name(unique_name, storage_name, next_generation)
-
-    base_components = {c.get("name"): c for c in project_data.get("components", [])}
-    base_component = base_components.get(component_name, {})
-    storage_list = extract_storage_from_component_services(base_component) if isinstance(base_component, dict) else []
-    target_storage = next((s for s in storage_list if s.get("name") == storage_name), None)
-
-    storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
-    storage_class = get_storage_class_name(deployment_cluster)
-    access_modes = get_storage_access_modes(deployment_cluster)
-    backup_enabled = target_storage.get("backup", True) if target_storage else True
-
-    logger.info(f"Restoring PVC {source_pvc_name} -> {target_pvc_name} (gen {file_generation} -> {next_generation})")
-
-    result = await backup_manager.restore_to_project_pvc(
-        cluster=deployment_cluster,
-        namespace=namespace,
-        source_pvc_name=source_pvc_name,
-        target_pvc_name=target_pvc_name,
-        storage_size=storage_size,
-        storage_class=storage_class,
-        access_modes=access_modes,
-        snapshot_id=snapshot.snapshot_id,
-        backup_enabled=backup_enabled,
-        project_name=project_name,
+    return JSONResponse(
+        content={
+            "status": status,
+            "message": message,
+            "result": result.model_dump(),
+            "new_generation": item["new_generation"],
+            "project_updated": answer["project_updated"],
+            "refresh_triggered": answer["refresh_triggered"],
+            "refresh_succeeded": answer["refresh_succeeded"],
+        },
+        status_code=status_code,
     )
-
-    detail = PVCRestoreDetail(
-        pvc_name=snapshot.pvc_name,
-        source_pvc_name=source_pvc_name,
-        target_pvc_name=target_pvc_name,
-        component_name=component_name,
-        storage_name=storage_name,
-        old_generation=file_generation,
-        new_generation=next_generation,
-        success=result.success,
-        error=result.error,
-    )
-
-    update = (
-        GenerationUpdate(
-            deployment=deployment_name,
-            component=component_name,
-            reference=storage_name,
-            resource_type=ResourceType.PVC,
-            new_generation=next_generation,
-        )
-        if result.success
-        else None
-    )
-
-    return detail, update
-
-
-async def _restore_database(
-    snapshot: SnapshotInfo,
-    component_name: str,
-    reference_name: str,
-    project_name: ProjectNamePath,
-    deployment_name: str,
-    deployment_cluster: str,
-    namespace: str,
-    project_data: dict[str, Any],
-    project_file_handler: ProjectFileHandler,
-) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
-    """Restore a database from snapshot using versioned restore."""
-    result = await restore_database_with_versioning(
-        project_name=project_name,
-        deployment_name=deployment_name,
-        component_name=component_name,
-        reference_name=reference_name,
-        snapshot_id=snapshot.snapshot_id,
-        deployment_cluster=deployment_cluster,
-        namespace=namespace,
-        project_data=project_data,
-        project_file_handler=project_file_handler,
-    )
-
-    detail = PVCRestoreDetail(
-        pvc_name=f"database:{reference_name}",
-        source_pvc_name=result.get("old_resource_name", f"database:{reference_name}"),
-        target_pvc_name=result.get("new_resource_name", ""),
-        component_name=component_name,
-        storage_name=reference_name,
-        old_generation=result.get("old_generation", 0),
-        new_generation=result.get("new_generation", 0),
-        success=result["success"],
-        error=result.get("error"),
-    )
-
-    update = (
-        GenerationUpdate(
-            deployment=deployment_name,
-            component=component_name,
-            reference=reference_name,
-            resource_type=ResourceType.DATABASE,
-            new_generation=result.get("new_generation", 0),
-        )
-        if result["success"]
-        else None
-    )
-
-    return detail, update
-
-
-async def _restore_bucket(
-    snapshot: SnapshotInfo,
-    component_name: str,
-    reference_name: str,
-    project_name: ProjectNamePath,
-    deployment_name: str,
-    deployment_cluster: str,
-    namespace: str,
-    project_data: dict[str, Any],
-    project_file_handler: ProjectFileHandler,
-) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
-    """Restore a bucket from snapshot using versioned restore."""
-    result = await restore_bucket_with_versioning(
-        project_name=project_name,
-        deployment_name=deployment_name,
-        component_name=component_name,
-        reference_name=reference_name,
-        snapshot_id=snapshot.snapshot_id,
-        deployment_cluster=deployment_cluster,
-        namespace=namespace,
-        project_data=project_data,
-        project_file_handler=project_file_handler,
-    )
-
-    detail = PVCRestoreDetail(
-        pvc_name=f"bucket:{reference_name}",
-        source_pvc_name=result.get("old_resource_name", f"bucket:{reference_name}"),
-        target_pvc_name=result.get("new_resource_name", ""),
-        component_name=component_name,
-        storage_name=reference_name,
-        old_generation=result.get("old_generation", 0),
-        new_generation=result.get("new_generation", 0),
-        success=result["success"],
-        error=result.get("error"),
-    )
-
-    update = (
-        GenerationUpdate(
-            deployment=deployment_name,
-            component=component_name,
-            reference=reference_name,
-            resource_type=ResourceType.BUCKET,
-            new_generation=result.get("new_generation", 0),
-        )
-        if result["success"]
-        else None
-    )
-
-    return detail, update
 
 
 @restore_router.post(
@@ -1274,178 +1043,103 @@ async def restore_backup_run(
 ) -> JSONResponse:
     """Restore every resource of one backup run, each into its next generation.
 
-    PVCs, databases and buckets that were backed up together come back together. Once they
-    are all restored the project file records the new generations, the change is committed,
-    and a project refresh regenerates the manifests.
+    PVCs, databases and buckets that were backed up together come back together. Each one
+    that lands records its new generation in the project file, and a project refresh
+    regenerates the manifests afterwards.
     """
+    logger.info("Backup run restore: project=%s, deployment=%s, run=%s", project_name, deployment_name, backup_run_id)
+
+    namespace, cluster = await _restore_target_or_refusal(project_name, deployment_name)
+    # Looked up here and not only in the task: a run that is gone is a 404 for the caller
+    # instead of a failed task, and its deployments are what the restore reads. The items
+    # themselves the task reads when it starts (decision R11).
     try:
-        logger.info(f"Backup run restore: project={project_name}, deployment={deployment_name}, run={backup_run_id}")
+        sources = await backup_run_source_deployments(project_name, cluster, namespace, backup_run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"No snapshots found for backup run '{backup_run_id}'") from e
+    # A run whose snapshots carry no deployment tag names no source at all; the empty name
+    # weighs against the highest marking of the project instead of skipping the weighing.
+    for source in sources or [""]:
+        require_restore_source_access(request, project_name, source)
 
-        project = get_project_store().get(project_name)
-        if not project or not project.data:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found or has no data")
+    payload = _restore_payload(project_name, deployment_name, items=None)
+    payload["backup_run_id"] = backup_run_id
+    answer = await _run_restore_task(request, project_name, deployment_name, payload)
+    return _backup_run_restore_response(answer, backup_run_id)
 
-        project_file_handler = create_project_file_handler()
-        deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, deployment_name)
-        if not deployment_cluster:
-            raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' not found")
 
-        raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
-        if not raw_namespace:
-            raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' has no namespace configured")
-        namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
+def _backup_run_restore_response(answer: dict[str, Any], backup_run_id: str) -> JSONResponse:
+    """The answer of a backup-run restore as this route's body: 200, 207 or 500."""
+    details = [_restore_detail(item) for item in answer["restored_items"]]
+    success_count = sum(1 for detail in details if detail.success)
+    total_count = len(details)
+    refresh_triggered = answer["refresh_triggered"]
+    refresh_succeeded = bool(answer["refresh_succeeded"])
 
-        backup_manager = create_backup_manager()
-        all_snapshots = await backup_manager.list_snapshots(deployment_cluster, namespace, project_name=project_name)
-        run_snapshots = [s for s in all_snapshots if s.backup_run_id == backup_run_id]
-
-        if not run_snapshots:
-            raise HTTPException(status_code=404, detail=f"No snapshots found for backup run '{backup_run_id}'")
-
-        logger.info(f"Found {len(run_snapshots)} snapshot(s) in backup run {backup_run_id}")
-
-        # Read through the manager that saves later on: that records the compare-and-swap
-        # base, so the commit after a long restore merges with whatever landed in between
-        # instead of overwriting it.
-        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
-        try:
-            project_data = await restore_project_manager.get_contents()
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
-
-        restore_details: list[PVCRestoreDetail] = []
-        generation_updates: list[GenerationUpdate] = []
-
-        for snapshot in run_snapshots:
-            detail, update = await _restore_snapshot(
-                snapshot=snapshot,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                deployment_cluster=deployment_cluster,
-                namespace=namespace,
-                project_data=project_data,
-                project_file_handler=project_file_handler,
-                backup_manager=backup_manager,
-            )
-            restore_details.append(detail)
-            if update:
-                generation_updates.append(update)
-
-        project_updated = False
-        if generation_updates:
-            for upd in generation_updates:
-                set_restored_generation(project_file_handler, project_data, upd)
-            project_updated = True
-
-            restored_names = [d.target_pvc_name for d in restore_details if d.success]
-            commit_message = (
-                f"Restore backup run {backup_run_id}\n\n"
-                f"Project: {project_name}\n"
-                f"Deployment: {deployment_name}\n"
-                f"Resources restored: {', '.join(restored_names)}"
-            )
-            await restore_project_manager.save_and_commit_project(project_data, commit_message)
-            logger.info("Project file committed and pushed")
-
-        refresh_triggered = False
-        refresh_succeeded = False
-        if project_updated:
-            logger.info(f"Triggering project refresh for {project_name}")
-            project_manager = ProjectManager()
-            refresh_succeeded = await project_manager.process_project_from_git(
-                f"projects/{project.filename}",
-                deployment_name=deployment_name,
-                force_clone=True,
-            )
-            refresh_triggered = True
-
-        success_count = sum(1 for d in restore_details if d.success)
-        total_count = len(restore_details)
-
-        if success_count == total_count:
-            status, message, status_code = _restore_outcome(
-                f"Restored all {total_count} resource(s)",
-                refresh_triggered=refresh_triggered,
-                refresh_succeeded=refresh_succeeded,
-            )
-        elif success_count > 0:
-            status, message, status_code = (
-                OperationStatus.PARTIAL,
-                f"Restored {success_count}/{total_count} resource(s)",
-                207,
-            )
-            if refresh_triggered and not refresh_succeeded:
-                message += _REFRESH_FAILED_SUFFIX
-        else:
-            status, message, status_code = OperationStatus.FAILED, "Failed to restore any resources", 500
-
-        return JSONResponse(
-            content={
-                "status": status,
-                "message": message,
-                "backup_run_id": backup_run_id,
-                "pvcs_restored": [d.model_dump() for d in restore_details],
-                "project_updated": project_updated,
-                "refresh_triggered": refresh_triggered,
-                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
-            },
-            status_code=status_code,
+    if success_count == total_count:
+        status, message, status_code = _restore_outcome(
+            f"Restored all {total_count} resource(s)",
+            refresh_triggered=refresh_triggered,
+            refresh_succeeded=refresh_succeeded,
         )
+    elif success_count > 0:
+        status, message, status_code = (
+            OperationStatus.PARTIAL,
+            f"Restored {success_count}/{total_count} resource(s)",
+            207,
+        )
+        if refresh_triggered and not refresh_succeeded:
+            message += _REFRESH_FAILED_SUFFIX
+    else:
+        status, message, status_code = OperationStatus.FAILED, "Failed to restore any resources", 500
 
-    except HTTPException:
-        raise
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-    except Exception as e:
-        logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-
-# The normal restore puts a backup back into the project's OWN database or bucket. Those
-# credentials are platform-managed: they are injected into the project's pods and are
-# published through no API, so a caller cannot name them. When the request omits the target
-# fields, the helpers below resolve them from the deployment secret in the project's own
-# namespace, the same secret the backup side reads. This can only ever reach the
-# authenticated project's own namespace, because ``_require_namespace_owned_by_project`` has
-# already pinned ``namespace`` to ``get_prefixed_namespace(cluster, project_name)``. The
-# resolved credentials stay inside the request: never logged, never in an error message.
-
-_DATABASE_SERVICE_TYPES = [
-    ServiceType.POSTGRESQL_DATABASE.value,
-    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
-]
-#: minio-storage and seaweedfs-storage: the same bucket behind the same S3 API, so the same
-#: restore. Which of the two a deployment uses stands in the name of its secret, and
-#: ``get_object_storage_secret`` reads both.
-_MINIO_SERVICE_TYPES = OBJECT_STORAGE_SERVICE_TYPES
+    return JSONResponse(
+        content={
+            "status": status,
+            "message": message,
+            "backup_run_id": backup_run_id,
+            "pvcs_restored": [detail.model_dump() for detail in details],
+            "project_updated": answer["project_updated"],
+            "refresh_triggered": refresh_triggered,
+            "refresh_succeeded": answer["refresh_succeeded"],
+        },
+        status_code=status_code,
+    )
 
 
-@dataclass
-class _DatabaseTarget:
-    """Connection details of the database a restore writes into."""
-
-    host: str
-    port: int
-    database: str
-    username: str
-    password: str
-
-
-@dataclass
-class _BucketTarget:
-    """Connection details of the bucket a restore writes into."""
-
-    endpoint: str
-    bucket_name: str
-    access_key: str
-    secret_key: str
+def _restore_detail(item: dict[str, Any]) -> PVCRestoreDetail:
+    """One restored item as the per-resource detail of a backup-run restore."""
+    resource_type = ResourceType.from_string(item["resource_type"])
+    reference_name = item["reference_name"]
+    name = reference_name if resource_type is ResourceType.PVC else f"{resource_type.value}:{reference_name}"
+    return PVCRestoreDetail(
+        pvc_name=item["old_resource_name"] or name,
+        source_pvc_name=item["old_resource_name"] or name,
+        target_pvc_name=item["new_resource_name"],
+        component_name=item["component_name"],
+        storage_name=reference_name,
+        old_generation=item["old_generation"],
+        new_generation=item["new_generation"],
+        success=item["success"],
+        error=item["error"],
+    )
 
 
-def _explicit_database_target(body: DatabaseRestoreRequest) -> _DatabaseTarget | None:
+async def _refuse_unreachable_target(endpoint: str | None) -> None:
+    """Refuse a destination the caller named that lies in private or unresolvable space.
+
+    The same rule as for a clone source: data leaving the cluster goes to a public address
+    only. The project's OWN service is not checked, because the platform named it.
+
+    Raises:
+        HTTPException: 422 when the destination may not be reached.
+    """
+    refusal = await external_target_refusal(endpoint)
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
+
+
+def _explicit_database_target(body: DatabaseRestoreRequest) -> DatabaseTarget | None:
     """Return the external target the caller named, or None when it named none."""
     if (
         body.target_database_host is None
@@ -1454,7 +1148,7 @@ def _explicit_database_target(body: DatabaseRestoreRequest) -> _DatabaseTarget |
         or body.target_database_password is None
     ):
         return None
-    return _DatabaseTarget(
+    return DatabaseTarget(
         host=body.target_database_host,
         port=body.target_database_port,
         database=body.target_database_name,
@@ -1463,7 +1157,7 @@ def _explicit_database_target(body: DatabaseRestoreRequest) -> _DatabaseTarget |
     )
 
 
-def _explicit_bucket_target(body: BucketRestoreRequest) -> _BucketTarget | None:
+def _explicit_bucket_target(body: BucketRestoreRequest) -> BucketTarget | None:
     """Return the external target the caller named, or None when it named none."""
     if (
         body.target_minio_endpoint is None
@@ -1472,7 +1166,7 @@ def _explicit_bucket_target(body: BucketRestoreRequest) -> _BucketTarget | None:
         or body.target_secret_key is None
     ):
         return None
-    return _BucketTarget(
+    return BucketTarget(
         endpoint=body.target_minio_endpoint,
         bucket_name=body.target_bucket_name,
         access_key=body.target_access_key,
@@ -1480,171 +1174,41 @@ def _explicit_bucket_target(body: BucketRestoreRequest) -> _BucketTarget | None:
     )
 
 
-def _require_project_data(project_name: str) -> dict[str, Any]:
-    """Return the project definition, or a 404 that says which part is missing."""
-    project = get_project_store().get(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-    if not project.data:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no data loaded")
-    return project.data
+async def _own_database_target(project_name: str, namespace: str, reference_name: str) -> DatabaseTarget:
+    """The project's own database as the target, or this route's 404."""
+    try:
+        return await resolve_own_database_target(project_name, namespace, reference_name)
+    except NoSuchReferenceError as e:
+        raise HTTPException(status_code=404, detail=_no_such_reference_detail(e, "target_database_*")) from e
+    except RestoreTargetError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
-def _find_deployment_for_reference(
-    project_data: dict[str, Any], reference_name: str, service_types: list[str], default_suffix: str
-) -> str | None:
-    """Find the deployment whose backup of this kind is named ``reference_name``.
-
-    A backup is registered either under the reference of the component service or, when no
-    component carries one, under the deployment-level fallback ``{deployment}-{suffix}``
-    (see ``backup_router``). Both are checked, component references first.
-    """
-    project_file_handler = create_project_file_handler()
-    deployment_names = [
-        str(deployment["name"])
-        for deployment in (project_data.get("deployments") or [])
-        if isinstance(deployment, dict) and deployment.get("name")
-    ]
-
-    for deployment_name in deployment_names:
-        for component_info in project_file_handler.get_components_using_service(
-            project_data, deployment_name, service_types
-        ):
-            if component_info.get("reference_name") == reference_name:
-                return deployment_name
-
-    for deployment_name in deployment_names:
-        if reference_name in _fallback_reference_names(deployment_name, service_types, default_suffix):
-            return deployment_name
-
-    return None
+async def _own_bucket_target(project_name: str, namespace: str, reference_name: str) -> BucketTarget:
+    """The project's own bucket as the target, or this route's 404."""
+    try:
+        return await resolve_own_bucket_target(project_name, namespace, reference_name)
+    except NoSuchReferenceError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=_no_such_reference_detail(
+                e, "target_minio_endpoint, target_bucket_name, target_access_key and target_secret_key"
+            ),
+        ) from e
+    except RestoreTargetError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
-def _fallback_reference_names(deployment_name: str, service_types: list[str], default_suffix: str) -> list[str]:
-    """The names a backup CAN carry when no component carries the service.
-
-    These follow the rule of the WRITER, ``default_service_reference``. The old suffix stays
-    in the list: a backup written away under the old name has to stay restorable.
-    """
-    names = [default_service_reference(deployment_name, service_type) for service_type in service_types]
-    names.append(f"{deployment_name}-{default_suffix}")
-    return list(dict.fromkeys(names))
-
-
-def _known_reference_names(project_data: dict[str, Any], service_types: list[str], default_suffix: str) -> list[str]:
-    """Every reference of this kind the project has, in the order they are accepted.
-
-    Feeds the 404: a caller who guessed wrong gets the names that do exist instead of only
-    the one that does not. Same two sources as ``_find_deployment_for_reference``.
-    """
-    project_file_handler = create_project_file_handler()
-    names: list[str] = []
-    for deployment in project_data.get("deployments") or []:
-        if not isinstance(deployment, dict) or not deployment.get("name"):
-            continue
-        deployment_name = str(deployment["name"])
-        component_refs = [
-            str(component_info["reference_name"])
-            for component_info in project_file_handler.get_components_using_service(
-                project_data, deployment_name, service_types
-            )
-            if component_info.get("reference_name")
-        ]
-        names.extend(component_refs)
-        if not component_refs:
-            # The same names as the ones accepted above: a 404 that names something the
-            # restore then refuses, or worse accepts, sends the caller the wrong way.
-            names.extend(_fallback_reference_names(deployment_name, service_types, default_suffix))
-
-    # Preserve order, drop duplicates (two components can share one service reference).
-    return list(dict.fromkeys(names))
-
-
-def _no_such_reference_detail(
-    project_name: str, reference_name: str, kind: str, known: list[str], target_fields: str
-) -> str:
-    """The 404 body for a reference no deployment carries."""
-    if known:
-        available = "This project has: " + ", ".join(f"'{name}'" for name in known) + "."
+def _no_such_reference_detail(error: NoSuchReferenceError, target_fields: str) -> str:
+    """The 404 body for a reference no deployment carries, naming the ones that exist."""
+    if error.known:
+        available = "This project has: " + ", ".join(f"'{name}'" for name in error.known) + "."
     else:
-        available = f"This project has no {kind} backups registered."
+        available = f"This project has no {error.kind} backups registered."
     return (
-        f"No deployment of project '{project_name}' has a {kind} backup named "
-        f"'{reference_name}'. {available} Supply the {target_fields} fields to restore "
+        f"No deployment of project '{error.project_name}' has a {error.kind} backup named "
+        f"'{error.reference_name}'. {available} Supply the {target_fields} fields to restore "
         "into an external destination."
-    )
-
-
-async def _resolve_own_database_target(project_name: str, namespace: str, reference_name: str) -> _DatabaseTarget:
-    """Resolve the project's own database as the restore target."""
-    project_data = _require_project_data(project_name)
-    deployment_name = _find_deployment_for_reference(project_data, reference_name, _DATABASE_SERVICE_TYPES, "database")
-    if not deployment_name:
-        raise HTTPException(
-            status_code=404,
-            detail=_no_such_reference_detail(
-                project_name,
-                reference_name,
-                "database",
-                _known_reference_names(project_data, _DATABASE_SERVICE_TYPES, "database"),
-                "target_database_*",
-            ),
-        )
-
-    secret = await DatabaseSecret.get_data(
-        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
-    )
-    if secret is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Deployment '{deployment_name}' has no database credentials in namespace "
-                f"'{namespace}'; the database may not be provisioned yet."
-            ),
-        )
-
-    return _DatabaseTarget(
-        host=secret.host,
-        port=secret.port,
-        database=secret.database,
-        username=secret.username,
-        password=secret.password,
-    )
-
-
-async def _resolve_own_bucket_target(project_name: str, namespace: str, reference_name: str) -> _BucketTarget:
-    """Resolve the project's own bucket as the restore target."""
-    project_data = _require_project_data(project_name)
-    deployment_name = _find_deployment_for_reference(project_data, reference_name, _MINIO_SERVICE_TYPES, "minio")
-    if not deployment_name:
-        raise HTTPException(
-            status_code=404,
-            detail=_no_such_reference_detail(
-                project_name,
-                reference_name,
-                "bucket",
-                _known_reference_names(project_data, _MINIO_SERVICE_TYPES, "minio"),
-                "target_minio_endpoint, target_bucket_name, target_access_key and target_secret_key",
-            ),
-        )
-
-    secret = await get_object_storage_secret(
-        kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
-    )
-    if secret is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Deployment '{deployment_name}' has no storage credentials in namespace "
-                f"'{namespace}'; the bucket may not be provisioned yet."
-            ),
-        )
-
-    return _BucketTarget(
-        endpoint=secret.endpoint_url,
-        bucket_name=secret.bucket_name,
-        access_key=secret.access_key,
-        secret_key=secret.secret_key,
     )
 
 
@@ -1746,7 +1310,8 @@ async def restore_database(
     # project's own database.
     body = body or DatabaseRestoreRequest()
     explicit_target = _explicit_database_target(body)
-    target = explicit_target or await _resolve_own_database_target(project_name, namespace, reference_name)
+    await _refuse_unreachable_target(explicit_target.host if explicit_target else None)
+    target = explicit_target or await _own_database_target(project_name, namespace, reference_name)
 
     try:
         logger.info(f"Database restore request for {cluster}/{namespace}/{reference_name}")
@@ -1885,7 +1450,8 @@ async def restore_bucket(
     # No body at all means the same as a body without target fields.
     body = body or BucketRestoreRequest()
     explicit_target = _explicit_bucket_target(body)
-    target = explicit_target or await _resolve_own_bucket_target(project_name, namespace, reference_name)
+    await _refuse_unreachable_target(explicit_target.endpoint if explicit_target else None)
+    target = explicit_target or await _own_bucket_target(project_name, namespace, reference_name)
 
     try:
         logger.info(f"Bucket restore request for {cluster}/{namespace}/{reference_name}")
@@ -1984,179 +1550,88 @@ async def restore_deployment_resource(
       }'
     ```
     """
-    try:
-        logger.info(
-            f"Deployment restore request for {project_name}/{deployment_name}: "
-            f"resource_type={body.resource_type}, snapshot_id={body.snapshot_id}, "
-            f"component={body.component_name}, reference={body.reference_name}"
+    logger.info(
+        "Deployment restore request for %s/%s: resource_type=%s, snapshot_id=%s, component=%s, reference=%s",
+        project_name,
+        deployment_name,
+        body.resource_type,
+        body.snapshot_id,
+        body.component_name,
+        body.reference_name,
+    )
+
+    if body.resource_type not in VALID_BACKUP_RESOURCE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {sorted(VALID_BACKUP_RESOURCE_TYPES)}",
         )
 
-        if body.resource_type not in VALID_BACKUP_RESOURCE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {sorted(VALID_BACKUP_RESOURCE_TYPES)}",
-            )
+    await _restore_target_or_refusal(project_name, deployment_name)
 
-        project = get_project_store().get(project_name)
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-        if not project.data:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' has no data loaded")
-
-        project_file_handler = create_project_file_handler()
-        deployment_cluster = project_file_handler.extract_deployment_cluster(project.data, deployment_name)
-        if not deployment_cluster:
-            raise HTTPException(
-                status_code=404, detail=f"Deployment '{deployment_name}' not found or has no cluster configured"
-            )
-
-        raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
-        namespace = get_prefixed_namespace(deployment_cluster, raw_namespace or project_name)
-
-        # Read through the manager that saves later on: that records the compare-and-swap
-        # base, so the commit after a long restore merges with whatever landed in between
-        # instead of overwriting it.
-        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
-        try:
-            project_data = await restore_project_manager.get_contents()
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
-
-        if body.resource_type == "pvc":
-            result = await restore_pvc_with_versioning(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                component_name=body.component_name,
-                storage_name=body.reference_name,
-                snapshot_id=body.snapshot_id,
-                deployment_cluster=deployment_cluster,
-                namespace=namespace,
-                project_data=project_data,
-                project_file_handler=project_file_handler,
-            )
-        elif body.resource_type == "database":
-            result = await restore_database_with_versioning(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                component_name=body.component_name,
-                reference_name=body.reference_name,
-                snapshot_id=body.snapshot_id,
-                deployment_cluster=deployment_cluster,
-                namespace=namespace,
-                project_data=project_data,
-                project_file_handler=project_file_handler,
-            )
-        else:  # minio
-            result = await restore_bucket_with_versioning(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                component_name=body.component_name,
-                reference_name=body.reference_name,
-                snapshot_id=body.snapshot_id,
-                deployment_cluster=deployment_cluster,
-                namespace=namespace,
-                project_data=project_data,
-                project_file_handler=project_file_handler,
-            )
-
-        if not result["success"]:
-            # ``result["error"]`` is a sentence for the reader here ("the target database is
-            # not empty, raise the generation") and goes out as it is. What the layer below
-            # said about it stands in the log; see the helpers underneath.
-            logger.error(
-                "Terugzetten van %s %s voor %s/%s mislukt: %s",
-                body.resource_type,
-                body.reference_name,
-                project_name,
-                deployment_name,
-                result["error"],
-            )
-            return JSONResponse(
-                content={
-                    "status": "failed",
-                    "message": with_reference(result["error"], reference_for(request)),
-                    "resource_type": body.resource_type,
+    answer = await _run_restore_task(
+        request,
+        project_name,
+        deployment_name,
+        _restore_payload(
+            project_name,
+            deployment_name,
+            [
+                {
+                    "resource_type": ResourceType.from_backup_label(body.resource_type).value,
+                    "component_name": body.component_name,
                     "reference_name": body.reference_name,
-                    "old_generation": result.get("old_generation"),
-                    "new_generation": result.get("new_generation"),
-                    "old_resource_name": result.get("old_resource_name"),
-                    "new_resource_name": result.get("new_resource_name"),
-                    "project_updated": False,
-                    "refresh_triggered": False,
-                },
-                status_code=500,
-            )
+                    "snapshot_id": body.snapshot_id,
+                }
+            ],
+            refresh=RefreshPolicy.ON_ANY_SUCCESS if body.update_deployment else RefreshPolicy.NEVER,
+        ),
+    )
+    return _deployment_restore_response(request, answer, body)
 
-        logger.info(f"Updating project file with generation {result['new_generation']}")
-        if body.resource_type == "pvc":
-            # PVC is component-level
-            project_file_handler.set_storage_generation(
-                project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
-            )
-        elif body.resource_type == "database":
-            # Database is deployment-level; the handler resolves which PostgreSQL service
-            # name the project declares, so the write and the read cannot disagree.
-            project_file_handler.set_database_generation(project_data, deployment_name, result["new_generation"])
-        else:  # minio
-            # Bucket is deployment-level
-            project_file_handler.set_bucket_generation(project_data, deployment_name, result["new_generation"])
-        commit_message = (
-            f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
-            f"Project: {project_name}\n"
-            f"Deployment: {deployment_name}\n"
-            f"Component: {body.component_name}\n"
-            f"Resource: {body.reference_name}\n"
-            f"Generation: {result['old_generation']} -> {result['new_generation']}\n"
-            f"Snapshot: {body.snapshot_id}"
-        )
-        await restore_project_manager.save_and_commit_project(project_data, commit_message)
-        logger.info("Project file committed and pushed")
 
-        refresh_triggered = False
-        refresh_succeeded = False
-        if body.update_deployment:
-            logger.info(f"Triggering project refresh for {project_name}, deployment: {deployment_name}")
-            project_manager = ProjectManager()
-            refresh_succeeded = await project_manager.process_project_from_git(
-                f"projects/{project.filename}",
-                deployment_name=deployment_name,
-                force_clone=True,
-            )
-            refresh_triggered = True
+def _deployment_restore_response(
+    request: Request, answer: dict[str, Any], body: DeploymentRestoreRequest
+) -> JSONResponse:
+    """The answer of a one-resource deployment restore as this route's body."""
+    item = _only_restored_item(answer)
+    content: dict[str, Any] = {
+        "resource_type": body.resource_type,
+        "reference_name": body.reference_name,
+        "old_generation": item["old_generation"],
+        "new_generation": item["new_generation"],
+        "old_resource_name": item["old_resource_name"],
+        "new_resource_name": item["new_resource_name"],
+    }
 
-        status, message, status_code = _restore_outcome(
-            f"Restored {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}",
-            refresh_triggered=refresh_triggered,
-            refresh_succeeded=refresh_succeeded,
-        )
+    if not item["success"]:
+        # The item's error is a sentence for the reader ("the target database is not empty,
+        # raise the generation") and goes out as it is. What the layer below said about it
+        # stands in the log of the task that ran the restore.
+        logger.error("Terugzetten van %s %s mislukt: %s", body.resource_type, body.reference_name, item["error"])
         return JSONResponse(
             content={
-                "status": status,
-                "message": message,
-                "resource_type": body.resource_type,
-                "reference_name": body.reference_name,
-                "old_generation": result["old_generation"],
-                "new_generation": result["new_generation"],
-                "old_resource_name": result["old_resource_name"],
-                "new_resource_name": result["new_resource_name"],
-                "project_updated": True,
-                "refresh_triggered": refresh_triggered,
-                "refresh_succeeded": refresh_succeeded if refresh_triggered else None,
+                **content,
+                "status": "failed",
+                "message": with_reference(item["error"] or TERUGZETTEN_MISLUKT, reference_for(request)),
+                "project_updated": False,
+                "refresh_triggered": False,
             },
-            status_code=status_code,
+            status_code=500,
         )
 
-    except HTTPException:
-        raise
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Restore lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
-
-    except Exception as e:
-        logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
+    status, message, status_code = _restore_outcome(
+        f"Restored {body.resource_type} {item['old_resource_name']} to {item['new_resource_name']}",
+        refresh_triggered=answer["refresh_triggered"],
+        refresh_succeeded=bool(answer["refresh_succeeded"]),
+    )
+    return JSONResponse(
+        content={
+            **content,
+            "status": status,
+            "message": message,
+            "project_updated": answer["project_updated"],
+            "refresh_triggered": answer["refresh_triggered"],
+            "refresh_succeeded": answer["refresh_succeeded"],
+        },
+        status_code=status_code,
+    )

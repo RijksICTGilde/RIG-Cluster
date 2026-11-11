@@ -23,6 +23,7 @@ URL = "/api/v1/backup/project/demo/deployment/prod"
 HEADERS = {"X-API-Key": "test-key"}
 
 _BR = "opi.api.backup_router"
+_TH = "opi.http.task_helpers"
 
 
 def _project_data() -> dict[str, Any]:
@@ -122,7 +123,7 @@ def backup(store):
     with (
         patch("opi.manager.backup.run.create_project_file_handler") as handler,
         patch(f"{_BR}.create_async_task", new_callable=AsyncMock) as created,
-        patch(f"{_BR}.wait_for_task_completion", new_callable=AsyncMock) as finished,
+        patch(f"{_TH}.wait_for_task_completion", new_callable=AsyncMock) as finished,
     ):
         handler.return_value.extract_deployment_namespace.return_value = "demo"
         handler.return_value.extract_deployment_cluster.return_value = "local"
@@ -228,8 +229,8 @@ class TestHowTheOutcomeMapsOntoStatusCodes:
         }
 
         with (
-            patch(f"{_BR}.BACKUP_RESULT_GRACE_SECONDS", 0.0),
-            patch(f"{_BR}.get_task_service", return_value=MagicMock()),
+            patch(f"{_TH}.TASK_ANSWER_GRACE_SECONDS", 0.0),
+            patch(f"{_TH}.get_task_service", return_value=MagicMock()),
         ):
             response = client.post(URL, headers=HEADERS, json={})
 
@@ -246,7 +247,7 @@ class TestHowTheOutcomeMapsOntoStatusCodes:
         task_service = MagicMock()
         task_service.get_task = AsyncMock(return_value={"task_id": "task-1", "status": "completed", "result": done})
 
-        with patch(f"{_BR}.get_task_service", return_value=task_service):
+        with patch(f"{_TH}.get_task_service", return_value=task_service):
             response = client.post(URL, headers=HEADERS, json={})
 
         assert response.status_code == 200, response.text

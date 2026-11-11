@@ -28,6 +28,7 @@ from opi.api.router import (
     UpdateImageRequest,
     UpsertDeploymentRequest,
     subdomain_check_rate_limiter,
+    validate_clone_source_reachable,
     validate_upsert_deployment_request,
 )
 from opi.api.task_models import (
@@ -1580,6 +1581,7 @@ async def clone_database_v2(
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
     task = await create_async_task(
         request=request,
@@ -1629,6 +1631,7 @@ async def clone_bucket_v2(
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
     task = await create_async_task(
         request=request,
