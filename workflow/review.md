@@ -33,7 +33,7 @@ If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a
 **Approve means the branch is mergeable.** That is a hard gate, not a judgement call:
 
 - `uv run ruff check .` clean, `uv run ruff format --check .` clean, `uv run pyright` clean.
-- The tests for what the PR touched pass (`task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short`). You do not need the broad layer, the live groups or the e2e suite green - those need Docker or a live sandbox and belong to the phase before the merge - but everything you *can* run for the changed code must pass.
+- The tests for what the PR touched pass (`task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short`). You do not need to run the broad layer, the live groups or the e2e suite yourself - the broad layer runs in the test phase (`test.md`), the others need a live sandbox - but everything you *can* run for the changed code must pass.
 
 A single lint error, type error, or failing touched-test is **red → rework**, never approve. Do not wave red checks through as "non-blocking" or "minor": if it isn't green, it isn't mergeable.
 
