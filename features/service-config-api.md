@@ -353,9 +353,12 @@ Elke provider die een service-configveld vult declareert zelf welke van de twee 
 
 The typed body is validated by FastAPI at request time (an unknown or out-of-enum
 value returns 422 immediately). The write then goes through the async task system
-(`TaskType.CONFIGURE_SERVICE` -> `handle_configure_service` ->
-`ProjectManager.configure_service` / `clear_service_config`), exactly like the other
-v2 mutations. The mutation itself is the pure `ServiceAdapter.set_service_config` /
+(`TaskType.CONFIGURE_SERVICE` -> `handle_configure_service` -> the use case
+`opi/manager/service/configure.py` -> `ProjectManager.configure_service` /
+`clear_service_config` / `patch_service_config_list`), exactly like the other
+v2 mutations. The task handler only translates; the dispatch over the three operations,
+the approval requests, the rollout scope and the error types live in the use case (RC-481,
+see [env-vars-en-service-values-een-pad.md](env-vars-en-service-values-een-pad.md)). The mutation itself is the pure `ServiceAdapter.set_service_config` /
 `remove_service_config`: it writes the same `{name, config}` (project) /
 `{reference, config}` (component/deployment) records the wizard writes, finds an
 existing entry with `service_entry_name` and promotes a bare-string selection in
@@ -380,8 +383,11 @@ never a value), and appends the accepted-field list only when a key is unknown
 (`extra_forbidden`): for a wrong or missing value inside a field it would suggest the
 field itself is not accepted. No schema-version bump and no change to the global
 project schema is involved: the record shapes are already valid there. After a
-successful write the project is processed (reconciled) so the config takes effect. A
-`DELETE` that changed nothing is a quiet, idempotent no-op.
+successful write the project is processed (reconciled) so the config takes effect, scoped
+to the deployments the config touches. A write that changed nothing is a quiet, idempotent
+no-op and reconciles nothing, a `PUT` or `PATCH` of the same values included. A concurrent
+change that could not be merged comes back as `error_type: "conflict"`, not as
+`internal_error`.
 
 ## Which services are configurable, and where
 

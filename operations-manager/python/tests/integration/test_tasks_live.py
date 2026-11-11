@@ -89,6 +89,11 @@ SCHEMA_POSTFIX = "rapportage"
 ENV_NAME = "METING_SLEUTEL"
 ENV_VALUE = "metingwaarde"
 
+#: The env-var the rollout task is measured with. The window sends the WHOLE set, so the
+#: line of the values task travels along: without it this measurement would wipe that one.
+ROLLOUT_ENV_NAME = "METING_UITROL"
+ROLLOUT_ENV_VALUE = "uitrolwaarde"
+
 #: De inhoud van de bijlage. Een constante, want het bijlage-scenario zet hem neer en het
 #: opzeg-scenario eist dat precies deze tekst weg is.
 ATTACHMENT_CONTENT = b"inhoud van de meting\n"
@@ -477,6 +482,27 @@ async def test_configure_service_values_reaches_the_namespace(wereld: Wereld, ku
     assert await tasks_live.wait_until(
         lambda: tasks_live.secret_holds(kubectl, namespace, ENV_NAME, ENV_VALUE), timeout=CLUSTER_TIMEOUT
     ), f"geen Secret in {namespace} draagt {ENV_NAME}"
+
+
+async def test_rollout_project_reaches_the_namespace(wereld: Wereld, kubectl: kubernetes_live.Kubectl) -> None:
+    """ROLLOUT_PROJECT: the env-vars window writes in the request, this task rolls it out.
+
+    The only task that changes nothing in the project file itself: it processes the
+    deployments the saved change touched. Through the real entrance, because that is what
+    resolves the task's scope.
+    """
+    answer = await _web(
+        wereld,
+        f"/projects/{PROJECT}/componenten/{COMPONENT}/env-vars",
+        {"vars": f"{ENV_NAME}={ENV_VALUE}\n{ROLLOUT_ENV_NAME}={ROLLOUT_ENV_VALUE}"},
+    )
+    await _await_task(wereld, _task_id_from_fragment(answer))
+
+    namespace = next(iter(tasks_live.project_namespaces(kubectl)))
+    assert await tasks_live.wait_until(
+        lambda: tasks_live.secret_holds(kubectl, namespace, ROLLOUT_ENV_NAME, ROLLOUT_ENV_VALUE),
+        timeout=CLUSTER_TIMEOUT,
+    ), f"no Secret in {namespace} carries {ROLLOUT_ENV_NAME}"
 
 
 async def test_manage_database_schemas_adds_and_removes_one(wereld: Wereld, forgejo: forgejo_live.ForgejoApi) -> None:

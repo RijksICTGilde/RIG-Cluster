@@ -119,12 +119,14 @@ for _action, _label, _section in (
     )
 
 # On the COMPONENT scopes and not on a deployment's, unlike what the row in design section 4
-# says: the env-vars hang off the component, and the route that edits them has no deployment
+# says: the env-vars hang off the component, and the route that opens them has no deployment
 # in its path. A deployment scope reads that route as non-production, and the developer grant
-# then opens the values of a component that only stands on production.
+# then shows the values of a component that only stands on production.
+# Since RC-481 this action opens the window and no longer writes: saving the values weighs
+# SERVICE_WRITE_VALUES on the project, like the values endpoints.
 rule(
     Action.ENV_VARS_MANAGE,
-    label="Env-vars bekijken en wijzigen",
+    label="Env-vars bekijken",
     section=DEPLOYMENTS,
     grants=[
         Grant(Role.DEVELOPER, COMPONENT_NOT_IN_PRODUCTION, requires=STEP_UP),

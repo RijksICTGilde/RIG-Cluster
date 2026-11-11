@@ -19,6 +19,7 @@ from opi.services.component_values import (
 )
 from opi.services.component_values import decode as decode_component_values
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.services.project_store import ConcurrencyError, ConflictError
 from opi.services.registry import generate_missing_values, get_service
 from opi.services.services_enums import ServiceType
 
@@ -26,6 +27,13 @@ if TYPE_CHECKING:
     from opi.manager.project.access import ProjectFileAccess
 
 logger = logging.getLogger(__name__)
+
+#: What a caller is told when someone else's write landed first and the two could not be
+#: merged. The project file is unchanged, so retrying on the fresh state is the way out.
+CONFLICT_MESSAGE = (
+    "Dit project is ondertussen door iemand anders gewijzigd en de wijzigingen konden niet "
+    "automatisch worden samengevoegd. Probeer het opnieuw."
+)
 
 
 class ServiceConfigMutations:
@@ -129,20 +137,25 @@ class ServiceConfigMutations:
             generated = generate_missing_values(project_data)
 
             # A domain or subdomain in this config is on request: without the request no
-            # ingress ever appears on the address that was asked for.
+            # ingress ever appears on the address that was asked for. Every operation that
+            # can introduce such a value does this, clear and patch included.
             ensure_approval_requests(project_data)
 
             commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
             try:
-                await self._host.save_and_commit_project(project_data, commit_message)
+                mutation = await self._host.save_and_commit_project(project_data, commit_message)
             except (ProjectSchemaError, ProjectIntegrityError) as e:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
+            except ConflictError as e:
+                logger.warning("Concurrent change blocked the write of '%s': %s", service_name, e)
+                return {"success": False, "error": CONFLICT_MESSAGE, "error_type": "conflict"}
 
             logger.info(f"Configured service '{service_name}' at {target} target in project '{project_name}'")
             return {
                 "success": True,
                 "service": service_name,
                 "target": target,
+                "changed": mutation.committed,
                 "generated": generated,
                 "approvals": approval_notices(project_data, deployment_name),
                 "warnings": config_advice_warnings(project_data),
@@ -183,16 +196,33 @@ class ServiceConfigMutations:
                 return {"success": False, "error": str(e), "error_type": "invalid_target"}
 
             if not removed:
-                return {"success": True, "service": service_name, "target": target, "removed": False}
+                return {
+                    "success": True,
+                    "service": service_name,
+                    "target": target,
+                    "removed": False,
+                    "changed": False,
+                }
+
+            ensure_approval_requests(project_data)
 
             commit_message = f"Clear service '{service_name}' config at {target} target in project '{project_name}'"
             try:
-                await self._host.save_and_commit_project(project_data, commit_message)
+                mutation = await self._host.save_and_commit_project(project_data, commit_message)
             except (ProjectSchemaError, ProjectIntegrityError) as e:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
+            except ConflictError as e:
+                logger.warning("Concurrent change blocked the write of '%s': %s", service_name, e)
+                return {"success": False, "error": CONFLICT_MESSAGE, "error_type": "conflict"}
 
             logger.info(f"Cleared service '{service_name}' config at {target} target in project '{project_name}'")
-            return {"success": True, "service": service_name, "target": target, "removed": True}
+            return {
+                "success": True,
+                "service": service_name,
+                "target": target,
+                "removed": True,
+                "changed": mutation.committed,
+            }
 
         except Exception as e:
             error_msg = f"Error clearing service '{service_name}' config: {e}"
@@ -245,17 +275,23 @@ class ServiceConfigMutations:
             # see configure_service.
             generated = generate_missing_values(project_data)
 
+            ensure_approval_requests(project_data)
+
             commit_message = f"Patch service '{service_name}' config at {target} target in project '{project_name}'"
             try:
-                await self._host.save_and_commit_project(project_data, commit_message)
+                mutation = await self._host.save_and_commit_project(project_data, commit_message)
             except (ProjectSchemaError, ProjectIntegrityError) as e:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
+            except ConflictError as e:
+                logger.warning("Concurrent change blocked the write of '%s': %s", service_name, e)
+                return {"success": False, "error": CONFLICT_MESSAGE, "error_type": "conflict"}
 
             logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
             return {
                 "success": True,
                 "service": service_name,
                 "target": target,
+                "changed": mutation.committed,
                 "generated": generated,
                 "warnings": config_advice_warnings(project_data),
                 **counts,
@@ -339,6 +375,11 @@ class ServiceConfigMutations:
             return {"success": False, "error": str(e), "error_type": "invalid_values"}
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             return {"success": False, "error": str(e), "error_type": "validation_error"}
+        except (ConflictError, ConcurrencyError) as e:
+            # Re-applying is what mutate_and_commit_project already did, so this is the
+            # case where that did not settle either.
+            logger.warning("Concurrent change blocked the values write of '%s': %s", service_name, e)
+            return {"success": False, "error": CONFLICT_MESSAGE, "error_type": "conflict"}
 
         if committed:
             # The names are not secret, the values are.

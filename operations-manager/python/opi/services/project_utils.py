@@ -4,6 +4,7 @@ Sits apart from the managers that use it to avoid a circular import: the wizard,
 creation API and the add-component API all reach these functions.
 """
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,7 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
+from opi.services.component_values import encode_with_key, to_block, validate_value_for_storage
 from opi.services.project_members import expiry_date, hash_of, new_token
 from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
@@ -24,6 +26,7 @@ from opi.utils.age import (
     generate_age_key_pair,
     wrap_project_key,
 )
+from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_from_string, load_yaml_round_trip
 
@@ -260,13 +263,18 @@ async def build_component_config(
         component_config["resources"] = {}
         apply_resource_limits(component_config["resources"], cpu_limit=cpu_limit, memory_limit=memory_limit)
 
-    # Encrypt and add user env vars if provided
+    # The same validation and the same stored shape as every other writer of this field
+    # (``opi.services.component_values``), so what creation writes is what the values API
+    # reads back. Without a public key it raises rather than leaving the variables out:
+    # a creation that reports success while dropping them lies about what it did.
     if env_vars:
-        if not public_key:
-            logger.warning(f"Could not encrypt env_vars for component '{name}': no AGE public key available")
-        else:
-            encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
-            component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
+        values = validate_and_parse_env_vars(env_vars)
+        for key, value in values.items():
+            validate_value_for_storage(key, value)
+        # Text that parses to nothing (only comments) leaves no key rather than an empty
+        # one, and has nothing to refuse either.
+        if encoded := await asyncio.to_thread(encode_with_key, values, public_key):
+            component_config["user-env-vars"] = encoded
 
     # Add aliases if provided. Stored as ONE AGE block whose plaintext is KEY=value
     # lines, exactly like user-env-vars (RC-106). An unencrypted mapping is kept as-is
@@ -275,8 +283,9 @@ async def build_component_config(
         aliases_dict = parse_aliases(aliases)
         if aliases_dict:
             if public_key:
-                block = "\n".join(f"{key}={value}" for key, value in aliases_dict.items())
-                component_config["aliases"] = LiteralScalarString(await encrypt_age_content(block, public_key))
+                component_config["aliases"] = LiteralScalarString(
+                    await encrypt_age_content(to_block(aliases_dict), public_key)
+                )
             else:
                 logger.warning("Could not encrypt aliases for component '%s': no AGE public key available", name)
                 component_config["aliases"] = aliases_dict

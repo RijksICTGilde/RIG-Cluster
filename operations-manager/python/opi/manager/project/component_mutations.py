@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opi.services import ServiceAdapter, ServiceValidationError
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     get_domain_setting,
@@ -393,6 +394,10 @@ class ComponentMutations:
                 _ComponentAttachment(name=name, image=normalized_image, root=root),
             )
 
+            # Binding a service to the new component can ask for something an administrator
+            # has to grant, the same way configuring that service does.
+            ensure_approval_requests(project_data)
+
             await self._host.save_and_commit_project(
                 project_data, _add_commit_message(name, project_name, deployments_updated)
             )
@@ -530,6 +535,8 @@ class ComponentMutations:
                     {"limits_cpu": cpu_limit, "limits_memory": memory_limit},
                     origin="api",
                 )
+
+            ensure_approval_requests(project_data)
 
             await self._host.save_and_commit_project(
                 project_data, f"Update component '{name}' in project '{project_name}'"

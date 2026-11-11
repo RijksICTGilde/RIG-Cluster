@@ -69,6 +69,7 @@ class ValuesOperation(StrEnum):
     PATCH = "patch"
     DELETE = "delete"
     CLEAR = "clear"
+    REPLACE = "replace"
 
 
 def validate_key(key: str) -> None:
@@ -230,8 +231,18 @@ def _decrypt(ciphertext: str, project_data: dict[str, Any], label: str, private_
     return plaintext
 
 
+def to_block(values: dict[str, str]) -> str:
+    """The ``KEY=value`` plaintext of a value map, which is what gets encrypted and shown."""
+    return "\n".join(f"{key}={value}" for key, value in values.items())
+
+
 def encode(values: dict[str, str], project_data: dict[str, Any]) -> Any:
-    """The stored shape for *values*, encrypted with the project's public key.
+    """The stored shape for *values*, encrypted with the project's own public key."""
+    return encode_with_key(values, get_project_public_key(project_data))
+
+
+def encode_with_key(values: dict[str, str], public_key: str | None) -> Any:
+    """The stored shape for *values*, for a caller that already holds the public key.
 
     Returns ``None`` for an empty map, which is the caller's signal to remove the
     property rather than store an empty one. Raises when there is no public key: this
@@ -240,13 +251,11 @@ def encode(values: dict[str, str], project_data: dict[str, Any]) -> Any:
     """
     if not values:
         return None
-    public_key = get_project_public_key(project_data)
     if not public_key:
         raise ComponentValuesError(
             "Het project heeft geen AGE-publieke sleutel; waarden worden niet onversleuteld opgeslagen."
         )
-    text = "\n".join(f"{key}={value}" for key, value in values.items())
-    return LiteralScalarString(encrypt_age_content_sync(text, public_key))
+    return LiteralScalarString(encrypt_age_content_sync(to_block(values), public_key))
 
 
 def apply_operation(
@@ -259,13 +268,17 @@ def apply_operation(
     """The new value map after *operation*, or raise on a name that does not fit it.
 
     Adding refuses a name that is already there and patching/deleting refuses one that
-    is not. Without that a typo in a name silently creates a second variable next to
-    the one that was meant, or overwrites a value nobody wanted touched -- and since
-    the stored form is encrypted, nobody would see it in the diff either.
+    is not. Without that a typo in a name silently creates a second variable next to the
+    one that was meant, or overwrites a value nobody wanted touched -- and since the
+    stored form is encrypted, nobody would see it in the diff either. Replacing refuses
+    no name: it carries the whole set, from an editor that showed the author every name
+    in it.
     """
     updated = dict(current)
     if operation is ValuesOperation.CLEAR:
         return {}
+    if operation is ValuesOperation.REPLACE:
+        return dict(values or {})
     if operation is ValuesOperation.DELETE:
         missing = [key for key in (keys or []) if key not in updated]
         if missing:

@@ -52,6 +52,7 @@ def task_handlers() -> dict[TaskType, Callable[..., Any]]:
         handle_delete_project,
         handle_upsert_deployment,
     )
+    from opi.runtime.tasks.task_handlers_rollout import handle_rollout_project
     from opi.services.catalog.attachments.task import handle_configure_attachment, handle_delete_attachment
     from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
@@ -71,6 +72,7 @@ def task_handlers() -> dict[TaskType, Callable[..., Any]]:
         TaskType.SLEEP_DEPLOYMENT: handle_sleep_transition,
         TaskType.WAKE_DEPLOYMENT: handle_sleep_transition,
         TaskType.REFRESH_PROJECT: handle_refresh_project,
+        TaskType.ROLLOUT_PROJECT: handle_rollout_project,
         TaskType.ROTATE_PROJECT_KEY: handle_rotate_project_key,
         TaskType.ADD_COMPONENT: handle_add_component,
         TaskType.UPDATE_COMPONENT: handle_update_component,

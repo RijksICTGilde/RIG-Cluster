@@ -224,11 +224,12 @@ class TestConvertersRefuseWithoutAProjectKey:
 
 
 class TestFailOpenComponentConfig:
-    """Deliberately kept (RC-453): the API builder stores less rather than refusing.
+    """What the API builder still stores rather than refusing, and what it no longer does.
 
-    Unlike the converters above this is not a form path: ``build_component_config`` is
-    called with the key it was handed, and the schema gate downstream refuses what would
-    be plain text in the project file.
+    ``build_component_config`` is called with the key it was handed. For ``env_vars`` that
+    is fail-closed since RC-481: leaving them out reported success for a creation that
+    silently dropped them. For ``aliases`` the plain mapping stays, because an unencrypted
+    mapping is a shape the project schema allows.
     """
 
     @pytest.mark.asyncio
@@ -247,19 +248,20 @@ class TestFailOpenComponentConfig:
         assert config["aliases"] == {"FOO": "$BAR"}
 
     @pytest.mark.asyncio
-    async def test_env_vars_are_dropped_without_a_public_key(self) -> None:
+    async def test_env_vars_are_refused_without_a_public_key(self) -> None:
+        from opi.services.component_values import ComponentValuesError
         from opi.services.project_utils import build_component_config
 
-        config = await build_component_config(
-            name="component-1",
-            component_type="single",
-            port=8080,
-            path="/",
-            services=[],
-            env_vars="FOO=bar",
-            public_key=None,
-        )
-        assert "user-env-vars" not in config
+        with pytest.raises(ComponentValuesError):
+            await build_component_config(
+                name="component-1",
+                component_type="single",
+                port=8080,
+                path="/",
+                services=[],
+                env_vars="FOO=bar",
+                public_key=None,
+            )
 
 
 class TestRecognition:

@@ -256,7 +256,14 @@ Net als de omliggende endpoints:
   in `DEFERRABLE_TASK_TYPES`.
 
 Schrijven gaat altijd via `ProjectStore` (`ProjectManager.mutate_and_commit_project`), nooit
-rechtstreeks YAML.
+rechtstreeks YAML. Sinds RC-481 loopt elke ingang, dus ook het env-vars-venster van het
+portaal, door dezelfde use case `opi/manager/service/values.py`; zie
+[env-vars-en-service-values-een-pad.md](env-vars-en-service-values-een-pad.md). Daar staat
+ook de operatie `replace`, die het venster gebruikt en die geen endpoint heeft: de API
+adresseert per sleutel, zodat twee clients niet elkaars sleutels weggooien.
+
+Een gelijktijdige wijziging die ook na opnieuw toepassen niet samen te voegen is, komt
+terug als `error_type: "conflict"` en niet als `internal_error`.
 
 ## Validatie
 
@@ -348,7 +355,7 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | opslagvormen, versleutelen/ontsleutelen, operaties | `opi/services/component_values.py` |
 | declaratie dat een service een waardenmap bezit | `opi/services/catalog/base.py` (`owned_values_map`) |
 | de routes (registry-gedreven) | `opi/api/v2/router.py` (`_register_service_values_routes`) |
-| de schrijfactie | `ProjectManager.set_component_values` |
+| de use case | `opi/manager/service/values.py` (`set_component_values`), met de schrijfkern in `ProjectManager.set_component_values` |
 | de taak | `opi/runtime/tasks/task_handlers_components.py` (`handle_configure_service_values`) |
 | lezen (maskering per dienst) | `opi/api/v2/router.py` (`_make_values_read_endpoint`), `Service.owned_value_is_secret` |
 | aliasregel (verwijzing bestaat) | `opi/services/catalog/aliases/references.py` |

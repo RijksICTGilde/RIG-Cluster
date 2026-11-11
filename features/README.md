@@ -79,6 +79,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Een project aanmaken vanaf de CLI](cli-project-aanmaken.md)
 - [Een project als geheel opvragen](project-opvragen-api.md)
 - [Env-vars en aliassen via de API](component-values-api.md)
+- [Env-vars en service values: één pad](env-vars-en-service-values-een-pad.md)
 - [How the API documents itself](api-documentation-grouping.md)
 - [Je projecten opvragen vanaf de CLI](cli-projecten-opvragen.md)
 - [Platformbeheer via de API](platformbeheer-via-de-api.md)

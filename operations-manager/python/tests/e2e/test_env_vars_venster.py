@@ -247,7 +247,7 @@ def test_the_aliases_field_is_not_masked(app_server: str, auth_page: Page) -> No
 def task_started() -> object:
     """De lokale testserver heeft geen taakdienst; vang alleen de start op.
 
-    Wat de route aan de taakdienst vraagt (create_project met de al-opgeslagen stand) is
+    Wat de route aan de taakdienst vraagt (de uitroltaak met de geraakte deployments) is
     hier het meetpunt; de verwerking zelf staat in de sandbox-meting.
     """
     from fastapi.responses import HTMLResponse
@@ -277,7 +277,8 @@ def test_saving_writes_encrypted_and_leaves_nothing_on_the_card(
         # De step-up van zojuist is nog vers, dus geen tweede vraag: de taak start.
         auth_page.wait_for_selector("#edit-section-inner .edit-progress-view", timeout=10000)
         assert task_started.await_count == 1
-        assert task_started.await_args.kwargs["payload"]["project_file_already_saved"] is True
+        assert task_started.await_args.kwargs["task_type"] == "rollout_project"
+        assert "project_file_already_saved" not in task_started.await_args.kwargs["payload"]
 
         from opi.services.project_store import get_project_store
 

@@ -541,134 +541,45 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
 
 
 async def handle_configure_service(payload: dict, progress: Any) -> dict:
-    """Handle async configure-service task (unified service-config endpoint).
+    """Run a service-config write as a task: translate the payload, report the outcome.
 
-    Upserts or clears one service's config at a target layer, then processes the
-    project so the change is reconciled -- mirroring handle_add_service. A clear
-    that changed nothing skips processing (and, per the logging rule, is a quiet
-    no-op).
+    Expected payload keys:
+        project_name, service, target, operation, component, deployment, config, add,
+        remove, list_field, deployment_names, rollout
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_names import validate_project_name
+    from opi.manager.service.configure import ConfigOperation, ServiceConfigChange, configure_service
+    from opi.manager.service.errors import ServiceChangeError
 
-    project_name: str = payload["project_name"]
     service_name: str = payload["service"]
     target: str = payload["target"]
-    operation: str = payload.get("operation", "upsert")
-    component_name: str | None = payload.get("component")
-    deployment_name: str | None = payload.get("deployment")
-    config = payload.get("config")
     project_manager: ProjectManager | None = None
 
     try:
-        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
-        if not validate_project_name(project_name):
-            error_msg = (
-                "Invalid project name format. Must start with lowercase letter, "
-                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
-            )
-            progress.fail_task(validate_task, error_msg)
-            progress.fail_project(error_msg)
-            return {
-                "service": service_name,
-                "target": target,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": "invalid_project_name",
-            }
-        progress.complete_task(validate_task)
-
-        write_task = progress.add_task(steps.SERVICE_CONFIG_SAVE, subject=f"{service_name} op {target}")
-        project_file_relative_path = f"projects/{project_name}.yaml"
-        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
-
-        if operation == "clear":
-            result = await project_manager.clear_service_config(
-                service_name, target, component_name=component_name, deployment_name=deployment_name
-            )
-        elif operation == "patch":
-            result = await project_manager.patch_service_config_list(
-                service_name,
-                target,
-                add=payload.get("add") or [],
-                remove=payload.get("remove") or [],
-                list_field=payload.get("list_field"),
-                component_name=component_name,
-                deployment_name=deployment_name,
-            )
-        else:
-            if config is None:
-                msg = f"Upsert van service '{service_name}' zonder config"
-                raise ValueError(msg)
-            result = await project_manager.configure_service(
-                service_name, target, config, component_name=component_name, deployment_name=deployment_name
-            )
-
-        if not result["success"]:
-            error_msg = result.get("error", "Unknown error configuring service")
-            progress.fail_task(write_task, error_msg)
-            progress.fail_project(error_msg)
-            return {
-                "service": service_name,
-                "target": target,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": result.get("error_type", "unknown"),
-            }
-        progress.complete_task(write_task)
-
-        # Only reconcile when the project file actually changed. A clear that found
-        # nothing to remove returns removed=False and skips processing entirely.
-        changed = operation != "clear" or result.get("removed", False)
-        processing: dict[str, Any] = {"status": "skipped"}
-        if not rollout_requested(payload):
-            note_rollout_skipped(progress)
-            processing = skipped_processing()
-        elif changed:
-            processing_success = await project_manager.process_project_from_git(
-                project_file_relative_path,
-                task_progress_manager=progress,
-                deployment_names=payload.get("deployment_names"),
-            )
-            if processing_success:
-                processing = {"status": "completed"}
-            else:
-                processing = {"status": "failed"}
-                processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_project(processing_error)
-
-        succeeded = processing["status"] != "failed"
-        counts = (
-            {key: result[key] for key in ("added", "updated", "removed") if key in result}
-            if operation == "patch"
-            else {"removed": result.get("removed")}
+        change = ServiceConfigChange(
+            project_name=payload["project_name"],
+            service_name=service_name,
+            target=target,
+            operation=ConfigOperation(payload.get("operation", "upsert")),
+            config=payload.get("config"),
+            add=payload.get("add") or [],
+            remove=payload.get("remove") or [],
+            list_field=payload.get("list_field"),
+            component_name=payload.get("component"),
+            deployment_name=payload.get("deployment"),
+            rollout=rollout_requested(payload),
+            deployment_names=payload.get("deployment_names"),
         )
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{change.project_name}.yaml")
+        result = await configure_service(change, project_manager, progress)
+    except ServiceChangeError as refusal:
         return {
-            "status": "success" if succeeded else "failed",
             "service": service_name,
             "target": target,
-            **counts,
-            # What the platform filled in because the caller left it empty. This is the only
-            # place where it gets to see an invitation key it did not choose itself, and
-            # without that key the invitation cannot be sent.
-            "generated": result.get("generated", {}),
-            # What is still waiting on an administrator. Without this, a client only notices
-            # its domain was not approved because no ingress appears on that address.
-            "approvals": result.get("approvals", []),
-            # What waits on nobody and still does not work: a field that became required by
-            # a setting elsewhere and stayed empty. Without this a client only finds out when
-            # somebody tries to use the invitation.
-            "warnings": result.get("warnings") or None,
-            "processing": {
-                **processing,
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-            },
+            "status": "failed",
+            "error": str(refusal),
+            "error_type": refusal.error_type,
         }
-
     except Exception as exc:
         error_msg = f"Error configuring service: {exc}"
         logger.error(error_msg)
@@ -684,122 +595,92 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
         if project_manager:
             await project_manager.close()
 
+    return {
+        "status": "success" if result.succeeded else "failed",
+        "service": service_name,
+        "target": target,
+        **result.counts,
+        # What the platform filled in because the caller left it empty. This is the only
+        # place where it gets to see an invitation key it did not choose itself, and
+        # without that key the invitation cannot be sent.
+        "generated": result.generated,
+        # What is still waiting on an administrator. Without this, a client only notices
+        # its domain was not approved because no ingress appears on that address.
+        "approvals": result.approvals,
+        # What waits on nobody and still does not work: a field that became required by
+        # a setting elsewhere and stayed empty. Without this a client only finds out when
+        # somebody tries to use the invitation.
+        "warnings": result.warnings,
+        "processing": result.processing,
+    }
+
 
 async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
-    """Add, patch, delete or clear the values a service owns on one component (RC-55).
-
-    The sibling of ``handle_configure_service`` for ``user-env-vars`` and ``aliases``,
-    which own a plain component property rather than a block in a ``services:`` list.
-    Write first, then reconcile -- and skip the reconcile when the write changed
-    nothing, exactly as a clear that removed nothing does.
+    """Run a values write as a task: translate the payload, report the outcome.
 
     Expected payload keys:
         project_name, service, target, operation, component, deployment, values, keys,
-        rollout
+        deployment_names, rollout
     """
     from opi.manager.project_manager import ProjectManager
-    from opi.utils.project_names import validate_project_name
+    from opi.manager.service.errors import ServiceChangeError
+    from opi.manager.service.values import ComponentValuesChange, set_component_values
+    from opi.services.catalog.base import ConfigLayer
+    from opi.services.component_values import ValuesOperation
 
-    project_name: str = payload["project_name"]
     service_name: str = payload["service"]
     target: str = payload["target"]
     operation: str = payload["operation"]
     component_name: str = payload["component"]
     deployment_name: str | None = payload.get("deployment")
-    values: dict[str, str] | None = payload.get("values")
-    keys: list[str] | None = payload.get("keys")
     project_manager: ProjectManager | None = None
 
-    def failure(message: str, error_type: str = "unknown") -> dict:
+    def answer(extra: dict[str, Any]) -> dict:
         return {
-            "status": "failed",
             "service": service_name,
             "target": target,
             "component": component_name,
             "deployment": deployment_name,
             "operation": operation,
-            "error": message,
-            "error_type": error_type,
+            **extra,
         }
 
     try:
-        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
-        if not validate_project_name(project_name):
-            error_msg = (
-                "Invalid project name format. Must start with lowercase letter, "
-                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
-            )
-            progress.fail_task(validate_task, error_msg)
-            progress.fail_project(error_msg)
-            return failure(error_msg, "invalid_project_name")
-        progress.complete_task(validate_task)
-
-        write_task = progress.add_task(steps.VALUES_SAVE, subject=f"{operation} van {service_name} op {target}")
-        project_file_relative_path = f"projects/{project_name}.yaml"
-        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
-
-        result = await project_manager.set_component_values(
-            service_name,
-            target,
-            operation,
+        change = ComponentValuesChange(
+            project_name=payload["project_name"],
+            service_name=service_name,
+            layer=ConfigLayer(target),
+            operation=ValuesOperation(operation),
             component_name=component_name,
             deployment_name=deployment_name,
-            values=values,
-            keys=keys,
+            values=payload.get("values"),
+            keys=payload.get("keys"),
+            rollout=rollout_requested(payload),
+            deployment_names=payload.get("deployment_names"),
         )
-        if not result["success"]:
-            error_msg = result.get("error", "Unknown error writing service values")
-            progress.fail_task(write_task, error_msg)
-            progress.fail_project(error_msg)
-            return failure(error_msg, result.get("error_type", "unknown"))
-        progress.complete_task(write_task)
-
-        changed = bool(result.get("changed"))
-        processing: dict[str, Any] = {"status": "skipped"}
-        if not rollout_requested(payload):
-            note_rollout_skipped(progress)
-            processing = skipped_processing()
-        elif changed:
-            processing_success = await project_manager.process_project_from_git(
-                project_file_relative_path,
-                task_progress_manager=progress,
-                deployment_names=payload.get("deployment_names"),
-            )
-            if processing_success:
-                processing = {"status": "completed"}
-            else:
-                processing = {"status": "failed"}
-                processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_project(processing_error)
-
-        succeeded = processing["status"] != "failed"
-        return {
-            "status": "success" if succeeded else "failed",
-            "service": service_name,
-            "target": target,
-            "component": component_name,
-            "deployment": deployment_name,
-            "operation": operation,
-            "changed": changed,
-            "processing": {
-                **processing,
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-            },
-        }
-
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{change.project_name}.yaml")
+        result = await set_component_values(change, project_manager, progress)
+    except ServiceChangeError as refusal:
+        return answer({"status": "failed", "error": str(refusal), "error_type": refusal.error_type})
     except Exception:
         # Never the exception's own text: a failure in this path can carry a decrypted
         # value, and this message reaches the caller and the log.
-        logger.exception("Error applying %s of '%s' values in project '%s'", operation, service_name, project_name)
+        logger.exception(
+            "Error applying %s of '%s' values in project '%s'", operation, service_name, payload["project_name"]
+        )
         progress.fail_project("An internal error occurred")
-        return failure("An internal error occurred", "internal_error")
+        return answer({"status": "failed", "error": "An internal error occurred", "error_type": "internal_error"})
     finally:
         if project_manager:
             await project_manager.close()
+
+    return answer(
+        {
+            "status": "success" if result.succeeded else "failed",
+            "changed": result.changed,
+            "processing": result.processing,
+        }
+    )
 
 
 async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:

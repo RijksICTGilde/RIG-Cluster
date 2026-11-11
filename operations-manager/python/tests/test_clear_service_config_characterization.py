@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.services.project_store import MutationResult
 from opi.services.services import ServiceValidationError
 
 
@@ -18,7 +19,10 @@ def _manager() -> ProjectManager:
     pm._project_file_handler = MagicMock()
     pm._ProjectManager__has_contents = True
     pm.get_name = AsyncMock(return_value="demo")
-    pm.save_and_commit_project = AsyncMock()
+    # The real return value: ``committed`` is what tells the caller whether to roll out.
+    pm.save_and_commit_project = AsyncMock(
+        return_value=MutationResult(before=None, after={}, ref="test", committed=True)
+    )
     return pm
 
 
@@ -38,7 +42,13 @@ class TestClearServiceConfigProjectLayer:
 
         result = await pm.clear_service_config("auth-wall", "project")
 
-        assert result == {"success": True, "service": "auth-wall", "target": "project", "removed": True}
+        assert result == {
+            "success": True,
+            "service": "auth-wall",
+            "target": "project",
+            "removed": True,
+            "changed": True,
+        }
         assert project_data["services"] == ["auth-wall"]
         saved, message = pm.save_and_commit_project.await_args.args
         assert saved is project_data
@@ -51,7 +61,13 @@ class TestClearServiceConfigProjectLayer:
 
         result = await pm.clear_service_config("auth-wall", "project")
 
-        assert result == {"success": True, "service": "auth-wall", "target": "project", "removed": False}
+        assert result == {
+            "success": True,
+            "service": "auth-wall",
+            "target": "project",
+            "removed": False,
+            "changed": False,
+        }
         assert project_data["services"] == ["auth-wall"]
         pm.save_and_commit_project.assert_not_awaited()
 

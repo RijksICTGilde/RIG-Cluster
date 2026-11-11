@@ -602,30 +602,48 @@ def test_de_migratie_van_een_oud_bestand_levert_iets_geldigs_op() -> None:
 async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> None:
     """De route uit RC-388 is een schrijver naar het projectbestand.
 
-    De echte route, niet een handgeschreven blok: de converter versleutelt daar met de
-    projectsleutel uit het bestand, en juist die blokstring met zijn patroonregel is wat
-    het schema kent. Zowel de component- als de deployment-override-houder wordt gemeten,
-    want dat zijn twee definities in het schema.
+    De echte route, niet een handgeschreven blok: sinds RC-481 loopt dat schrijven via de
+    values-use case naar ``ServiceConfigMutations.set_component_values``, die zelf
+    ``mutate_and_commit_project`` aanroept -- dus die laag wordt hier nagemaakt, niet
+    ``save_and_commit_project`` zoals de oude route direct deed. De echte encoder
+    versleutelt met de projectsleutel uit het bestand, en juist die blokstring met zijn
+    patroonregel is wat het schema kent. Zowel de component- als de
+    deployment-override-houder wordt gemeten, want dat zijn twee definities in het schema.
     """
     from types import SimpleNamespace
 
+    from opi.services.project_store import MutationResult
     from opi.services.step_up import STEP_UP_SESSION_KEY
     from opi.web.router_env_vars import save_env_vars
 
     project = _basis_project()
     verzoek = SimpleNamespace(
-        state=SimpleNamespace(user={"email": "admin@rijksoverheid.nl"}, csrf_token="csrf"),
+        state=SimpleNamespace(
+            user={"email": "admin@rijksoverheid.nl"},
+            csrf_token="csrf",
+            # Without this decision ``authorized_project`` refuses with a 500: only the
+            # guard that hangs the route sets it, and that guard does not run here.
+            authz_project=SimpleNamespace(data=project),
+        ),
         session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
         url=SimpleNamespace(path="/projects/schrijvers/componenten/api/env-vars"),
         method="POST",
         headers={"HX-Request": "true"},
         form=AsyncMock(return_value={"vars": "API_TOKEN=bewijsbaar\nTWEEDE=twee"}),
     )
-    manager = SimpleNamespace(
-        get_contents=AsyncMock(return_value=project),
-        save_and_commit_project=AsyncMock(),
-        close=AsyncMock(),
-    )
+
+    aangeboden: dict[str, Any] = {}
+
+    async def mutate(name: str, mutator: Any, **_kwargs: Any) -> MutationResult:
+        nonlocal aangeboden
+        result = mutator(copy.deepcopy(project))
+        if result is None:
+            return MutationResult(before=project, after=project, ref="test", committed=False)
+        aangeboden = result
+        return MutationResult(before=project, after=result, ref="test")
+
+    manager = _manager()
+    manager.get_contents = AsyncMock(return_value=project)
     with (
         patch.multiple(
             "opi.http.auth.authz",
@@ -634,12 +652,16 @@ async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> Non
             ),
             get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: True),
         ),
+        patch(
+            "opi.manager.project_manager.get_project_store",
+            lambda: SimpleNamespace(mutate=mutate),
+        ),
         patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
         patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()),
     ):
         await save_env_vars(verzoek, "schrijvers", "api", "productie" if met_deployment else None)
 
-    aangeboden = _aangeboden(manager.save_and_commit_project)
+    assert aangeboden, "de schrijver heeft niets opgeslagen; dan meet deze test niets"
     if met_deployment:
         blok = aangeboden["deployments"][0]["components"][0]["user-env-vars"]
     else:

@@ -229,7 +229,7 @@ def client(mock_settings: Any, mock_project_service: Any, app_schoon: FastAPI) -
         patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
         patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         patch("opi.api.v2.router.get_decoded_project_private_key", AsyncMock(return_value=PRIVATE_KEY)),
-        patch("opi.services.project_env_vars.decrypt_age_content", AsyncMock(return_value=DECRYPTED_ENV_VARS)),
+        patch("opi.services.component_values.decrypt_age_content_sync", return_value=DECRYPTED_ENV_VARS),
         # The attachments catalogue is described from the DECRYPTED bytes, so the read
         # opens the block. Imported inside the summary, hence patched at the source.
         patch("opi.utils.age.decrypt_age_block_to_bytes_sync", return_value=ATTACHMENT_BYTES),
@@ -376,10 +376,7 @@ class TestProjectComponents:
         """The distinction only earns its keep if the unreadable case keeps saying null."""
         from opi.api.v2.project_read import build_component_details
 
-        with patch(
-            "opi.services.project_env_vars.decrypt_age_content",
-            AsyncMock(side_effect=RuntimeError("age: no identity matched")),
-        ):
+        with patch("opi.services.component_values.decrypt_age_content_sync", return_value=None):
             details = await build_component_details(SAMPLE_PROJECT_DATA, PRIVATE_KEY)
 
         by_name = {detail.name: detail for detail in details}
@@ -627,14 +624,14 @@ class TestUserEnvVarsReader:
     async def test_reads_key_value_block(self) -> None:
         from opi.services.project_env_vars import read_user_env_vars
 
-        with patch("opi.services.project_env_vars.decrypt_age_content", AsyncMock(return_value="A=1\nB=2")):
+        with patch("opi.services.component_values.decrypt_age_content_sync", return_value="A=1\nB=2"):
             assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="test") == {"A": "1", "B": "2"}
 
     @pytest.mark.asyncio
     async def test_reads_yaml_block(self) -> None:
         from opi.services.project_env_vars import read_user_env_vars
 
-        with patch("opi.services.project_env_vars.decrypt_age_content", AsyncMock(return_value="A: one\nB: two")):
+        with patch("opi.services.component_values.decrypt_age_content_sync", return_value="A: one\nB: two"):
             assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="test") == {"A": "one", "B": "two"}
 
     @pytest.mark.asyncio
@@ -642,10 +639,10 @@ class TestUserEnvVarsReader:
         """A plain block is a legal stored shape; decrypting it would fail on every read."""
         from opi.services.project_env_vars import read_user_env_vars
 
-        decrypt = AsyncMock(side_effect=AssertionError("plain text must not be decrypted"))
-        with patch("opi.services.project_env_vars.decrypt_age_content", decrypt):
+        decrypt = MagicMock(side_effect=AssertionError("plain text must not be decrypted"))
+        with patch("opi.services.component_values.decrypt_age_content_sync", decrypt):
             assert await read_user_env_vars("A=1\n", PRIVATE_KEY, where="test") == {"A": "1"}
-        decrypt.assert_not_awaited()
+        decrypt.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_legacy_mapping_is_returned_as_is(self) -> None:
@@ -670,10 +667,7 @@ class TestUserEnvVarsReader:
         """A read endpoint must not 500 because one component's block cannot be decrypted."""
         from opi.services.project_env_vars import read_user_env_vars
 
-        with patch(
-            "opi.services.project_env_vars.decrypt_age_content",
-            AsyncMock(side_effect=RuntimeError("age: no identity matched")),
-        ):
+        with patch("opi.services.component_values.decrypt_age_content_sync", return_value=None):
             assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="test") is None
 
     @pytest.mark.asyncio
@@ -682,10 +676,7 @@ class TestUserEnvVarsReader:
         from opi.services.project_env_vars import read_user_env_vars
 
         with (
-            patch(
-                "opi.services.project_env_vars.decrypt_age_content",
-                AsyncMock(side_effect=RuntimeError("age: no identity matched")),
-            ),
+            patch("opi.services.component_values.decrypt_age_content_sync", return_value=None),
             caplog.at_level("WARNING", logger="opi.services.project_env_vars"),
         ):
             assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="component 'backend'") is None

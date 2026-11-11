@@ -137,7 +137,7 @@ verklaring leest `enforce_route_action` alleen het pad: een aangeplakte
 
 `env-vars.manage` staat daarom op de componentscopes en niet op die van een deployment,
 anders dan de rij in ontwerp paragraaf 4: de waarden hangen aan het component, en de route
-die ze bewerkt heeft geen deployment in het pad. Een component dat in een
+die het venster opent heeft geen deployment in het pad. Een component dat in een
 productiedeployment zit vraagt dus `ops`, ook op de deployment-variant van die route.
 
 ## Rollen schrijven

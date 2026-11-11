@@ -16,8 +16,12 @@ from opi.forms.editables.converters import (
     ServiceListConverter,
     TruncateConverter,
 )
-from opi.forms.editables.validators import KeyValueValidator
+from opi.forms.wizard.secrets import REDACTED
+from opi.services.catalog.user_env_vars.editables import UserEnvVarsConverter, UserEnvVarsValidator
 from opi.utils.age import AgeDecryptionError, AgeEncryptionError
+
+#: A block already in the field's own stored shape, as a session hands it back untouched.
+USER_ENV_VARS_AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nYWJj\n-----END AGE ENCRYPTED FILE-----"
 
 FAKE_AGE_ENCRYPTED = "-----BEGIN AGE ENCRYPTED FILE-----\nencrypted\n-----END AGE ENCRYPTED FILE-----"
 FAKE_PUBLIC_KEY = "age1testpublickey"
@@ -302,56 +306,61 @@ class TestKeycloakRealmsDisplayConverter:
         assert KeycloakRealmsDisplayConverter().view([]) == []
 
 
-class TestKeyValueValidator:
-    """Validates ENV and YAML key-value input via validate_and_parse_env_vars."""
+class TestUserEnvVarsValidator:
+    """Validates ENV and YAML key-value input, and refuses what storage cannot give back."""
 
     # --- Valid ENV ---
 
     def test_valid_env_single(self):
-        assert KeyValueValidator().validate("KEY=value") == []
+        assert UserEnvVarsValidator().validate("KEY=value") == []
 
     def test_valid_env_multi(self):
-        assert KeyValueValidator().validate("KEY=value\nOTHER=val2") == []
+        assert UserEnvVarsValidator().validate("KEY=value\nOTHER=val2") == []
 
     def test_valid_env_with_comment(self):
-        assert KeyValueValidator().validate("# comment\nKEY=value") == []
+        assert UserEnvVarsValidator().validate("# comment\nKEY=value") == []
 
     def test_valid_env_equals_in_value(self):
-        assert KeyValueValidator().validate("KEY=val=ue") == []
+        assert UserEnvVarsValidator().validate("KEY=val=ue") == []
 
     def test_valid_env_empty_value(self):
-        assert KeyValueValidator().validate("KEY=") == []
+        assert UserEnvVarsValidator().validate("KEY=") == []
 
     # --- Valid YAML ---
 
     def test_valid_yaml_single(self):
-        assert KeyValueValidator().validate("KEY: value") == []
+        assert UserEnvVarsValidator().validate("KEY: value") == []
 
     def test_valid_yaml_multi(self):
-        assert KeyValueValidator().validate("KEY: value\nOTHER: val2") == []
+        assert UserEnvVarsValidator().validate("KEY: value\nOTHER: val2") == []
 
     def test_valid_yaml_integer_value(self):
-        assert KeyValueValidator().validate("PORT: 8080") == []
+        assert UserEnvVarsValidator().validate("PORT: 8080") == []
 
     def test_valid_yaml_boolean_value(self):
-        assert KeyValueValidator().validate("DEBUG: true") == []
+        assert UserEnvVarsValidator().validate("DEBUG: true") == []
 
-    def test_valid_yaml_pipe_block(self):
-        assert KeyValueValidator().validate("CONFIG: |\n  line1\n  line2") == []
+    def test_a_value_with_a_newline_in_it_is_refused(self):
+        """A multi-line value cannot be stored as KEY=value lines, so it is refused.
 
-    def test_valid_yaml_folded_block(self):
-        assert KeyValueValidator().validate("CONFIG: >\n  line1\n  line2") == []
+        The whole set is kept as one block of those lines, so the second line of such a
+        value reads back as an invalid line and leaves the stored block unreadable. The
+        values API refuses it for the same reason. A folded block holds no newline and is
+        therefore still a value this field accepts.
+        """
+        assert UserEnvVarsValidator().validate("CONFIG: |\n  line1\n  line2") != []
+        assert UserEnvVarsValidator().validate("CONFIG: >\n  line1\n  line2") == []
 
     # --- Empty / None ---
 
     def test_empty_string(self):
-        assert KeyValueValidator().validate("") == []
+        assert UserEnvVarsValidator().validate("") == []
 
     def test_none(self):
-        assert KeyValueValidator().validate(None) == []
+        assert UserEnvVarsValidator().validate(None) == []
 
     def test_whitespace_only(self):
-        assert KeyValueValidator().validate("  ") == []
+        assert UserEnvVarsValidator().validate("  ") == []
 
     # --- Invalid ---
 
@@ -359,27 +368,68 @@ class TestKeyValueValidator:
         # The message points at the line by NUMBER, not by quoting it back: the same
         # parser message is logged and returned to the client on the save path, where the
         # line may be a pasted secret (RC-25 security rework).
-        errors = KeyValueValidator().validate("BADLINE")
+        errors = UserEnvVarsValidator().validate("BADLINE")
         assert len(errors) == 1
         assert "Line 1" in errors[0]
         assert "BADLINE" not in errors[0]
 
     def test_invalid_env_line_in_multi(self):
-        errors = KeyValueValidator().validate("KEY=value\nBADLINE")
+        errors = UserEnvVarsValidator().validate("KEY=value\nBADLINE")
         assert len(errors) == 1
 
     def test_invalid_env_key_starts_with_digit(self):
-        errors = KeyValueValidator().validate("123BAD=value")
+        errors = UserEnvVarsValidator().validate("123BAD=value")
         assert len(errors) == 1
 
     def test_invalid_yaml_unclosed_flow(self):
-        errors = KeyValueValidator().validate("KEY: [unclosed")
+        errors = UserEnvVarsValidator().validate("KEY: [unclosed")
         assert len(errors) == 1
 
     def test_invalid_yaml_list_value(self):
         """Lists are not valid env var values - only scalars allowed."""
-        errors = KeyValueValidator().validate("ITEMS:\n  - one\n  - two")
+        errors = UserEnvVarsValidator().validate("ITEMS:\n  - one\n  - two")
         assert len(errors) == 1
+
+    # --- Round trip of a value this field already stored ---
+
+    def test_an_already_stored_age_block_is_not_reparsed_as_typed_text(self):
+        """A multi-step submit hands an untouched field back as its own stored block.
+
+        Parsed as ``KEY=value`` text, an armored AGE block is multiple invalid lines; the
+        field must recognise its own stored shape and wave it through instead.
+        """
+        assert UserEnvVarsValidator().validate(USER_ENV_VARS_AGE_BLOCK) == []
+
+    def test_the_redaction_placeholder_is_not_reparsed_either(self):
+        """The session hands back ``REDACTED`` for a field nobody retyped; same bypass."""
+        assert UserEnvVarsValidator().validate(REDACTED) == []
+
+
+class TestUserEnvVarsConverter:
+    """Stores typed text canonically, but never re-encodes what is already stored."""
+
+    def test_typed_text_is_stored_through_the_canonical_encoder(self):
+        with patch("opi.services.component_values.encrypt_age_content_sync", return_value="cipher") as encrypt:
+            result = UserEnvVarsConverter().write("A=1", PROJECT_WITH_KEY)
+
+        assert result == "cipher"
+        encrypt.assert_called_once_with("A=1", FAKE_PUBLIC_KEY)
+
+    def test_an_already_stored_age_block_passes_through_unencoded(self):
+        """Re-encoding would first have to parse it as typed text, which it is not."""
+        with patch("opi.services.component_values.encrypt_age_content_sync") as encrypt:
+            result = UserEnvVarsConverter().write(USER_ENV_VARS_AGE_BLOCK, PROJECT_WITH_KEY)
+
+        assert result == USER_ENV_VARS_AGE_BLOCK
+        encrypt.assert_not_called()
+
+    def test_the_redaction_placeholder_passes_through_unencoded(self):
+        """Saving a later step must not turn an untouched field's redaction into its value."""
+        with patch("opi.services.component_values.encrypt_age_content_sync") as encrypt:
+            result = UserEnvVarsConverter().write(REDACTED, PROJECT_WITH_KEY)
+
+        assert result == REDACTED
+        encrypt.assert_not_called()
 
 
 class TestKeyValueConverterEncryption:

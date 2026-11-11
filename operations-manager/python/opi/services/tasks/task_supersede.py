@@ -89,6 +89,7 @@ _SCOPE_FROM_PAYLOAD_TASK_TYPES = frozenset(
         "add_service",
         "configure_service",
         "configure_service_values",
+        "rollout_project",
         "update_component",
     }
 )

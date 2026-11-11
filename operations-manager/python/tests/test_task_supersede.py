@@ -51,6 +51,16 @@ def test_scope_add_component_reads_payload_deployments() -> None:
     assert scope == frozenset({"productie", "acceptatie"})
 
 
+def test_scope_rollout_project_reads_payload_deployments() -> None:
+    """RC-481: the rollout task's scope is the same payload list the saver resolved."""
+    scope = scope_of("rollout_project", None, {"deployment_names": ["productie"]})
+    assert scope == frozenset({"productie"})
+
+
+def test_scope_rollout_project_without_a_list_is_project_wide() -> None:
+    assert scope_of("rollout_project", None, {}) is None
+
+
 def test_scope_update_component_is_project_wide() -> None:
     """update_component reprocesses the whole project despite a NULL column."""
     assert scope_of("update_component", None, {}) is None

@@ -43,6 +43,7 @@ DEFERRABLE_TASK_TYPES = frozenset(
 # tell the caller what is wrong rather than silently rolling out anyway.
 NON_DEFERRABLE_REASONS: dict[str, str] = {
     "refresh_project": "processing the project is the whole point of this operation",
+    "rollout_project": "the change is already saved; rolling it out is all this task does",
     "refresh_deployment": "processing the deployment is the whole point of this operation",
     "rotate_credentials": (
         "the new credential only reaches the pods through the rollout; deferring it would leave "
@@ -81,6 +82,7 @@ PROCESSING_TASK_TYPES = frozenset(
         "refresh_deployment",
         "rotate_credentials",
         "refresh_project",
+        "rollout_project",
         "delete_component",
         "restore",
     }
@@ -116,7 +118,7 @@ def first_phase(task_type: str) -> str | None:
 
     Restore opens none: it starts by restoring data, not by checking a change.
     """
-    if task_type in ("refresh_project", "refresh_deployment"):
+    if task_type in ("refresh_project", "refresh_deployment", "rollout_project"):
         return PHASE_CHECK
     if task_type in PROCESSING_TASK_TYPES and task_type != "restore":
         return PHASE_CHECK_AND_SAVE

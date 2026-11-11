@@ -123,6 +123,7 @@ class TaskType(StrEnum):
     SLEEP_DEPLOYMENT = "sleep_deployment"
     WAKE_DEPLOYMENT = "wake_deployment"
     REFRESH_PROJECT = "refresh_project"
+    ROLLOUT_PROJECT = "rollout_project"
     ROTATE_PROJECT_KEY = "rotate_project_key"
     CREATE_PROJECT = "create_project"
     ADD_COMPONENT = "add_component"

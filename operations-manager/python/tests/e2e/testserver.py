@@ -14,6 +14,8 @@ Usage:
     Used automatically by tests/e2e/conftest.py
 """
 
+import copy
+import inspect
 import logging
 import os
 import secrets
@@ -567,6 +569,38 @@ async def _fake_store_save(
     return MutationResult(before=None, after=data, ref="e2e-testserver")
 
 
+async def _fake_store_mutate(
+    self,
+    name: str,
+    change,
+    *,
+    message,
+    actor,
+    enforce_validation: bool = True,
+    filename: str | None = None,
+):
+    """In-memory stand-in for GitProjectStore.mutate, next to :func:`_fake_store_save`.
+
+    The read-modify-write primitive every values and service write goes through. Same
+    contract: the change function sees the current state and may return None for an
+    idempotent no-op, which commits nothing.
+    """
+    from opi.services.project_store import MutationResult, ProjectNotFoundError
+
+    project = self.get(name)
+    current = (project.data if project else None) or None
+    if current is None:
+        raise ProjectNotFoundError(f"Project '{name}' does not exist")
+
+    changed = change(copy.deepcopy(current))
+    mutated = await changed if inspect.isawaitable(changed) else changed
+    if mutated is None:
+        return MutationResult(before=current, after=current, ref="e2e-testserver", committed=False)
+
+    self._refresh_cache(name, mutated, os.path.basename(filename or f"{name}.yaml"))
+    return MutationResult(before=current, after=mutated, ref="e2e-testserver")
+
+
 def _munt_projectsleutelpaar(data: dict) -> None:
     """Geef dit fixtureproject een AGE-sleutelpaar dat bij DEZE run past.
 
@@ -681,6 +715,7 @@ def create_test_app():
                 return_value=MagicMock(ensure_authenticated=AsyncMock(return_value=False)),
             ),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
+            patch("opi.services.project_store.GitProjectStore.mutate", _fake_store_mutate),
             # version_of() clones the real repo, hier niet beschikbaar. Stand-in: een vaste
             # geldige blob-SHA (40 hex per _BLOB_SHA_RE); de nagemaakte save negeert hem.
             patch(

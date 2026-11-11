@@ -445,6 +445,11 @@ tasks:
     dependencies:
       git: {status: measured, test: test_refresh_project_syncs_everything}
       argocd: {status: measured, test: test_refresh_project_syncs_everything}
+  - task: ROLLOUT_PROJECT
+    dependencies:
+      git: {status: measured, test: test_rollout_project_reaches_the_namespace}
+      argocd: {status: measured, test: test_rollout_project_reaches_the_namespace}
+      kubernetes: {status: measured, test: test_rollout_project_reaches_the_namespace}
   - task: ROTATE_PROJECT_KEY
     dependencies:
       git: {status: measured, test: test_rotate_project_key_replaces_the_keypair}
