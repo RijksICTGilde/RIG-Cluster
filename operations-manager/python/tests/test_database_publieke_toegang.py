@@ -248,6 +248,7 @@ def _kloon_manager(server: _KloonServer) -> DatabaseManager:
         get_contents=AsyncMock(return_value=_project()),
         get_name=AsyncMock(return_value="proj"),
         mark_clone_started=AsyncMock(),
+        commit_clone_state=AsyncMock(),
         _revision_manager=SimpleNamespace(record_clone=lambda **kwargs: None),
         _project_file_handler=SimpleNamespace(set_deployment_service_generation=lambda *args: None),
         _add_secret_to_create=lambda *args: None,

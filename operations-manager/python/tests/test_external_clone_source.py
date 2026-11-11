@@ -315,12 +315,17 @@ class TestPayloadFromRouteToHandler:
 
         project_manager = AsyncMock()
         project_manager.clone_database_from_external_with_tunnel = AsyncMock(
-            return_value={"success": True, "source": {}, "target": {}, "operations": {"rows_copied": 3}}
+            return_value={
+                "success": True,
+                "source": {},
+                "target": {},
+                "operations": [{"type": "clone", "status": "success"}],
+            }
         )
         with patch("opi.manager.project_manager.ProjectManager", return_value=project_manager):
             result = await handle_clone_database(payload, MagicMock())
 
-        assert result["rows_copied"] == 3
+        assert result == {"source": {}, "target": {}}
         call = project_manager.clone_database_from_external_with_tunnel.call_args[1]
         assert call["source_password"] == "geheim-wachtwoord"
         assert call["tunnel_password"] == "geheime-tunnel"
@@ -339,12 +344,17 @@ class TestPayloadFromRouteToHandler:
 
         project_manager = AsyncMock()
         project_manager.clone_minio_bucket_from_external_direct = AsyncMock(
-            return_value={"success": True, "source": {}, "target": {}, "operations": {"objects_copied": 7}}
+            return_value={
+                "success": True,
+                "source": {},
+                "target": {},
+                "operations": [{"type": "clone", "status": "success"}],
+            }
         )
         with patch("opi.manager.project_manager.ProjectManager", return_value=project_manager):
             result = await handle_clone_bucket(payload, MagicMock())
 
-        assert result["objects_copied"] == 7
+        assert result == {"source": {}, "target": {}}
         call = project_manager.clone_minio_bucket_from_external_direct.call_args[1]
         assert call["source_secret_key"] == "geheime-sleutel"
         assert call["source_bucket"] == "data"

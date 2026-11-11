@@ -29,7 +29,7 @@ import copy
 import re
 from typing import Any
 
-from opi.forms.editables.service_path import smart_get_value, smart_set_value
+from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import resolve_options_for_editable
 from opi.forms.wizard.services_merge import merge_service_lists
 from opi.services.services import ServiceAdapter, service_entry_name
@@ -40,6 +40,10 @@ SERVICES_PATH = "services"
 #: A component's own service selection: the checklist editable's yaml_path, either
 #: materialized (``components[0]/services``) or the wildcard template form.
 _COMPONENT_SERVICES_PATH = re.compile(r"^components\[(\d+|\*)\]/services$")
+
+#: A field inside one of a component's service entries, e.g.
+#: ``components[*]/services{health-check}/config/liveness-path``.
+_COMPONENT_SERVICE_FIELD_PATH = re.compile(r"^components\[(?:\d+|\*)\]/(services\{([^}]+)\}/.+)$")
 
 
 def _walk(editables: list[Any]) -> list[Any]:
@@ -204,6 +208,13 @@ def apply_component_services_mutation(
         options = resolve_options_for_editable(vis, {"project_services": project_service_names})
         offered = {str(option["value"]) for option in options if option.get("value")}
 
+        field_paths = [
+            (field.group(1), field.group(2))
+            for vis_field in _walk(editables)
+            if getattr(vis_field, "editable", None) is not None
+            and (field := _COMPONENT_SERVICE_FIELD_PATH.match(vis_field.editable.yaml_path))
+        ]
+
         components = submitted_yaml.get("components")
         if not isinstance(components, list):
             return
@@ -213,8 +224,19 @@ def apply_component_services_mutation(
             submitted = smart_get_value(submitted_yaml, path)
             if not isinstance(submitted, list):
                 continue
+            # The merge with the base below restores every config key the submission
+            # lacks, including a field this form owns and the user emptied. Note those
+            # now, while absence still means "emptied", and remove them after the merge.
+            selected = {service_entry_name(entry) for entry in submitted}
+            cleared = [
+                f"components[{idx}]/{field}"
+                for field, service in field_paths
+                if service in selected and smart_get_value(submitted_yaml, f"components[{idx}]/{field}") is None
+            ]
             base = smart_get_value(base_data, path)
             if isinstance(base, list):
                 submitted = apply_selection_mutation(base, submitted, offered)
             smart_set_value(submitted_yaml, path, submitted)
+            for field in cleared:
+                smart_delete_value(submitted_yaml, field)
         return

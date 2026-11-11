@@ -10,7 +10,7 @@
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
 {% from "bg/_getting-started-blokken.html.j2" import
-    begrippen, hello_world, services_gebruiken, image_uitrollen %}
+    begrippen, hello_world, services_gebruiken, team_en_rollen, image_uitrollen %}
 
 {% block page_title %}Getting started - Zelfservice Applicatie Deployment{% endblock %}
 
@@ -32,7 +32,11 @@
         {{ services_gebruiken() }}
     {% endcall %}
 
+    {% call panel("Je team en de rollen", "person-2") %}
+        {{ team_en_rollen(rollen) }}
+    {% endcall %}
+
     {% call panel("Een nieuwe image uitrollen", "arrow-up-arrow-down") %}
-        {{ image_uitrollen() }}
+        {{ image_uitrollen(api_url) }}
     {% endcall %}
 {% endblock %}

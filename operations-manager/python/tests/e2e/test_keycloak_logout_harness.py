@@ -37,15 +37,16 @@ from typing import TYPE_CHECKING, Literal
 import httpx
 import pytest
 from playwright.sync_api import Page, sync_playwright
+from tests.image_pins import base_image_from_dockerfile
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 pytestmark = [pytest.mark.keycloak_harness, pytest.mark.requires_infra, pytest.mark.slow]
 
-# Dezelfde versie als images/keycloak-zad/Dockerfile: sinds RC-412 draait de shim zonder
-# @Provider, en op een 25-server zou het logout-endpoint daarmee juist 404 geven.
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.8.1"
+# De basis van images/keycloak-zad/Dockerfile, daar gelezen: sinds RC-412 draait de shim
+# zonder @Provider, en op een 25-server zou het logout-endpoint daarmee juist 404 geven.
+KEYCLOAK_IMAGE = base_image_from_dockerfile("images/keycloak-zad/Dockerfile")
 CONTAINER = "kc-logout-harness"
 ADMIN = "admin"
 SHIM_SOURCE = Path(__file__).resolve().parents[4] / "images" / "keycloak-zad" / "extensions" / "custom-mapper"

@@ -25,7 +25,7 @@
         <c-paragraph size="sm">
             Lukt scannen niet of gebruik je een passwordmanager, dan kun je onderstaande sleutel gebruiken.
         </c-paragraph>
-        <c-code>{{ base32_secret }}</c-code>
+        <nldd-rich-text><code>{{ base32_secret }}</code></nldd-rich-text>
     {% endcall %}
 
     {% call panel("Stap 2: bevestig met een code", "key") %}

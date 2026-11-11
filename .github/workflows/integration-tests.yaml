@@ -5,12 +5,15 @@
 # It includes:
 # - Unit tests (fast, every PR)
 # - Integration tests with mocks (fast, every PR)
-# - Integration tests with Kind cluster (thorough, every PR)
+# - Een job per live groep, elk tegen de echte afhankelijkheid in de gepinde versie
 #
 # Test hierarchy:
 # 1. Unit tests - fastest, no infrastructure
 # 2. Mock integration tests - fast, mocked external services
-# 3. Kind cluster tests - slower, real kubectl operations
+# 3. Live groepen - langzaam, tegen een echte Keycloak, PostgreSQL, MinIO, Forgejo,
+#    Kubernetes en ArgoCD, het opstarten tegen alle zeven tegelijk (startup-live) en elke
+#    taak van begin tot eind (tasks-live).
+#    Zie docs/development/toetsen.md.
 
 name: Integration Tests
 
@@ -21,12 +24,51 @@ on:
       - 'operations-manager/**'
       - '.github/workflows/integration-tests.yaml'
       - 'docker-compose.dev.yaml'
+      - 'images/keycloak-zad/**'  # voor job keycloak-live
+      # De pins van de live groepen. Een groep meet een gepinde image, dus hij hoeft alleen
+      # te draaien als de pin of de code verandert, en dit filter vangt beide. Elke glob
+      # dekt het pinbestand van die afhankelijkheid plus de overlay die het kan overrulen:
+      # cluster.yaml van PostgreSQL, deployment.yaml van MinIO, statefulset.yaml van Forgejo.
+      - 'infrastructure/bootstrap/infrastructure/keycloak/**'  # voor job keycloak-live
+      - 'infrastructure/bootstrap/infrastructure/postgresql/**'  # voor job postgres-live
+      - 'infrastructure/bootstrap/infrastructure/minio/**'  # voor job minio-live
+      - 'infrastructure/bootstrap/infrastructure/forgejo/**'  # voor job forgejo-live
+      - 'infrastructure/bootstrap/infrastructure/mail/**'  # voor job startup-live
+      # De pins van het wegwerpcluster van kubernetes-live en argocd-live: de node-image,
+      # de ArgoCD-CR met zijn image en version, de CMP-sidecar met zijn eigen digest, en het
+      # voorbereide manifest van de ArgoCD-operator.
+      - 'bootstrap/sandbox/kind-config.yaml'
+      - 'bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml'
+      - 'bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml'
+      - 'bootstrap/rig-system/kustomize/components/sops-plugin/**'
+      - 'bootstrap/crd/**'
+      - 'Taskfile.yaml'
+      # De opstart van de CNPG-image, die keycloak-live en postgres-live meegeven.
+      - 'scripts/postgres-standalone-start.sh'
   pull_request:
     branches: [main]
     paths:
       - 'operations-manager/**'
       - '.github/workflows/integration-tests.yaml'
       - 'docker-compose.dev.yaml'
+      - 'images/keycloak-zad/**'
+      # De pins van de live groepen, zie de toelichting bij push.
+      - 'infrastructure/bootstrap/infrastructure/keycloak/**'
+      - 'infrastructure/bootstrap/infrastructure/postgresql/**'
+      - 'infrastructure/bootstrap/infrastructure/minio/**'
+      - 'infrastructure/bootstrap/infrastructure/forgejo/**'
+      - 'infrastructure/bootstrap/infrastructure/mail/**'  # voor job startup-live
+      # De pins van het wegwerpcluster van kubernetes-live en argocd-live: de node-image,
+      # de ArgoCD-CR met zijn image en version, de CMP-sidecar met zijn eigen digest, en het
+      # voorbereide manifest van de ArgoCD-operator.
+      - 'bootstrap/sandbox/kind-config.yaml'
+      - 'bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml'
+      - 'bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml'
+      - 'bootstrap/rig-system/kustomize/components/sops-plugin/**'
+      - 'bootstrap/crd/**'
+      - 'Taskfile.yaml'
+      # De opstart van de CNPG-image, die keycloak-live en postgres-live meegeven.
+      - 'scripts/postgres-standalone-start.sh'
 
 permissions:
   contents: read
@@ -36,11 +78,20 @@ permissions:
 # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
 # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
 # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
+#
+# De twee ubuntu-endpoints zijn van de live jobs: die halen pwgen uit apt voor de
+# wegwerpwachtwoorden van hun containers, en postgres-live ook de psql-client. De
+# Task-release komt van github.com en de Keycloak-, PostgreSQL- en MinIO-image anoniem van
+# ghcr.io, en die twee staan er al, dus die jobs hebben geen packages:read nodig.
+# codeberg.org is van de job forgejo-live: daar staat de Forgejo-image.
 env:
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
     *.blob.core.windows.net:443
     agent.api.stepsecurity.io:443
+    azure.archive.ubuntu.com:80
+    security.ubuntu.com:80
+    codeberg.org:443
     api.github.com:443
     astral.sh:443
     auth.docker.io:443
@@ -54,6 +105,7 @@ env:
     ghcr.io:443
     github.com:443
     index.docker.io:443
+    kind.sigs.k8s.io:443
     mirror.gcr.io:443
     objects.githubusercontent.com:443
     pkg-containers.githubusercontent.com:443
@@ -167,8 +219,12 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.dev.yaml down
 
-  integration-tests-kind:
-    name: Integration Tests (Kind)
+  # Deze job heette integration-tests-kind en maakte zijn eigen kind-cluster voor de drie
+  # kubectl-toetsbestanden. Die zijn opgegaan in de groep kubernetes_live, die op het
+  # wegwerpcluster van task test-cluster-up meet (zie de job kubernetes-live hieronder),
+  # dus wat hier overblijft van `-m slow` heeft geen cluster meer nodig.
+  integration-tests-slow:
+    name: Integration Tests (slow)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: integration-tests-mock
@@ -193,61 +249,477 @@ jobs:
         working-directory: operations-manager/python
         run: uv sync --all-groups
 
-      - name: Install Kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
-
-      - name: Install kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          kubectl version --client
-
-      - name: Create Kind cluster
-        run: |
-          kind create cluster \
-            --name rig-integration-test \
-            --config operations-manager/python/tests/fixtures/kind-config.yaml \
-            --wait 120s
-
-      - name: Deploy test workloads
-        run: |
-          kubectl apply -f operations-manager/python/tests/fixtures/test-workloads.yaml
-          # Wait for deployment
-          kubectl wait --for=condition=available \
-            deployment/log-generator \
-            -n test-project \
-            --timeout=120s
-
-      - name: Run Kind cluster integration tests
+      - name: Run the slow integration tests
         working-directory: operations-manager/python
         run: uv run pytest tests/integration/ -v -m "slow" --tb=short
 
-      - name: Collect cluster logs on failure
+  keycloak-live:
+    name: Keycloak (live, gepinde image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # pwgen voor de wegwerpwachtwoorden van de containers, Task omdat de groep via de
+      # Taskfile start: een tweede opstartroute in deze job zou stil kunnen afwijken van
+      # wat een ontwikkelaar draait. yq en docker staan al op de runner.
+      - name: Install pwgen and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          task --version
+
+      # KEYCLOAK_LIVE_REQUIRED maakt een ontbrekende KEYCLOAK_IMAGE_TEST_URL een FOUT in
+      # plaats van een skip. Zonder dat zou deze job groen zijn terwijl de hele groep
+      # zichzelf oversloeg, en dat is precies het gat waardoor de 409 productie bereikte.
+      - name: Run the keycloak_live group against the pinned image
+        env:
+          KEYCLOAK_LIVE_REQUIRED: '1'
+        run: task test-keycloak
+
+      - name: Keycloak logs on failure
+        if: failure()
+        run: docker logs --tail 200 zad-keycloak-image-test || true
+
+  postgres-live:
+    name: PostgreSQL (live, gepinde image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # psql en pg_dump omdat de kloonpijplijn ze als losse processen aanroept, pwgen voor
+      # het wachtwoord van de wegwerpcontainer, en Task omdat de groep via de Taskfile
+      # start: een tweede opstartroute hier zou stil kunnen afwijken van wat een
+      # ontwikkelaar draait.
+      - name: Install pwgen, the psql client and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen postgresql-client
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          task --version
+
+      # POSTGRES_LIVE_REQUIRED maakt een ontbrekende POSTGRES_LIVE_DSN een FOUT in plaats
+      # van een skip. Zonder dat zou deze job groen zijn terwijl de groep zichzelf oversloeg.
+      - name: Run the postgres_live group against the pinned image
+        env:
+          POSTGRES_LIVE_REQUIRED: '1'
+        run: task test-postgres
+
+      - name: PostgreSQL logs on failure
+        if: failure()
+        run: docker logs --tail 200 zad-postgres-live-test || true
+
+  minio-live:
+    name: MinIO (live, gepinde image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      - name: Install pwgen and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          task --version
+
+      - name: Run the minio_live group against the pinned image
+        env:
+          MINIO_LIVE_REQUIRED: '1'
+        run: task test-minio
+
+      - name: MinIO logs on failure
+        if: failure()
+        run: docker logs --tail 200 zad-minio-live-test || true
+
+  forgejo-live:
+    name: Forgejo (live, gepinde image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      - name: Install pwgen and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          task --version
+
+      - name: Run the forgejo_live group against the pinned image
+        env:
+          FORGEJO_LIVE_REQUIRED: '1'
+        run: task test-forgejo
+
+      - name: Forgejo logs on failure
+        if: failure()
+        run: docker logs --tail 200 zad-forgejo-live-test || true
+
+  kubernetes-live:
+    name: Kubernetes (live, wegwerpcluster)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # kind en kubectl voor het wegwerpcluster, en Task omdat de groep via de Taskfile
+      # start: een tweede opstartroute in deze job zou stil kunnen afwijken van wat een
+      # ontwikkelaar draait. yq, jq, envsubst en docker staan al op de runner.
+      - name: Install kind, kubectl and Task
+        run: |
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      # De node-image komt uit de pin in bootstrap/sandbox/kind-config.yaml; de taak leest
+      # hem daar. tests/test_test_images_follow_pins.py bewaakt dat.
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # KUBERNETES_LIVE_REQUIRED maakt een ontbrekende KUBERNETES_LIVE_CONTEXT een FOUT in
+      # plaats van een skip. Zonder dat zou deze job groen zijn terwijl de hele groep
+      # zichzelf oversloeg.
+      - name: Run the kubernetes_live group
+        env:
+          KUBERNETES_LIVE_REQUIRED: '1'
+        run: task test-kubernetes
+
+      - name: Cluster state on failure
         if: failure()
         run: |
-          echo "=== Cluster Info ==="
-          kubectl cluster-info
-          echo ""
-          echo "=== Nodes ==="
-          kubectl get nodes -o wide
-          echo ""
-          echo "=== Pods in test-project ==="
-          kubectl get pods -n test-project -o wide
-          echo ""
-          echo "=== Events in test-project ==="
-          kubectl get events -n test-project --sort-by='.lastTimestamp'
-          echo ""
-          echo "=== Log generator logs ==="
-          kubectl logs -n test-project deployment/log-generator --tail=50 || true
+          kubectl --context kind-rig-testcluster get all -A || true
+          kubectl --context kind-rig-testcluster get events -A --sort-by=.lastTimestamp | tail -50 || true
 
-      - name: Delete Kind cluster
+      - name: Tear the throwaway cluster down
         if: always()
-        run: kind delete cluster --name rig-integration-test
+        run: task test-cluster-down
+
+  argocd-live:
+    name: ArgoCD (live, gepinde versie)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # kind en kubectl voor het wegwerpcluster, en Task omdat de groep via de Taskfile
+      # start: een tweede opstartroute in deze job zou stil kunnen afwijken van wat een
+      # ontwikkelaar draait. yq, jq, envsubst en docker staan al op de runner.
+      - name: Install kind, kubectl and Task
+        run: |
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # ARGOCD_LIVE_REQUIRED en FORGEJO_LIVE_REQUIRED: de groep leest de Forgejo van het
+      # testcluster met ForgejoApi, dus een ontbrekend adres moet daar ook een fout zijn.
+      - name: Run the argocd_live group
+        env:
+          ARGOCD_LIVE_REQUIRED: '1'
+          FORGEJO_LIVE_REQUIRED: '1'
+        run: task test-argocd
+
+      - name: ArgoCD state on failure
+        if: failure()
+        run: |
+          kubectl --context kind-rig-testcluster -n rig-system get applications,appprojects -o yaml || true
+          kubectl --context kind-rig-testcluster -n rig-system logs deployment/argocd-repo-server --all-containers --tail=100 || true
+          kubectl --context kind-rig-testcluster -n rig-system logs statefulset/argocd-application-controller --tail=100 || true
+
+      - name: Tear the throwaway cluster down
+        if: always()
+        run: task test-cluster-down
+
+  startup-live:
+    name: Het opstarten (live, alle afhankelijkheden)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # Dezelfde tools als andere live jobs, plus kind en kubectl voor het cluster.
+      - name: Install pwgen, kind, kubectl and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # STARTUP_LIVE_REQUIRED: ontbrekend adres is fout in CI (anders job groen zonder meting).
+      - name: Run the startup_live group
+        env:
+          STARTUP_LIVE_REQUIRED: '1'
+        run: task test-startup
+
+      - name: Setup state on failure
+        if: failure()
+        run: |
+          docker logs --tail 200 zad-startup-live-test-mail || true
+          docker logs --tail 100 zad-startup-live-test-db || true
+          docker logs --tail 100 zad-startup-live-test-kc || true
+          kubectl --context kind-rig-testcluster get all -A || true
+
+      - name: Tear the throwaway cluster down
+        if: always()
+        run: task test-cluster-down
+
+  # De paden van deze job zijn die van het hele filter bovenaan: de handlers, opi/manager,
+  # opi/connectors en opi/services/catalog vallen onder operations-manager/**, en de pins
+  # en de Taskfile staan er apart bij. Geen geplande run: hij hoort bij een wijziging.
+  tasks-live:
+    name: Elke taak (live, alle afhankelijkheden)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # Dezelfde tools als startup-live: de opstelling is dezelfde task.
+      - name: Install pwgen, kind, kubectl and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      # Creating a project generates its AGE key pair and encrypts with SOPS, so OPI needs
+      # both binaries; the same steps as jobs.test-shard in ci.yml.
+      - name: Install age
+        run: sudo apt-get install -y age
+      - name: Install sops
+        run: |
+          curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  /tmp/sops" | sha256sum -c -
+          chmod +x /tmp/sops
+          sudo mv /tmp/sops /usr/local/bin/sops
+          sops --version --disable-version-check
+
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # TASKS_LIVE_REQUIRED: een ontbrekend adres is hier een FOUT en geen skip. Zonder dat
+      # is deze job groen zodra de opstelling niet staat, en dan is er niets gemeten.
+      - name: Run the tasks_live group
+        env:
+          TASKS_LIVE_REQUIRED: '1'
+        run: task test-taken
+
+      - name: Setup state on failure
+        if: failure()
+        run: |
+          docker logs --tail 200 zad-startup-live-test-mail || true
+          docker logs --tail 100 zad-startup-live-test-db || true
+          docker logs --tail 100 zad-startup-live-test-kc || true
+          kubectl --context kind-rig-testcluster get all -A || true
+          kubectl --context kind-rig-testcluster get applications -n rig-system -o wide || true
+
+      - name: Tear the throwaway cluster down
+        if: always()
+        run: task test-cluster-down
 
   # Summary job that depends on all tests
   tests-passed:
@@ -257,7 +729,15 @@ jobs:
     needs:
       - lint
       - integration-tests-mock
-      - integration-tests-kind
+      - integration-tests-slow
+      - keycloak-live
+      - postgres-live
+      - minio-live
+      - forgejo-live
+      - kubernetes-live
+      - argocd-live
+      - startup-live
+      - tasks-live
     if: always()
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -268,7 +748,15 @@ jobs:
         run: |
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.integration-tests-mock.result }}" != "success" ]] || \
-             [[ "${{ needs.integration-tests-kind.result }}" != "success" ]]; then
+             [[ "${{ needs.integration-tests-slow.result }}" != "success" ]] || \
+             [[ "${{ needs.keycloak-live.result }}" != "success" ]] || \
+             [[ "${{ needs.postgres-live.result }}" != "success" ]] || \
+             [[ "${{ needs.minio-live.result }}" != "success" ]] || \
+             [[ "${{ needs.forgejo-live.result }}" != "success" ]] || \
+             [[ "${{ needs.kubernetes-live.result }}" != "success" ]] || \
+             [[ "${{ needs.argocd-live.result }}" != "success" ]] || \
+             [[ "${{ needs.startup-live.result }}" != "success" ]] || \
+             [[ "${{ needs.tasks-live.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

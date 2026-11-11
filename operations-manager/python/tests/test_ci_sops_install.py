@@ -12,6 +12,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+INTEGRATION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "integration-tests.yaml"
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
 KUSTOMIZE_DOCKERFILE = REPO_ROOT / "images" / "cmp-kustomize-sops" / "Dockerfile"
 
@@ -27,7 +28,7 @@ KUSTOMIZE_STAP = "Install kustomize"
 
 def _index_of(steps: list[dict], pattern: str) -> int:
     hits = [i for i, step in enumerate(steps) if re.search(pattern, step.get("run", ""))]
-    assert hits, f"geen stap in jobs.test-shard die {pattern!r} draait"
+    assert hits, f"geen stap in deze job die {pattern!r} draait"
     return hits[0]
 
 
@@ -39,7 +40,7 @@ def _index_of_name(steps: list[dict], name: str) -> int:
     een verbetering die niets verandert aan wat hij bewaakt.
     """
     hits = [i for i, step in enumerate(steps) if step.get("name") == name]
-    assert hits, f"geen stap in jobs.test-shard met naam {name!r}"
+    assert hits, f"geen stap in deze job met naam {name!r}"
     return hits[0]
 
 
@@ -49,10 +50,24 @@ def test_sops_is_installed_before_the_tests_run(ci_test_steps: list[dict]) -> No
     assert install < pytest_run, "sops wordt pas na de testrun geinstalleerd, de sops-tests slaan dan over"
 
 
-def test_sops_version_matches_the_dockerfile(ci_test_steps: list[dict]) -> None:
+def _tasks_live_steps() -> list[dict]:
+    return yaml.safe_load(INTEGRATION_WORKFLOW.read_text())["jobs"]["tasks-live"]["steps"]
+
+
+def test_tasks_live_installs_age_and_sops_before_the_run() -> None:
+    """Creating a project needs age-keygen and sops; without them every task fails on a 500."""
+    steps = _tasks_live_steps()
+    run = _index_of(steps, r"task test-taken")
+    assert _index_of_name(steps, "Install age") < run
+    assert _index_of_name(steps, INSTALL_STAP) < run
+
+
+@pytest.mark.parametrize("job", ["test-shard", "tasks-live"])
+def test_sops_version_matches_the_dockerfile(ci_test_steps: list[dict], job: str) -> None:
     dockerfile_version = re.search(r"^ARG SOPS_VERSION=(\S+)$", DOCKERFILE.read_text(), re.MULTILINE)
     assert dockerfile_version, "ARG SOPS_VERSION ontbreekt in de Dockerfile"
-    script = ci_test_steps[_index_of_name(ci_test_steps, INSTALL_STAP)]["run"]
+    steps = ci_test_steps if job == "test-shard" else _tasks_live_steps()
+    script = steps[_index_of_name(steps, INSTALL_STAP)]["run"]
     ci_versions = set(re.findall(r"/releases/download/(v[\d.]+)/sops-(v[\d.]+)\.", script))
     assert ci_versions == {(dockerfile_version[1], dockerfile_version[1])}, (
         f"CI haalt sops {sorted(ci_versions)}, de Dockerfile pint {dockerfile_version[1]}"

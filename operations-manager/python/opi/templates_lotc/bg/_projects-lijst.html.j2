@@ -66,7 +66,7 @@
                 title="{{ project.display_name or project.name }}"
                 sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
                 href="/projects/{{ project.name }}/details">
-                {% if korte_naam %}<c-chip><c-code>{{ korte_naam }}</c-code></c-chip>{% endif %}
+                {% if korte_naam %}<c-chip><code>{{ korte_naam }}</code></c-chip>{% endif %}
                 {% if project.last_modified %}
                     <c-chip :attrs="{'title': project.last_modified.titel}">
                         Bewerkt {{ project.last_modified.label }}

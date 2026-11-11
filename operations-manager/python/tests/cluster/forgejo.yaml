@@ -1,0 +1,82 @@
+# De Forgejo van het testcluster: waar de toetsen hun manifesten neerzetten en waar ArgoCD
+# ze ophaalt, zoals productie dat uit zad-deployments doet.
+#
+# sqlite3 en een emptyDir, net als de wegwerp-Forgejo van de groep forgejo_live: dit cluster
+# leeft een paar minuten, en de PostgreSQL-route van de sandbox vraagt CNPG en de
+# ontwikkelaarssleutel voor de SOPS-secrets. De image komt uit de pin van de sandbox-overlay,
+# ingevuld door task test-cluster-up.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rig-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo
+  namespace: rig-system
+spec:
+  type: NodePort
+  selector:
+    app: forgejo
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30300
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo
+  namespace: rig-system
+spec:
+  serviceName: forgejo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forgejo
+  template:
+    metadata:
+      labels:
+        app: forgejo
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: forgejo
+          image: ${TESTCLUSTER_FORGEJO_IMAGE}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: USER_UID
+              value: "1000"
+            - name: USER_GID
+              value: "1000"
+            - name: FORGEJO__security__INSTALL_LOCK
+              value: "true"
+            # Het adres waarop de toetsen hem aanspreken; Forgejo bouwt zijn clone-URL's
+            # hiermee op.
+            - name: FORGEJO__server__ROOT_URL
+              value: "http://localhost:${TESTCLUSTER_FORGEJO_PORT}/"
+            - name: FORGEJO__server__HTTP_PORT
+              value: "3000"
+            - name: FORGEJO__server__PROTOCOL
+              value: "http"
+            - name: FORGEJO__database__DB_TYPE
+              value: "sqlite3"
+            - name: FORGEJO__service__DISABLE_REGISTRATION
+              value: "true"
+            - name: FORGEJO__repository__DEFAULT_BRANCH
+              value: "main"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/gitea
+      volumes:
+        - name: data
+          emptyDir: {}

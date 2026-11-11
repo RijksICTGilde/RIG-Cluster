@@ -35,13 +35,14 @@
         </c-alert>
 
         {% call panel("Hoe krijg ik toegang?", "info-circle") %}
-            <c-list>
-                <c-list-item>Zorg dat je e-mailadres geverifieerd is</c-list-item>
-                <c-list-item>
+            {# Not c-list: nldd-list-item lays out text and link as separate items, which glues them together. #}
+            <nldd-rich-text><ul>
+                <li>Zorg dat je e-mailadres geverifieerd is</li>
+                <li>
                     Denk je dat dit onterecht is? Neem contact op met de
-                    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" label="platformbeheerder" />
-                </c-list-item>
-            </c-list>
+                    <nldd-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" text="platformbeheerder"></nldd-link>
+                </li>
+            </ul></nldd-rich-text>
         {% endcall %}
     {% else %}
         {{ page_head("Geen Toegang tot ZAD") }}
@@ -52,15 +53,10 @@
         </c-alert>
 
         {% call panel("Hoe krijg ik toegang?", "info-circle") %}
-            <c-list>
-                <c-list-item>
-                    Neem contact op met een collega die al een project in ZAD heeft of de
-                    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl"
-                            label="platformbeheerder"
-                            icon="info-circle"
-                            show-icon="before" />
-                </c-list-item>
-            </c-list>
+            <nldd-rich-text><p>
+                Neem contact op met een collega die al een project in ZAD heeft of de
+                <nldd-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" text="platformbeheerder"></nldd-link>
+            </p></nldd-rich-text>
         {% endcall %}
     {% endif %}
 

@@ -1,6 +1,6 @@
 # Getting started-pagina
 
-Een korte pagina voor wie nieuw is op ZAD: hoe het in elkaar zit, hoe je een hello world neerzet, hoe je code een service gebruikt en hoe je een nieuwe image uitrolt.
+Een korte pagina voor wie nieuw is op ZAD: hoe het in elkaar zit, hoe je een hello world neerzet, hoe je code een service gebruikt, welke rollen je team kan hebben en hoe je een nieuwe image uitrolt.
 
 ## Gebruik
 
@@ -10,7 +10,7 @@ De pagina vermeldt dat een webadres later te wijzigen is. Dat klopt omdat de red
 
 ## Configuratie
 
-Geen. De pagina heeft geen gegevens en geen instellingen. De tekst staat in `opi/templates_lotc/bg/_getting-started-blokken.html.j2`.
+Geen. De pagina heeft geen projectgegevens en geen instellingen. De tekst staat in `opi/templates_lotc/bg/_getting-started-blokken.html.j2`, de rollentabel komt uit `columns()` in `opi/core/authz/matrix.py`, dezelfde bron als `/rollen`.
 
 ## Voorbeeld
 

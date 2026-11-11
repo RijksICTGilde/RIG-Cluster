@@ -3,8 +3,11 @@
 import re
 from typing import TYPE_CHECKING
 
+from opi.core.authz.matrix import columns
+from opi.core.config import settings
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.registry import SERVICE_DEFINITIONS
+from opi.utils.naming import extract_domain_from_url
 from opi.web.router import getting_started
 
 if TYPE_CHECKING:
@@ -41,8 +44,19 @@ def test_postgres_list_is_complete(test_client: TestClient) -> None:
     assert {variable.value.name for variable in DatabaseVariables} <= set(re.findall(r"\bDATABASE_[A-Z_]+\b", html))
 
 
+def test_every_role_is_explained(test_client: TestClient) -> None:
+    html = test_client.get("/getting-started").text
+
+    for column in columns():
+        assert f"<td>{column.label}</td><td>{column.description}</td>" in html
+
+
 def test_named_service_exists_in_the_catalog(test_client: TestClient) -> None:
     labels = {service.name for service in SERVICE_DEFINITIONS.values()}
 
     assert "Publiceren op het web" in labels
     assert "Publiceren op het web" in test_client.get("/getting-started").text
+
+
+def test_page_shows_the_api_url(test_client: TestClient) -> None:
+    assert f"https://{extract_domain_from_url(settings.OWN_DOMAIN)}" in test_client.get("/getting-started").text

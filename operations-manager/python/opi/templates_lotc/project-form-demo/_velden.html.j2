@@ -3,7 +3,7 @@
    Was een kale <table class="lotc-table"> met eigen randen, eigen kopregelkleur en een
    <div class="debug-fields"> eromheen om te kunnen scrollen. Dat is <c-table>: de opmaak
    komt uit het thema en een grid-tabel voegt zich naar de breedte, dus het scrollvenster
-   is overbodig. De veldnaam is <c-code> in plaats van een <code> met een eigen
+   is overbodig. De veldnaam is een <code> in nldd-rich-text, zonder eigen
    achtergrondje. #}
 <c-fieldset legend="Debug: Extracted Fields">
     <c-table columns="2fr 2fr 1fr 2fr">
@@ -15,7 +15,7 @@
         </c-table-head>
         {% for field in fields %}
         <c-table-row>
-            <c-td><c-code>{{ field.name }}</c-code></c-td>
+            <c-td><nldd-rich-text><code>{{ field.name }}</code></nldd-rich-text></c-td>
             <c-td>{{ field.widget_type }}</c-td>
             <c-td>{{ "Ja" if field.required else "Nee" }}</c-td>
             <c-td>{{ field.label }}</c-td>

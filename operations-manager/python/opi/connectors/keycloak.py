@@ -6,7 +6,6 @@ the python-keycloak library, maintaining a consistent interface for the
 operations manager.
 """
 
-import json
 import logging
 import secrets
 import string
@@ -396,8 +395,8 @@ class KeycloakConnector:
     async def set_required_action_default(self, realm_name: str, alias: str, default: bool) -> None:
         """Zet of een required action aan een NIEUWE gebruiker wordt gehangen.
 
-        Zo stelt een nieuw lokaal account in een realm met verplichte OTP bij zijn eerste
-        login een authenticator-app in.
+        Keycloak maakt daarbij geen onderscheid tussen een lokaal account en een gebruiker die
+        via SSO binnenkomt (first broker login): beide krijgen de actie.
         """
         await self._update_required_action(realm_name, alias, {"defaultAction": default})
 
@@ -2473,9 +2472,11 @@ class KeycloakConnector:
         execution_id = redirector_execution.get("id")
         logger.debug(f"Found Identity Provider Redirector execution: {execution_id}")
 
-        # Configure the redirector
+        # Keycloak 26 refuses a config alias that already exists in the realm, and the realm
+        # flow and every role gate have their own redirector.
+        config_alias = f"redirector-{flow_alias}"
         config_data = {
-            "alias": provider_alias,
+            "alias": config_alias,
             "config": {"defaultProvider": provider_alias},
         }
 
@@ -2495,7 +2496,7 @@ class KeycloakConnector:
                 # Update existing config
                 update_data = {
                     "id": existing_config_id,
-                    "alias": provider_alias,
+                    "alias": config_alias,
                     "config": {"defaultProvider": provider_alias},
                 }
                 self.admin.update_authenticator_config(payload=update_data, config_id=existing_config_id)
@@ -2777,17 +2778,13 @@ class KeycloakConnector:
             self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
 
         # Configure the condition - format differs for client vs realm roles
-        if client_id:
-            # Client role: "clientId.roleName" format
-            cond_user_role = f"{client_id}.{role_name}"
-            config_alias = f"check-role-{client_id}-{role_name}"
-        else:
-            # Realm role: just "roleName"
-            cond_user_role = role_name
-            config_alias = f"check-realm-role-{role_name}"
+        # Client role: "clientId.roleName" format, realm role: just "roleName"
+        cond_user_role = f"{client_id}.{role_name}" if client_id else role_name
 
+        # Keycloak 26 refuses a config alias that already exists in the realm, and the
+        # deployments of a project share a realm and usually a role.
         config_data = {
-            "alias": config_alias,
+            "alias": f"check-role-{subflow_alias}",
             "config": {
                 "condUserRole": cond_user_role,
                 "negate": str(negate).lower(),
@@ -3155,6 +3152,9 @@ class KeycloakConnector:
         """Set CONFIGURE_TOTP on human users without OTP. Idempotent.
 
         Skips service accounts, users with existing OTP credentials, and federated users.
+        A federated user that still carries the action loses it: Keycloak hangs a realm's
+        default actions on brokered users too, so the old default of ``sso-support-otp``
+        left SSO users asked for an authenticator app.
         ``skip_usernames`` spares accounts whose non-browser logins must keep working: an
         open required action makes the password grant unusable ("Account is not fully set up").
         Returns the usernames that received the action.
@@ -3167,10 +3167,14 @@ class KeycloakConnector:
                 if username.startswith(_SERVICE_ACCOUNT_PREFIX) or username in skip_usernames:
                     continue
                 acties = list(user.get("requiredActions") or [])
-                if CONFIGURE_TOTP in acties:
-                    continue
                 user_id = user["id"]
                 if self.admin.get_user_social_logins(user_id=user_id):
+                    if CONFIGURE_TOTP in acties:
+                        acties.remove(CONFIGURE_TOTP)
+                        self.admin.update_user(user_id=user_id, payload={"requiredActions": acties})
+                        logger.info(f"Removed CONFIGURE_TOTP from federated user '{username}' in realm '{realm_name}'")
+                    continue
+                if CONFIGURE_TOTP in acties:
                     continue
                 credentials = self.admin.get_credentials(user_id=user_id)
                 if any(c.get("type") in _OTP_CREDENTIAL_TYPES for c in credentials):
@@ -3471,9 +3475,10 @@ class KeycloakConnector:
         # Step 3: Configure the authenticator with client ID, role name, error message, and skip clients
         execution_id = authenticator_execution.get("id")
         existing_config_id = authenticator_execution.get("authenticationConfig")
-        config_alias = f"require-role-{client_id or 'realm'}-{role_name}"
+        # Keycloak 26 refuses a config alias that already exists in the realm, and the
+        # deployments of a project share a realm and usually a role.
         config_data = {
-            "alias": config_alias,
+            "alias": f"require-role-{flow_alias}",
             "config": {
                 "roleName": role_name,
                 "errorMessage": error_message,
@@ -3496,8 +3501,7 @@ class KeycloakConnector:
             logger.debug(f"Updated RequireRoleAuthenticator config: role={role_desc}")
         else:
             # Create new config
-            url = f"admin/realms/{self.admin.connection.realm_name}/authentication/executions/{execution_id}/config"
-            self.admin.connection.raw_post(url, data=json.dumps(config_data))
+            self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
             logger.debug(f"Created RequireRoleAuthenticator config: role={role_desc}")
 
     async def set_identity_provider_post_broker_login_flow(

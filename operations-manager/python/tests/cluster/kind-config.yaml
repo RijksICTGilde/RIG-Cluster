@@ -1,0 +1,26 @@
+# Het wegwerpcluster waarop de groepen kubernetes_live en argocd_live meten.
+#
+# Een eigen naam en eigen poorten, zodat hij naast rig-sandbox kan draaien. De node-image
+# komt uit de pin in bootstrap/sandbox/kind-config.yaml; task test-cluster-up leest die en
+# vult hem hier in, zodat deze opstelling niet stil van de sandbox afdrijft.
+#
+# Gebruik: task test-cluster-up
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: ${TESTCLUSTER_NODE_IMAGE}
+    # Where the ingress-nginx of the sandbox runs (install-ingress-nginx selects on it).
+    # Without a controller no Ingress gets an address, and ArgoCD keeps every app that
+    # publishes on the web on Progressing.
+    labels:
+      ingress-ready: "true"
+    extraPortMappings:
+      # De Forgejo van dit cluster, als NodePort. De toetsen pushen hun manifesten er
+      # vanaf de host naartoe; ArgoCD haalt ze binnen het cluster op via zijn Service.
+      # argocd-server krijgt geen vaste poort: zijn Service is van de operator, dus die
+      # gaat via een port-forward in task test-argocd.
+      - containerPort: 30300
+        hostPort: ${TESTCLUSTER_FORGEJO_PORT}
+        listenAddress: "127.0.0.1"
+        protocol: TCP

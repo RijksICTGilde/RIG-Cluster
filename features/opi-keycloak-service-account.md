@@ -147,6 +147,35 @@ Twee dingen die deze stap niet raakt:
   aanmaak met HTTP 400 `invalidPasswordMinLengthMessage`. Bij een eerste start speelt dat
   niet, want de hardening loopt na `ensure_otp_master_admin`.
 
+## Het lightweight access token
+
+De clientpayload in `ensure_master_service_account_client()` draagt
+`client.use.lightweight.access.token.enabled: "true"`. De master-rol `admin` zet elke realm
+in het token; met 39 realms werd dat ~25 kB, en de router van ODCN beantwoordt een verzoek
+met zo'n Authorization-header met een kale 400.
+
+**Wanneer dat attribuut een cluster bereikt.** Alleen via de reparatietak hierboven, en die
+loopt alleen als client-credentials NIET werken. Dat is geen gat maar precies het geval dat
+het attribuut nodig heeft: een te groot token laat ook `connection_works()` (een
+`GET /admin/realms/master`) op die 400 lopen, dus een cluster dat tegen de grens aanloopt
+repareert zichzelf bij de volgende start. Een cluster waar het token nog klein genoeg is
+houdt een gewoon token; gemeten op de sandbox (4 realms, 3,6 kB, attribuut afwezig).
+
+Daar hangt wel een voorwaarde aan: die reparatie loopt over de ADMIN-WACHTWOORD-weg. Is
+`KEYCLOAK_ADMIN_PASSWORD` uit de omgeving gehaald, zoals de follow-up hieronder aanraadt,
+dan kan een cluster dat later over de grens groeit zichzelf niet meer repareren en faalt
+`setup_all`. Haal het wachtwoord dus pas weg als het attribuut er staat.
+
+OPI zelf leest niets uit dit token: het gaat alleen als bearer mee naar Keycloak. De
+admin-API verliest er ook geen rechten door, en dat is niet vanzelfsprekend: een lightweight
+token houdt alleen `exp, iat, jti, iss, typ, azp, sid, scope, cnf`, dus ook `realm_access` en
+`resource_access` vallen weg. `AdminAuth.hasRealmRole` en `hasAppRole` (26.8.1,
+`services/src/main/java/org/keycloak/services/resources/admin/AdminAuth.java`) lezen de rol
+echter uit de rolmapping van de service-account-gebruiker plus de scope van de client zodra
+het token een client noemt, en dat doet een client-credentials-token altijd; de claims in het
+token zijn daar alleen de terugvalweg voor. Het `_refresh_admin_token()` na `create_realm`
+blijft om zijn eigen reden staan, zie het commentaar in `keycloak.py`.
+
 ## Files
 
 - `opi/core/config.py` - `KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS`.

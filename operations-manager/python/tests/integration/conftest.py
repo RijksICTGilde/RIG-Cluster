@@ -1,53 +1,32 @@
 """
 Integration test fixtures.
 
-This module provides fixtures specific to integration tests, including
-Kind cluster management and real service connections.
+This module provides fixtures specific to integration tests and real service
+connections. The Kubernetes cluster the kubernetes_live and argocd_live groups measure on
+comes from ``task test-cluster-up``, not from a fixture: fase 2 made it one cluster that
+several groups share, and a fixture that creates and deletes it per session cannot do that.
 """
 
-import asyncio
 import logging
-import os
 import subprocess
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-import pytest_asyncio
+from opi.bootstrap.keycloak_setup import KeycloakSetup
+from opi.connectors.keycloak import create_keycloak_connector
+from opi.core.config import settings
+from opi.manager.argo_manager import ArgoManager
+from opi.manager.project_manager import ProjectManager
+from tests.integration import argocd_live, forgejo_live, keycloak_image, kubernetes_live
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Generator
 
-
-def is_kind_available() -> bool:
-    """Check if Kind CLI is available."""
-    try:
-        result = subprocess.run(
-            ["kind", "version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except FileNotFoundError, subprocess.TimeoutExpired:
-        return False
-
-
-def is_kubectl_available() -> bool:
-    """Check if kubectl CLI is available."""
-    try:
-        result = subprocess.run(
-            ["kubectl", "version", "--client"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except FileNotFoundError, subprocess.TimeoutExpired:
-        return False
+    from opi.connectors.keycloak import KeycloakConnector
 
 
 def is_docker_available() -> bool:
@@ -64,263 +43,10 @@ def is_docker_available() -> bool:
         return False
 
 
-def _create_kind_cluster(cluster_name: str, config_path: str) -> None:
-    """Create a Kind cluster if it doesn't exist."""
-    result = subprocess.run(
-        ["kind", "get", "clusters"],
-        capture_output=True,
-        text=True,
-    )
-
-    if cluster_name in result.stdout.split():
-        return  # Cluster already exists
-
-    print(f"\nCreating Kind cluster: {cluster_name}")
-    create_result = subprocess.run(
-        [
-            "kind",
-            "create",
-            "cluster",
-            "--name",
-            cluster_name,
-            "--config",
-            config_path,
-            "--wait",
-            "120s",
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    if create_result.returncode != 0:
-        pytest.fail(f"Failed to create Kind cluster: {create_result.stderr}")
-
-
-def _deploy_test_workloads(workloads_path: str) -> None:
-    """Deploy test workloads to the Kind cluster."""
-    if not os.path.exists(workloads_path):
-        return
-
-    print(f"\nDeploying test workloads from: {workloads_path}")
-    deploy_result = subprocess.run(
-        ["kubectl", "apply", "-f", workloads_path],
-        capture_output=True,
-        text=True,
-    )
-
-    if deploy_result.returncode != 0:
-        print(f"Warning: Failed to deploy test workloads: {deploy_result.stderr}")
-        return
-
-    print("\nWaiting for test deployment to be ready...")
-    wait_result = subprocess.run(
-        [
-            "kubectl",
-            "wait",
-            "--for=condition=available",
-            "deployment/log-generator",
-            "-n",
-            "test-project",
-            "--timeout=120s",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if wait_result.returncode != 0:
-        print(f"Warning: Deployment may not be ready: {wait_result.stderr}")
-
-
 # Register custom markers
 def pytest_configure(config: Any) -> None:
     """Register custom pytest markers for integration tests."""
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
-    config.addinivalue_line("markers", "docker: marks tests that require Docker")
-    config.addinivalue_line("markers", "kind: marks tests that require Kind cluster")
-
-
-@pytest.fixture(scope="session")
-def kind_cluster_name() -> str:
-    """Return the name of the test Kind cluster."""
-    return "rig-integration-test"
-
-
-@pytest.fixture(scope="session")
-def kind_config_path() -> str:
-    """Return the path to the Kind cluster configuration."""
-    return str(Path(__file__).parent.parent / "fixtures" / "kind-config.yaml")
-
-
-@pytest.fixture(scope="session")
-def test_workloads_path() -> str:
-    """Return the path to the test workloads manifest."""
-    return str(Path(__file__).parent.parent / "fixtures" / "test-workloads.yaml")
-
-
-@pytest.fixture(scope="session")
-def kind_cluster(
-    kind_cluster_name: str,
-    kind_config_path: str,
-    test_workloads_path: str,
-) -> Generator[str]:
-    """
-    Create a Kind cluster for integration tests.
-
-    This fixture is session-scoped and will:
-    1. Create a Kind cluster with the specified configuration
-    2. Deploy test workloads
-    3. Wait for workloads to be ready
-
-    The cluster is deleted again when the session ends, and the kubectl context is
-    restored to its original value. Set KEEP_TEST_CLUSTER=1 to keep it, for a develop
-    loop where recreating it every run costs more than leaving it.
-
-    Usage:
-        @pytest.mark.slow
-        @pytest.mark.kind
-        def test_real_kubectl(kind_cluster):
-            # kind_cluster is the cluster name
-            ...
-
-    Requires:
-        - Kind CLI installed
-        - kubectl CLI installed
-        - Docker running
-    """
-    if not is_kind_available():
-        pytest.skip("Kind CLI not available")
-
-    if not is_kubectl_available():
-        pytest.skip("kubectl CLI not available")
-
-    if not is_docker_available():
-        pytest.skip("Docker not available")
-
-    # Save current kubectl context so we can restore it after tests
-    original_context = None
-    try:
-        result = subprocess.run(
-            ["kubectl", "config", "current-context"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            original_context = result.stdout.strip()
-    except FileNotFoundError, subprocess.TimeoutExpired:
-        pass
-
-    _create_kind_cluster(kind_cluster_name, kind_config_path)
-
-    # Set kubectl context
-    subprocess.run(
-        ["kubectl", "config", "use-context", f"kind-{kind_cluster_name}"],
-        check=True,
-    )
-
-    _deploy_test_workloads(test_workloads_path)
-
-    yield kind_cluster_name
-
-    # Restore the original kubectl context
-    if original_context:
-        subprocess.run(
-            ["kubectl", "config", "use-context", original_context],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-    # Tear the cluster down. Setting infrastructure up and cleaning it up are the same
-    # responsibility; leaving it behind means whoever runs the tests pays for it forever.
-    # It used to be kept "for reuse during development", which is convenience for the
-    # person in the loop paid for by everyone after them: on this machine both nodes sat
-    # there until Docker OOM-killed them (exit 137), each about a gigabyte.
-    #
-    # KEEP_TEST_CLUSTER=1 keeps it, for the develop loop where recreating it every run is
-    # the bigger cost. Opt in, not the default.
-    if os.environ.get("KEEP_TEST_CLUSTER"):
-        logger.info(
-            f"KEEP_TEST_CLUSTER set; leaving cluster '{kind_cluster_name}' running. "
-            f"Remove it with: kind delete cluster --name {kind_cluster_name}"
-        )
-        return
-
-    logger.info(f"Deleting Kind cluster '{kind_cluster_name}'")
-    subprocess.run(
-        ["kind", "delete", "cluster", "--name", kind_cluster_name],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
-
-@pytest.fixture
-def kubeconfig(kind_cluster: str) -> str:
-    """
-    Get kubeconfig content for the test cluster.
-
-    Returns the kubeconfig as a string that can be written to a file
-    or used with KUBECONFIG environment variable.
-    """
-    result = subprocess.run(
-        ["kind", "get", "kubeconfig", "--name", kind_cluster],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout
-
-
-@pytest.fixture
-def kubeconfig_file(kubeconfig: str, tmp_path: Path) -> str:
-    """
-    Create a temporary kubeconfig file for the test cluster.
-
-    Returns the path to the kubeconfig file.
-    """
-    kubeconfig_path = tmp_path / "kubeconfig"
-    kubeconfig_path.write_text(kubeconfig)
-    return str(kubeconfig_path)
-
-
-@pytest.fixture
-def kubectl_env(kubeconfig_file: str) -> dict[str, str]:
-    """
-    Get environment variables for kubectl with the test cluster.
-
-    Returns a dict that can be passed to subprocess.run(env=...).
-    """
-    env = os.environ.copy()
-    env["KUBECONFIG"] = kubeconfig_file
-    return env
-
-
-@pytest_asyncio.fixture
-async def connected_kubectl_connector(kind_cluster: str) -> Any:
-    """
-    Get a KubectlConnector that is connected to the Kind test cluster.
-
-    This fixture ensures the KubectlConnector singleton is properly
-    initialized and connected to the test cluster.
-    """
-    from opi.connectors.kubectl import KubectlConnector
-
-    # Reset singleton
-    KubectlConnector._instance = None
-
-    # Create new instance
-    connector = KubectlConnector()
-
-    # Wait for connection
-    max_retries = 10
-    for _i in range(max_retries):
-        if connector.isConnected:
-            break
-        await asyncio.sleep(1)
-    else:
-        pytest.fail("Failed to connect to Kind cluster")
-
-    return connector
 
 
 @pytest.fixture
@@ -387,3 +113,166 @@ def docker_services(docker_compose_file: str) -> None:
         pytest.skip(f"Failed to start Docker services: {result.stderr}")
 
     _wait_for_postgres(compose_file)
+
+
+# ==================== De groep keycloak_live ====================
+#
+# Alle modules met de marker ``keycloak_live`` meten tegen dezelfde echte Keycloak, die
+# `task test-keycloak` opstart. Deze fixtures staan daarom hier en niet in een van die
+# modules: ze zijn modulebreed, en een tweede exemplaar per module zou een tweede
+# admin-token en een tweede bootstrap betekenen. Ze materialiseren alleen voor een toets
+# die erom vraagt, dus de rest van deze integratietoetsen merkt er niets van.
+
+
+@pytest.fixture(scope="module")
+def keycloak_url() -> str:
+    url = keycloak_image.basis_url()
+    keycloak_image.assert_local(url)
+    return url
+
+
+@pytest.fixture(scope="module")
+def api(keycloak_url: str) -> keycloak_image.AdminApi:
+    return keycloak_image.AdminApi(keycloak_url)
+
+
+@pytest.fixture(scope="module")
+def patched_settings(keycloak_url: str) -> Generator[None]:
+    """Point OPI's settings at the throwaway Keycloak for the whole module."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "KEYCLOAK_URL", keycloak_url)
+        patch.setattr(settings, "KEYCLOAK_ADMIN_USERNAME", keycloak_image.omgeving("KEYCLOAK_IMAGE_TEST_ADMIN"))
+        patch.setattr(
+            settings, "KEYCLOAK_ADMIN_PASSWORD", keycloak_image.omgeving("KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD")
+        )
+        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_ID", "opi-admin-service")
+        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_SECRET", keycloak_image.SERVICE_ACCOUNT_SECRET)
+        yield
+
+
+@pytest.fixture(scope="module")
+async def connector(patched_settings: None, api: keycloak_image.AdminApi) -> KeycloakConnector:
+    """A connector on client credentials, after OPI's own bootstrap created the account.
+
+    The bootstrap step is the production path: it uses the admin password once to create the
+    master service-account client, and everything afterwards runs on that account.
+    """
+    await KeycloakSetup().ensure_master_admin_service_account()
+    client = api.client("master", "opi-admin-service")
+    assert client["serviceAccountsEnabled"] is True
+    return await create_keycloak_connector()
+
+
+# ==================== De groep argocd_live ====================
+#
+# Alle modules met de marker ``argocd_live`` meten tegen dezelfde ArgoCD op het
+# wegwerpcluster, die `task test-cluster-up` neerzet. De opstelling staat daarom hier en
+# niet in een van die modules: hij kost een echte sync, en een tweede exemplaar per module
+# zou die twee keer doen. Ze materialiseren alleen voor een toets die erom vraagt.
+
+
+@pytest.fixture(scope="module")
+def argo_kubectl() -> kubernetes_live.Kubectl:
+    """De Kubernetes-API: de waarheid over wat ArgoCD werkelijk neerzette."""
+    kubernetes_live.assert_test_cluster()
+    return kubernetes_live.Kubectl()
+
+
+@pytest.fixture(scope="module")
+def argo_settings() -> Generator[None]:
+    """De instellingen van OPI op de ArgoCD van het wegwerpcluster, voor de hele module.
+
+    Ook ``CLUSTER_MANAGER``, want de managers leiden de ArgoCD-namespace daaruit af, en op
+    dit cluster staat ArgoCD waar hij op de sandbox staat.
+    """
+    argocd_live.assert_local()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        patch.setattr(settings, "ARGOCD_HOST", argocd_live.host())
+        patch.setattr(settings, "ARGOCD_PORT", argocd_live.port())
+        patch.setattr(settings, "ARGOCD_TOKEN", argocd_live.token())
+        patch.setattr(settings, "ARGOCD_USERNAME", "admin")
+        patch.setattr(settings, "ARGOCD_PASSWORD", argocd_live.admin_password())
+        patch.setattr(settings, "ARGOCD_USE_TLS", argocd_live.use_tls())
+        patch.setattr(settings, "ARGOCD_VERIFY_SSL", False)
+        yield
+
+
+@pytest.fixture(scope="module")
+def argo_forgejo() -> Generator[forgejo_live.ForgejoApi]:
+    """De Forgejo van het wegwerpcluster, waar de manifesten in staan."""
+    api = forgejo_live.ForgejoApi()
+    yield api
+    api.drop_token()
+
+
+@pytest.fixture(scope="module")
+async def deployed_app(
+    argo_settings: None,
+    argo_kubectl: kubernetes_live.Kubectl,
+    argo_forgejo: forgejo_live.ForgejoApi,
+) -> AsyncGenerator[argocd_live.DeployedApp]:
+    """Een Application die ArgoCD echt heeft uitgerold, langs de weg van productie.
+
+    De manifesten komen uit ``ArgoManager``: de AppProject en de Application zijn die van
+    productie, met de CMP-plugin en het syncPolicy-blok eromheen, want juist daar zitten de
+    valkuilen die de scenario's meten (PruneLast, selfHeal, prune).
+
+    De umbrella-Application die ze in productie toepast, bestaat op dit cluster niet; de
+    opstelling doet die ene stap met kubectl.
+    """
+    opstelling = argocd_live.DeployedApp(
+        app=f"{argocd_live.PREFIX}-app",
+        app_project=f"{argocd_live.PREFIX}-project",
+        namespace=f"{argocd_live.PREFIX}-argo",
+        repo=f"{argocd_live.PREFIX}-manifests",
+        repo_url=argocd_live.repo_url_in_cluster(forgejo_live.admin_user(), f"{argocd_live.PREFIX}-manifests"),
+        workload=f"{argocd_live.PREFIX}-web",
+    )
+    argocd_live.drop_everything(opstelling, argo_kubectl, argo_forgejo)
+
+    argo_forgejo.fresh_repo(
+        opstelling.repo,
+        files={
+            "kustomization.yaml": "resources:\n  - deployment.yaml\n",
+            "deployment.yaml": argocd_live.workload_manifest(
+                opstelling.workload, opstelling.namespace, kubernetes_live.WORKLOAD_IMAGE
+            ),
+        },
+    )
+    await argocd_live.prepare_destination_namespace(opstelling.namespace, argo_kubectl)
+    argo_kubectl.apply(
+        argocd_live.repository_secret_manifest(
+            f"{argocd_live.PREFIX}-repo", opstelling.repo_url, forgejo_live.admin_user(), argo_forgejo.token
+        )
+    )
+
+    manager = ArgoManager(ProjectManager())
+    argo_kubectl.apply(
+        manager.generate_appproject_manifest(
+            name=opstelling.app_project,
+            namespace=argocd_live.ARGO_NAMESPACE,
+            destination_namespace=opstelling.namespace,
+            project_label=argocd_live.PREFIX,
+            source_repos=[opstelling.repo_url],
+        )
+    )
+    argo_kubectl.apply(
+        manager.generate_application_manifest(
+            name=opstelling.app,
+            namespace=argocd_live.ARGO_NAMESPACE,
+            argo_project=opstelling.app_project,
+            repo_url=opstelling.repo_url,
+            target_revision="main",
+            repo_path=".",
+            destination_namespace=opstelling.namespace,
+            project_label=argocd_live.PREFIX,
+        )
+    )
+
+    await manager.wait_for_application_created(opstelling.app)
+    await manager.wait_for_application_synced(opstelling.app)
+
+    yield opstelling
+
+    argocd_live.drop_everything(opstelling, argo_kubectl, argo_forgejo)

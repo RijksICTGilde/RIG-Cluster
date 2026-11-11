@@ -63,7 +63,7 @@
                 <c-paragraph size="sm">{{ service.summary }}</c-paragraph>
             {% endif %}
 
-            <c-paragraph size="sm" color="grijs-500">API naam: <c-code>{{ service.name }}</c-code></c-paragraph>
+            <c-paragraph size="sm" color="grijs-500">API naam: <code>{{ service.name }}</code></c-paragraph>
         </c-stack>
 
         {# 4: de omgevingsvariabelen #}
@@ -82,12 +82,12 @@
                                normale grootte erft de code die maat, en strong maakt het
                                verschil met de aliassen eronder ook zonder op de grootte te
                                hoeven letten. #}
-                            <c-paragraph><strong><c-code>{{ variable.name }}</c-code></strong></c-paragraph>
+                            <c-paragraph><strong><code>{{ variable.name }}</code></strong></c-paragraph>
                             {% if variable.aliases %}
                                 {# Aliassen als code, net als in het origineel: het zijn namen die je
                                    letterlijk overtypt, en dan helpt vaste breedte. #}
                                 <c-paragraph size="sm" color="grijs-500">Aliassen:
-                                    {% for alias in variable.aliases %}<c-code>{{ alias }}</c-code>{% if not loop.last %}, {% endif %}{% endfor %}
+                                    {% for alias in variable.aliases %}<code>{{ alias }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
                                 </c-paragraph>
                             {% endif %}
                             <c-paragraph size="sm" color="grijs-500">{{ variable.description }}</c-paragraph>

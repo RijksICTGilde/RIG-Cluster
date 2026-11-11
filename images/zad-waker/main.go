@@ -5,11 +5,11 @@
 // and ask ZAD to wake the deployment. This is that pod. It shares the app's Service
 // and Ingress (same app label), so while the app has zero pods the waker is the only
 // endpoint; once the app is back its readiness probe flips and it takes itself out of
-// the EndpointSlice again.
+// the EndpointSlice, and when the app sleeps again it flips back and takes over.
 //
 // Design goals: minimal footprint (100m CPU / 64Mi), non-root, no writable paths,
-// single-flight wake (a hundred simultaneous visitors cause exactly one wake call),
-// and no questions asked on behalf of nobody (see idlePollInterval).
+// single-flight wake (a hundred simultaneous visitors cause exactly one wake call per
+// sleep cycle), and no questions asked on behalf of nobody (see idlePollInterval).
 package main
 
 import (
@@ -23,7 +23,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -106,14 +105,16 @@ func firstNonEmpty(values ...string) string {
 
 // waker holds the mutable state shared across handlers.
 type waker struct {
-	cfg           config
-	client        *http.Client
-	once          sync.Once    // single-flight: one wake call per pod lifetime
-	appReady      atomic.Bool  // true once the app is back; flips /__zad/ready to 503
-	state         atomic.Value // "idle" | "waking" | "ready" | "error"
-	started       time.Time
-	lastVisitor   atomic.Int64  // UnixNano of the last request from someone who is waiting
-	wakeRequested atomic.Bool   // this pod asked ZAD to wake the deployment
+	cfg         config
+	client      *http.Client
+	appReady    atomic.Bool  // true while the app is back; /__zad/ready answers 503, and flips back when the app sleeps again
+	state       atomic.Value // "idle" | "waking" | "ready" | "error"
+	started     time.Time
+	lastVisitor atomic.Int64 // UnixNano of the last request from someone who is waiting
+	// wakeRequested is also the wake's single-flight guard (see wake): it latches true for
+	// as long as this wake cycle runs, and is cleared only when the app has been back AND
+	// has gone to sleep again, so the next visitor of the next sleep cycle wakes afresh.
+	wakeRequested atomic.Bool
 	nudge         chan struct{} // wakes the poller from its slow cadence at once
 }
 
@@ -137,18 +138,21 @@ func (w *waker) currentState() string {
 
 // waiting reports whether anyone is waiting for the status answer right now.
 //
-// Two situations count, and nothing else does. A visitor whose browser is on the waker
+// Three situations count, and nothing else does. A visitor whose browser is on the waker
 // page polls /__zad/status every two seconds, so a recent request there (or on the page
 // itself) means a human is looking at a spinner. And a wake this pod asked for is in
 // progress, which means the app is cold-starting while traffic arrives, so the handover
-// has to be noticed the moment it happens -- even if that visitor closed the tab.
+// has to be noticed the moment it happens -- even if that visitor closed the tab. Once
+// the app IS back the answer is no longer awaited here at all: the visitor has been
+// handed over to the real app, so only the idle cadence remains for noticing the wake
+// cycle is over and the app has gone back to sleep.
 //
 // A wake that FAILED is not in progress; it must not hold the fast cadence for the rest
 // of the pod's life. The probes (/__zad/healthz, /__zad/ready) deliberately do not count:
 // the kubelet hits those constantly, and treating them as visitors would mean the waker
 // always considers someone to be waiting -- which is the situation this replaces.
 func (w *waker) waiting() bool {
-	if w.wakeRequested.Load() && w.currentState() != "error" {
+	if w.wakeRequested.Load() && !w.appReady.Load() && w.currentState() != "error" {
 		return true
 	}
 	last := w.lastVisitor.Load()
@@ -191,59 +195,67 @@ func (w *waker) kick() {
 	}
 }
 
-// wake asks ZAD to wake the deployment, exactly once, with a small retry/backoff.
+// wake asks ZAD to wake the deployment. The CompareAndSwap is the single-flight: a
+// hundred simultaneous visitors cause exactly one wake call per sleep cycle. The guard
+// is released when the app has gone back to sleep (checkStatus), so a pod that survives
+// its own sleep cycle can wake the next one; a failed wake stays latched, as before.
 // In manual mode it never runs (an admin wakes via the UI/API); the poller still
 // detects that and takes the waker out of traffic.
 func (w *waker) wake() {
 	if w.cfg.mode == "manual" {
 		return
 	}
-	w.once.Do(func() {
-		w.state.Store("waking")
-		// A wake is now in progress, so the handover matters even if the visitor walks
-		// away: poll at the fast cadence and check straight away.
-		w.wakeRequested.Store(true)
-		w.kick()
-		url := fmt.Sprintf("%s/api/sleep-mode/%s/%s/wake", w.cfg.apiURL, w.cfg.project, w.cfg.deployment)
-		var lastErr error
-		for attempt := 1; attempt <= 3; attempt++ {
-			req, err := http.NewRequest(http.MethodPost, url, nil)
-			if err != nil {
-				lastErr = err
-				break
-			}
-			req.Header.Set("X-Wake-Token", w.cfg.token)
-			resp, err := w.client.Do(req)
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode < 300 {
-					log.Printf("wake requested for %s/%s (status %d)", w.cfg.project, w.cfg.deployment, resp.StatusCode)
-					return
-				}
-				lastErr = fmt.Errorf("wake returned status %d", resp.StatusCode)
-			} else {
-				lastErr = err
-			}
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+	if !w.wakeRequested.CompareAndSwap(false, true) {
+		return
+	}
+	w.state.Store("waking")
+	// A wake is now in progress, so the handover matters even if the visitor walks
+	// away: poll at the fast cadence and check straight away.
+	w.kick()
+	url := fmt.Sprintf("%s/api/sleep-mode/%s/%s/wake", w.cfg.apiURL, w.cfg.project, w.cfg.deployment)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, url, nil)
+		if err != nil {
+			lastErr = err
+			break
 		}
-		log.Printf("wake failed for %s/%s: %v", w.cfg.project, w.cfg.deployment, lastErr)
-		w.state.Store("error")
-	})
+		req.Header.Set("X-Wake-Token", w.cfg.token)
+		resp, err := w.client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode < 300 {
+				log.Printf("wake requested for %s/%s (status %d)", w.cfg.project, w.cfg.deployment, resp.StatusCode)
+				return
+			}
+			lastErr = fmt.Errorf("wake returned status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(time.Duration(attempt) * 2 * time.Second)
+	}
+	log.Printf("wake failed for %s/%s: %v", w.cfg.project, w.cfg.deployment, lastErr)
+	w.state.Store("error")
 }
 
 // poll runs for the pod's lifetime, checking ZAD's status endpoint. As soon as the app
-// is back it marks itself ready, which makes /__zad/ready return 503 so Kubernetes
-// removes the waker from the Service endpoints -- the app takes over with no gap.
+// is back the waker marks it ready, which makes /__zad/ready return 503 so Kubernetes
+// removes the waker from the Service endpoints -- the app takes over with no gap. When
+// the app goes back to sleep the waker steps back in: this pod may well survive its own
+// sleep cycle (nothing guarantees the waker Deployment is replaced between two sleeps),
+// and a pod that cannot step back in would answer 503 forever in front of a re-sleeping
+// deployment -- no endpoints at all on the Service, and no way to wake it.
 //
 // It asks at two speeds. While someone is waiting for the answer it asks every
 // pollInterval (3s), exactly as before: that person must not wait longer than they used
 // to. While nobody is waiting it drops to idlePollInterval, because a sleeping deployment
 // with zero visitors used to cost 1200 status calls per hour -- each one a kubectl call
-// against the apiserver -- for an answer nobody read.
+// against the apiserver -- for an answer nobody read. The same idle cadence applies while
+// the app is awake: the waiting party has moved to the real app.
 //
 // It never stops asking. That is the point of the slow cadence rather than a pause: a
-// wake started from zadctl, the API or the portal has no browser behind it, and the pod
-// only learns the app is back by asking.
+// wake started from zadctl, the API or the portal has no browser behind it, and a sleep
+// has no messenger at all -- the pod learns both only by asking.
 func (w *waker) poll(ctx context.Context) {
 	url := fmt.Sprintf("%s/api/sleep-mode/%s/%s/status", w.cfg.apiURL, w.cfg.project, w.cfg.deployment)
 	timer := time.NewTimer(w.nextInterval())
@@ -263,9 +275,7 @@ func (w *waker) poll(ctx context.Context) {
 			}
 		case <-timer.C:
 		}
-		if !w.appReady.Load() {
-			w.checkStatus(ctx, url)
-		}
+		w.checkStatus(ctx, url)
 		timer.Reset(w.nextInterval())
 	}
 }
@@ -273,7 +283,10 @@ func (w *waker) poll(ctx context.Context) {
 // checkStatus asks ZAD once whether the app behind the waker is back.
 //
 // It reads the "state" field and only that: starting | ready is the poll contract and it
-// is the same in every version of ZAD (see the sleep-mode API models).
+// is the same in every version of ZAD (see the sleep-mode API models). Anything else --
+// a non-200 response, a half-written body, a state this image does not know -- changes
+// nothing: the cost of staying in an old state one cadence longer beats flipping on a
+// word that was not the contract. Transitions are logged once, on the flip itself.
 func (w *waker) checkStatus(ctx context.Context, url string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -284,15 +297,28 @@ func (w *waker) checkStatus(ctx context.Context, url string) {
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
 	var body struct {
 		State string `json:"state"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&body)
-	resp.Body.Close()
-	if body.State == "ready" {
-		w.appReady.Store(true)
+	switch body.State {
+	case "ready":
+		if !w.appReady.Swap(true) {
+			log.Printf("app %s/%s is back; waker stepping out of traffic", w.cfg.project, w.cfg.deployment)
+		}
 		w.state.Store("ready")
-		log.Printf("app %s/%s is back; waker stepping out of traffic", w.cfg.project, w.cfg.deployment)
+	case "starting":
+		// The app went back to sleep. Step in again: serve traffic, and release the
+		// wake's single-flight so this sleep cycle's first visitor triggers a fresh call.
+		if w.appReady.Swap(false) {
+			w.wakeRequested.Store(false)
+			w.state.Store("idle")
+			log.Printf("app %s/%s went back to sleep; waker stepping into traffic", w.cfg.project, w.cfg.deployment)
+		}
 	}
 }
 
@@ -302,7 +328,8 @@ func (w *waker) handleHealthz(rw http.ResponseWriter, _ *http.Request) {
 }
 
 // handleReady is deliberately inverted: 200 while the app is NOT back (so the waker
-// serves traffic), 503 once it is (so the waker leaves the EndpointSlice).
+// serves traffic), 503 once it is (so the waker leaves the EndpointSlice). The flip is
+// not one way: when the app sleeps again this returns to 200 and the waker is back.
 func (w *waker) handleReady(rw http.ResponseWriter, _ *http.Request) {
 	if w.appReady.Load() {
 		rw.WriteHeader(http.StatusServiceUnavailable)

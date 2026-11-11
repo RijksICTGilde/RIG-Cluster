@@ -207,7 +207,6 @@ class CloneDatabaseResult(BaseModel):
 
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
-    rows_copied: int | None = None
     error: str | None = None
     error_type: str | None = None
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
@@ -218,7 +217,6 @@ class CloneBucketResult(BaseModel):
 
     source: dict[str, Any] = Field(default_factory=dict)
     target: dict[str, Any] = Field(default_factory=dict)
-    objects_copied: int | None = None
     error: str | None = None
     error_type: str | None = None
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD

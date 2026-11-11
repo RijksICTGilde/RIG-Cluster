@@ -2287,7 +2287,8 @@ class GitConnector:
         self._closed = True
         # TODO: rethink cleanup logic.. for now, we always remove the working directory on close
         # if self.should_cleanup and self.working_dir and os.path.exists(self.working_dir):
-        if await self.has_changes():
+        # has_changes() kloont opnieuw en zou de clone-fout over de task-fout heen gooien.
+        if self._repo_cloned and await self.has_changes():
             logger.warning(
                 f"Repository {self.name} for project {self.project_name} has uncommitted changes but is being closed."
             )

@@ -15,10 +15,10 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
-from opi.services.project_roles import roles_from_value
+from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
-from opi.utils.age import encrypt_age_content, wrap_project_key
+from opi.utils.age import encrypt_age_content, ensure_base64_age_sync, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
@@ -436,21 +436,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
             status_code=500,
             detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
         )
-    # Het projectbestand mag nooit een platte PAT dragen: waar de env hem meegeeft in
-    # platte vorm versleutelen we hem hier voor hij op schijf landt; blijft hij als
-    # base64+age staan dan is hij al versleuteld en laten we hem precies zo.
-    from opi.utils.age import (
-        _encrypt_with_age_and_base64encode_as_prefixed_string,
-        decrypt_password_smart,
-        parse_password_with_prefix,
-    )
-
-    form, _ = parse_password_with_prefix(repo_password)
-    if form != "base64+age":
-        plain_password = await decrypt_password_smart(repo_password, settings.SOPS_AGE_PRIVATE_KEY)
-        repo_password = await _encrypt_with_age_and_base64encode_as_prefixed_string(
-            plain_password, settings.SOPS_AGE_PUBLIC_KEY
-        )
+    repo_password = ensure_base64_age_sync(repo_password, settings.SOPS_AGE_PRIVATE_KEY, settings.SOPS_AGE_PUBLIC_KEY)
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
@@ -643,7 +629,7 @@ async def generate_base_project_file(
         display_name: Human-readable name
         description: Project description
         cluster: Cluster the project targets
-        owner_email: The creator, recorded as the project's admin
+        owner_email: The creator, recorded as a member with ``CREATOR_ROLES``
 
     Returns:
         A tuple of the project file as a dict, and the plaintext API key of the
@@ -665,7 +651,7 @@ async def generate_base_project_file(
         issuer=None,
         contact_email=None,
         user_email=[owner_email],
-        user_roles=["admin"],
+        user_roles=[sorted(rol.value for rol in CREATOR_ROLES)],
         services=[],
         components=None,
     )

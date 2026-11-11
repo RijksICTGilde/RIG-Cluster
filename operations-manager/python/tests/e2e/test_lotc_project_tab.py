@@ -132,12 +132,12 @@ AANROEPEN_VAN_HET_PROJECTTABBLAD = {
     "openEditModal('modal-edit-component-2', 'Component toevoegen')",
     "openEditModal('modal-edit-keycloak-config', 'Keycloak Authentication configuratie')",
     "openEditModal('modal-edit-postgresql-schemas', 'PostgreSQL Database configuratie')",
-    "openServiceModal('/projects/test-project-detail/actions/delete-component/confirm?target=web-app', "
+    "openConfirmAction('/projects/test-project-detail/actions/delete-component/confirm?target=web-app', "
     "'Component verwijderen')",
-    "openServiceModal('/projects/test-project-detail/actions/delete-component/confirm?target=worker', "
+    "openConfirmAction('/projects/test-project-detail/actions/delete-component/confirm?target=worker', "
     "'Component verwijderen')",
-    "openServiceModal('/projects/test-project-detail/actions/refresh-project/confirm', 'Project herverwerken')",
-    "openServiceModal('/projects/test-project-detail/actions/delete-project/confirm', 'Project verwijderen')",
+    "openConfirmAction('/projects/test-project-detail/actions/refresh-project/confirm', 'Project herverwerken')",
+    "openConfirmAction('/projects/test-project-detail/actions/delete-project/confirm', 'Project verwijderen')",
 }
 #: Hier stond ``copyToClipboard('.config-code', event, '.config-item')``. Die aanroep is
 #: bewust weg: onder "Configuratie & Secrets" staat elke waarde nu in een

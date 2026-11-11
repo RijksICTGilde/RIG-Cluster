@@ -340,73 +340,13 @@ class TestBackupScheduleSectionRendering:
 
 
 # ---------------------------------------------------------------------------
-# Editable definition tests
-# ---------------------------------------------------------------------------
-
-
-class TestDeploymentBackupScheduleEditable:
-    """Tests for the DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE definition."""
-
-    def test_editable_exists(self) -> None:
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE is not None
-
-    def test_yaml_path(self) -> None:
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE.yaml_path == "deployments[*]/backup/schedule"
-
-    def test_values_provider(self) -> None:
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE.values_provider == "BackupScheduleFrequencyOptionsProvider"
-
-    def test_remove_when_none(self) -> None:
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE.remove_when_none is True
-
-    def test_has_converter(self) -> None:
-        from opi.forms.editables.converters import RRuleFrequencyConverter
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-
-        assert isinstance(DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE.converter, RRuleFrequencyConverter)
-
-
-# ---------------------------------------------------------------------------
 # Visualizer definition tests
 # ---------------------------------------------------------------------------
 
 
 class TestDeploymentBackupScheduleVisualizer:
-    """Tests for the DEPLOYMENT_BACKUP_SCHEDULE visualizer."""
-
-    def test_visualizer_exists(self) -> None:
-        from opi.forms.visualizers.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE is not None
-
-    def test_widget_type(self) -> None:
-        from opi.forms.visualizers.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE.widget == WidgetType.SELECT
-
-    def test_label(self) -> None:
-        from opi.forms.visualizers.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE.label == "Herhaling"
-
-    def test_has_help_text(self) -> None:
-        from opi.forms.visualizers.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE.help_text is not None
-
-    def test_editable_reference(self) -> None:
-        from opi.forms.editables.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
-        from opi.forms.visualizers.fields.deployments import DEPLOYMENT_BACKUP_SCHEDULE
-
-        assert DEPLOYMENT_BACKUP_SCHEDULE.editable is DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE
+    """Wat de declaratie van het veld moet DOEN meet TestBackupScheduleSectionRendering
+    hierboven op de gerenderde HTML. Hier blijft alleen de afspraak met de javascript."""
 
     def test_has_data_rerender_attribute(self) -> None:
         """Frequency select must trigger re-render so dependent fields show/hide."""

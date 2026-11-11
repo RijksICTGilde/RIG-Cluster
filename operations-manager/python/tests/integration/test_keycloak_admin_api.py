@@ -6,215 +6,44 @@ silently ignores unknown fields, so "no exception" proves nothing.
 
 The connector runs in production authentication mode: the service account
 ``opi-admin-service``, created by OPI's own bootstrap. Requires ``KEYCLOAK_IMAGE_TEST_URL``
-(set by ``task test-keycloak-image``) and skips without it. Coverage is guarded by
-``tests/test_keycloak_admin_api_coverage.py``.
+(set by ``task test-keycloak``) and skips without it. Coverage is guarded by
+``tests/test_live_group_coverage.py``.
 """
 
 from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 import pytest
 from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
-from opi.connectors.keycloak import RealmType, create_keycloak_connector
+from opi.connectors.keycloak import RealmType
 from opi.core.config import settings
-from tests.integration.keycloak_image import TIMEOUT, admin_token, basis_url, omgeving
+from tests.integration.keycloak_image import (
+    SERVICE_ACCOUNT_SECRET,
+    TIMEOUT,
+    USER_PASSWORD,
+    AdminApi,
+    assert_realm_consistent,
+    execution,
+    omgeving,
+    subflow,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from opi.connectors.keycloak import KeycloakConnector
 
-pytestmark = pytest.mark.requires_infra
+pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 
 #: Prefix of every realm this module creates, so leftovers are recognisable.
 REALM_PREFIX = "adminapi-"
 
-#: The service-account secret the bootstrap step creates the client with. Throwaway: it
-#: only ever reaches the Keycloak this module starts against.
-SERVICE_ACCOUNT_SECRET = "rc413-throwaway-service-account-secret"
-
-#: Password for the users these tests create. Long enough for the master password policy
-#: (length(14)); placeholder form so the secret scan recognises it as one.
-USER_PASSWORD = "example-Wachtwoord-1234"
-
-#: Master access tokens live 60 seconds by default, so the read-back channel mints a new
-#: one well before that.
-TOKEN_MAX_AGE = 30.0
-
-
-def _assert_local(url: str) -> None:
-    """Refuse to run against anything but a Keycloak on this machine.
-
-    This module creates and deletes realms and hardens the master realm. Pointed at a
-    shared or production Keycloak it would be destructive, so the address decides whether
-    it may run at all.
-    """
-    host = urlparse(url).hostname
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        pytest.fail(
-            f"KEYCLOAK_IMAGE_TEST_URL points at '{host}'. This module creates and deletes realms "
-            "and only ever runs against a throwaway Keycloak on localhost."
-        )
-
-
-class AdminApi:
-    """Read-back channel over the admin API, independent of the connector under test."""
-
-    def __init__(self, url: str) -> None:
-        self._url = url
-        self._token = ""
-        self._minted = 0.0
-
-    @property
-    def headers(self) -> dict[str, str]:
-        if time.monotonic() - self._minted > TOKEN_MAX_AGE:
-            self._token = admin_token(self._url)
-            self._minted = time.monotonic()
-        return {"Authorization": f"Bearer {self._token}"}
-
-    def get(self, path: str, **params: Any) -> Any:
-        answer = httpx.get(f"{self._url}{path}", headers=self.headers, params=params, timeout=TIMEOUT)
-        assert answer.status_code == 200, f"GET {path}: {answer.status_code} {answer.text}"
-        return answer.json()
-
-    def status(self, path: str) -> int:
-        return httpx.get(f"{self._url}{path}", headers=self.headers, timeout=TIMEOUT).status_code
-
-    def delete(self, path: str) -> int:
-        return httpx.delete(f"{self._url}{path}", headers=self.headers, timeout=TIMEOUT).status_code
-
-    def realm(self, realm_name: str) -> dict[str, Any]:
-        return self.get(f"/admin/realms/{realm_name}")
-
-    def clients(self, realm_name: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/clients")
-
-    def client(self, realm_name: str, client_id: str) -> dict[str, Any]:
-        found = [c for c in self.clients(realm_name) if c["clientId"] == client_id]
-        assert found, f"Client '{client_id}' not found in realm '{realm_name}'"
-        return found[0]
-
-    def client_or_none(self, realm_name: str, client_id: str) -> dict[str, Any] | None:
-        return next((c for c in self.clients(realm_name) if c["clientId"] == client_id), None)
-
-    def idp(self, realm_name: str, alias: str) -> dict[str, Any]:
-        return self.get(f"/admin/realms/{realm_name}/identity-provider/instances/{alias}")
-
-    def idp_mappers(self, realm_name: str, alias: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/identity-provider/instances/{alias}/mappers")
-
-    def required_action(self, realm_name: str, alias: str) -> dict[str, Any]:
-        actions = self.get(f"/admin/realms/{realm_name}/authentication/required-actions")
-        found = [a for a in actions if a["alias"] == alias]
-        assert found, f"Required action '{alias}' not registered in realm '{realm_name}'"
-        return found[0]
-
-    def flows(self, realm_name: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/authentication/flows")
-
-    def executions(self, realm_name: str, flow_alias: str) -> list[dict[str, Any]]:
-        quoted = flow_alias.replace(" ", "%20")
-        return self.get(f"/admin/realms/{realm_name}/authentication/flows/{quoted}/executions")
-
-    def authenticator_config(self, realm_name: str, config_id: str) -> dict[str, Any]:
-        return self.get(f"/admin/realms/{realm_name}/authentication/config/{config_id}")
-
-    def user(self, realm_name: str, username: str) -> dict[str, Any]:
-        users = self.get(f"/admin/realms/{realm_name}/users", username=username, exact="true")
-        assert users, f"User '{username}' not found in realm '{realm_name}'"
-        return users[0]
-
-    def credential_types(self, realm_name: str, user_id: str) -> set[str]:
-        credentials = self.get(f"/admin/realms/{realm_name}/users/{user_id}/credentials")
-        return {c["type"] for c in credentials}
-
-    def realm_roles_of_user(self, realm_name: str, user_id: str) -> set[str]:
-        roles = self.get(f"/admin/realms/{realm_name}/users/{user_id}/role-mappings/realm")
-        return {r["name"] for r in roles}
-
-    def client_roles_of_user(self, realm_name: str, user_id: str, client_uuid: str) -> set[str]:
-        roles = self.get(f"/admin/realms/{realm_name}/users/{user_id}/role-mappings/clients/{client_uuid}")
-        return {r["name"] for r in roles}
-
-    def default_role_composites(self, realm_name: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/roles/default-roles-{realm_name}/composites")
-
-    def client_scopes(self, realm_name: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/client-scopes")
-
-    def default_realm_scopes(self, realm_name: str) -> set[str]:
-        scopes = self.get(f"/admin/realms/{realm_name}/default-default-client-scopes")
-        return {s["name"] for s in scopes}
-
-    def default_client_scopes(self, realm_name: str, client_uuid: str) -> set[str]:
-        scopes = self.get(f"/admin/realms/{realm_name}/clients/{client_uuid}/default-client-scopes")
-        return {s["name"] for s in scopes}
-
-    def scope_mappers(self, realm_name: str, scope_id: str) -> list[dict[str, Any]]:
-        return self.get(f"/admin/realms/{realm_name}/client-scopes/{scope_id}/protocol-mappers/models")
-
-    def user_profile(self, realm_name: str) -> dict[str, Any]:
-        return self.get(f"/admin/realms/{realm_name}/users/profile")
-
-    def drop_realm(self, realm_name: str) -> None:
-        self.delete(f"/admin/realms/{realm_name}")
-
-
-def execution(executions: list[dict[str, Any]], provider_id: str) -> dict[str, Any]:
-    found = [e for e in executions if e.get("providerId") == provider_id]
-    assert found, f"No '{provider_id}' execution; present: {[e.get('displayName') for e in executions]}"
-    return found[0]
-
-
-def subflow(executions: list[dict[str, Any]], display_name: str) -> dict[str, Any]:
-    found = [e for e in executions if e.get("displayName") == display_name and e.get("authenticationFlow")]
-    assert found, f"No subflow '{display_name}'; present: {[e.get('displayName') for e in executions]}"
-    return found[0]
-
 
 # ==================== Fixtures ====================
-
-
-@pytest.fixture(scope="module")
-def keycloak_url() -> str:
-    url = basis_url()
-    _assert_local(url)
-    return url
-
-
-@pytest.fixture(scope="module")
-def api(keycloak_url: str) -> AdminApi:
-    return AdminApi(keycloak_url)
-
-
-@pytest.fixture(scope="module")
-def patched_settings(keycloak_url: str) -> Iterator[None]:
-    """Point OPI's settings at the throwaway Keycloak for the whole module."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(settings, "KEYCLOAK_URL", keycloak_url)
-        patch.setattr(settings, "KEYCLOAK_ADMIN_USERNAME", omgeving("KEYCLOAK_IMAGE_TEST_ADMIN"))
-        patch.setattr(settings, "KEYCLOAK_ADMIN_PASSWORD", omgeving("KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD"))
-        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_ID", "opi-admin-service")
-        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_SECRET", SERVICE_ACCOUNT_SECRET)
-        yield
-
-
-@pytest.fixture(scope="module")
-async def connector(patched_settings: None, api: AdminApi) -> KeycloakConnector:
-    """A connector on client credentials, after OPI's own bootstrap created the account.
-
-    The bootstrap step is the production path: it uses the admin password once to create
-    the master service-account client, and everything afterwards runs on that account.
-    """
-    await KeycloakSetup().ensure_master_admin_service_account()
-    client = api.client("master", "opi-admin-service")
-    assert client["serviceAccountsEnabled"] is True
-    return await create_keycloak_connector()
 
 
 @pytest.fixture
@@ -949,6 +778,60 @@ class TestFlows:
         assert subflow(executions, "gate-realm-otp")["requirement"] == "REQUIRED"
         assert execution(executions, "conditional-user-configured")["requirement"] == "DISABLED"
 
+    async def test_each_deployment_gate_in_a_realm_gets_its_own_config(
+        self, connector: KeycloakConnector, api: AdminApi, keycloak_url: str, made_realm: str
+    ) -> None:
+        """Keycloak 26 refuses a config alias that already exists in the realm.
+
+        Deployments of a project share a realm and usually a role, so every step here runs
+        twice, and again to prove a reprocess leaves both gates as they are.
+        """
+        await connector.add_identity_provider(
+            realm_name=made_realm,
+            provider_alias="sso-rijk",
+            display_name="SSO Rijk",
+            client_id="broker-client",
+            client_secret="broker-secret",
+            discovery_url=f"{keycloak_url}/realms/master/.well-known/openid-configuration",
+        )
+        await connector.configure_sso_redirect_flow(made_realm, "sso-rijk")
+        await connector.create_realm_role(made_realm, "allowed-user")
+
+        for _ in range(2):
+            for deployment in ("one", "two"):
+                await connector.create_restricted_browser_flow_realm_role(
+                    realm_name=made_realm,
+                    flow_alias=f"gate-{deployment}",
+                    role_name="allowed-user",
+                    redirect_to_idp="sso-rijk",
+                )
+                await connector.create_post_broker_login_flow_realm_role(
+                    realm_name=made_realm,
+                    flow_alias=f"post-broker-{deployment}",
+                    role_name="allowed-user",
+                )
+
+        for deployment in ("one", "two"):
+            gate = api.executions(made_realm, f"gate-{deployment}")
+            condition = execution(gate, "conditional-user-role")
+            assert (
+                api.authenticator_config(made_realm, condition["authenticationConfig"])["config"]["condUserRole"]
+                == "allowed-user"
+            )
+            redirector = execution(gate, "identity-provider-redirector")
+            assert (
+                api.authenticator_config(made_realm, redirector["authenticationConfig"])["config"]["defaultProvider"]
+                == "sso-rijk"
+            )
+            # Without its config this step fails every SSO login in the realm.
+            authenticator = execution(
+                api.executions(made_realm, f"post-broker-{deployment}"), "require-client-role-authenticator"
+            )
+            assert (
+                api.authenticator_config(made_realm, authenticator["authenticationConfig"])["config"]["roleName"]
+                == "allowed-user"
+            )
+
     async def test_set_client_authentication_flow_override_stores_the_flow_id(
         self, connector: KeycloakConnector, api: AdminApi, made_realm: str
     ) -> None:
@@ -1395,6 +1278,9 @@ class TestBootstrapFlow:
             assert "https://zad.example.invalid/*" in opi_client["redirectUris"]
             assert opi_client["attributes"]["pkce.code.challenge.method"] == "S256"
 
+            for realm_name in ("rig-platform", OPERATIONS_REALM_NAME):
+                assert_realm_consistent(api, realm_name, step="first bootstrap")
+
             first = {
                 "platform_flows": sorted(flow["alias"] for flow in api.flows("rig-platform")),
                 "operations_flows": sorted(flow["alias"] for flow in api.flows(OPERATIONS_REALM_NAME)),
@@ -1416,6 +1302,8 @@ class TestBootstrapFlow:
                 ),
             }
             assert second == first
+            for realm_name in ("rig-platform", OPERATIONS_REALM_NAME):
+                assert_realm_consistent(api, realm_name, step="second bootstrap")
         finally:
             api.drop_realm(OPERATIONS_REALM_NAME)
             api.drop_realm("rig-platform")

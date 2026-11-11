@@ -27,7 +27,7 @@
                         <c-stack gap="xs">
                             <strong>Uitnodigingslink</strong>
                             <c-cluster gap="sm" align="center">
-                                <c-code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</c-code>
+                                <nldd-rich-text><code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</code></nldd-rich-text>
                                 <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
                                           class="copy-btn" @click="{{ kopieer }}" />
                             </c-cluster>
@@ -37,14 +37,14 @@
                     {% if invite.realm_roles %}
                         <c-stack gap="xs">
                             <strong>Toegekende rollen</strong>
-                            <c-code>{{ invite.realm_roles | join(', ') }}</c-code>
+                            <nldd-rich-text><code>{{ invite.realm_roles | join(', ') }}</code></nldd-rich-text>
                         </c-stack>
                     {% endif %}
 
                     {% if invite.contact_email %}
                         <c-stack gap="xs">
                             <strong>Contact</strong>
-                            <c-code>{{ invite.contact_email }}</c-code>
+                            <nldd-rich-text><code>{{ invite.contact_email }}</code></nldd-rich-text>
                         </c-stack>
                     {% endif %}
                 </c-stack>

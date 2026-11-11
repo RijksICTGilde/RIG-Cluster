@@ -275,9 +275,9 @@ class TestCreateProject:
         assert project["description"] == "Nog een test"
         assert project["clusters"] == ["local"]
 
-    def test_the_creator_becomes_the_admin(self, created: Any) -> None:
+    def test_the_creator_gets_every_role(self, created: Any) -> None:
         mensen = [lid for lid in created["project"]["users"] if lid.get("type") != "service-account"]
-        assert mensen == [{"email": CALLER, "roles": ["admin", "ops"]}]
+        assert mensen == [{"email": CALLER, "roles": ["admin", "developer", "ops"]}]
 
     def test_nothing_is_declared_to_run_yet(self, created: Any) -> None:
         """Explicitly no deployment: that is configured afterwards."""

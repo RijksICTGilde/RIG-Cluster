@@ -410,6 +410,43 @@ class TestGitopsFolderInventory:
         assert mappen["weg-xyz"]["path"] == f"{cluster}/weg-xyz"
 
     @pytest.mark.asyncio
+    async def test_the_infrastructure_folder_follows_its_project(self, tmp_path) -> None:
+        """``<project>-infrastructure`` holds the project's database cluster Application."""
+        cluster = "sandboxed-local"
+        repo = AsyncMock()
+        repo.list_tree = AsyncMock(
+            return_value=[
+                f"{cluster}/leeft-abc-infrastructure/kustomization.yaml",
+                f"{cluster}/weg-xyz-infrastructure/kustomization.yaml",
+            ]
+        )
+
+        with (
+            patch("opi.jobs.service_orphan_sweep.get_git_repo", MagicMock(return_value=repo)),
+            patch("opi.jobs.service_orphan_sweep.credentials_from_repo_config", MagicMock()),
+        ):
+            report = await sweep([{"name": "leeft-abc", "deployments": []}], cluster=cluster)
+
+        mappen = {entry["path"]: entry for entry in report["gitops_folders"]}
+        assert mappen[f"{cluster}/leeft-abc-infrastructure"]["classification"] == "expected"
+        assert mappen[f"{cluster}/weg-xyz-infrastructure"]["classification"] == CONFIRMABLE
+
+    @pytest.mark.asyncio
+    async def test_the_bootstrap_folder_is_expected(self, tmp_path) -> None:
+        """``_bootstrap`` keeps user-applications from rendering empty; removing it undoes that."""
+        cluster = "sandboxed-local"
+        repo = AsyncMock()
+        repo.list_tree = AsyncMock(return_value=[f"{cluster}/_bootstrap/kustomization.yaml"])
+
+        with (
+            patch("opi.jobs.service_orphan_sweep.get_git_repo", MagicMock(return_value=repo)),
+            patch("opi.jobs.service_orphan_sweep.credentials_from_repo_config", MagicMock()),
+        ):
+            report = await sweep([], cluster=cluster)
+
+        assert report["gitops_folders"][0]["classification"] == "expected"
+
+    @pytest.mark.asyncio
     async def test_de_inventaris_leest_de_laatste_stand(self, tmp_path) -> None:
         """Zonder een sync wordt er geoordeeld op een stand die willekeurig oud kan zijn."""
         repo = AsyncMock()

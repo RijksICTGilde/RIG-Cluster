@@ -40,11 +40,16 @@ import httpx
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
 from tests.docker_runtime import DockerError, container_state, docker
+from tests.image_pins import base_image_from_dockerfile
 
 
 class AuthwallHarnessError(DockerError):
     """De opstelling kon niet opgebouwd worden. Luid falen, nooit stil."""
 
+
+#: Het Dockerfile van de Keycloak-image van het platform; zijn FROM is de versie die
+#: productie draait.
+KEYCLOAK_ZAD_DOCKERFILE = "images/keycloak-zad/Dockerfile"
 
 #: Vaste namen, want daar draait dit ontwerp om: wat een mens kan noemen, kan hij opruimen.
 KEYCLOAK_CONTAINER = "zad-test-keycloak"
@@ -52,7 +57,9 @@ PROXY_CONTAINER = "zad-test-authwall-proxy"
 PROXY_IMAGE = "zad-test-authwall-proxy:local"
 NETWORK = "zad-test-authwall"
 
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:25.0.6"
+#: De basis van onze eigen Keycloak-image: lees hem uit het Dockerfile, niet hardgecodeerd.
+#: Hardcoded versies drijven stil af van wat productie werkelijk draait.
+KEYCLOAK_IMAGE = base_image_from_dockerfile(KEYCLOAK_ZAD_DOCKERFILE)
 KEYCLOAK_ADMIN = "admin"
 KEYCLOAK_ADMIN_PASSWORD = "adminadmin"
 
@@ -325,6 +332,7 @@ async def login(client: httpx.AsyncClient, gebruiker: str, wachtwoord: str, pad:
     """
     antwoord = await client.get(f"{proxy_url()}/oauth2/start", params={"rd": pad})
     for _ in range(12):
+        _send_secure_cookies_to_loopback(client)
         if antwoord.is_redirect:
             doel = naar_host(urljoin(str(antwoord.request.url), antwoord.headers["location"]))
             antwoord = await client.get(doel)
@@ -337,6 +345,18 @@ async def login(client: httpx.AsyncClient, gebruiker: str, wachtwoord: str, pad:
             data={"username": gebruiker, "password": wachtwoord, "credentialId": ""},
         )
     raise AuthwallHarnessError("de inlogflow bleef rondlopen zonder ergens uit te komen")
+
+
+def _send_secure_cookies_to_loopback(client: httpx.AsyncClient) -> None:
+    """Let the Secure cookies of 127.0.0.1 go over http, as a browser does.
+
+    Keycloak 26 marks its session cookies Secure. A browser treats a loopback address as a
+    secure context and sends them anyway; httpx does not, and Keycloak then answers the login
+    form with 400 "Restart login cookie not found".
+    """
+    for cookie in client.cookies.jar:
+        if cookie.domain == "127.0.0.1":
+            cookie.secure = False
 
 
 def _inlogformulier_actie(html: str) -> str | None:

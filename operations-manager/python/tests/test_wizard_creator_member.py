@@ -11,10 +11,10 @@ from opi.core.project_schema import _load_latest_schema
 from opi.web.router_wizard import creator_as_member
 
 
-def test_the_creator_is_a_valid_admin_member() -> None:
+def test_the_creator_is_a_valid_member_with_every_role() -> None:
     schema = _load_latest_schema()
     member_schema = {**schema["$defs"]["user"], "$defs": schema["$defs"]}
     member = creator_as_member("maker@example.nl")
 
     assert list(Draft202012Validator(member_schema).iter_errors(member)) == []
-    assert member["roles"] == ["admin"]
+    assert member["roles"] == ["admin", "developer", "ops"]

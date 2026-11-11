@@ -254,7 +254,7 @@ testpaths = [
 # impose it. Once installed it shuffles by default, which would reorder the ~6300 unit
 # tests on every run as a side effect of a change that is about the E2E layer. So it is
 # off here and switched on deliberately by `task test-e2e-random`.
-addopts = "--strict-markers -v -q -p no:randomly -m 'not requires_infra and not e2e'"
+addopts = "--strict-markers -v -q -p no:randomly -m 'not requires_infra and not e2e and not wide'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"
@@ -264,6 +264,7 @@ log_cli_level = "INFO"
 faulthandler_timeout = 60
 markers = [
    "slow: marks tests as slow",
+   "wide: de brede laag - een echte database of een echte binary, buiten de standaardrun (docs/development/toetsen.md)",
    "enable_auth: marks tests that require authentication",
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
    "e2e: marks end-to-end browser tests (require playwright and chromium)",
@@ -272,6 +273,14 @@ markers = [
    "punt14: gerichte jacht op punt 14 uit de zad-cli-doorlopen (deployment_not_found); buiten de standaard sandboxrun",
    "serial: tests in this module depend on each other by design and keep their file order, also under pytest-randomly",
    "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)",
+   "keycloak_live: meet tegen een echte Keycloak uit de eigen image; draait met `task test-keycloak`",
+   "postgres_live: meet tegen een echte PostgreSQL in de gepinde versie; draait met `task test-postgres`",
+   "minio_live: meet tegen een echte MinIO in de gepinde versie; draait met `task test-minio`",
+   "forgejo_live: meet tegen een echte Forgejo in de gepinde versie; draait met `task test-forgejo`",
+   "kubernetes_live: meet tegen een echte Kubernetes-API op het wegwerpcluster; draait met `task test-kubernetes`",
+   "argocd_live: meet tegen een echte ArgoCD in de gepinde versie; draait met `task test-argocd`",
+   "startup_live: meet het hele opstarten van OPI tegen alle echte afhankelijkheden; draait met `task test-startup`",
+   "tasks_live: meet elk TaskType van begin tot eind tegen alle echte afhankelijkheden; draait met `task test-taken`",
    "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun"
 ]
 pythonpath = "."

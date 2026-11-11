@@ -146,6 +146,8 @@ Bepaal eerst welke van de twee je doet. Ze lopen door dezelfde fasen; alleen sta
 
 Doe je A en moet de token later alsnog om, dan is dat stap 7: een tokenronde op zichzelf, met dezelfde eindtoets erachter.
 
+**C. Alleen de token.** De token is uitgelekt, de platformsleutel niet. Dan draait alleen `replace-git-pat.py`, met dezelfde sleutel als `--old-key` en `--new-key`. Er schuift dan niets naar een andere sleutel: alleen een bestand of secret dat de huidige token draagt wordt herschreven, en een projectbestand met `plain:<token>` komt er versleuteld uit. `rotate-sops-key.py --assert-old-key-dead` weigert twee keer dezelfde sleutel, want die eindtoets gaat over de sleutel. De eindtoets van C is een tweede dry-run van `replace-git-pat.py` met dezelfde twee tokenbestanden en `--old-key security/key.txt --new-key security/key.txt`: die moet nergens meer iets te vervangen vinden.
+
 Waarom die vlaggen alleen bij B horen: `--pat-current-file` eist dat geen enkel veld nog naar de oude token ontsleutelt. In A is die token niet vervangen, dus dat zou terecht overal rood melden.
 
 ## Gebruik

@@ -106,18 +106,28 @@ def mock_auth_project_service() -> Any:
         yield mock_service
 
 
+@pytest.fixture(scope="module")
+def v2_app() -> FastAPI:
+    """Build the app once for this module: `create_app` costs half a second per call.
+
+    The per-test mocks hang off the app state and off module-level patches, not off the
+    app itself, so one app is enough for the whole module.
+    """
+    from opi.server import create_app
+
+    return create_app()
+
+
 @pytest.fixture
 def v2_client(
     mock_settings: Any,
     mock_task_service: AsyncMock,
     mock_auth_project_service: Any,
+    v2_app: FastAPI,
 ) -> TestClient:
     """Create a TestClient with task_service on app state for V2 testing."""
-    from opi.server import create_app
-
-    app: FastAPI = create_app()
-    app.state.task_service = mock_task_service
-    return TestClient(app)
+    v2_app.state.task_service = mock_task_service
+    return TestClient(v2_app)
 
 
 def _assert_accepted(response: Any, expected_task_type: str) -> dict:

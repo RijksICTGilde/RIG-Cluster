@@ -123,7 +123,7 @@
                     <c-stack gap="sm">
                         <c-cluster gap="sm" align="center">
                             <c-icon icon="rectangle-stack" size="sm" />
-                            <c-code>{{ helm_chart.reference }}</c-code>
+                            <nldd-rich-text><code>{{ helm_chart.reference }}</code></nldd-rich-text>
                         </c-cluster>
                         {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
                             {% set waarden = helm_chart['helm-values'] | length %}
@@ -148,7 +148,7 @@
                     <c-stack gap="sm">
                         <c-cluster gap="sm" align="center">
                             <c-icon icon="rectangle-stack" size="sm" />
-                            <c-code>{{ helmfile.reference }}</c-code>
+                            <nldd-rich-text><code>{{ helmfile.reference }}</code></nldd-rich-text>
                         </c-cluster>
                         {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
                             {% set waarden = helmfile['helm-values'] | length %}

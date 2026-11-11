@@ -27,7 +27,7 @@ from tests.integration.keycloak_image import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.requires_infra
+pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 
 #: Provider-id per SPI, gelezen uit de factories en de META-INF/services-bestanden van
 #: `images/keycloak-zad/extensions/`, niet uit het plan. De SPI-namen komen uit `getName()` van de

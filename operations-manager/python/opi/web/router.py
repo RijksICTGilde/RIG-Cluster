@@ -14,7 +14,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
+from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.config import settings
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.step_up import StepUpAction, is_elevated_admin
@@ -50,6 +52,7 @@ from opi.services.zad_map.project import usage_targets
 from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
+from opi.utils.naming import extract_domain_from_url
 from opi.utils.totp import totp_now
 from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
@@ -263,7 +266,14 @@ async def getting_started(request: Request):
 
     BEWUST ZONDER ``@requires_sso``: public like /introductie, it is for people without access yet.
     """
-    return _wegwijzer(request, "getting-started.html.j2", "bg/getting-started.html.j2", "/getting-started")
+    return _wegwijzer(
+        request,
+        "getting-started.html.j2",
+        "bg/getting-started.html.j2",
+        "/getting-started",
+        rollen=columns(),
+        api_url=f"https://{extract_domain_from_url(settings.OWN_DOMAIN)}",
+    )
 
 
 @web_router.get("/permission-denied", response_class=HTMLResponse)
@@ -2860,8 +2870,8 @@ async def actions_pagina(request: Request):
     return _wegwijzer(request, "actions.html.j2", "bg/actions.html.j2", "/actions")
 
 
-def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
-    """Een pagina zonder eigen gegevens: alleen de schil en zijn navigatie."""
+def _wegwijzer(request: Request, roos: str, lotc: str, pad: str, **context: object):
+    """Een pagina zonder projectgegevens: de schil, zijn navigatie en wat ``context`` meegeeft."""
     user = get_current_user(request)
     from opi.web.navigation_lotc import get_navigation
 
@@ -2872,6 +2882,7 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
             "request": request,
             "menu_items": get_menu_items(user),
             "navigation": get_navigation(user, current_path=pad),
+            **context,
         },
     )
 

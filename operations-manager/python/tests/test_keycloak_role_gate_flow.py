@@ -323,6 +323,90 @@ async def test_ook_de_clientrolpoort_stuurt_door() -> None:
     assert config["config"] == {"defaultProvider": "rig-platform-oidc"}
 
 
+# ---------------------------------------------------------------------------
+# Keycloak 26 weigert een config-alias die al in het realm bestaat
+# ---------------------------------------------------------------------------
+#
+# De oude aliassen hingen aan de rol of de identity provider, niet aan de flow: twee
+# deployments met dezelfde rol (het gewone geval, want restrict-access staat op
+# projectniveau) kregen dus letterlijk dezelfde alias. Op 25.0.6 accepteerde Keycloak
+# dat gewoon; 26.8.1 geeft een 409 op de tweede. De aliassen volgen nu de flow, die al
+# per deployment uniek is. Een integratietoets tegen een echte 26.8.1 bewijst de 409
+# weg (`tests/integration/test_keycloak_admin_api.py`); deze toetsen vangen snel, zonder
+# Docker, de regressie dat de aliassen weer gedeeld worden.
+
+
+@pytest.mark.asyncio
+async def test_de_conditie_configalias_is_unique_per_flow() -> None:
+    connector, admin = _connector()
+    ander_flow = role_gate_flow_alias("proj-app-2")
+
+    await _bouw(connector)
+    await connector.create_restricted_browser_flow_realm_role(
+        realm_name="realm-a", flow_alias=ander_flow, role_name="allowed-user"
+    )
+
+    condities = [c for c in admin.configs.values() if c["config"].get("condUserRole") == "allowed-user"]
+    assert len(condities) == 2
+    aliassen = {c["alias"] for c in condities}
+    assert len(aliassen) == 2, "twee deployments met dezelfde rol botsen anders op dezelfde alias in Keycloak 26"
+
+
+@pytest.mark.asyncio
+async def test_de_redirector_configalias_is_unique_per_flow() -> None:
+    connector, admin = _connector()
+    ander_flow = role_gate_flow_alias("proj-app-2")
+
+    await _bouw(connector, redirect_to_idp="rig-platform-oidc")
+    await connector.create_restricted_browser_flow_realm_role(
+        realm_name="realm-a", flow_alias=ander_flow, role_name="allowed-user", redirect_to_idp="rig-platform-oidc"
+    )
+
+    aliassen = {c["alias"] for c in admin.configs.values() if c["config"].get("defaultProvider") == "rig-platform-oidc"}
+    assert len(aliassen) == 2, "beide poorten sturen door naar dezelfde IdP en botsen anders op dezelfde alias"
+
+
+@pytest.mark.asyncio
+async def test_de_post_broker_configalias_volgt_de_flow_en_is_unique_per_deployment() -> None:
+    """``_add_require_role_authenticator`` is de enige plek die nog ``raw_post`` gebruikte;
+    FakeAdmin heeft die methode niet, dus een terugval daarop laat deze toets falen op een
+    AttributeError in plaats van de alias te controleren."""
+    connector, admin = _connector()
+
+    await connector.create_post_broker_login_flow_realm_role(
+        realm_name="realm-a", flow_alias="post-broker-one", role_name="allowed-user"
+    )
+    await connector.create_post_broker_login_flow_realm_role(
+        realm_name="realm-a", flow_alias="post-broker-two", role_name="allowed-user"
+    )
+
+    config_one = admin.configs[
+        _stap(admin, "post-broker-one", "require-client-role-authenticator")["authenticationConfig"]
+    ]
+    config_two = admin.configs[
+        _stap(admin, "post-broker-two", "require-client-role-authenticator")["authenticationConfig"]
+    ]
+
+    assert config_one["alias"] == "require-role-post-broker-one"
+    assert config_two["alias"] == "require-role-post-broker-two"
+    assert config_one["config"]["roleName"] == "allowed-user"
+    assert "clientId" not in config_one["config"], "een realm-rol mag geen clientId in de config krijgen"
+
+
+@pytest.mark.asyncio
+async def test_de_post_broker_rolcontrole_overleeft_opnieuw_toepassen() -> None:
+    """Elke reprocess bouwt deze flow opnieuw op; de execution en zijn config mogen niet verdubbelen."""
+    connector, admin = _connector()
+
+    for _ in range(2):
+        await connector.create_post_broker_login_flow_realm_role(
+            realm_name="realm-a", flow_alias="post-broker-one", role_name="allowed-user"
+        )
+
+    assert _namen(admin, "post-broker-one") == ["require-client-role-authenticator"]
+    assert len(admin.configs) == 1
+
+
 @pytest.mark.asyncio
 async def test_een_clientrol_geeft_de_template_net_zo_goed_door() -> None:
     """De manager kent twee wegen naar de poort; ze horen allebei de blauwdruk te dragen."""

@@ -226,7 +226,7 @@ config:
 Declarative Kustomize manifests that bootstrap the cluster itself - PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{sandboxed-local,odcn}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
-A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-thema) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
+A Python 3.14 FastAPI app with a web UI (Jinja2 + the NLDD Designsysteem; Lord of the Components is legacy) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
 
 ## Where To Find Things
 
@@ -256,13 +256,18 @@ A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-t
 ## Testing
 
 ### Rules
-- **Only run tests for changed files** - never run the full suite blindly
+- **Only run tests for changed files** - `task test-changed` picks them, or name them yourself; never run the whole suite blindly
+- **The suite has layers** and `docs/development/toetsen.md` says when each one runs: `task test` is the fast layer, `task test-wide` the broad one (a real database, real binaries), the live groups measure the real dependencies, `task test-e2e*` the browser
 - **90% coverage minimum** is enforced (`fail_under = 90` in `pyproject.toml`)
-- Default pytest config excludes `requires_infra` and `e2e` markers automatically (`addopts = "... -m 'not requires_infra and not e2e'"`)
+- Default pytest config excludes `requires_infra`, `e2e` and `wide` markers automatically (`addopts = "... -m 'not requires_infra and not e2e and not wide'"`)
 - Post-dev validation is mandatory: `ruff check . --fix`, `ruff format .`, `pyright`
 
 ### Commands (all from `operations-manager/python/`)
 ```bash
+task test-changed                                              # the tests for what you changed
+task test                                                      # the fast layer
+task test-wide                                                 # the broad layer (the database half needs Docker)
+task test-inventaris                                           # what the suite consists of and where the time goes
 uv run pytest tests/test_specific_file.py -x -q --tb=short   # targeted test
 uv run pytest tests/forms/ -q                                  # form tests
 uv run pytest tests/e2e/ -m "e2e and not sandbox" -q           # Playwright E2E (local test server)
@@ -271,9 +276,9 @@ uv run pytest tests/integration/ -m requires_infra -q          # integration (ne
 ```
 
 ### Test Layout
-- `tests/test_*.py` - ~520 unit-test files (root level), ~10.300 tests in the default run
-- `tests/forms/test_*.py` - 27 form-specific test files
-- `tests/integration/` - 7 integration test files (API endpoints, auth, kubectl); the infra-dependent ones self-skip or are marked `requires_infra`
+- `tests/test_*.py` - 858 unit-test files (root level). Counts age fast, so read them off `task test-inventaris` rather than from here; in november 2026 it was ~15.800 tests in the fast layer and ~3.000 in the broad one
+- `tests/forms/test_*.py` - 34 form-specific test files
+- `tests/integration/` - 21 integration test files (API endpoints, auth, kubectl, and the live groups per dependency); the infra-dependent ones self-skip or are marked `requires_infra`
 - `tests/e2e/` - 95 Playwright browser-test files, 605 tests (524 local + 81 live-sandbox, incl. the `reallife` and `punt14` subsets)
 - `tests/golden/` - golden manifest snapshots and the flow registry
 - `tests/conftest.py` - 20+ fixtures mocking connectors, services, settings
@@ -305,9 +310,9 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 - Type annotations required on all function parameters and return types
 - Specific exceptions only - no `except Exception`. Let exceptions bubble up in new code
 - No emojis anywhere (code, comments, logs)
-- Components: attributes are kebab-case, samenstellingen krijgen kinderen in plaats van data-props, en Jinja mag niet op attribuutpositie (`:prop="expr"` / `:attrs="<dict>"`). Zie `features/lotc-bouwlijn.md`; de oude ROOS-referentie is met de bibliotheek verdwenen.
+- Components: gebruik de `<nldd-*>` web components van het NLDD Designsysteem (https://nederlandsedigitaledienst.github.io/design-system/). Lord of the Components (`<c-*>`) is legacy en mag worden vervangen als je het tegenkomt; voor bestaande `<c-*>` gelden nog de regels uit `features/lotc-bouwlijn.md` (kebab-case attributen, kinderen in plaats van data-props, geen Jinja op attribuutpositie). De oude ROOS-referentie is met de bibliotheek verdwenen.
 - Principles: KISS, YAGNI, SOLID, DRY - no premature abstractions, no "just in case" features
 
 ## Tech Stack Summary
 
-FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + lord-of-the-components, OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)
+FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + NLDD Designsysteem (Lord of the Components is legacy), OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)

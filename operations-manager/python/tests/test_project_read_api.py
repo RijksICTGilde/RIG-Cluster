@@ -197,12 +197,11 @@ def mock_project_service() -> Any:
 
 
 @pytest.fixture
-def client(mock_settings: Any, mock_project_service: Any) -> TestClient:
+def client(mock_settings: Any, mock_project_service: Any, app_schoon: FastAPI) -> TestClient:
     """A TestClient with the crypto, the cluster backends and the task service canned."""
-    from opi.server import create_app
     from opi.utils.naming import generate_argocd_application_name
 
-    app: FastAPI = create_app()
+    app = app_schoon
 
     argo_mock = MagicMock()
     argo_mock.ensure_authenticated = AsyncMock(return_value=True)

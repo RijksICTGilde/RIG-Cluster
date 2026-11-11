@@ -89,9 +89,8 @@ staat ruimt ze op als kloonpuin.
 | Naamguard | `opi/connectors/postgres.py` (`validate_cloneable_schema_name`), `opi/utils/patterns.py` |
 | Ontdekken en melden | `opi/manager/database_manager.py` (`_resolve_application_schemas`) |
 | De dump | `opi/connectors/postgres.py` (`clone_schema`, `_execute_pgdump_clone`) |
-| Tests | `tests/test_multi_schema.py`, `tests/test_clone_all_schemas.py` (`requires_infra`) |
+| Tests | `tests/test_multi_schema.py`, `tests/integration/test_postgres_live.py` (`postgres_live` groep) |
 
-De `requires_infra`-tests meten dit tegen een echte PostgreSQL 17, inclusief foreign keys
-in beide richtingen tussen twee schema's van de applicatie, een view eroverheen, het
-eigendom van de doelrol en beide faalpaden. Hoe je ze aanwijst staat bovenaan
-`tests/test_clone_all_schemas.py`.
+De live-tests meten dit tegen een echte PostgreSQL 17 (dezelfde versie als productie),
+inclusief foreign keys in beide richtingen tussen twee schema's van de applicatie, een view
+eroverheen, het eigendom van de doelrol en beide faalpaden. Draai ze met `task test-postgres`.

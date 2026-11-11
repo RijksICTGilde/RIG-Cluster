@@ -205,7 +205,11 @@ class SleepModeScheduler:
             await project_manager.save_and_commit_project(
                 project_data, f"sleep-mode: sweep {project_name} ({', '.join(applied)})"
             )
-            await trigger_reprocessing(project_name, filename, None, argocd_resources_changed=False)
+            # Scoped to what the sweep touched: waiting on the whole project would let an
+            # unhealthy deployment outside this run fail every sweep it is not part of.
+            await trigger_reprocessing(
+                project_name, filename, None, argocd_resources_changed=False, deployment_names=applied
+            )
             return True
         finally:
             await project_manager.close()

@@ -37,6 +37,7 @@ from opi.utils.naming import (
     _sanitize_for_identifier,
     _sanitize_for_lowercase,
     generate_deployment_mail_account_name,
+    generate_infrastructure_argocd_folder_path,
     generate_keycloak_client_id,
     generate_mail_account_name,
     generate_project_platform_client_id,
@@ -44,6 +45,10 @@ from opi.utils.naming import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: The folder the bootstrap places beside the projects in the argo-applications repo; the
+#: source and the reason are in bootstrap/argo-user-applications/_bootstrap/.
+BOOTSTRAP_FOLDER = "_bootstrap"
 
 SYSTEM_DATABASES = {"postgres", "template0", "template1", "keycloak", "operations_manager", "forgejo"}
 BUILTIN_KEYCLOAK_CLIENTS = {
@@ -373,11 +378,23 @@ async def sweep(
         tip = await repo.sync(credentials)
 
         bekende_projecten = {p.get("name") for p in project_yamls if p.get("name")}
+        # Named by the same helper that writes them, so the two cannot drift apart.
+        infrastructuurmappen = {
+            generate_infrastructure_argocd_folder_path(cluster, str(naam)).rsplit("/", 1)[-1]
+            for naam in bekende_projecten
+        }
         # Een projectmap bestaat alleen als er iets in staat: {cluster}/{project}/<bestand>.
         mappen = {delen[1] for pad in await repo.list_tree(cluster, tip) if len(delen := pad.split("/")) > 2}
         for map_naam in sorted(mappen):
             if map_naam in bekende_projecten:
                 classification, reason = "expected", "belongs to an existing project"
+            elif map_naam in infrastructuurmappen:
+                classification, reason = "expected", "the infrastructure of an existing project"
+            elif map_naam == BOOTSTRAP_FOLDER:
+                classification, reason = (
+                    "expected",
+                    "placed by the bootstrap, keeps user-applications from rendering empty",
+                )
             else:
                 classification, reason = (
                     CONFIRMABLE,

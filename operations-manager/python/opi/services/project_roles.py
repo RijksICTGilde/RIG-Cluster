@@ -34,6 +34,10 @@ LEGACY_ROLES: dict[str, frozenset[Role]] = {
 #: Wat een platformbeheerder op ELK project heeft, zoals hij nu overal ``admin`` krijgt (B6).
 PLATFORM_ADMIN_ROLES: frozenset[Role] = frozenset({Role.ADMIN, Role.OPS})
 
+#: What the creator of a new project gets. Admin alone manages members but cannot edit the
+#: project: that takes developer or ops.
+CREATOR_ROLES: frozenset[Role] = frozenset({Role.ADMIN, Role.OPS, Role.DEVELOPER})
+
 
 def roles_from_value(value: Any) -> frozenset[Role]:
     """De rollen uit een opgeslagen waarde: één oude rol of een lijst sleutels.

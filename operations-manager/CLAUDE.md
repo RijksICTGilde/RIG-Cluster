@@ -192,11 +192,17 @@ uv run pytest tests/ -k "test_name" -q     # Specific test
 
 Note: templates live in `opi/templates_lotc/`; `opi/templates/` (jinja-roos) is gone since RC-67.
 
+The suite has two layers: `task test` is the fast one, `task test-wide` the broad one (a
+real database, real binaries). `task test-changed` runs what your change touches, and
+`docs/development/toetsen.md` says when which layer runs.
+
 ### The test Postgres
 
-The 80 ORM-backed tests (the `orm_db` fixture) need a real Postgres. They share **one**
-long-lived container named `zad-test-postgres` on port 55432 (`ZAD_TEST_PG_PORT` to change
-it), and each pytest run gets its own database inside it, dropped when the run ends.
+The ORM-backed tests (the `orm_db` fixture) are the broad layer, and `tests/conftest.py`
+marks them `wide` on that fixture, so the default run leaves them out. They need a real
+Postgres, and they share **one** long-lived container named `zad-test-postgres` on port
+55432 (`ZAD_TEST_PG_PORT` to change it); each pytest run gets its own database inside it,
+dropped when the run ends.
 Databases left by a run that died are swept by a later run.
 
 The container is supposed to stay up between runs -- that is what stops it from ever

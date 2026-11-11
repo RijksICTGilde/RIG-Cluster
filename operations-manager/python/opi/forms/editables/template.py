@@ -14,6 +14,7 @@ from ruamel.yaml import YAML
 
 from opi.core.config import settings
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
+from opi.utils.age import ensure_base64_age_sync
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-template.yaml"
 _PLACEHOLDER_RE = re.compile(r"\$\{(\w+)\}")
@@ -45,4 +46,9 @@ def load_project_template() -> dict[str, Any]:
         data = yaml.load(f)
     resolved = _resolve_placeholders(data or {})
     resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
+    # The placeholder brings the setting as is, and the env may carry it plain.
+    for repo in resolved.get("repositories", []):
+        repo["password"] = ensure_base64_age_sync(
+            repo["password"], settings.SOPS_AGE_PRIVATE_KEY, settings.SOPS_AGE_PUBLIC_KEY
+        )
     return resolved

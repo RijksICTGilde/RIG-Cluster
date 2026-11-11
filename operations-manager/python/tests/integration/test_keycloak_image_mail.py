@@ -30,7 +30,7 @@ from tests.integration.keycloak_image import TIMEOUT, admin_token, basis_url, om
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.requires_infra
+pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 
 MAIL_REALM = "rc412-mail"
 MAIL_GEBRUIKER = "mailtoets"

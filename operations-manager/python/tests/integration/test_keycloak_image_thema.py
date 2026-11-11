@@ -32,12 +32,12 @@ import httpx
 import pytest
 from opi.utils.totp import TOTP_PERIOD, totp_now
 from tests.integration import keycloak_image
-from tests.integration.keycloak_image import TIMEOUT, tijdelijke_realm
+from tests.integration.keycloak_image import TIMEOUT, browser_client, form_action, tijdelijke_realm
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.requires_infra
+pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 
 THEMA = "nl-design-system"
 REALM = "rc424-thema"
@@ -89,15 +89,6 @@ def _redirect(basis_url: str, realm: str = REALM) -> str:
     een 404, en dat is genoeg: wat gemeten wordt is de URL waar de flow uitkomt.
     """
     return f"{basis_url}/realms/{realm}/rc424-klaar"
-
-
-def _form_action(pagina: str, form_id: str) -> str:
-    """De action-URL van het formulier met dit id, in de volgorde waarin het er staat."""
-    tag = re.search(rf"<form[^>]*\bid=\"{re.escape(form_id)}\"[^>]*>", pagina)
-    assert tag is not None, f"geen formulier met id {form_id} in de pagina:\n{pagina[:3000]}"
-    action = re.search(r'\baction="([^"]+)"', tag.group(0))
-    assert action is not None, tag.group(0)
-    return html.unescape(action.group(1))
 
 
 def _is_thema(pagina: str) -> None:
@@ -234,22 +225,6 @@ def gesplitst_realm(basis_url: str, admin_token: str) -> Iterator[str]:
         yield GESPLITST_REALM
 
 
-def _client() -> httpx.Client:
-    # Keycloak 26.8 sets its session cookies `Secure` and renders links relative to the host.
-    # A browser treats http://localhost as a secure context and resolves those links. httpx
-    # does neither: it keeps Secure cookies in the jar but never sends them over http, so
-    # every form post ended in "cookie not found" (400). The hook sends them, as a browser would.
-    client = httpx.Client(base_url=keycloak_image.basis_url(), timeout=TIMEOUT, follow_redirects=True)
-
-    def send_secure_cookies(request: httpx.Request) -> None:
-        cookies = [f"{c.name}={c.value}" for c in client.cookies.jar if request.url.path.startswith(c.path)]
-        if cookies:
-            request.headers["Cookie"] = "; ".join(cookies)
-
-    client.event_hooks["request"] = [send_secure_cookies]
-    return client
-
-
 def _inlogpagina(
     http: httpx.Client,
     basis_url: str,
@@ -273,7 +248,7 @@ def _log_in(http: httpx.Client, basis_url: str, gebruiker: str, taal: str = "nl"
     assert pagina.status_code == 200, pagina.text[:2000]
     _is_thema(pagina.text)
     return http.post(
-        _form_action(pagina.text, "kc-form-login"),
+        form_action(pagina.text, "kc-form-login"),
         data={"username": gebruiker, "password": WACHTWOORD, "credentialId": ""},
     )
 
@@ -287,7 +262,7 @@ class TestElkePaginaRendertInHetThema:
 
     @pytest.mark.parametrize("taal", ["nl", "en"])
     def test_de_inlogpagina(self, basis_url: str, realm: str, taal: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url, taal=taal)
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -297,10 +272,10 @@ class TestElkePaginaRendertInHetThema:
 
     def test_de_inlogpagina_met_een_afgekeurd_wachtwoord(self, basis_url: str, realm: str) -> None:
         """De foutweg van het thema: `invalid` op het veld en de melding in de lijst."""
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url)
             antwoord = http.post(
-                _form_action(pagina.text, "kc-form-login"),
+                form_action(pagina.text, "kc-form-login"),
                 data={"username": "gewoon", "password": "fout-wachtwoord", "credentialId": ""},
             )
             assert antwoord.status_code == 200, antwoord.text[:2000]
@@ -309,7 +284,7 @@ class TestElkePaginaRendertInHetThema:
             assert 'unmet="error-username"' in antwoord.text, antwoord.text[:3000]
 
     def test_de_registratiepagina(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url)
             # De link naar registreren staat in de melding onderaan de inlogpagina.
             url = re.search(r'href="([^"]*registration[^"]*)"', pagina.text)
@@ -321,7 +296,7 @@ class TestElkePaginaRendertInHetThema:
 
     def test_de_pagina_voor_een_vergeten_wachtwoord_en_de_melding_erna(self, basis_url: str, realm: str) -> None:
         """After the reset form, Keycloak 26.8 returns to the login page with a success message, not `info.ftl`."""
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url)
             url = re.search(r'href="([^"]*reset-credentials[^"]*)"', pagina.text)
             assert url is not None, pagina.text[:3000]
@@ -329,14 +304,14 @@ class TestElkePaginaRendertInHetThema:
             assert herstel.status_code == 200, herstel.text[:2000]
             _is_thema(herstel.text)
 
-            terug = http.post(_form_action(herstel.text, "kc-reset-password-form"), data={"username": "gewoon"})
+            terug = http.post(form_action(herstel.text, "kc-reset-password-form"), data={"username": "gewoon"})
             assert terug.status_code == 200, terug.text[:2000]
             _is_thema(terug.text)
             assert 'data-page-id="login-login"' in terug.text, terug.text[:3000]
             assert '<nldd-banner variant="success">' in terug.text, terug.text[:3000]
 
     def test_de_pagina_die_een_authenticator_instelt(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _log_in(http, basis_url, "otp")
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -344,7 +319,7 @@ class TestElkePaginaRendertInHetThema:
             assert 'name="totpSecret"' in pagina.text
 
     def test_de_pagina_die_een_wachtwoord_laat_wijzigen(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _log_in(http, basis_url, "wachtwoord")
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -353,7 +328,7 @@ class TestElkePaginaRendertInHetThema:
             assert 'name="password-confirm"' in pagina.text
 
     def test_de_pagina_die_het_profiel_laat_bijwerken(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _log_in(http, basis_url, "profiel")
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -361,7 +336,7 @@ class TestElkePaginaRendertInHetThema:
             assert 'name="firstName"' in pagina.text
 
     def test_de_pagina_die_om_een_mailbevestiging_vraagt(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _log_in(http, basis_url, "mail")
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -369,13 +344,13 @@ class TestElkePaginaRendertInHetThema:
 
     def test_de_foutpagina(self, basis_url: str, realm: str) -> None:
         """Een onbekende client: Keycloak rendert `error.ftl` in het thema van het realm."""
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url, client_id="bestaat-niet")
             assert pagina.status_code >= 400, pagina.status_code
             _is_thema(pagina.text)
 
     def test_de_pagina_die_het_uitloggen_laat_bevestigen(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             klaar = _log_in(http, basis_url, "gewoon")
             assert "code=" in str(klaar.url), klaar.url
 
@@ -394,7 +369,7 @@ class TestDeGesplitsteInlogflow:
     """
 
     def test_de_pagina_die_alleen_om_de_gebruikersnaam_vraagt(self, basis_url: str, gesplitst_realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url, realm=gesplitst_realm)
             assert pagina.status_code == 200, pagina.text[:2000]
             _is_thema(pagina.text)
@@ -402,10 +377,10 @@ class TestDeGesplitsteInlogflow:
             assert 'name="password"' not in pagina.text, pagina.text[:3000]
 
     def test_de_pagina_die_daarna_alleen_om_het_wachtwoord_vraagt(self, basis_url: str, gesplitst_realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             gebruikersnaam = _inlogpagina(http, basis_url, realm=gesplitst_realm)
             wachtwoord = http.post(
-                _form_action(gebruikersnaam.text, "kc-form-login"),
+                form_action(gebruikersnaam.text, "kc-form-login"),
                 data={"username": "gewoon"},
             )
             assert wachtwoord.status_code == 200, wachtwoord.text[:2000]
@@ -413,7 +388,7 @@ class TestDeGesplitsteInlogflow:
             assert 'name="password"' in wachtwoord.text, wachtwoord.text[:3000]
 
             klaar = http.post(
-                _form_action(wachtwoord.text, "kc-form-login"),
+                form_action(wachtwoord.text, "kc-form-login"),
                 data={"password": WACHTWOORD},
             )
             assert str(klaar.url).startswith(_redirect(basis_url, gesplitst_realm)), klaar.url
@@ -429,7 +404,7 @@ class TestDeFormulierenPostenEcht:
     def test_inloggen_met_gebruikersnaam_en_wachtwoord_komt_bij_de_redirect_uri_uit(
         self, basis_url: str, realm: str
     ) -> None:
-        with _client() as http:
+        with browser_client() as http:
             klaar = _log_in(http, basis_url, "gewoon")
             assert str(klaar.url).startswith(_redirect(basis_url)), klaar.url
             assert "code=" in str(klaar.url), klaar.url
@@ -441,13 +416,13 @@ class TestDeFormulierenPostenEcht:
         tweede gebruikt het. Zo is de OTP-weg in zijn geheel gemeten en niet alleen de
         pagina die hem instelt.
         """
-        with _client() as http:
+        with browser_client() as http:
             instellen = _log_in(http, basis_url, "otp")
             geheim = re.search(r'name="totpSecret" value="([^"]+)"', instellen.text)
             assert geheim is not None, instellen.text[:3000]
 
             klaar = http.post(
-                _form_action(instellen.text, "kc-totp-settings-form"),
+                form_action(instellen.text, "kc-totp-settings-form"),
                 data={
                     "totp": totp_now(geheim.group(1))[0],
                     "totpSecret": geheim.group(1),
@@ -456,7 +431,7 @@ class TestDeFormulierenPostenEcht:
             )
             assert str(klaar.url).startswith(_redirect(basis_url)), klaar.text[:3000]
 
-        with _client() as http:
+        with browser_client() as http:
             otp_pagina = _log_in(http, basis_url, "otp")
             assert 'id="kc-otp-login-form"' in otp_pagina.text, otp_pagina.text[:3000]
             _is_thema(otp_pagina.text)
@@ -464,7 +439,7 @@ class TestDeFormulierenPostenEcht:
             # Keycloak refuses a code that was already used, and setup used the current one.
             # The next period's code falls inside Keycloak's look-around window.
             klaar = http.post(
-                _form_action(otp_pagina.text, "kc-otp-login-form"),
+                form_action(otp_pagina.text, "kc-otp-login-form"),
                 data={"otp": totp_now(geheim.group(1), at=time.time() + TOTP_PERIOD)[0]},
             )
             assert str(klaar.url).startswith(_redirect(basis_url)), klaar.text[:3000]
@@ -479,7 +454,7 @@ class TestDePaginaHaaltNietsBuitenDeEigenHost:
     """
 
     def test_elke_verwijzing_in_de_inlogpagina_blijft_op_de_eigen_host(self, basis_url: str, realm: str) -> None:
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url)
             verwijzingen = re.findall(r'(?:src|href)="(https?://[^"]+)"', pagina.text)
             vreemd = [u for u in verwijzingen if not u.startswith(basis_url)]
@@ -487,7 +462,7 @@ class TestDePaginaHaaltNietsBuitenDeEigenHost:
 
     def test_de_stijlbladen_en_de_bundel_halen_zelf_ook_niets_op(self, basis_url: str, realm: str) -> None:
         """Een @import of een url() naar een andere host zou pas in de browser blijken."""
-        with _client() as http:
+        with browser_client() as http:
             pagina = _inlogpagina(http, basis_url)
             # Keycloak 26.8 renders resource URLs relative to the host; the client resolves them.
             bronnen = [

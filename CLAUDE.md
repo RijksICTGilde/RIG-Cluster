@@ -157,6 +157,7 @@ task sandbox:sync                      # Sync infrastructure changes to Forgejo
 task sandbox:skaffold-dev              # Hot-reload development (port 9595)
 task sandbox:update-operations-manager # Rebuild and deploy OPI
 task sandbox:destroy                   # Tear down sandbox
+task test-keycloak                     # Alles wat tegen een echte Keycloak meet (groep keycloak_live)
 task requirements-check                # Verify all tools installed
 ```
 
@@ -174,6 +175,8 @@ Read `docs/development/` before changing a subsystem it covers - it holds the co
 the step-by-step, and saves you reverse-engineering them. Start with `docs/development/README.md`,
 which also states which folder is for what (`docs/development/` vs `features/` vs the rest of `docs/`).
 
+- `docs/operations/uitrollen.md` - hoe een release op de sandbox, staging en productie komt:
+  publiceren, pinnen, deployen, de CMP-sidecar, en de kubectl-context per cluster.
 - `docs/development/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
 
@@ -187,7 +190,7 @@ Plans, TODO lists, run reports, design briefs for unbuilt work (the old `feature
 - **Modern type hints**: `dict`, `list`, `tuple` (lowercase), `str | None` (not `Optional`)
 - **Type annotations**: Always for function parameters and return types
 - **Error handling**: Specific exception types, avoid generic `except Exception`
-- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md` en `features/roos-eruit.md`
+- **Frontend**: Jinja2 + het NLDD Designsysteem (`<nldd-*>`, `@nldd/design-system`), zie `features/nldd-app-shell.md`. Lord of the Components (`<c-*>`, `features/lotc-bouwlijn.md`) is legacy en mag worden vervangen als je het tegenkomt
 
 ## Uitleg in code en tekst
 
