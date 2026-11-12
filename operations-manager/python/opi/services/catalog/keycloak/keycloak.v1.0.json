@@ -274,7 +274,7 @@
     },
     "template": {
       "default": "sso-only",
-      "description": "Realm template the realm is created from: 'sso-only' is single sign-on without extras, 'sso-support' adds a login screen where a local account can sign in, and 'sso-support-otp' also requires an OTP from such a local account.",
+      "description": "Realm template the realm is created from: 'sso-only' is single sign-on without extras, 'sso-support' adds a login screen where a local account can sign in, 'sso-support-otp' also requires an OTP from such a local account, and 'local-only' has no single sign-on: only local accounts, supplied by the project or created through an invite.",
       "title": "Template",
       "type": "string"
     },

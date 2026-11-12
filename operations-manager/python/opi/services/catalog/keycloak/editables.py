@@ -6,8 +6,11 @@ stay hand-written rather than derived from the config model (the hard 10%).
 
 from __future__ import annotations
 
+from typing import Any
+
 from opi.forms.editables.converters import EmptyToNoneConverter, LogoutPathConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
+from opi.forms.editables.service_path import smart_get_value
 from opi.forms.editables.validators import LogoutPathValidator, RealmRoleValidator, RedirectUriValidator
 
 #: GEEN default, en dat is de hele reparatie.
@@ -50,16 +53,26 @@ KEYCLOAK_RESTRICT_ACCESS_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
+RESTRICT_ACCESS_CLIENT_ROLE_PATH = "services/keycloak/config/restrict-access/role"
+
+
+def _default_realm_role(data: dict[str, Any]) -> str | None:
+    """``allowed-user``, unless a client role is set: that one gates, so no realm role is invented."""
+    return None if smart_get_value(data, RESTRICT_ACCESS_CLIENT_ROLE_PATH) else "allowed-user"
+
+
 KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE = Editable(
     yaml_path="services/keycloak/config/restrict-access/realm-role",
-    default="allowed-user",
+    default=_default_realm_role,
     depends_on="services/keycloak/config/restrict-access/enabled",
     validator=RealmRoleValidator(),
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
 
 KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE = Editable(
-    yaml_path="services/keycloak/config/restrict-access/role",
+    yaml_path=RESTRICT_ACCESS_CLIENT_ROLE_PATH,
     depends_on="services/keycloak/config/restrict-access/enabled",
     validator=RealmRoleValidator(),
     converter=EmptyToNoneConverter(),

@@ -32,7 +32,6 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.invite_manager import InviteManager
 from opi.manager.keycloak_manager import BROWSER_FLOW_BY_TEMPLATE, KeycloakManager
 from opi.services.catalog.keycloak.templates import (
-    LOCAL_ACCOUNT_TEMPLATES,
     SSO_ONLY_TEMPLATE,
     SSO_SUPPORT_OTP_TEMPLATE,
     SSO_SUPPORT_TEMPLATE,
@@ -561,7 +560,7 @@ def test_de_blauwdrukken_met_een_lokaal_account() -> None:
 def test_de_uitnodiging_biedt_een_lokaal_account_onder_de_nieuwe_template() -> None:
     from opi.forms.visualizers.providers import InviteAuthMethodOptionsProvider
 
-    for template in LOCAL_ACCOUNT_TEMPLATES:
+    for template in (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE):
         provider = InviteAuthMethodOptionsProvider(
             {"services": [{"name": "keycloak", "config": {"template": template}}]}
         )
@@ -573,7 +572,7 @@ def test_het_keuzeveld_toont_de_derde_template() -> None:
 
     opties = {o["value"]: o for o in KeycloakTemplateOptionsProvider().get_options()}
 
-    assert list(opties) == [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE]
+    assert list(opties)[:3] == [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE]
     assert "OTP" in opties[SSO_SUPPORT_OTP_TEMPLATE]["label"]
     assert "authenticator-app" in opties[SSO_SUPPORT_OTP_TEMPLATE]["description"]
 

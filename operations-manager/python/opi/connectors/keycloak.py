@@ -1632,6 +1632,18 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             return None
 
+    async def delete_identity_provider(self, realm_name: str, provider_alias: str) -> bool:
+        """Delete an identity provider if it exists; returns whether one was deleted."""
+        if await self.get_identity_provider(realm_name, provider_alias) is None:
+            return False
+        try:
+            self.admin.change_current_realm(realm_name)
+            self.admin.delete_idp(idp_alias=provider_alias)
+            logger.info(f"Deleted identity provider '{provider_alias}' from realm '{realm_name}'")
+            return True
+        finally:
+            self.admin.change_current_realm("master")
+
     async def get_identity_provider_mappers(self, realm_name: str, provider_alias: str) -> list[dict[str, Any]]:
         """
         Get all identity provider mappers for a specific provider.

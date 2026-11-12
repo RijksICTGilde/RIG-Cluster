@@ -18,8 +18,11 @@ SSO_SUPPORT_TEMPLATE = "sso-support"
 #: Zelfde keuze, maar een lokaal account geeft naast zijn wachtwoord een OTP.
 SSO_SUPPORT_OTP_TEMPLATE = "sso-support-otp"
 
+#: Only local accounts, supplied by the project or created through an invite; no SSO Rijk.
+LOCAL_ONLY_TEMPLATE = "local-only"
+
 #: De blauwdrukken waarin een lokaal account een weg naar binnen is.
-LOCAL_ACCOUNT_TEMPLATES = (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE)
+LOCAL_ACCOUNT_TEMPLATES = (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE, LOCAL_ONLY_TEMPLATE)
 
 
 def allows_local_accounts(template: str | None) -> bool:
@@ -29,3 +32,8 @@ def allows_local_accounts(template: str | None) -> bool:
     ``KeycloakConfig.template`` en dus wat de realm werkelijk krijgt.
     """
     return (template or SSO_ONLY_TEMPLATE) in LOCAL_ACCOUNT_TEMPLATES
+
+
+def allows_sso(template: str | None) -> bool:
+    """Whether this blueprint federates to SSO Rijk. An empty template means ``sso-only``."""
+    return (template or SSO_ONLY_TEMPLATE) != LOCAL_ONLY_TEMPLATE

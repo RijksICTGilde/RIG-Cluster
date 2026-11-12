@@ -1,0 +1,130 @@
+# Local-Only Keycloak Configuration
+# Purpose: Project realm with local accounts only, no SSO Rijk.
+# Accounts are supplied by the project or created through an OPI invite. There is no
+# self-registration, no password reset and no self-service on password or profile.
+
+---
+# No platformClients and no identityProviders: this realm does not federate. A realm that
+# switches here from an SSO template gets its IdP and platform client removed by
+# KeycloakManager._ensure_realm_identity_providers, because reconciling is additive.
+
+realms:
+  - name: "{{ project_realm_name }}"
+    displayName: "{{ project_display_name }}"
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    resetPasswordAllowed: false
+    editUsernameAllowed: false
+    # A request, not an order: OPI only turns it on when the platform has a mail relay
+    # (see the same field in sso-support.yaml).
+    verifyEmail: true
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
+    bruteForceProtected: true
+    loginTheme: "nl-design-system"
+    eventsEnabled: true
+    eventsExpiration: 7776000  # 90 days
+    adminEventsEnabled: true
+    adminEventsDetailsEnabled: true
+    # Accounts are managed by the project, not by their holders. The invite form sets the
+    # password through the admin API and never touches UPDATE_PASSWORD.
+    disabledRequiredActions:
+      - UPDATE_PASSWORD
+    removeFromDefaultRoles:
+      - account:manage-account
+    # Explicitly off: a realm switching here from sso-support-otp would otherwise keep
+    # asking every new account to configure an authenticator app.
+    requiredActionDefaults:
+      CONFIGURE_TOTP: false
+
+# Resets the auto-redirect of a realm switching here from sso-only.
+browserFlow: "browser"
+
+# Client for operations manager invite flow
+# Allows the operations manager to authenticate users via this realm for invitations
+# This is a public client (no secret) since the OAuth flow happens in the user's browser
+# Uses the standard "browser" flow to bypass any access restrictions on other clients
+clients:
+  - clientId: "{{ invite_client_id }}"
+    name: "Operations Manager Invite Flow"
+    enabled: true
+    publicClient: true
+    protocol: "openid-connect"
+    redirectUris:
+      - "https://{{ operations_manager_domain }}/invite/*"
+      - "http://{{ operations_manager_domain }}/invite/*"
+    postLogoutRedirectUris:
+      - "+"
+    webOrigins:
+      - "https://{{ operations_manager_domain }}"
+      - "http://{{ operations_manager_domain }}"
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    pkceCodeChallengeMethod: "S256"
+    browserFlowOverride: "browser"
+    # Explicitly set theme since browserFlowOverride may not inherit realm theme correctly
+    attributes:
+      login_theme: "nl-design-system"
+
+clientScopes:
+  - name: "custom_attributes_passthrough"
+    description: "Custom attributes passthrough for project realm (no override mappers)"
+    realmType: "PROJECT"
+    protocol: "openid-connect"
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: "Organization Name Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.name"
+          claim.name: "organization.name"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "Organization Number Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.number"
+          claim.name: "organization.number"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sso-rijk-userid"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "sso-rijk-userid-lowercase"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+    # Assign as realm-level default client scope
+    defaultScope: true
+
+# Note: Deployment clients are created separately via deployment-specific flow,
+# not during project realm setup

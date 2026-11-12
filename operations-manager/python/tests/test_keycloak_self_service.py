@@ -165,7 +165,7 @@ def _handler_with_fake_connector(realm: dict | None = None) -> tuple[KeycloakYam
     return KeycloakYamlHandler(keycloak), keycloak
 
 
-@pytest.mark.parametrize("template", ["sso-only", "sso-support"])
+@pytest.mark.parametrize("template", ["sso-only", "sso-support", "local-only"])
 async def test_project_blueprints_close_both_knobs(template: str) -> None:
     handler, keycloak = _handler_with_fake_connector()
 

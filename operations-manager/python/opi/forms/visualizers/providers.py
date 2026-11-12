@@ -20,7 +20,7 @@ from opi.services.catalog.base import ConfigLayer, config_path, offers_component
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.keycloak.account_link import account_link_mode
-from opi.services.catalog.keycloak.templates import allows_local_accounts
+from opi.services.catalog.keycloak.templates import allows_local_accounts, allows_sso
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
@@ -600,7 +600,7 @@ class SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurren
 
 
 class KeycloakTemplateOptionsProvider:
-    """The three realm blueprints, named after what a user gets rather than after the file.
+    """The realm blueprints, named after what a user gets rather than after the file.
 
     What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
     browser flow at "External IDP Redirector", so whoever opens the application travels
@@ -655,6 +655,16 @@ class KeycloakTemplateOptionsProvider:
                     "Zelfde keuze als hierboven, maar een lokaal account geeft naast zijn wachtwoord een code "
                     "uit een authenticator-app. Bij de eerste login stelt het die app in. Wie met SSO Rijk "
                     "inlogt merkt er niets van."
+                ),
+            },
+            {
+                "value": "local-only",
+                "label": "Alleen lokale accounts",
+                "description": (
+                    "Geen SSO Rijk. Alleen lokale accounts uit het realm van dit project kunnen inloggen. "
+                    "Accounts worden aangeleverd of komen via een uitnodiging; aanmelden, een wachtwoord "
+                    "herstellen of het eigen profiel beheren kan niemand zelf. Wie eerder via SSO Rijk "
+                    "binnenkwam, heeft na deze keuze geen weg naar binnen tot hij een lokaal account krijgt."
                 ),
             },
         ]
@@ -2043,7 +2053,8 @@ class InviteAuthMethodOptionsProvider:
       screen on which a local account could ever be typed in;
     * ``sso-support`` en ``sso-support-otp`` -- Keycloak's own login screen, which offers
       both. Welke blauwdruk een lokaal account toelaat staat op één plek:
-      ``allows_local_accounts``.
+      ``allows_local_accounts``;
+    * ``local-only``  -- no identity provider, so SSO is not offered (``allows_sso``).
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
@@ -2058,9 +2069,9 @@ class InviteAuthMethodOptionsProvider:
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
-            "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (sso-support of sso-support-otp) en het realm niet "
-            "automatisch koppelt op e-mailadres (account-link)."
+            "sso tenzij het keycloak-template local-only is; local alleen als het template "
+            "lokale accounts toestaat (sso-support, sso-support-otp of local-only) en het "
+            "realm niet automatisch koppelt op e-mailadres (account-link)."
         ),
         endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
         path="configurations[].config.template",
@@ -2072,11 +2083,11 @@ class InviteAuthMethodOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         from opi.forms.editables.service_path import smart_get_value
 
-        options = [{"value": "sso", "label": "Single sign-on (SSO)"}]
         # Absent template means sso-only (the default on KeycloakConfig.template),
         # which is what the realm gets. Treating it as "unknown, allow both" would
         # conflict with the field's show_when rule, which hides the field in that case.
         template = smart_get_value(self.yaml_data, "services/keycloak/config/template")
+        options = [{"value": "sso", "label": "Single sign-on (SSO)"}] if allows_sso(template) else []
         # Via smart_get_value en niet via de project-ingang van de helper: in de wizard staat
         # de keycloak-config onder de virtuele root, waar een lezing op "services" niets vindt.
         links_on_email = account_link_mode(smart_get_value(self.yaml_data, "services/keycloak/config")) is not None
@@ -2125,6 +2136,9 @@ class InviteRealmRoleOptionsProvider:
                 if name and name not in roles:
                     roles.append(str(name))
         wall_role = smart_get_value(self.yaml_data, "services/keycloak/config/restrict-access/realm-role")
+        # A client role replaces the realm role at the gate, so the realm role grants nothing.
+        if smart_get_value(self.yaml_data, "services/keycloak/config/restrict-access/role"):
+            wall_role = None
         if wall_role and str(wall_role) not in roles:
             roles.append(str(wall_role))
 

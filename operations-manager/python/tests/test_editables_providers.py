@@ -51,7 +51,7 @@ class TestKeycloakTemplateOptionsProvider:
     def test_returns_options(self):
         provider = KeycloakTemplateOptionsProvider()
         options = provider.get_options()
-        assert len(options) == 3
+        assert len(options) == 4
         assert all("value" in o and "label" in o for o in options)
 
     def test_includes_expected_template_values(self):
@@ -60,6 +60,7 @@ class TestKeycloakTemplateOptionsProvider:
         assert "sso-support" in values
         assert "sso-only" in values
         assert "sso-support-otp" in values
+        assert "local-only" in values
 
 
 class TestPullPolicyOptionsProvider:

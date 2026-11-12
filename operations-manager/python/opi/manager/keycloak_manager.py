@@ -36,7 +36,7 @@ from opi.services.catalog.keycloak.config_model import (
     KeycloakClientEntry,
     RestrictAccessConfig,
 )
-from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
+from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE, allows_sso
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -579,8 +579,8 @@ class KeycloakManager:
                 "logout_path": "/api/v1.0/logout/"  # Optional front-channel logout path (YAML: logout-path)
                 "restrict_access": {       # Optional access restriction config (YAML: restrict-access)
                     "enabled": True,
-                    "role": "allowed-user",  # Client role
-                    "realm_role": "allowed-user",  # Or realm role (takes precedence, YAML: realm-role)
+                    "role": "allowed-user",  # Client role (takes precedence)
+                    "realm_role": "allowed-user",  # Or realm role (YAML: realm-role)
                     "error_message": "${accessDeniedNoPermission}"  # YAML: error-message
                 }
             }
@@ -703,8 +703,10 @@ class KeycloakManager:
 
             merged_config["restrict_access"] = {
                 "enabled": checked.enabled,
-                "role": checked.role,  # Client role (may be None if realm-role is used)
-                "realm_role": checked.realm_role,  # Realm role (takes precedence)
+                "role": checked.role,
+                # The client role is the optional, explicit choice and replaces the realm role,
+                # which the form fills with ``allowed-user`` by default.
+                "realm_role": None if checked.role else checked.realm_role,
                 "error_message": checked.error_message,
             }
             if merged_config["restrict_access"]["realm_role"]:
@@ -1348,8 +1350,8 @@ class KeycloakManager:
             client_id: Client ID (not UUID)
             restrict_access: Access restriction configuration with:
                 - enabled: bool
-                - role: str (client role name) - used if realm_role not specified
-                - realm_role: str (realm role name) - takes precedence over role
+                - role: str (client role name) - takes precedence over realm_role
+                - realm_role: str (realm role name) - None when role is set
                 - error_message: str (theme message key)
             template: The project's realm blueprint. It decides whether the gate redirects to
                 SSO Rijk or shows Keycloak's login screen: the gate REPLACES the realm's
@@ -1779,6 +1781,12 @@ class KeycloakManager:
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_identity_providers(yaml_path, context)
+
+        # Reconciling is additive, so a realm that switches to a template without SSO keeps
+        # its IdP and platform client unless they are removed here.
+        if not allows_sso(template_name):
+            await keycloak.delete_identity_provider(realm_name, PLATFORM_IDP_ALIAS)
+            await keycloak.delete_client_by_client_id(settings.KEYCLOAK_DEFAULT_REALM, platform_client_id)
 
     async def _ensure_realm_self_service(
         self,
