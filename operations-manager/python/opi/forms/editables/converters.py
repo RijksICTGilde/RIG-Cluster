@@ -20,7 +20,7 @@ from opi.utils.yaml_util import dump_yaml_to_string
 logger = logging.getLogger(__name__)
 
 
-def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data: dict[str, Any] | None) -> Any:
+def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data: dict[str, Any] | None) -> Any:  # noqa: ANN401  # a project-file value
     """Return *existing* when both values are AGE blocks with identical plaintext.
 
     AGE encryption is non-deterministic, so re-encrypting unchanged plaintext yields entirely
@@ -50,13 +50,13 @@ def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data:
 class EncryptedDisplayConverter:
     """Shows an encrypted field as a status, never as a value. The field is read-only."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if carries_encrypted_value(value):
             return "Versleuteld opgeslagen"
         if value:
@@ -68,13 +68,13 @@ class TruncateConverter:
     def __init__(self, max_length: int = 20) -> None:
         self.max_length = max_length
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not value:
             return "Niet geconfigureerd"
         value_str = str(value)
@@ -90,15 +90,15 @@ class EmptyToNoneConverter:
     should result in the key being absent from the project file.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value or ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if not value:
             return None
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return str(value) if value else ""
 
 
@@ -113,10 +113,10 @@ class LogoutPathConverter:
     break the save instead of showing the message of ``LogoutPathValidator`` at the field.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value or ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if not value:
             return None
         try:
@@ -124,7 +124,7 @@ class LogoutPathConverter:
         except ValueError:
             return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return str(value) if value else ""
 
 
@@ -136,17 +136,17 @@ class EnsureListConverter:
     one item checked) or None (no items checked).
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any]:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any]:  # noqa: ANN401  # a project-file value
         if value is None:
             return []
         if isinstance(value, list):
             return value
         return [value]
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
 
@@ -161,14 +161,14 @@ class ServiceListConverter:
     def __init__(self, preserve_catalog_data: bool = False) -> None:
         self._preserve_catalog_data = preserve_catalog_data
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         from opi.services.services import ServiceAdapter
 
         if not value or not isinstance(value, list):
             return []
         return ServiceAdapter.extract_service_names_from_project_services(value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str | dict]:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str | dict]:  # noqa: ANN401  # a project-file value
         """Convert service names back to a simple list; configs are added separately.
 
         ``json-enc`` delivers a single checked box as a scalar instead of an array, and it
@@ -198,14 +198,14 @@ class ServiceListConverter:
         return value
 
     @staticmethod
-    def _existing_attachments_data(context_data: dict[str, Any] | None) -> Any:
+    def _existing_attachments_data(context_data: dict[str, Any] | None) -> Any:  # noqa: ANN401  # a project-file value
         for entry in (context_data or {}).get("services", []):
             if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
                 return entry["attachments"].get("data")
         return None
 
     @staticmethod
-    def _restore_attachments_data(item: Any, existing_data: Any) -> Any:
+    def _restore_attachments_data(item: Any, existing_data: Any) -> Any:  # noqa: ANN401  # a project-file value
         from opi.services.services import service_entry_name
 
         name = service_entry_name(item)
@@ -214,19 +214,19 @@ class ServiceListConverter:
         current = item["attachments"] if isinstance(item, dict) and isinstance(item.get("attachments"), dict) else {}
         return {"attachments": {**current, "data": existing_data}}
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         return self.read(value)
 
 
 class IntegerConverter:
     """Converts a single integer to/from string for text input."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> int | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> int | None:  # noqa: ANN401  # a project-file value
         if isinstance(value, int):
             return value
         val = str(value).strip()
@@ -234,24 +234,24 @@ class IntegerConverter:
             return int(val)
         return None
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value)
 
 
 class IntegerListConverter:
     """Converts list[int] to/from comma-separated string."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if isinstance(value, list):
             return ", ".join(str(v) for v in value)
         return str(value or "")
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[int]:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[int]:  # noqa: ANN401  # a project-file value
         if isinstance(value, list):
             return [int(v) for v in value if str(v).strip().isdigit()]
         return [int(v.strip()) for v in str(value).split(",") if v.strip().isdigit()]
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value)
 
 
@@ -262,19 +262,19 @@ class ListSingleSelectConverter:
     single-select dropdown.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if isinstance(value, list) and value:
             return str(value[0])
         return ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if isinstance(value, list):
             return value
         if value:
             return [str(value)]
         return []
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value)
 
 
@@ -293,7 +293,7 @@ class KeyValueConverter:
         self.fmt = fmt  # "env" or "yaml"
         self.write_as = write_as  # "dict" or "string"
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         """Return the stored text for the editor, decrypted when it is an AGE block."""
         # Never log the value itself: user-env-vars and aliases hold secrets.
         logger.debug("[KeyValueConverter.read] write_as=%s, input type=%s", self.write_as, type(value).__name__)
@@ -306,7 +306,7 @@ class KeyValueConverter:
             return dump_yaml_to_string(dict(value)).rstrip("\n")
         return str(value or "")
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> dict[str, str] | str | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> dict[str, str] | str | None:  # noqa: ANN401  # a project-file value
         """Convert form input to the YAML storage format; empty input gives None.
 
         None lets the YAML key be omitted. With ``write_as="string"`` and a project AGE public
@@ -324,7 +324,7 @@ class KeyValueConverter:
         )
         return result
 
-    def _write_as_dict(self, value: Any) -> dict[str, str] | None:
+    def _write_as_dict(self, value: Any) -> dict[str, str] | None:  # noqa: ANN401  # a project-file value
         if isinstance(value, dict):
             return value or None
         text = str(value or "").strip()
@@ -333,7 +333,7 @@ class KeyValueConverter:
         return self._parse_env_text(text)
 
     @staticmethod
-    def _write_as_string(value: Any) -> str | None:
+    def _write_as_string(value: Any) -> str | None:  # noqa: ANN401  # a project-file value
         if isinstance(value, dict):
             if not value:
                 return None
@@ -366,7 +366,7 @@ class KeyValueConverter:
             return result
 
     @staticmethod
-    def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:
+    def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:  # noqa: ANN401  # a project-file value
         """Decrypt an AGE-encrypted value with the project's private key.
 
         Aliases are a dict of ``name -> value`` whose values are encrypted on their own, so
@@ -390,7 +390,7 @@ class KeyValueConverter:
                 logger.debug("[KeyValueConverter] Successfully decrypted AGE-encrypted value")
                 return decrypted
             return value
-        except Exception:
+        except AgeEncryptionError, OSError, ValueError:
             logger.warning("[KeyValueConverter] AGE decryption failed, returning raw value", exc_info=True)
             return value
 
@@ -410,24 +410,24 @@ class KeyValueConverter:
             )
         return LiteralScalarString(encrypt_age_content_sync(value, public_key))
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value, context_data=context_data)
 
 
 class ContainerImageConverter:
     """Lowercases container image references on write."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         if not value:
             return None
         return str(value).strip().lower()
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value)
 
 
@@ -444,14 +444,14 @@ class CloneFromConverter:
         "staging"  (or "" for no clone)
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if isinstance(value, dict):
             return value.get("reference", "")
         if isinstance(value, str):
             return value
         return ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if not value or (isinstance(value, str) and not value.strip()):
             return None
         if isinstance(value, dict):
@@ -462,7 +462,7 @@ class CloneFromConverter:
             "mode": "once",
         }
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not value:
             return ""
         if isinstance(value, dict):
@@ -479,13 +479,13 @@ class CloneFromConverter:
 class DeploymentServicesDisplayConverter:
     """Formats deployment-level service overrides for display."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not value or not isinstance(value, list):
             return "Geen deployment services"
         names = [s.get("reference", "onbekend") for s in value if isinstance(s, dict)]
@@ -495,13 +495,13 @@ class DeploymentServicesDisplayConverter:
 class KeycloakRealmsDisplayConverter:
     """Formats keycloak realm list for display."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[dict[str, str]]:  # noqa: ANN401  # a project-file value
         if not value or not isinstance(value, list):
             return []
         return [
@@ -518,13 +518,13 @@ class KeycloakRealmsDisplayConverter:
 class CustomDomainSelectConverter:
     """Maps non-standard base-domain values to '__custom__' for the select widget."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return self.view(value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value  # the merge happens in post-processing
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if not value:
             return value
         from opi.core.config import settings
@@ -542,13 +542,13 @@ class RRuleFrequencyConverter:
     ``context_data`` into the full RRULE.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not value:
             return ""
         parts = parse_rrule(str(value))
         return parts.get("FREQ", "").upper()
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         freq = str(value).strip().upper() if value else ""
         if not freq:
             return None
@@ -580,7 +580,7 @@ class RRuleFrequencyConverter:
 
         return build_rrule(freq, hour, minute, byday, bymonthday)
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return format_rrule(str(value) if value else None)
 
 
@@ -606,7 +606,7 @@ class RRuleTimeConverter:
     Write is a no-op (RRuleFrequencyConverter combines all fields).
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         # A transient field has no value of its own, so the time comes from the context.
         rrule = _find_parent_rrule(context_data)
         if not rrule:
@@ -616,45 +616,45 @@ class RRuleTimeConverter:
         minute = parts.get("BYMINUTE", "0")
         return f"{int(hour):02d}:{int(minute):02d}"
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         """A no-op: ``RRuleFrequencyConverter`` picks this field up from the context."""
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value, context_data=context_data)
 
 
 class RRuleDayConverter:
     """Transient field converter: extracts BYDAY from the parent RRULE."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         rrule = _find_parent_rrule(context_data)
         if not rrule:
             return "MO"
         parts = parse_rrule(rrule)
         return parts.get("BYDAY", "MO")
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value, context_data=context_data)
 
 
 class RRuleMonthDayConverter:
     """Transient field converter: extracts BYMONTHDAY from the parent RRULE."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         rrule = _find_parent_rrule(context_data)
         if not rrule:
             return "1"
         parts = parse_rrule(rrule)
         return parts.get("BYMONTHDAY", "1")
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value, context_data=context_data)
 
 
@@ -666,32 +666,32 @@ class BooleanConverter:
     explicit ``true``/``false`` instead.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return ""
         return "true" if value in (True, "true", "on", "yes", "1") else "false"
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> bool:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> bool:  # noqa: ANN401  # a project-file value
         return value in (True, "true", "on", "yes", "1")
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return "Ja" if value in (True, "true", "on", "yes", "1") else "Nee"
 
 
 class CommaSeparatedListConverter:
     """Converts a list to/from a comma-separated string (trimmed, empties dropped)."""
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if isinstance(value, list):
             return ", ".join(str(v) for v in value)
         return str(value or "")
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if isinstance(value, list):
             return value
         return [part.strip() for part in str(value).split(",") if part.strip()]
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return self.read(value, context_data=context_data)
 
 
@@ -717,12 +717,12 @@ class CommandLineConverter:
 
     QUOTE = '"'
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not isinstance(value, list):
             return "" if value is None else str(value)
         return " ".join(self._quote(str(argument)) for argument in value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str] | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str] | None:  # noqa: ANN401  # a project-file value
         """The typed line as the list the cluster gets; empty gives None.
 
         None lets ``remove_when_none`` drop the key. The schema demands at least one
@@ -734,7 +734,7 @@ class CommandLineConverter:
         arguments = split_command_line(str(value or ""))
         return arguments or None
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not value:
             return "Zoals in het image"
         return self.read(value, context_data)
@@ -808,17 +808,17 @@ class NonEmptyListConverter:
     writing an empty list.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any] | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any] | None:  # noqa: ANN401  # a project-file value
         if value is None:
             return None
         items = value if isinstance(value, list) else [value]
         remaining = [item for item in items if item is not None and str(item).strip() != ""]
         return remaining or None
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
 
@@ -836,7 +836,7 @@ class InviteTargetConverter:
     ``application-url`` to a destination outside the project is a field of its own.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         """The stored choice as the address the picker should preselect.
 
         A choice that no longer resolves selects nothing, just as the success page shows no
@@ -848,7 +848,7 @@ class InviteTargetConverter:
             return ""
         return url_for_target(value, context_data) or ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         """The chosen address as the choice behind it, or None to write nothing."""
         from opi.services.catalog.invite.destination import target_for_url
 
@@ -856,7 +856,7 @@ class InviteTargetConverter:
             return None
         return target_for_url(value, context_data)
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         """Read-only view: the address this points at today."""
         from opi.services.catalog.invite.destination import url_for_target
 

@@ -24,7 +24,7 @@ from typing import Any
 from opi.forms.editables.merge import deep_merge_into
 
 
-def service_name(entry: Any) -> str | None:
+def service_name(entry: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """The service identity for a services-list entry, or None if unrecognised."""
     from opi.services.services import service_entry_name
 
@@ -40,7 +40,7 @@ def _record_key(entry: dict[str, Any]) -> str | None:
     return None
 
 
-def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:
+def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:  # noqa: ANN401  # a project-file value
     """Fold one entry into *result*, merging onto the entry that shares its name.
 
     ``index`` maps service name -> position in *result* and is kept in sync. An entry

@@ -43,7 +43,7 @@ class ProjectApiKeyError(RuntimeError):
 
 def _apply_web_address_settings(
     deployment_config: dict[str, Any],
-    project_data: Any,
+    project_data: Any,  # noqa: ANN401  # a project-file value
     deployment_name: str,
     root_component: str | None,
 ) -> None:
@@ -398,12 +398,12 @@ def deployments_touched(before: dict[str, Any], after: dict[str, Any]) -> list[s
     return sorted(touched & set(names_after))
 
 
-def _by_name(items: Any) -> dict[str, Any]:
+def _by_name(items: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """The named entries of a project list, keyed by name. An unnamed entry is skipped."""
     return {str(item["name"]): item for item in items or [] if isinstance(item, dict) and item.get("name")}
 
 
-def _changed_names(before: Any, after: Any) -> set[str]:
+def _changed_names(before: Any, after: Any) -> set[str]:  # noqa: ANN401  # a project-file value
     """The names whose entry appeared, disappeared or changed between the two lists."""
     old = _by_name(before)
     new = _by_name(after)
@@ -473,7 +473,7 @@ def encrypted_repository_password() -> str:
     return ensure_base64_age_sync(stored, settings.SOPS_AGE_PRIVATE_KEY, settings.SOPS_AGE_PUBLIC_KEY)
 
 
-async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:
+async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:  # noqa: ANN401  # a project-file value
     """Build the project file for a self-service creation, as a YAML string.
 
     ``project_data`` is a ``SelfServiceProjectRequest``, or any object carrying the same
@@ -485,7 +485,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         logger.debug(f"Generated AGE key pair for project: {project_data.project_name}")
     except Exception as e:
         logger.error(f"Failed to generate AGE key pair: {e}")
-        raise HTTPException(status_code=500, detail=f"Cannot create project: AGE key generation failed. {e!s}")
+        raise HTTPException(status_code=500, detail=f"Cannot create project: AGE key generation failed. {e!s}") from e
 
     # The first credential of this project: a token of the ``project-api`` service account.
     # Only the hash goes into the file (schema version 2.12), so the value cannot be read
@@ -521,7 +521,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
                     default_port=8080,
                 )
             except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+                raise HTTPException(status_code=400, detail=str(e)) from e
 
             components_list.append(component_config)
     else:

@@ -15,7 +15,7 @@ naming.py).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.approval import (
     ApprovalItem,
@@ -35,6 +35,14 @@ from opi.services.catalog.publish_on_web.variables import WebVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceType
 
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
+
 
 def _to_status(stored: str | None) -> ApprovalStatus:
     """Map a persisted status string onto ApprovalStatus; anything else -> NONE."""
@@ -47,7 +55,7 @@ def _to_status(stored: str | None) -> ApprovalStatus:
 # CHECK: is a requested domain / subdomain approved?
 
 
-def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
     """Approval status of a requested domain (``value`` is the domain string).
 
     Reads the stored state via the existing pure predicate -- no rules duplicated here.
@@ -60,7 +68,7 @@ def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
     return _to_status(cfg.get("status"))
 
 
-def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
     """Approval status of a requested subdomain (``value`` is a ``(domain, subdomain)``)."""
     from opi.services.catalog.publish_on_web.subdomain import get_subdomain_status
 
@@ -145,7 +153,7 @@ def _deployment_domain(deployment: dict[str, Any]) -> tuple[str | None, str | No
     return base_domain or None, get_domain_setting(deployment, DomainSetting.SUBDOMAIN) or None
 
 
-def _last_verdict(history: Any) -> dict[str, Any]:
+def _last_verdict(history: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """The most recent history entry, or an empty dict when there is none."""
     if isinstance(history, list) and history and isinstance(history[-1], dict):
         return history[-1]
@@ -253,7 +261,7 @@ class PublishOnWebService(Service):
     config_schema_version = "1.0"
     config_component_order = 30
 
-    def config_model_for(self, layer: ConfigLayer):
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """One model per layer -- three questions, three shapes.
 
         Project: which domains may this project publish on. Deployment: how is this
@@ -269,7 +277,7 @@ class PublishOnWebService(Service):
         # deployment-component entry exists precisely to override the component's.
         return PublishOnWebComponentConfig
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.DEPLOYMENT:
             from opi.services.catalog.publish_on_web.editables import PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES
 
@@ -289,13 +297,13 @@ class PublishOnWebService(Service):
 
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         """The "Webadres" step at the deployment layer; the base default elsewhere."""
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         return super().config_form_section(layer)
 
-    def deployment_form_section(self, deployment_index: int | None = None, *, edit_mode: bool = False):
+    def deployment_form_section(self, deployment_index: int | None = None, *, edit_mode: bool = False) -> FormSection:
         """The "Webadres" section, optionally materialized for one deployment.
 
         The wizard step and the edit modal are the same form with a different heading and a
@@ -362,12 +370,12 @@ class PublishOnWebService(Service):
             post_save_action=post_save_action,
         )
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.publish_on_web.visualizers import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
 
         return [PUBLISH_ON_WEB_TLS, PUBLISH_ON_WEB_ATTACHMENT]
 
-    def config_deployment_component_visualizers(self):
+    def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.publish_on_web.visualizers import (
             DEPLOYMENT_COMP_PUBLISH_ATTACHMENT,
             DEPLOYMENT_COMP_PUBLISH_TLS,
@@ -375,7 +383,7 @@ class PublishOnWebService(Service):
 
         return [DEPLOYMENT_COMP_PUBLISH_TLS, DEPLOYMENT_COMP_PUBLISH_ATTACHMENT]
 
-    def config_deployment_component_layout(self):
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value
@@ -393,7 +401,7 @@ class PublishOnWebService(Service):
             )
         ]
 
-    def config_approvals(self, layer: ConfigLayer):
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
         # A deployment's requested domain / subdomain needs platform-admin approval
         # before ingress is generated for it. The rule (status_of) reuses the existing
         # pure predicates; the state lives under this service's config
@@ -441,7 +449,7 @@ class PublishOnWebService(Service):
 
         ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value

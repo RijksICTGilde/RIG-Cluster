@@ -23,12 +23,15 @@ layers are therefore in ``form_exempt_layers``. The API read keeps masking the v
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceKind, ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
 
 
 class UserEnvVarsService(Service):
@@ -78,7 +81,7 @@ class UserEnvVarsService(Service):
         # The config IS the value (a RootModel), so there are no named fields to accept.
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         from opi.services.catalog.user_env_vars.editables import (
             COMPONENT_USER_ENV_VARS_EDITABLE,
             DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,

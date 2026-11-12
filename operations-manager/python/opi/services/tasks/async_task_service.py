@@ -27,6 +27,8 @@ from opi.services.tasks.task_supersede import Scope, covers, scope_of
 if TYPE_CHECKING:
     import asyncio
 
+    from sqlalchemy.sql.elements import ColumnElement
+
 logger = logging.getLogger(__name__)
 
 #: The alarm of the worker in this process, or None when no worker runs (the API-only role,
@@ -53,7 +55,7 @@ def notify_new_task() -> None:
 MAX_ERROR_MESSAGE_CHARS = 8000
 
 
-def _deferred(task=AsyncTask):
+def _deferred(task: type[AsyncTask] = AsyncTask) -> ColumnElement[bool]:
     """Rows that wrote to the project file and deliberately did not roll it out (RC-46).
 
     ``is_not_distinct_from`` rather than ``==``: a task whose payload has no rollout key at
@@ -63,7 +65,7 @@ def _deferred(task=AsyncTask):
     return task.payload[ROLLOUT_PAYLOAD_KEY].astext.is_not_distinct_from("false")
 
 
-def _not_yet_reconciled(task=AsyncTask):
+def _not_yet_reconciled(task: type[AsyncTask] = AsyncTask) -> ColumnElement[bool]:
     """Rows whose change no processing run has read since they completed.
 
     The read rule is in ``features/opslaan-zonder-verwerken.md``.
@@ -94,7 +96,7 @@ _TERMINAL_STATES = ("completed", "failed", "cancelled")
 _UNORDERED_TASK_TYPES = ("backup", "restore")
 
 
-def _scopes_overlap(a, b):
+def _scopes_overlap(a: type[AsyncTask], b: type[AsyncTask]) -> ColumnElement[bool]:
     """Whether two tasks can get in each other's way.
 
     NULL is project-wide and overlaps with everything, another NULL included. Two concrete
@@ -159,7 +161,7 @@ class AsyncTaskStatus(StrEnum):
 class AsyncTaskService:
     """Service layer for async task queue operations (ORM-backed)."""
 
-    def __init__(self, cluster: str):
+    def __init__(self, cluster: str) -> None:
         self._cluster = cluster
         self._instance_id = os.environ.get("HOSTNAME", socket.gethostname())
 

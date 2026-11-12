@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opi.core.authz.actions import audit_fields_of
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Callable
 
     from starlette.requests import Request
 
@@ -101,7 +102,7 @@ async def fields_from_form(request: Request, names: tuple[str, ...]) -> dict[str
     return found
 
 
-async def capture_fields(request: Request, endpoint: Any) -> None:
+async def capture_fields(request: Request, endpoint: Callable[..., object]) -> None:
     """Record the fields THIS route names itself, with their submitted value.
 
     Only the named fields, never a whole body, and each truncated at

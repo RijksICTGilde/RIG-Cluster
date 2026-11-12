@@ -78,6 +78,8 @@ from opi.utils.forbidden_characters import find_forbidden_characters
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from opi.core.actor import Actor
 
 logger = logging.getLogger(__name__)
@@ -264,7 +266,7 @@ class GitProjectStore(ProjectStore):
         return connector
 
     @contextlib.asynccontextmanager
-    async def _locked(self, operation: str, name: str):
+    async def _locked(self, operation: str, name: str) -> AsyncIterator[None]:
         """Acquire the store lock, timing the wait and the hold.
 
         The single process-wide lock serializes every project-file write, so its
@@ -1187,7 +1189,7 @@ class GitProjectStore(ProjectStore):
             logger.info("ProjectStore bootstrap loaded %d project(s) at %s", len(loaded), (self._cache_head or "?")[:8])
 
 
-def _as_plain(value: Any) -> Any:
+def _as_plain(value: Any) -> Any:  # noqa: ANN401  # a project-file value
     """The same content in plain Python containers, for a diff that is about content.
 
     Loading through ruamel yields ``CommentedMap``/``CommentedSeq`` and scalar subclasses like
@@ -1350,7 +1352,7 @@ async def _reconcile_poll_loop(interval_seconds: int) -> None:
         await asyncio.sleep(interval_seconds)
         try:
             await get_project_store().reconcile()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a background loop must not stop
             # Broad on purpose: this loop is the revocation bound. A transient
             # git/network error must not end it, or out-of-band revocations
             # silently stop propagating until restart.

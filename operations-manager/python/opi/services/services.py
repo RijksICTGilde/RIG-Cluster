@@ -104,7 +104,7 @@ def deployment_modal_action(
     )
 
 
-def service_entry_name(entry: Any) -> str | None:
+def service_entry_name(entry: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """Return the service name from a ``services``-list entry, format-agnostic.
 
     Handles every form a services list may hold (RC-5 A):
@@ -130,7 +130,7 @@ def service_entry_name(entry: Any) -> str | None:
     return None
 
 
-def service_entry_schema_version(entry: Any) -> str | None:
+def service_entry_schema_version(entry: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """Return the ``schema-version`` stamped on a service entry, or None.
 
     The version is a sibling of ``config`` on the entry record
@@ -146,7 +146,7 @@ def service_entry_schema_version(entry: Any) -> str | None:
     return None
 
 
-def service_entry_type(entry: Any) -> str | None:
+def service_entry_type(entry: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """Return the ``type`` of a service entry, format-agnostic (None if none).
 
     ``type`` marks a service as externally provided (e.g. keycloak ``type: external``)
@@ -166,7 +166,7 @@ def service_entry_type(entry: Any) -> str | None:
     return None
 
 
-def service_entry_body(entry: Any, name: str | None = None) -> Any:
+def service_entry_body(entry: Any, name: str | None = None) -> Any:  # noqa: ANN401  # a project-file value
     """Return the config-carrying sub-dict of a service entry, format-agnostic.
 
     New record (``{name/reference: X, config: ...}``) carries ``config`` and its
@@ -186,7 +186,7 @@ def service_entry_body(entry: Any, name: str | None = None) -> Any:
     return entry.get(key) if key is not None else None
 
 
-def service_entry_config(entry: Any) -> Any:
+def service_entry_config(entry: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Return the ``config`` of a service entry, format-agnostic (None if none).
 
     New record: the ``config`` field on the entry. Legacy ``{X: {config: ...}}``: the
@@ -205,7 +205,7 @@ def service_entry_config(entry: Any) -> Any:
     return body
 
 
-def service_entry_data(entry: Any) -> Any:
+def service_entry_data(entry: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Return the ``data`` of a service entry, format-agnostic (None if none).
 
     The DEFINE-side counterpart of :func:`service_entry_config`. A definition (today:
@@ -308,7 +308,7 @@ class ConfigAdviceNotice:
     message: str
 
 
-def _is_blank(value: Any) -> bool:
+def _is_blank(value: Any) -> bool:  # noqa: ANN401  # a project-file value
     """Whether *value* counts as "not filled in" for ``ConfigAdvice.expects``.
 
     ``False`` and ``0`` are answers, not omissions, so only None and the empty
@@ -1323,7 +1323,7 @@ class ServiceAdapter:
         return service.platform_managed_fields(layer)
 
     @classmethod
-    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:
+    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
         """The platform-written fields present in ``config``, or an empty dict."""
         if not isinstance(config, dict):
             return {}
@@ -1331,7 +1331,11 @@ class ServiceAdapter:
 
     @classmethod
     def _keep_platform_fields(
-        cls, service_name: str, layer: ConfigLayer, config: dict[str, Any] | list[Any], stored: Any
+        cls,
+        service_name: str,
+        layer: ConfigLayer,
+        config: dict[str, Any] | list[Any],
+        stored: Any,  # noqa: ANN401  # a project-file value
     ) -> dict[str, Any] | list[Any]:
         """Preserve platform-written fields; drop unstored ones being written.
 
@@ -1468,7 +1472,7 @@ class ServiceAdapter:
 
         item_key = spec.item_key
 
-        def key_of(item: Any) -> Any:
+        def key_of(item: Any) -> Any:  # noqa: ANN401  # a project-file value
             if item_key is None:
                 return item
             return item.get(item_key) if isinstance(item, dict) else None

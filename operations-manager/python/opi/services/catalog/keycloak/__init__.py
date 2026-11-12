@@ -8,7 +8,7 @@ editables/visualizers in the forms layer; the service references them. Its API s
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.authz.actions import Action
 from opi.services.catalog.base import (
@@ -25,6 +25,10 @@ from opi.services.catalog.keycloak.variables import KeycloakVariables
 from opi.services.secrets import KeycloakSecret
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType, UIEvent
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 
 class KeycloakService(Service):
@@ -65,7 +69,7 @@ class KeycloakService(Service):
         # The full KeycloakConfig surface, broader than the UI section.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.keycloak.editables import (
@@ -108,7 +112,7 @@ class KeycloakService(Service):
             return []
         return [DetailPageSection(template="keycloak/section-detail.html.j2", context={"realms": realms})]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         cached = getattr(self, "_config_section_cache", None)

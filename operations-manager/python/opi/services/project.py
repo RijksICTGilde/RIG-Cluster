@@ -62,7 +62,7 @@ class Project:
         """The wrapped dict (the source of truth), for persistence."""
         return self._data
 
-    def get(self, path: str, default: Any = None) -> Any:
+    def get(self, path: str, default: Any = None) -> Any:  # noqa: ANN401  # a project-file value
         """Read a value by path, e.g. ``components{name=api}/ports/inbound[0]`` or
         ``services/keycloak/config/template``. Returns ``default`` if absent.
 
@@ -77,7 +77,7 @@ class Project:
         """Whether a path resolves to a present (truthy) value."""
         return smart_path_exists(self._data, path)
 
-    def set(self, path: str, value: Any) -> Project:
+    def set(self, path: str, value: Any) -> Project:  # noqa: ANN401  # a project-file value
         """Set a value by path, creating intermediates and preserving list order.
         Chainable."""
         smart_set_value(self._data, path, value)
@@ -90,7 +90,7 @@ class Project:
     # Programmatic find-by-identifier over a list of records. The path syntax
     # `{F=V}` matches a single field; these support multiple fields and "find all".
     @staticmethod
-    def locate(items: list[Any], **by: Any) -> dict[str, Any] | None:
+    def locate(items: list[Any], **by: Any) -> dict[str, Any] | None:  # noqa: ANN401  # a project-file value
         """First dict in ``items`` whose fields equal all of ``by``, or None. Look
         up by stable identifiers only. E.g. ``locate(deployment["components"],
         reference="frontend")``."""
@@ -100,17 +100,17 @@ class Project:
         return None
 
     @staticmethod
-    def locate_all(items: list[Any], **by: Any) -> list[dict[str, Any]]:
+    def locate_all(items: list[Any], **by: Any) -> list[dict[str, Any]]:  # noqa: ANN401  # a project-file value
         """All dicts in ``items`` matching ``by`` (order preserved)."""
         return [item for item in items or [] if isinstance(item, dict) and all(item.get(k) == v for k, v in by.items())]
 
-    def find(self, collection: str, **by: Any) -> dict[str, Any] | None:
+    def find(self, collection: str, **by: Any) -> dict[str, Any] | None:  # noqa: ANN401  # a project-file value
         """First record in a top-level collection (``components``, ``deployments``,
         ``users``, ``repositories``, ...) matching ``by`` -- by stable identifier
         (``name``/``reference``), never a generated value."""
         return self.locate(self._data.get(collection) or [], **by)
 
-    def find_all(self, collection: str, **by: Any) -> list[dict[str, Any]]:
+    def find_all(self, collection: str, **by: Any) -> list[dict[str, Any]]:  # noqa: ANN401  # a project-file value
         """All records in a top-level collection matching ``by`` (order preserved)."""
         return self.locate_all(self._data.get(collection) or [], **by)
 
@@ -128,7 +128,7 @@ class Project:
         """Whether the project declares the service at all (string or dict form)."""
         return self.service_entry(name) is not None
 
-    def service_config(self, name: str) -> Any:
+    def service_config(self, name: str) -> Any:  # noqa: ANN401  # a project-file value
         """The raw config of a project-level service (dict/list), or None if the
         service is absent or has no config block."""
         return smart_get_value(self._data, f"services/{name}/config")
@@ -181,7 +181,7 @@ class Project:
         )
 
 
-def member_from(entry: Any) -> ProjectUser | None:
+def member_from(entry: Any) -> ProjectUser | None:  # noqa: ANN401  # a project-file value
     """One member out of the raw list, or None when the entry is not one.
 
     A member that does not parse is skipped and not raised: half a line in ``users`` would

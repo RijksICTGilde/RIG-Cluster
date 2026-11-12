@@ -155,7 +155,7 @@ class ArgoCDSync:
                 await watcher
             except asyncio.CancelledError:
                 pass
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                 logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
     async def wait_for_project_level_application(self, app_name: str) -> None:

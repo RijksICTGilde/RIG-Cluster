@@ -23,15 +23,15 @@ class EditableConverter(Protocol):
     session state) surrounding the field. A converter that needs no context ignores it.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         """YAML value -> form input value."""
         ...
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         """Form submission value -> YAML storage value."""
         ...
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         """YAML value -> read-only display value."""
         ...
 
@@ -40,7 +40,7 @@ class EditableConverter(Protocol):
 class EditableValidator(Protocol):
     """Sync field-level validator."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         """Return error messages (empty list = valid)."""
         ...
 
@@ -60,7 +60,7 @@ class ContextAwareEditableValidator(Protocol):
     is for static checking and ``cast``, not for ``isinstance``.
     """
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         """Return error messages (empty list = valid)."""
         ...
 
@@ -69,7 +69,7 @@ class ContextAwareEditableValidator(Protocol):
 class EditableEnforcer(Protocol):
     """Sync business rule enforcer."""
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """Raises ``ValueError`` on a violation, otherwise returns the value."""
         ...
 
@@ -87,7 +87,7 @@ class AsyncEditableEnforcer(Protocol):
     - ``FieldWarning`` for warnings targeted at a specific field
     """
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """Enforce business rules asynchronously. Returns value."""
         ...
 
@@ -96,7 +96,7 @@ class AsyncEditableEnforcer(Protocol):
 class EditableCondition(Protocol):
     """Condition check for deferred field behavior."""
 
-    def check(self, value: Any) -> bool:
+    def check(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         """Return True when the condition is met."""
         ...
 
@@ -109,7 +109,7 @@ class EditableGenerator(Protocol):
     are computed from the merged YAML data during final submission.
     """
 
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
+    def generate(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """Compute a value from the current project data."""
         ...
 
@@ -123,7 +123,7 @@ class EditableSummarizer(Protocol):
     the text to display, or None to leave the field out of the summary entirely.
     """
 
-    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         """YAML value -> summary text, or None to omit the field."""
         ...
 
@@ -136,7 +136,7 @@ class TransientValueResolver(Protocol):
     dependent field evaluation) but is NOT persisted to the YAML output.
     """
 
-    def resolve(self, yaml_data: dict[str, Any]) -> Any:
+    def resolve(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """Compute the transient value from current project data."""
         ...
 

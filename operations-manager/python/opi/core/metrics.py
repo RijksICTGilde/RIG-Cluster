@@ -32,6 +32,8 @@ from prometheus_client.registry import Collector
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from prometheus_client.core import Metric
+
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 # So a test can run the child-process scan against a fake /proc.
 _PROC = "/proc"
@@ -122,7 +124,7 @@ class OPICollector(Collector):
     are always fresh without needing a background update loop.
     """
 
-    def collect(self):
+    def collect(self) -> Iterator[Metric]:
         gauge = GaugeMetricFamily(
             "opi_projects_cached",
             "Number of projects in ProjectService in-memory cache",
@@ -132,7 +134,7 @@ class OPICollector(Collector):
 
             if ProjectService._instance is not None:
                 gauge.add_metric([], len(ProjectService._instance._projects))
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect project cache metrics", exc_info=True)
         yield gauge
 
@@ -152,7 +154,7 @@ class OPICollector(Collector):
 
             ws_global.add_metric([], len(_global_connections))
             ws_users.add_metric([], len(_active_connections))
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect WebSocket metrics", exc_info=True)
         yield ws_global
         yield ws_users
@@ -170,7 +172,7 @@ class OPICollector(Collector):
 
             for (project, kind), count in usage_per_project().items():
                 credentials.add_metric([project, kind], count)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect credential metrics", exc_info=True)
         yield credentials
 
@@ -185,7 +187,7 @@ class OPICollector(Collector):
             from opi.services.audit import write_failures
 
             audit_failures.add_metric([], write_failures())
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect audit write failures", exc_info=True)
         yield audit_failures
 
@@ -197,7 +199,7 @@ class OPICollector(Collector):
             from opi.api.router import subdomain_check_rate_limiter
 
             rl_clients.add_metric([], len(subdomain_check_rate_limiter._tokens))
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect rate limiter metrics", exc_info=True)
         yield rl_clients
 
@@ -219,9 +221,9 @@ class OPICollector(Collector):
                     stats = pool.get_connection_stats()
                     db_active.add_metric([name], stats.get("tracked_active", 0))
                     db_size.add_metric([name], stats.get("pool_size", 0))
-                except Exception:
+                except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
                     logger.debug("Failed to collect stats for pool %s", name, exc_info=True)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect database pool metrics", exc_info=True)
         yield db_active
         yield db_size
@@ -234,7 +236,7 @@ class OPICollector(Collector):
         try:
             for gen, count in enumerate(gc.get_count()):
                 gc_objects.add_metric([str(gen)], count)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect GC metrics", exc_info=True)
         yield gc_objects
 
@@ -252,7 +254,7 @@ class OPICollector(Collector):
                 break
             except FileNotFoundError:
                 continue
-            except Exception:
+            except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
                 logger.debug("Failed to read cgroup memory from %s", cgroup_path, exc_info=True)
                 break
         yield cgroup_mem
@@ -291,7 +293,7 @@ class OPICollector(Collector):
                     num_children += 1
                 except FileNotFoundError, IndexError, ValueError, PermissionError:
                     continue
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to scan child processes", exc_info=True)
         child_count.add_metric([], num_children)
         yield child_rss
@@ -332,7 +334,7 @@ class OPICollector(Collector):
             lag_total.add_metric([], loop_watchdog.total_lag())
             lag_now.add_metric([], loop_watchdog.current_lag())
             stalls.add_metric([], loop_watchdog.stall_count())
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect event loop lag", exc_info=True)
         yield lag_total
         yield lag_now
@@ -392,7 +394,7 @@ class OPICollector(Collector):
             total = image_pull_failure_count()
             by_reason = image_pull_failure_counts()
             observed_at = image_pull_observed_timestamp()
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect image-pull metrics", exc_info=True)
         pull_failures.add_metric([], total)
         for (namespace, reason), count in by_reason.items():
@@ -423,12 +425,12 @@ class OPICollector(Collector):
                 labels = [state.project, state.deployment]
                 backup_last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
                 backup_unknown.add_metric(labels, 1 if state.unknown_streak else 0)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect backup schedule metrics", exc_info=True)
         yield backup_last_success
         yield backup_unknown
 
-    def describe(self):
+    def describe(self) -> list[Metric]:
         """Return empty description; metrics are generated dynamically."""
         return []
 
@@ -440,7 +442,7 @@ class TracmallocCollector(Collector):
     Has ~10-30% memory overhead, so off by default.
     """
 
-    def collect(self):
+    def collect(self) -> Iterator[Metric]:
         if not tracemalloc.is_tracing():
             return
 
@@ -472,7 +474,7 @@ class TracmallocCollector(Collector):
 
         yield gauge
 
-    def describe(self):
+    def describe(self) -> list[Metric]:
         """Return empty description; metrics are generated dynamically."""
         return []
 
@@ -509,7 +511,7 @@ def _read_cgroup_memory() -> int | None:
                 return int(f.read().strip())
         except FileNotFoundError:
             continue
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             return None
     return None
 
@@ -523,7 +525,7 @@ async def _peak_memory_sampler() -> None:
             if mem is not None and mem > _peak_memory_bytes:
                 _peak_memory_bytes = mem
                 _peak_memory_timestamp = time.time()
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to sample cgroup memory", exc_info=True)
         await asyncio.sleep(1)
 

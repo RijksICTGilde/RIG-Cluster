@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.backup_constants import (
     BACKUP_REPOSITORY_UNUSABLE_ERROR,
@@ -338,7 +338,7 @@ data:
             args = ["get", "pod", pod_name, "-n", self.lock_namespace, "-o", "name"]
             _, _, code = await self.kubectl.run_command(args)
             return code == 0
-        except Exception:
+        except OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError:
             logger.debug(f"Error checking if pod {pod_name} exists, assuming it doesn't")
             return False
 
@@ -382,7 +382,7 @@ data:
 """
             args = ["apply", "-f", "-"]
             await self.kubectl.run_command(args, stdin_input=configmap_yaml)
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.warning(f"Failed to update backup progress: {e}")
 
     async def __aenter__(self) -> BackupLock:
@@ -981,5 +981,5 @@ class BaseBackupManager:
             ]
             await self.kubectl.run_command(args)
             logger.debug(f"Deleted pod {pod_name} and secret {secret_name}")
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.warning(f"Failed to delete pod {pod_name}: {e}")

@@ -148,7 +148,9 @@ class DeploymentRolloutAccess(Protocol):
 
     async def _terminate_operation_we_waited_on(self, app_name: str, cluster: str | None) -> None: ...
 
-    async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None: ...
+    async def _queue_refresh_task(
+        self, task_service: AsyncTaskService | None, project_name: str, deployment_name: str
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -393,7 +395,7 @@ class DeploymentRollout:
                         statuses = await describe_components_waiting(
                             namespace, component_names, component_refs, deployment_state
                         )
-                    except Exception:
+                    except OSError, ValueError, KeyError, TypeError:
                         statuses = []
                 # Components with the same reason on one line: two components waiting
                 # on the same image are one thing going wrong, not two.
@@ -584,7 +586,7 @@ class DeploymentRollout:
                 )
                 await self._host._queue_refresh_task(task_service, round_.project_name, dep_name)
             tally.sync_failures.extend(f"{app_name}: {msg}" for msg in observation.failures)
-        except Exception as tune_err:
+        except Exception as tune_err:  # noqa: BLE001  # a step of this flow records its failure in the result
             logger.error(
                 "OOM after-sync observation failed for %s/%s (components: %s): %s",
                 round_.project_name,

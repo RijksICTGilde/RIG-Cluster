@@ -9,7 +9,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 import asyncio
 import logging
 from inspect import Parameter, Signature
-from typing import Annotated, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
@@ -197,6 +197,11 @@ v2_router: APIRouter = APIRouter(
     responses={404: {"description": "Not found"}},
     default_response_class=JSONResponse,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from opi.services.catalog.base import Service
 
 
 def _accepted_response(task: dict, task_type: str) -> JSONResponse:
@@ -441,7 +446,7 @@ async def _fetch_live_statuses_lenient(
                 argo=argo,
                 kubectl=kubectl,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # the outer boundary of this request; it must still answer
             logger.warning(
                 "Deployment status fetch failed for %s/%s: %s",
                 project_name,
@@ -2119,16 +2124,16 @@ async def add_service_v2(
 # lock-step with the models and never hardcodes a service name.
 
 
-def _service_or_404(service_name: str):
+def _service_or_404(service_name: str) -> Service:
     """Resolve a service by name or raise 404."""
     try:
         service_type = ServiceType(service_name)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Unknown service '{service_name}'")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Unknown service '{service_name}'") from e
     return get_service(service_type)
 
 
-def _accepts_config_at(service, layer: ConfigLayer) -> bool:
+def _accepts_config_at(service: Service, layer: ConfigLayer) -> bool:
     """Whether a service accepts a config block at ``layer``.
 
     Two questions, both answered by the service itself: does it carry config at this layer
@@ -2147,7 +2152,7 @@ def _accepts_config_at(service, layer: ConfigLayer) -> bool:
     return layer in service.config_layers() and service.config_model_for(layer) is not None
 
 
-def _values_targets(service) -> list[ConfigLayer]:
+def _values_targets(service: Service) -> list[ConfigLayer]:
     """The layers where this service's owned key/value map has endpoints.
 
     The single derivation both the catalog and the route generator use, so what a client
@@ -2158,17 +2163,17 @@ def _values_targets(service) -> list[ConfigLayer]:
     return [layer for layer in service.config_layers() if layer in VALUES_LAYERS]
 
 
-def _supported_targets(service) -> list[str]:
+def _supported_targets(service: Service) -> list[str]:
     """The config targets a service accepts, measured from its own declarations."""
     return [layer.value for layer in ConfigLayer if _accepts_config_at(service, layer)]
 
 
-def _resolve_supported_layer(service, service_name: str, target: str) -> ConfigLayer:
+def _resolve_supported_layer(service: Service, service_name: str, target: str) -> ConfigLayer:
     """Parse a target into a ConfigLayer the service actually supports, or 422."""
     try:
         layer = ConfigLayer(target)
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"Unknown target '{target}'")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown target '{target}'") from e
     if not _accepts_config_at(service, layer):
         raise HTTPException(
             status_code=422,
@@ -2259,7 +2264,7 @@ class ServiceCatalogResponse(BaseModel):
     services: list[ServiceCatalogEntry] = Field(..., description="Every platform service, sorted by name")
 
 
-def _catalog_entry(service_type: ServiceType, service: Any) -> ServiceCatalogEntry:
+def _catalog_entry(service_type: ServiceType, service: Service) -> ServiceCatalogEntry:
     """One catalog row, entirely out of what the service and its definition declare."""
     targets = _supported_targets(service)
     definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
@@ -2449,7 +2454,7 @@ class ServiceDescription(BaseModel):
     )
 
 
-def _layer_info(service: Any, service_type: ServiceType, layer: ConfigLayer) -> ServiceLayerInfo:
+def _layer_info(service: Service, service_type: ServiceType, layer: ConfigLayer) -> ServiceLayerInfo:
     """One layer of a service, out of what the service declares about that layer."""
     endpoint = None
     if _accepts_config_at(service, layer) and layer in _CONFIG_WRITE_LAYERS:
@@ -2544,7 +2549,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
 
     service = _service_or_404(service_name)
 
-    def visible(config: Any, layer: ConfigLayer) -> Any:
+    def visible(config: Any, layer: ConfigLayer) -> Any:  # noqa: ANN401  # a stored config block
         owned = service.platform_managed_fields(layer)
         if not owned or not isinstance(config, dict):
             return config
@@ -2758,7 +2763,7 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
     return Signature(params, return_annotation=JSONResponse)
 
 
-def _refuse_platform_managed(service_name: str, config: Any, managed: frozenset[str]) -> None:
+def _refuse_platform_managed(service_name: str, config: Any, managed: frozenset[str]) -> None:  # noqa: ANN401  # a stored config block
     """422 when a write carries a field OPI owns. The API can never change these.
 
     Refusing rather than dropping the field silently: a caller that sent it believes it
@@ -2795,7 +2800,7 @@ def _refuse_platform_managed(service_name: str, config: Any, managed: frozenset[
     )
 
 
-def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singular: frozenset[str]) -> None:
+def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singular: frozenset[str]) -> None:  # noqa: ANN401  # a stored config block
     """409 when the file holds more entries than the singular surface can honestly show.
 
     The service says its list is one thing to the outside world (``api_singular_lists``),
@@ -2827,7 +2832,7 @@ def _refuse_singular_overflow(service_name: str, target: str, stored: Any, singu
 
 def _stored_config_at(
     project_name: str, service_name: str, target: str, component: str | None, deployment: str | None
-) -> Any:
+) -> Any:  # noqa: ANN401  # a stored config block
     """This service's config as it stands in the project file, or None.
 
     Only read for the singular facade's honesty check, so only a service that declares one
@@ -2852,10 +2857,10 @@ def _make_upsert_endpoint(
     config_model: type,
     managed: frozenset[str],
     singular: frozenset[str],
-):
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build a typed PUT endpoint whose body is the service's config model."""
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         # exclude_unset: only write what the caller actually sent, so unset optional
         # fields leave no key rather than freezing a model default.
         config = kwargs["body"].model_dump(by_alias=True, exclude_unset=True)
@@ -2894,10 +2899,12 @@ def _make_upsert_endpoint(
     return endpoint
 
 
-def _make_clear_endpoint(service_name: str, target: str, name_param: str | None):
+def _make_clear_endpoint(
+    service_name: str, target: str, name_param: str | None
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build a DELETE endpoint that clears this service's config at a target."""
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         return await _enqueue_config_write(
             kwargs["request"],
             kwargs["project_name"],
@@ -3012,10 +3019,10 @@ def _config_patch_description(
 
 def _make_patch_endpoint(
     service_name: str, target: str, name_param: str | None, body_model: type, list_field: str | None
-):
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build a typed PATCH endpoint whose body is the service's add/remove patch model."""
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         body = kwargs["body"]
         return await _enqueue_config_write(
             kwargs["request"],
@@ -3897,12 +3904,14 @@ async def _enqueue_action_rollout(
     )
 
 
-def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
+def _make_action_endpoint(
+    action: ServiceAction, verbs: tuple[ActionVerb, ...]
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build the endpoint for one route: resolve the verb, validate against the service's
     own editables, then hand the values to the service's handler.
     """
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
         values: dict[str, Any] = {}
         uploads: dict[str, UploadedFile] = {}
@@ -4136,15 +4145,15 @@ async def _enqueue_values_write(
 
 def _make_values_endpoint(
     service_name: str,
-    service,
+    service: Service,
     layer: ConfigLayer,
     operation: ValuesOperation,
     *,
     keyed: bool = False,
-):
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build one values endpoint: the operation is fixed, the payload shape follows it."""
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         body = kwargs.get("body")
         keys: list[str] | None = None
         if operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
@@ -4220,7 +4229,9 @@ class ServiceValuesRead(BaseModel):
     )
 
 
-def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
+def _make_values_read_endpoint(
+    service_name: str, service: Service, layer: ConfigLayer, owned_property: str
+) -> Callable[..., Awaitable[JSONResponse]]:
     """Build the GET that reads back what the writes on this path put there.
 
     Synchronous: it reads the project file, so there is nothing to enqueue. Which values may
@@ -4237,7 +4248,7 @@ def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
     trade was made there, deliberately, and this endpoint is only the place it shows.
     """
 
-    async def endpoint(**kwargs: Any) -> JSONResponse:
+    async def endpoint(**kwargs: Any) -> JSONResponse:  # noqa: ANN401  # the route arguments FastAPI injects
         project_name: str = kwargs["project_name"]
         component_name: str = kwargs["component_name"]
         deployment_name: str | None = kwargs.get("deployment_name")
@@ -4251,7 +4262,7 @@ def _make_values_read_endpoint(service_name: str, service, layer: ConfigLayer):
             where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
             raise HTTPException(status_code=404, detail=f"No {where} in project '{project_name}'")
         try:
-            stored = decode_values(node.get(service.owned_property), project.data)
+            stored = decode_values(node.get(owned_property), project.data)
         except ComponentValuesError as error:
             # Stored values that will not decrypt or parse. Not "none set": saying so is
             # the difference between an empty map and one nobody can read.
@@ -4368,7 +4379,8 @@ def _register_service_values_routes(router: APIRouter) -> None:
     already declares -- so a layer the project schema has no place for cannot get a route.
     """
     for service_type, service in SERVICES.items():
-        if not service.owned_values_map or service.owned_property is None:
+        owned_property = service.owned_property
+        if not service.owned_values_map or owned_property is None:
             continue
         service_name = service_type.value
         for layer in _values_targets(service):
@@ -4413,7 +4425,7 @@ def _register_service_values_routes(router: APIRouter) -> None:
             router.add_api_route(
                 path,
                 action_marker(Action.SERVICE_READ)(
-                    validate_api_token(_make_values_read_endpoint(service_name, service, layer))
+                    validate_api_token(_make_values_read_endpoint(service_name, service, layer, owned_property))
                 ),
                 methods=["GET"],
                 tags=[service_name],

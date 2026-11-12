@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import create_kubectl_connector
@@ -31,6 +32,9 @@ from opi.manager.run_support import ANNOT_EXPIRES, LABEL_RUN
 from opi.services.runs_service import RunStatus, get_runs_service
 from opi.utils.naming import DB_CONSOLE_PREFIX
 
+if TYPE_CHECKING:
+    from opi.connectors.kubectl import KubectlConnector
+
 logger = logging.getLogger(__name__)
 
 # A bundle is applied within seconds, so a pod-less bundle older than this is a
@@ -39,7 +43,7 @@ ORPHAN_GRACE_SECONDS = 300
 
 
 class DbConsoleReaper:
-    def __init__(self, cluster: str):
+    def __init__(self, cluster: str) -> None:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
@@ -120,7 +124,7 @@ class DbConsoleReaper:
 
     async def _reap_orphans(
         self,
-        kubectl,
+        kubectl: KubectlConnector,
         manager: DbConsoleManager,
         namespace: str,
         live_sessions: set[str],
@@ -201,7 +205,7 @@ class DbConsoleReaper:
         """Delete dbconsole-* OIDC clients with no live pod (e.g. force-deleted pods)."""
         try:
             realm = DbConsoleManager._zad_realm()
-        except Exception:
+        except Exception:  # noqa: BLE001  # without a realm there is nothing to collect
             return
         try:
             keycloak = await create_keycloak_connector()

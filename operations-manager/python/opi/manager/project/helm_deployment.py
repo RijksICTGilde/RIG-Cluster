@@ -98,7 +98,7 @@ def deployment_uses_helmfile(deployment: dict[str, Any]) -> bool:
     return len(helmfiles) > 0
 
 
-def resolve_nested_aliases(obj: Any, context: dict[str, Any]) -> Any:
+def resolve_nested_aliases(obj: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """Resolve ``$VAR`` and ``${VAR}`` references in a nested structure.
 
     A string that is exactly one reference becomes the context value with its own type; a

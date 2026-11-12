@@ -214,6 +214,6 @@ async def test_een_falende_aanroep_gooit_niet():
     connector = _connector()
     with (
         patch.object(KubectlConnector, "is_connected", True),
-        patch.object(connector, "_run_kubectl_command", AsyncMock(side_effect=RuntimeError("kubectl weg"))),
+        patch.object(connector, "_run_kubectl_command", AsyncMock(side_effect=OSError("kubectl weg"))),
     ):
         assert await connector.get_application_pods("ns", "pr-114") == []

@@ -120,7 +120,7 @@ class JobManager:
             raise JobError("Er draait al een job voor deze deployment. Stop die eerst.")
         try:
             latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.JOB)
-        except Exception:
+        except Exception:  # noqa: BLE001  # an unreadable run row must not block the start
             latest = None
         if latest and latest.get("status") == "starting":
             # No pod exists (checked above). A 'starting' row with no pod is either

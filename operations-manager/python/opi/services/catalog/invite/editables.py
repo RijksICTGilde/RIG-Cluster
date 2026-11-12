@@ -138,9 +138,8 @@ INVITE_APPLICATION_TARGET_EDITABLE = Editable(
 # Closed set (sso/local); the model types it as list[Literal[...]] so it is guardrailed
 # regardless of the widget. Empty means: fall back to the project auth methods.
 #
-# An invite can only NARROW what the realm offers, never widen it:
-#     allow_sso = realm_auth["sso"] and invite_auth_config["sso"]   (invite_routes)
-# The realm follows the keycloak template, and the blueprints differ exactly here:
+# An invite can only NARROW what the realm offers, never widen it: invite_routes ANDs the
+# realm's flag per method with the invite's. The realm follows the keycloak template, and the blueprints differ exactly here:
 # sso-only shows no login form (SSO is the only way in); sso-support and sso-support-otp
 # show Keycloak's login form. Under sso-only there is one possible answer and the field
 # is inert: it is hidden rather than shown as a choice that changes nothing.

@@ -74,7 +74,7 @@ _WILDCARD_DESCRIPTION = (
 )
 
 
-def _check_wildcard_peer(peer: Any) -> Any:
+def _check_wildcard_peer(peer: Any) -> Any:  # noqa: ANN401  # a project-file value
     """A wildcard peer names nothing else: no deployment, no component.
 
     Refused rather than ignored. A rule reading ``{project: '*', component: 'api'}`` looks

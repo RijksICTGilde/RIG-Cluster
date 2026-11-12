@@ -16,6 +16,7 @@ import tempfile
 from io import StringIO
 from typing import TYPE_CHECKING, Any
 
+from jsonpath_ng.exceptions import JSONPathError
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -55,7 +56,7 @@ def _fits_literal_block(data: str) -> bool:
     return "\n" in data and "\r" not in data
 
 
-def _represent_multiline_str(representer: Any, data: str) -> Any:
+def _represent_multiline_str(representer: Any, data: str) -> Any:  # noqa: ANN401  # a ruamel representer
     """Emit a multi-line string as a literal block (``|``), not a quoted one-liner.
 
     AGE-encrypted values (realm passwords, api keys, user-env-vars, attachments)
@@ -75,7 +76,7 @@ _QUOTED_REPRESENTERS = {
 }
 
 
-def _represent_quoted_scalarstring(representer: Any, data: str) -> Any:
+def _represent_quoted_scalarstring(representer: Any, data: str) -> Any:  # noqa: ANN401  # a ruamel representer
     """Same rule for a scalar the loader read back as quoted.
 
     ``preserve_quotes`` keeps the quoting of values that were already quoted, which is
@@ -191,7 +192,7 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
     return True
 
 
-def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:
+def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """The value at ``json_path``, or ``default`` when the path matches nothing."""
     try:
         if not data:
@@ -202,7 +203,7 @@ def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = 
 
         return matches[0].value if matches else default
 
-    except Exception as e:
+    except (JSONPathError, ValueError, TypeError, KeyError) as e:
         logger.error(f"Error querying JSONPath '{json_path}': {e}")
         return default
 
@@ -277,7 +278,7 @@ def dump_yaml_documents_to_string(documents: list[Any]) -> str:
     return output.getvalue()
 
 
-def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:
+def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """Set the value at ``json_path`` in ``data`` in place. False when the path matches nothing."""
     try:
         if not data:
@@ -301,7 +302,7 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
         return False
 
 
-def load_yaml_safe(yaml_string: str) -> Any:
+def load_yaml_safe(yaml_string: str) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """Parse YAML for reading only: a mapping of plain dicts, lists and scalars.
 
     Raises:
@@ -319,7 +320,7 @@ def load_yaml_documents_safe(yaml_string: str) -> list[Any]:
     return list(_create_safe_loader().load_all(StringIO(yaml_string)))
 
 
-def load_yaml_round_trip(yaml_string: str) -> Any:
+def load_yaml_round_trip(yaml_string: str) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """Parse YAML whose result is emitted again, by one of the ``dump_yaml_for_go`` writers.
 
     A rewrite keeps the comments and the source form of every scalar, so a file in which
@@ -331,7 +332,7 @@ def load_yaml_round_trip(yaml_string: str) -> Any:
     return _create_plain_yaml().load(StringIO(yaml_string))
 
 
-def dump_yaml_for_go(data: Any) -> str:
+def dump_yaml_for_go(data: Any) -> str:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """Dump a file that a Go consumer reads.
 
     Folds a scalar past the emitter's default width, which collapses runs of whitespace in
@@ -342,7 +343,7 @@ def dump_yaml_for_go(data: Any) -> str:
     return output.getvalue()
 
 
-def dump_yaml_for_go_unfolded(data: Any) -> str:
+def dump_yaml_for_go_unfolded(data: Any) -> str:  # noqa: ANN401  # a YAML tree, any scalar or mapping
     """Dump a file that a Go consumer reads, keeping every scalar on one line."""
     yaml = _create_plain_yaml()
     yaml.width = _NO_FOLDING_WIDTH

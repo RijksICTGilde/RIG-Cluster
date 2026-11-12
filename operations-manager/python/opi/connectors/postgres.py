@@ -103,7 +103,7 @@ class PostgresConnector:
         else:
             try:
                 await self._conn.fetchval("SELECT 1")
-            except Exception:
+            except asyncpg.PostgresError, asyncpg.InterfaceError, OSError:
                 logger.warning(f"Connection to {self._host}/{database} broken, recreating")
                 with contextlib.suppress(OSError):
                     await self._conn.close()
@@ -125,7 +125,7 @@ class PostgresConnector:
             try:
                 await self._conn.close()
                 logger.debug("Closed managed connection")
-            except Exception as e:
+            except (asyncpg.PostgresError, OSError) as e:
                 logger.warning(f"Error closing connection: {e}")
             finally:
                 self._conn = None
@@ -418,7 +418,7 @@ class PostgresConnector:
             await self._get_or_create_connection(database)
             logger.info(f"Connection test successful for {self._admin_username}@{self._host}/{database}")
             return True
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as e:
             logger.debug(f"Connection test failed for {self._admin_username}@{self._host}/{database}: {e}")
             return False
 

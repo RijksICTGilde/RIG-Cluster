@@ -105,13 +105,13 @@ _MEMORY = re.compile(r"^([\d.]+)\s*(Ki|Mi|Gi|K|M|G)?$")
 _CPU = re.compile(r"^([\d.]+)(m)?$")
 
 
-def _memory_mi(value: Any) -> float | None:
+def _memory_mi(value: Any) -> float | None:  # noqa: ANN401  # a project-file value
     """Memory in Mi; None when there is nothing, or something unreadable."""
     match = _MEMORY.match(str(value or ""))
     return float(match.group(1)) * _MEMORY_UNITS.get(match.group(2) or "", 1 / (1024 * 1024)) if match else None
 
 
-def _cpu_millicores(value: Any) -> float | None:
+def _cpu_millicores(value: Any) -> float | None:  # noqa: ANN401  # a project-file value
     match = _CPU.match(str(value or ""))
     return float(match.group(1)) * (1 if match.group(2) else 1000) if match else None
 
@@ -130,7 +130,7 @@ def _service_title(name: str) -> str:
         return name
 
 
-def _component_service_config(component: dict[str, Any], service: ServiceType) -> Any:
+def _component_service_config(component: dict[str, Any], service: ServiceType) -> Any:  # noqa: ANN401  # a project-file value
     """The config of ONE service on a component, in whichever notation it is written."""
     for entry in component.get("services") or []:
         if service_entry_name(entry) == service.value:

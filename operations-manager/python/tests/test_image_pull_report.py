@@ -258,7 +258,7 @@ class TestObserve:
             assert await observe_image_pull_failures() == 1
             assert image_pull_failure_count() == 1
 
-        mock_kubectl.run_command = AsyncMock(side_effect=RuntimeError("kubectl is weg"))
+        mock_kubectl.run_command = AsyncMock(side_effect=OSError("kubectl is weg"))
         assert await observe_image_pull_failures() == 1
         assert image_pull_failure_count() == 1
 
@@ -309,7 +309,7 @@ class TestOfErGekekenIs:
             assert await observe_image_pull_failures() == 0
             assert image_pull_observed_timestamp() == 0.0
 
-        mock_kubectl.run_command = AsyncMock(side_effect=RuntimeError("kubectl is weg"))
+        mock_kubectl.run_command = AsyncMock(side_effect=OSError("kubectl is weg"))
         assert await observe_image_pull_failures() == 0
         assert image_pull_observed_timestamp() == 0.0
 

@@ -15,13 +15,18 @@ Like ``user-env-vars`` this service owns a plain component property
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.references import is_reference, validate_alias_value
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceKind, ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 class AliasesService(Service):
@@ -63,17 +68,17 @@ class AliasesService(Service):
         # An open map (a RootModel keyed by alias name), so there is no fixed field list.
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         from opi.services.catalog.aliases.editables import COMPONENT_ALIASES_EDITABLE
 
         return [COMPONENT_ALIASES_EDITABLE] if layer is ConfigLayer.COMPONENT else []
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.aliases.visualizers import COMPONENT_ALIASES
 
         return [COMPONENT_ALIASES]
 
-    def config_component_layout(self) -> list[Any]:
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         return [

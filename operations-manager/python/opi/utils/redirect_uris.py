@@ -22,7 +22,7 @@ REDIRECT_URI_MESSAGE = (
 )
 
 
-def validate_redirect_uri(value: Any, field: str) -> str:
+def validate_redirect_uri(value: Any, field: str) -> str:  # noqa: ANN401  # a project-file value
     """Validate a redirect URI a project supplies itself.
 
     Allowed is ``https://<host>[:port]/<path>`` with a concrete host, and ``http://`` only
@@ -64,7 +64,7 @@ def validate_redirect_uri(value: Any, field: str) -> str:
     return value
 
 
-def validate_redirect_uris(values: Any, field: str) -> list[str]:
+def validate_redirect_uris(values: Any, field: str) -> list[str]:  # noqa: ANN401  # a project-file value
     """Validate a list of redirect URIs. An empty list stays empty, that is not a wildcard."""
     if not isinstance(values, list):
         raise ValueError(f"{field} must be a list, got {type(values).__name__}")  # noqa: TRY004  # the caller handles one error type, so a type mismatch raises ValueError too

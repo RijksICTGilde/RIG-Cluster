@@ -27,7 +27,7 @@ def requires_sso(func: Callable) -> Callable:
     """Mark a route as requiring Keycloak SSO, as metadata on the function."""
 
     @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401  # forwarded to the wrapped route
         return await func(*args, **kwargs)
 
     wrapper._requires_sso = True
@@ -35,7 +35,7 @@ def requires_sso(func: Callable) -> Callable:
     return wrapper
 
 
-def get_current_user(request) -> dict[str, Any] | None:
+def get_current_user(request: Request) -> dict[str, Any] | None:
     """The authenticated user on this request, or None.
 
     Three routes fill ``request.state.user``: the authorization middleware out of a
@@ -53,7 +53,7 @@ def get_current_user(request) -> dict[str, Any] | None:
     return user
 
 
-def require_platform_admin(request) -> dict[str, Any]:
+def require_platform_admin(request: Request) -> dict[str, Any]:
     """Return the current user, or refuse the request if they are not a platform admin.
 
     Hiding a link in the menu is presentation, not access control: a page meant for
@@ -73,7 +73,7 @@ def require_platform_admin(request) -> dict[str, Any]:
     return user
 
 
-def _elevation_required(request) -> HTTPException:
+def _elevation_required(request: Request) -> HTTPException:
     """Send a platform admin without a fresh step-up to the popup that activates it."""
     if request.headers.get("HX-Request"):
         back = urlsplit(request.headers.get("HX-Current-URL", "")).path or "/"
@@ -121,7 +121,7 @@ def requires_step_up(
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401  # forwarded to the wrapped route
             # The request comes as a keyword from FastAPI and positionally from a test that
             # calls the route directly.
             request: Request = kwargs.get("request") or args[0]
@@ -182,7 +182,7 @@ def requires_step_up(
 
 async def _step_up_refusal(
     request: Request, action_phrase: str, text: str, *, fields: dict[str, str] | None = None, method: str = "POST"
-) -> Any:
+) -> Any:  # noqa: ANN401  # forwarded to the wrapped route
     """The dialog for an htmx request, the same text as a 403 for everything else.
 
     The dialog comes out of the web layer; importing that at module level would make a

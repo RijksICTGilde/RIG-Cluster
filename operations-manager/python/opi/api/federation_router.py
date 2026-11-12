@@ -72,7 +72,7 @@ async def federation_health(request: Request) -> JSONResponse:
                 resp = await conn.health_check()
                 entry["status"] = resp.get("status", "ok")
                 entry["healthy"] = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # a peer that does not answer is a health result, not a failure
             # foutmelding-gewogen: the error of a peer next to that peer's own url, which only
             # a platform admin sees, so this hands the reader nothing they did not have.
             # Without the reason, "peer does not answer" is a health check without value.

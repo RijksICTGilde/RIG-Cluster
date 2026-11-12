@@ -26,7 +26,7 @@ _NAMES: Final[dict[str, str]] = {
 }
 
 
-def find_forbidden_characters(data: Any) -> list[str]:
+def find_forbidden_characters(data: Any) -> list[str]:  # noqa: ANN401  # a project-file value
     """The paths whose string value holds a forbidden character, empty when there are none.
 
     The path is shaped like ``components[0].user-env-vars``, so a user knows which field to
@@ -50,7 +50,7 @@ def _escape(path: str) -> str:
     return _FORBIDDEN.sub(lambda match: _codepoint(match.group()), path)
 
 
-def _walk(node: Any, path: str, violations: list[str]) -> None:
+def _walk(node: Any, path: str, violations: list[str]) -> None:  # noqa: ANN401  # a project-file value
     if isinstance(node, str):
         found = sorted({match.group() for match in _FORBIDDEN.finditer(node)})
         if found:

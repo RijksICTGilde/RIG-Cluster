@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from keycloak.exceptions import KeycloakError
+
 from opi.connectors.keycloak import (
     AUTO_LINK_FIRST_BROKER_LOGIN_FLOW,
     KeycloakConnector,
@@ -73,7 +75,7 @@ _HARDENING_REALM_FIELDS = (
 _SMTP_CONNECTION_KEYS = ("host", "port", "auth", "user", "password", "ssl", "starttls")
 
 
-def _field_matches(current: Any, wanted: Any) -> bool:
+def _field_matches(current: Any, wanted: Any) -> bool:  # noqa: ANN401  # a bootstrap YAML value
     """Does the realm already carry this field, so nothing has to be written?
 
     ``==`` for almost every field, but not for a LIST: Keycloak keeps ``supportedLocales`` as
@@ -218,7 +220,7 @@ class KeycloakYamlHandler:
     #: instead of appending a second one with the same name.
     _IDENTITY_KEYS = ("clientId", "realm", "alias", "username", "name")
 
-    def _merge_config(self, base: Any, override: Any) -> Any:
+    def _merge_config(self, base: Any, override: Any) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         """Merge a child blueprint over its base.
 
         Dicts recurse. Lists merge on the entry's identity: same identity overrides, new
@@ -243,7 +245,7 @@ class KeycloakYamlHandler:
                 merged[index] = self._merge_config(merged[index], item)
         return merged
 
-    def _find_by_identity(self, entries: list[Any], item: Any) -> int | None:
+    def _find_by_identity(self, entries: list[Any], item: Any) -> int | None:  # noqa: ANN401  # a bootstrap YAML value
         if not isinstance(item, dict):
             return None
         for key in self._IDENTITY_KEYS:
@@ -255,7 +257,7 @@ class KeycloakYamlHandler:
             return None
         return None
 
-    def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:
+    def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         """Recursively substitute {{ variable }} placeholders in a str, dict or list."""
         if isinstance(value, str):
             match = re.fullmatch(r"\{\{\s*([^}]+)\s*\}\}", value)
@@ -278,7 +280,7 @@ class KeycloakYamlHandler:
 
         return value
 
-    def _get_nested_value(self, data: dict[str, Any], path: str) -> Any:
+    def _get_nested_value(self, data: dict[str, Any], path: str) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         """The value at a dot-separated ``path``, looked up in the outputs before the context.
 
         Raises:
@@ -311,7 +313,7 @@ class KeycloakYamlHandler:
                 )
         return value
 
-    def _expand_list(self, section: Any, variables: dict[str, Any]) -> list[dict[str, Any]]:
+    def _expand_list(self, section: Any, variables: dict[str, Any]) -> list[dict[str, Any]]:  # noqa: ANN401  # a bootstrap YAML value
         """Expand a section into a list of items, resolving forEach loops and variables."""
         if section is None:
             return []
@@ -365,7 +367,7 @@ class KeycloakYamlHandler:
 
         return expanded
 
-    async def _process_realms(self, realms_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_realms(self, realms_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not realms_section:
             return
 
@@ -574,7 +576,7 @@ class KeycloakYamlHandler:
             wanted = {field: item[field] for field in _HARDENING_REALM_FIELDS if field in item}
             await self._write_drift(realm_name, realm, wanted)
 
-    async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         """The identityProviders section; ``providerId`` picks between OIDC and SAML."""
         if not idp_section:
             return
@@ -704,7 +706,7 @@ class KeycloakYamlHandler:
                 logger.info(f"Creating mapper: {mapper_name}")
                 await self.keycloak.create_identity_provider_mapper(realm_name, provider_alias, mapper_config)
 
-    async def _process_authentication_flows(self, flows_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_authentication_flows(self, flows_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not flows_section:
             return
 
@@ -773,7 +775,7 @@ class KeycloakYamlHandler:
         else:
             logger.debug(f"Browser flow already '{resolved_alias}' for realm {realm_name}")
 
-    async def _process_client_scopes(self, scopes_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_client_scopes(self, scopes_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not scopes_section:
             return
 
@@ -796,7 +798,7 @@ class KeycloakYamlHandler:
                 realm_name=realm_name, scope_name=scope_name, realm_type=realm_type
             )
 
-    async def _process_platform_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_platform_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         """The platformClients section: federation clients in the platform realm.
 
         Like _process_clients, but in the YAML-supplied platform realm rather than the
@@ -899,7 +901,7 @@ class KeycloakYamlHandler:
 
         return client_data
 
-    async def _process_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not clients_section:
             return
 
@@ -1057,7 +1059,7 @@ class KeycloakYamlHandler:
             self.keycloak.admin.update_client(client_id=existing_client["id"], payload=update_data)
             logger.info(f"Updated client '{client_id}' in realm '{realm_name}': changed_keys={sorted(changed_keys)}")
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError, KeyError) as e:
             logger.error(f"Failed to update existing client '{client_id}': {e}")
             # Best effort: a failed update during a refresh does not stop the refresh.
 
@@ -1109,7 +1111,7 @@ class KeycloakYamlHandler:
             else:
                 logger.warning(f"No matching roles found in '{target_client_id}' for: {role_names}")
 
-    async def _process_realm_roles(self, roles_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_realm_roles(self, roles_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not roles_section:
             return
 
@@ -1130,7 +1132,7 @@ class KeycloakYamlHandler:
                 realm_name=realm_name, role_name=role_name, description=item.get("description", "")
             )
 
-    async def _process_groups(self, groups_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_groups(self, groups_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not groups_section:
             return
 
@@ -1149,7 +1151,7 @@ class KeycloakYamlHandler:
             logger.info(f"Creating group: {group_name} in realm {realm_name}")
             await self.keycloak.create_group(realm_name=realm_name, group_name=group_name, path=item.get("path"))
 
-    async def _process_users(self, users_section: Any, variables: dict[str, Any]) -> None:
+    async def _process_users(self, users_section: Any, variables: dict[str, Any]) -> None:  # noqa: ANN401  # a bootstrap YAML value
         if not users_section:
             return
 

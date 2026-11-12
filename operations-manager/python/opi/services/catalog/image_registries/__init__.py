@@ -52,6 +52,8 @@ from opi.services.services_enums import ServiceType, UIEvent
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.approval import ApprovalSpec
 
@@ -102,7 +104,7 @@ class ImageRegistriesService(Service):
             return ComponentRegistryConfig
         return self.config_model
 
-    def config_roles(self, layer: ConfigLayer):
+    def config_roles(self, layer: ConfigLayer) -> tuple[ConfigRole, ...]:
         # The project uses its own registries; a component binds one to its image.
         if layer is ConfigLayer.PROJECT:
             return (ConfigRole.USE,)
@@ -115,7 +117,7 @@ class ImageRegistriesService(Service):
             return ["registry"]
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             return [REGISTRIES_SEQUENCE_EDITABLE]
         if layer is ConfigLayer.COMPONENT:
@@ -133,7 +135,7 @@ class ImageRegistriesService(Service):
     def config_component_visualizers(self) -> list[EditableVisualizer]:
         return [COMPONENT_REGISTRY]
 
-    def config_component_layout(self) -> list[Any]:
+    def config_component_layout(self) -> list[LayoutChild]:
         svc = self.service_type.value
         # No ``depends_on`` on the services list: the choice IS the selection, so the field
         # would wait on what it sets itself.
@@ -147,7 +149,7 @@ class ImageRegistriesService(Service):
     def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
         return [DEPLOYMENT_COMPONENT_REGISTRY]
 
-    def config_deployment_component_layout(self) -> list[Any]:
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         svc = self.service_type.value
         # ``services`` is a dict keyed on service name here, so a plain path segment. The
         # fieldset is unconditional, because the component's services list is not a field of
@@ -205,7 +207,7 @@ class ImageRegistriesService(Service):
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)

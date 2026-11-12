@@ -5,9 +5,13 @@ import socket
 import subprocess
 import time
 from contextlib import contextmanager
-from typing import TypedDict
+from typing import IO, TYPE_CHECKING, Self, TypedDict
 
 from opi.core.subprocess_env import child_env
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,7 @@ class ChiselConnector:
         username: str,
         password: str,
         timeout: int = 30,
-    ):
+    ) -> None:
         """``timeout`` is in seconds and bounds how long ``start_tunnel`` waits for the port."""
         self.server_url = server_url
         self.auth = f"{username}:{password}"
@@ -115,7 +119,7 @@ class ChiselConnector:
 
         return "; ".join(output_lines[-5:]) if output_lines else "No output captured"
 
-    def _read_available_output(self, stream) -> list[str]:
+    def _read_available_output(self, stream: IO[str]) -> list[str]:
         """Read available output from a stream without blocking."""
         import select
 
@@ -130,7 +134,7 @@ class ChiselConnector:
             logger.debug(f"Error reading chisel output: {e}")
         return lines
 
-    def stop_tunnel(self):
+    def stop_tunnel(self) -> None:
         """Terminate the tunnel subprocess; a warning and no error when there is none."""
         if not self.process:
             logger.warning("No active tunnel to stop")
@@ -213,11 +217,13 @@ class ChiselConnector:
         except TimeoutError, ConnectionRefusedError, OSError:
             return False
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Does not open the tunnel: call ``start_tunnel`` yourself."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         self.stop_tunnel()
 
 
@@ -229,7 +235,7 @@ def chisel_tunnel(
     remote_host: str,
     remote_port: int,
     local_port: int | None = None,
-):
+) -> Iterator[ChiselConnector]:
     """Open a tunnel for the duration of the block and stop it afterwards."""
     connector = ChiselConnector(server_url, username, password)
     try:

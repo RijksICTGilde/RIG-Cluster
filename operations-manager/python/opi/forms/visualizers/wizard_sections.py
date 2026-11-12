@@ -8,7 +8,7 @@ any property on the section itself.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import (
@@ -55,6 +55,9 @@ from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import deployment_component_service_visualizers, get_service
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
@@ -1066,7 +1069,7 @@ def build_backup_schedule_section(deployment_index: int) -> FormSection:
         pfh = create_project_file_handler()
         return bool(pfh.get_deployment_backup_labels(yaml_data, dep_name))
 
-    async def _notify_backup_scheduler(request: Any) -> None:
+    async def _notify_backup_scheduler(request: Request) -> None:
         scheduler = getattr(request.app.state, "backup_scheduler", None)
         if scheduler:
             await scheduler.trigger_check()

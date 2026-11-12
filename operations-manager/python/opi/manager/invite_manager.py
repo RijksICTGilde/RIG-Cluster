@@ -118,7 +118,7 @@ class InviteManager:
                     await keycloak.assign_client_role_to_user(realm_name, client_id, user_id, role_name)
                     assigned_for_client.append(role_name)
                     logger.info(f"Assigned client role '{client_id}.{role_name}' to user {user_id}")
-                except Exception as e:
+                except (KeycloakError, OSError, ValueError, KeyError) as e:
                     error_msg = f"Client role '{client_id}.{role_name}' not found or could not be assigned"
                     errors.append(error_msg)
                     logger.error(f"Failed to assign client role '{client_id}.{role_name}': {e}")
@@ -156,7 +156,7 @@ class InviteManager:
                 if result["not_found"]:
                     errors.append(f"Realm roles not found: {result['not_found']}")
                 logger.info(f"Assigned realm roles {result['assigned']} to user {user_id} in realm {realm_name}")
-            except Exception as e:
+            except (KeycloakError, OSError, ValueError, KeyError) as e:
                 errors.append(f"Failed to assign realm roles: {e}")
                 logger.error(f"Failed to assign realm roles: {e}")
 
@@ -174,7 +174,7 @@ class InviteManager:
                 await keycloak.join_user_to_group(realm_name, user_id, group_name)
                 assigned["groups"].append(group_name)
                 logger.info(f"Added user {user_id} to group {group_name} in realm {realm_name}")
-            except Exception as e:
+            except (KeycloakError, OSError, ValueError, KeyError) as e:
                 errors.append(f"Group '{group_name}' not found or could not be joined: {e}")
                 logger.error(f"Failed to add user to group {group_name}: {e}")
 
@@ -444,7 +444,7 @@ class InviteManager:
                 "identity_providers": enabled_idps,
             }
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError, KeyError) as e:
             logger.warning(f"Failed to query Keycloak for realm {realm_name} auth methods: {e}")
             # Safe default: assume both are available.
             return {

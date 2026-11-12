@@ -1333,7 +1333,7 @@ class ImageRegistryOptionsProvider:
         yaml_data: dict[str, Any] | None = None,
         row_data: dict[str, Any] | None = None,
         yaml_path: str | None = None,
-        current_value: Any = None,
+        current_value: Any = None,  # noqa: ANN401  # a project-file value
     ) -> None:
         self._yaml_data = yaml_data or {}
         self._row_data = row_data or {}

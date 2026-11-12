@@ -34,9 +34,12 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.utils.age import carries_encrypted_value
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ def _leaf_key(yaml_path: str) -> str:
     return segment
 
 
-def reachable_leaf_keys(editables: Any) -> set[str]:
+def reachable_leaf_keys(editables: list[EditableVisualizer]) -> set[str]:
     """Leaf keys every editable in a flow can address, children included.
 
     Matching on the leaf key rather than the full path is deliberately coarse: paths in the
@@ -83,7 +86,7 @@ def reachable_leaf_keys(editables: Any) -> set[str]:
     return keys
 
 
-def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, list[str]]:
+def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, list[str]]:  # noqa: ANN401  # a project-file value
     """Return a copy of *data* with out-of-reach encrypted values replaced by REDACTED.
 
     Returns ``(redacted_copy, paths)``; *paths* names what was removed, so a caller can
@@ -94,7 +97,7 @@ def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, lis
     return _redact(copy.deepcopy(data), [], keep, removed), removed
 
 
-def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> Any:
+def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
@@ -120,7 +123,7 @@ def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> 
     return value
 
 
-def restore_redacted_secrets(data: Any, original: Any) -> Any:
+def restore_redacted_secrets(data: Any, original: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Return a copy of *data* with every REDACTED placeholder filled in from *original*.
 
     A placeholder with nothing to restore from (a list item the form added) has its key
@@ -135,7 +138,7 @@ def restore_redacted_secrets(data: Any, original: Any) -> Any:
     return _restore(data, original, [])
 
 
-def _restore(data: Any, original: Any, path: list[str]) -> Any:
+def _restore(data: Any, original: Any, path: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     if isinstance(data, dict):
         source = original if isinstance(original, dict) else {}
         restored: dict[Any, Any] = {}
@@ -161,7 +164,7 @@ def _restore(data: Any, original: Any, path: list[str]) -> Any:
     return data
 
 
-def _pair_with(item: Any, source: list[Any], index: int) -> Any:
+def _pair_with(item: Any, source: list[Any], index: int) -> Any:  # noqa: ANN401  # a project-file value
     """The element of *source* that corresponds to *item*: by identifier, else position."""
     if isinstance(item, dict):
         for key in _IDENTIFIER_KEYS:

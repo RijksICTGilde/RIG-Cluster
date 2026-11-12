@@ -137,7 +137,7 @@ async def _get_wizard_token_with_body(request: Request) -> str | None:
             value = form.get("_wizard_token")
             if isinstance(value, str) and value:
                 return value
-    except Exception:
+    except ValueError, TypeError, AttributeError:
         return None
     return None
 
@@ -174,7 +174,7 @@ def _progress_fragment(request: Request, context: dict[str, Any]) -> str:
     )
 
 
-def _get_edit_section(section_id: str):
+def _get_edit_section(section_id: str) -> FormSection:
     """Look up a section from the edit-sections registry."""
     section = EDIT_SECTIONS.get(section_id)
     if not section:
@@ -183,7 +183,7 @@ def _get_edit_section(section_id: str):
 
 
 def _render_section_html(
-    section,
+    section: FormSection,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     locked_services: list[str] | None = None,
@@ -294,7 +294,7 @@ def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[st
     return flow_context_from_base(flow_id, state.base_data)
 
 
-def _fully_owned_list_keys(flow: Any) -> set[str]:
+def _fully_owned_list_keys(flow: FormFlow) -> set[str]:
     """Top-level list keys that an editable fully owns (bare yaml_path, no index).
 
     Such keys must not be duplicated into ``state.base_data`` because
@@ -323,7 +323,7 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
 _ITEM_SELECTION_PATH = re.compile(r"^(\w[\w-]*)\[(\d+)\]/services$")
 
 
-def _owned_item_selection_paths(flow: Any) -> list[tuple[str, int]]:
+def _owned_item_selection_paths(flow: FormFlow) -> list[tuple[str, int]]:
     """(list_key, index) pairs whose per-item ``services`` selection an editable owns whole.
 
     The component form's checklist at ``components[0]/services`` renders the full
@@ -405,7 +405,7 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
+def _seed_components_for_new_deployment(state: WizardState, dep_idx: int) -> None:
     """Pre-fill the components step when adding a new deployment.
 
     Always seeds ALL project-level components. When a source deployment is chosen
@@ -459,7 +459,7 @@ def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     state.store_step_data(components_section_id, seed)
 
 
-def _seed_restore_config_source(state: Any, section_id: str) -> None:
+def _seed_restore_config_source(state: WizardState, section_id: str) -> None:
     """Default the restore's config source to the deployment the backup came from.
 
     Presence, not truth: once the step has the key, the user's own choice stands, the empty
@@ -1253,7 +1253,7 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     return HTMLResponse(content=rendered)
 
 
-def _attachment_review_items(yaml_data: dict, state) -> list[str]:
+def _attachment_review_items(yaml_data: dict, state: WizardState) -> list[str]:
     """List committed + staged attachments for the review summary.
 
     The attachments section is a TemplatePartial whose staged uploads live in the
@@ -1287,8 +1287,8 @@ def _render_modal_review(
     wizard_token: str | None,
     project_name: str,
     flow_id: str,
-    active_sections,
-    state,
+    active_sections: list[FormSection],
+    state: WizardState,
     global_errors: list[str] | None = None,
     field_warnings: dict[str, list[str]] | None = None,
 ) -> HTMLResponse:
@@ -1482,8 +1482,8 @@ async def _process_and_save_modal_edit(
     flow: FormFlow,
     wizard_token: str | None,
     merged_data: dict,
-    active_sections,
-    state,
+    active_sections: list[FormSection],
+    state: WizardState,
 ) -> ProjectUpdateResult | HTMLResponse:
     """Merge the modal-edit form into the project and persist it through the use case.
 
@@ -1641,7 +1641,7 @@ async def _handle_backup_restore_submit(
     project_name: str,
     flow_id: str,
     action: str,
-    state,
+    state: WizardState,
 ) -> HTMLResponse:
     """Handle backup/restore wizard submission via the async task queue."""
     from opi.core.config import settings
@@ -1887,17 +1887,17 @@ async def _gather_backup_runs_async(
             try:
                 snapshots = await backup_manager.list_snapshots(dep_cluster, k8s_ns, project_name=project_name)
                 backup_runs_map.update(group_snapshots_into_runs(snapshots, dep_name))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.warning("Failed to fetch backups for deployment %s: %s", dep_name, e)
 
-    except Exception:
+    except Exception:  # noqa: BLE001  # the outer boundary of this page; it must still render
         logger.warning("Failed to gather backup runs for %s", project_name)
 
     backup_runs = sorted(backup_runs_map.values(), key=lambda r: r.get("timestamp", ""), reverse=True)
     return backup_runs
 
 
-def _enrich_restore_target_context(state) -> None:
+def _enrich_restore_target_context(state: WizardState) -> None:
     """Derive _source_deployment from the selected backup_run_id in step data.
 
     Called before rendering the restore-target step so the template knows
@@ -1917,7 +1917,7 @@ def _enrich_restore_target_context(state) -> None:
             break
 
 
-def _get_section_from_flow(flow, section_id: str):
+def _get_section_from_flow(flow: FormFlow, section_id: str) -> FormSection:
     """Look up a section by ID within a flow."""
     for section in flow.sections:
         if section.section_id == section_id:

@@ -152,7 +152,7 @@ def build_lotc_introduction(user: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def build_lotc_dashboard(*, user: dict[str, Any] | None, **_unused: Any) -> dict[str, Any]:
+def build_lotc_dashboard(*, user: dict[str, Any] | None, **_unused: Any) -> dict[str, Any]:  # noqa: ANN401  # extra context a caller may pass
     """What the dashboard needs on top of its own data: only the navigation.
 
     The route supplies everything else and the template reads exactly those keys;
@@ -774,7 +774,7 @@ def audit_filters(request: Request) -> AuditFilters:
     )
 
 
-def audit_cursor_text(row: Any) -> str:
+def audit_cursor_text(row: Any) -> str:  # noqa: ANN401  # a database row
     """A row's cursor, as it appears in a paging link."""
     return f"{row.time.isoformat()}_{row.id}"
 

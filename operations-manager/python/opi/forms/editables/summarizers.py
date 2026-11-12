@@ -24,7 +24,7 @@ class HiddenSummary:
     else; only the summary skips it.
     """
 
-    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         return None
 
 
@@ -42,7 +42,7 @@ class MaskedSummary:
     """Shown when there is no value. None omits the field, which is what a
     summary usually wants: a field nobody filled in is noise."""
 
-    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
         if value is None or value == "" or value == [] or value == {}:
             return self.empty_text
         return self.text

@@ -5,16 +5,19 @@ the same information whether they use the sync path or poll an async task.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.tasks import progress_steps as steps
 from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
+if TYPE_CHECKING:
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
+
 logger = logging.getLogger(__name__)
 
 
-async def handle_update_image(payload: dict, progress: Any) -> dict:
+async def handle_update_image(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Update the container image of one component in a deployment and regenerate manifests.
 
     The payload holds ``project_name``, ``deployment_name``, ``component_name`` and
@@ -80,7 +83,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
         await project_manager.close()
 
 
-async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
+async def handle_delete_deployment(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Delete a deployment and all the resources that belong to it.
 
     The payload holds ``project_name`` and ``deployment_name``.

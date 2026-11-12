@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import asyncpg
 
 from opi.connectors import create_argo_connector
-from opi.connectors.kubectl import KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -282,7 +282,7 @@ class Infrastructure:
             try:
                 await self._host._kubectl_connector.delete_resource("secret", "sops-age-key", namespace)
                 logger.info(f"Deleted old SOPS secret from namespace {namespace}")
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
 
         if create_sops_secret:
@@ -343,7 +343,7 @@ class Infrastructure:
         except (ConnectionRefusedError, socket.gaierror, OSError) as e:
             logger.debug(f"Infrastructure database not reachable at {host}: {e}")
             return False, "connection_error"
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
             return False, "unknown_error"
 

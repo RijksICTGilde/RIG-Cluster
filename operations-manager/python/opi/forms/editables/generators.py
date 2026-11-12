@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class ProjectNameGenerator:
     """Generate a technical project name from the display-name field."""
 
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
+    def generate(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         from opi.utils.project_names import generate_project_name
 
         display_name = yaml_data.get("display-name", "")
@@ -45,7 +45,7 @@ class IssuerGenerator:
     def __init__(self, deployment_index: int = 0) -> None:
         self.deployment_index = deployment_index
 
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
+    def generate(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         deployments = yaml_data.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return None
@@ -69,7 +69,7 @@ class AttachmentStagingResolveGenerator:
 
     _PREFIX = "staging:"
 
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
+    def generate(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         from ruamel.yaml.scalarstring import LiteralScalarString
 
         from opi.services import upload_staging

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from opi.services.project_service import ProjectUser
+    from opi.services.project_store import ChangeFunction
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ def _require_token_name(name: str) -> str:
     return cleaned
 
 
-async def _mutate(project_name: str, change: Any, *, message: str, by: str) -> None:
+async def _mutate(project_name: str, change: ChangeFunction, *, message: str, by: str) -> None:
     await get_project_store().mutate(project_name, change, message=message, actor=user_actor(by))
 
 

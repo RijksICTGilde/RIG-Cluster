@@ -62,7 +62,9 @@ from opi.utils.url_paths import normalize_logout_path
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_path
 
 if TYPE_CHECKING:
+    from opi.connectors.keycloak import KeycloakConnector
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 logger = logging.getLogger(__name__)
 
@@ -505,7 +507,7 @@ class KeycloakManager:
                     )
                     logger.exception(f"Error deleting Keycloak client for component {component_name}: {e}")
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError, KeyError) as e:
             logger.warning(f"Could not connect to Keycloak for client cleanup: {e}")
             deletion_results["operations"].append(
                 {"type": "keycloak_connection", "status": "error", "error": f"Could not connect to Keycloak: {e}"}
@@ -747,7 +749,7 @@ class KeycloakManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: Any = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Clean up when the Keycloak service is removed from a deployment.
 
@@ -1139,7 +1141,7 @@ class KeycloakManager:
 
     async def _apply_access_restriction(
         self,
-        keycloak: Any,
+        keycloak: KeycloakConnector,
         realm_name: str,
         client_id: str,
         restrict_access: dict[str, Any],
@@ -1291,7 +1293,7 @@ class KeycloakManager:
 
     async def _apply_post_broker_login_restriction(
         self,
-        keycloak: Any,
+        keycloak: KeycloakConnector,
         realm_name: str,
         client_id: str,
         role_name: str,

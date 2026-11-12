@@ -79,7 +79,7 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
 
 
 async def _organization_status(
-    kubectl: Any, namespace: str, registry_name: str, upstream: str, customer_name: str, project_name: str
+    kubectl: KubectlConnector, namespace: str, registry_name: str, upstream: str, customer_name: str, project_name: str
 ) -> dict[str, Any]:
     """What the cluster says about a proxy organization, in the words of the screen.
 

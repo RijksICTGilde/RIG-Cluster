@@ -37,7 +37,7 @@ def get_effective_value(
     yaml_data: dict[str, Any],
     path: str,
     resolvers: dict[str, TransientValueResolver] | None = None,
-) -> Any:
+) -> Any:  # noqa: ANN401  # a project-file value
     """Get a field value, resolving transient defaults when the value is None.
 
     Looks up the value at *path* in yaml_data. If None and a resolver exists
@@ -66,7 +66,7 @@ class ClusterDefaultDomain:
     domain into the project file.
     """
 
-    def resolve(self, yaml_data: dict[str, Any]) -> Any:
+    def resolve(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         # Raises ValueError for an unknown cluster: a misconfigured CLUSTER_MANAGER is a
         # deployment error that has to surface rather than be swallowed.
         postfix = get_ingress_postfix(opi_config.settings.CLUSTER_MANAGER)

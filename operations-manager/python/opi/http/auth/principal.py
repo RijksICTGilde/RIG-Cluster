@@ -22,7 +22,7 @@ import logging
 import secrets
 from collections import defaultdict
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opi.core.actor import project_api_key_actor, service_account_actor, user_actor
 from opi.core.authz.engine import (
@@ -40,6 +40,8 @@ from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, mem
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
+    from starlette.requests import Request
+
     from opi.core.authz.actions import Action
     from opi.services.project_service import ProjectSummary, ProjectUser
 
@@ -162,7 +164,7 @@ def decide_action(
     action: Action,
     resource: Resource | None = None,
     step_up_fresh: bool = True,
-    request: Any = None,
+    request: Request | None = None,
 ) -> Decision:
     """Allow this action on this project, or refuse it.
 

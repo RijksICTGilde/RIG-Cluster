@@ -263,7 +263,7 @@ def component_health_from_oom_failures(failures: list[ComponentFailure]) -> dict
 class DeploymentHealthError(Exception):
     """Raised when pod health issues are detected during deployment polling."""
 
-    def __init__(self, failures: list[ComponentFailure], namespace: str):
+    def __init__(self, failures: list[ComponentFailure], namespace: str) -> None:
         self.failures = failures
         self.namespace = namespace
         summary = "; ".join(f"{f.component_name}: {f.failure_type}" for f in failures)
@@ -489,7 +489,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                     result.image_pull_container = pull.container
                     result.image_pull_image = pull.image
 
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
         logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
 
     return result
@@ -607,7 +607,7 @@ async def describe_components_waiting(
             logger.debug("describe_components_waiting: kubectl failed for %s: %s", namespace, stderr)
             return []
         pods_data = json.loads(stdout)
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
         logger.debug("describe_components_waiting: error for %s: %s", namespace, e)
         return []
 
@@ -703,7 +703,7 @@ async def apply_oom_tune(
         for msg in observation.failures:
             logger.warning("Health watcher: %s", msg)
         return committed
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a background loop must not stop
         logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
         return False
 
@@ -1062,7 +1062,14 @@ def create_health_check_callback(
             if health.crash_loop_detected or health.oom_detected:
                 try:
                     logs = await kubectl.get_deployment_logs(health.component_name, namespace, lines=20)
-                except Exception as log_err:
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    KubectlConnectionError,
+                    KubectlExecutionError,
+                ) as log_err:
                     logger.debug("Failed to capture logs for %s: %s", health.component_name, log_err)
 
             # The grace period guards against stale lastState from a prior pod. That
@@ -1652,7 +1659,7 @@ async def run_oom_metric_sweep(cluster: str) -> int:
     try:
         connector = await get_metrics_connector()
         rows = await connector.query(query)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a background loop must not stop
         logger.info("OOM metric sweep: disabled, no metrics backend answered the query: %s", e)
         return 0
 

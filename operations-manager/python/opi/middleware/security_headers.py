@@ -17,12 +17,13 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
+    from starlette.types import ASGIApp
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security response headers to every HTTP response."""
 
-    def __init__(self, app, *, keycloak_url: str = "", prometheus_url: str = "") -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, app: ASGIApp, *, keycloak_url: str = "", prometheus_url: str = "") -> None:
         super().__init__(app)
         self._keycloak_host = self._extract_origin(keycloak_url)
         self._prometheus_host = self._extract_origin(prometheus_url)

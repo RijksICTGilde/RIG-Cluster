@@ -115,10 +115,12 @@ from opi.utils.naming import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from types import TracebackType
 
     from opi.connectors.argo import ArgoConnector
     from opi.manager.database_manager import DatabaseManager
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -240,29 +242,22 @@ class ProjectManager:
         self.__scratch_dirs: list[str] = []
         # Progress manager for tracking operation status
         self.__progress_manager = None
-        # Private map for storing secrets that need to be created
-        # Structure: {deployment_name: {secret_type: secret_instance}}
-        # Example: {"dev": {"database": DatabaseSecret(...), "keycloak": KeycloakSecret(...)}}
+        # Secrets to create, keyed on deployment name and then secret type.
         self._secrets_to_create: dict[str, dict[str, BaseSecret]] = {}
 
-        # Private map for storing aliases collected from all components in a deployment
-        # Structure: {deployment_name: {source_type: {service_category: {alias_name: alias_template}}}}
-        # Example: {"dev": {"secret": {"database": {"DATABASE_URL": "$HOST:$PORT"}}, "direct": {"web": {"PREVIEW_URL": "https://$PUBLIC_HOST"}}}}
+        # Aliases collected from all components, keyed on deployment name, source type
+        # ("secret" or "direct"), service category and alias name.
         self._deployment_aliases: dict[str, dict[str, dict[str, dict[str, str]]]] = {}
 
-        # Deployment results collected during processing
-        # Structure: {deployment_name: DeploymentResult}
-        # Contains URLs, status, and errors for each processed deployment
+        # Per deployment name the URLs, status and errors of its processing.
         self._deployment_results: dict[str, DeploymentResult] = {}
 
         # The subdomain registration of the deployment being rendered, to be undone when its
         # manifests fail. Set by the manifest generation, read back by its rollback.
         self._pending_subdomain_rollback: dict[str, Any] | None = None
 
-        # Track clones performed during processing
-        # Structure: {deployment_name: {service_type: {"generation": int | None, "timestamp": str}}}
-        # Example: {"productie": {"postgresql-database": {"generation": None, "timestamp": "..."}}}
-        # Services report clones here; project_manager updates clone-from status at the end
+        # Clones performed, keyed on deployment name and service type, each with a generation
+        # and a timestamp. Services report here; the clone-from status is updated at the end.
         self._clones_performed: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Runtime force_clone override from API (used by PVC manager and other nested calls)
@@ -278,8 +273,8 @@ class ProjectManager:
 
         self._terminated_sync_operations: list[str] = []
 
-        # Change context from YAML diff (populated by process_project_changes)
-        # Structure: {"previous_yaml": {...}, "current_yaml": {...}, "changes": {"added": {}, "changed": {}, "deleted": {}}}
+        # Change context from the YAML diff: previous_yaml, current_yaml and the added,
+        # changed and deleted keys under changes. Populated by process_project_changes.
         self._project_changes: dict[str, Any] | None = None
 
         self._closed = False
@@ -312,7 +307,9 @@ class ProjectManager:
     async def __aenter__(self) -> ProjectManager:
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         await self.close()
 
     async def _ensure_database_manager(self, skip_credential_check: bool = False) -> DatabaseManager:
@@ -500,7 +497,9 @@ class ProjectManager:
         """The deployments whose running sync operation this run broke off."""
         return self._terminated_sync_operations
 
-    async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None:
+    async def _queue_refresh_task(
+        self, task_service: AsyncTaskService | None, project_name: str, deployment_name: str
+    ) -> None:
         """Queue a refresh_deployment task via the task queue."""
         if task_service:
             await task_service.create_task(

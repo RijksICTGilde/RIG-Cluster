@@ -41,7 +41,7 @@ PLATFORM_ADMIN_ROLES: frozenset[Role] = frozenset({Role.ADMIN, Role.OPS})
 CREATOR_ROLES: frozenset[Role] = frozenset({Role.ADMIN, Role.OPS, Role.DEVELOPER})
 
 
-def roles_from_value(value: Any) -> frozenset[Role]:
+def roles_from_value(value: Any) -> frozenset[Role]:  # noqa: ANN401  # a project-file value
     """The roles out of a stored value: one old role, or a list of keys.
 
     An unknown key opens nothing and is logged: ignoring it quietly would make a typo in a
@@ -169,6 +169,6 @@ def build_resource(
     )
 
 
-def has_role(value: Any, role: Role) -> bool:
+def has_role(value: Any, role: Role) -> bool:  # noqa: ANN401  # a project-file value
     """Whether a stored role value covers *role*, through the stacking in INCLUDES."""
     return role in effective_roles(roles_from_value(value))

@@ -55,7 +55,7 @@ class BootstrapManager:
             if progress_manager and bootstrap_task:
                 progress_manager.complete_task(bootstrap_task)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a failed bootstrap does not block the deployment
             logger.error(f"Bootstrap actions failed for deployment {deployment_name}: {e}")
             if progress_manager and bootstrap_task:
                 progress_manager.fail_task(bootstrap_task, str(e))

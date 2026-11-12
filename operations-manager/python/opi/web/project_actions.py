@@ -52,7 +52,7 @@ def _display_name(project_name: str, project_data: dict[str, Any]) -> str:
     return str(project_data.get("display-name") or project_name)
 
 
-def _names(entries: Any) -> list[str]:
+def _names(entries: Any) -> list[str]:  # noqa: ANN401  # a project-file value
     return [e.get("name") for e in entries or [] if isinstance(e, dict) and e.get("name")]
 
 

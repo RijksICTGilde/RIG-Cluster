@@ -58,7 +58,7 @@ class PatchableList:
         return f"/{self.name}" if self.name else ""
 
 
-def list_item_type(annotation: Any) -> Any:
+def list_item_type(annotation: Any) -> Any:  # noqa: ANN401  # a type annotation object
     """The entry type of a ``list[...]`` annotation, or ``None`` for anything else."""
     if get_origin(annotation) is not list:
         return None

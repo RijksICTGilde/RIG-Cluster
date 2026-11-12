@@ -170,7 +170,7 @@ def _overdue_reason(state: BackupScheduleState, now_local: datetime, deadline: t
 class BackupScheduler:
     """Periodically checks for deployments that need automatic backups."""
 
-    def __init__(self, task_service: AsyncTaskService, cluster: str):
+    def __init__(self, task_service: AsyncTaskService, cluster: str) -> None:
         self._task_service = task_service
         self._cluster = cluster
         self._running = False
@@ -414,7 +414,7 @@ class BackupScheduler:
             snapshots = await backup_manager.list_snapshots_or_raise(
                 cluster=cluster, namespace=namespace, project_name=project_name
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # a background loop must not stop
             # Not an ERROR: this line runs per namespace per tick, and an unreachable
             # destination is already reported by _log_overdue_backups once per 24 hours per
             # deployment.

@@ -171,7 +171,7 @@ class RotationResult:
     skipped: list[str] = field(default_factory=list)
 
 
-def encrypted_fields(node: Any, path: str = "") -> Iterator[EncryptedField]:
+def encrypted_fields(node: Any, path: str = "") -> Iterator[EncryptedField]:  # noqa: ANN401  # a project-file value
     """Every encrypted value in the tree, with a field path such as ``components[0].aliases``.
 
     On the shape of the value and not on a list of fields: a service can carry encrypted

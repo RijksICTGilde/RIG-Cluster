@@ -32,7 +32,7 @@ def local_redirect_path(value: str, default: str = "/") -> str:
     return default
 
 
-def sanitize_path_value(value: Any, field: str) -> str:
+def sanitize_path_value(value: Any, field: str) -> str:  # noqa: ANN401  # a project-file value
     """Validate a tenant-supplied URL path used for ingress routing and rewriting.
 
     Raises:
@@ -54,7 +54,7 @@ def sanitize_path_value(value: Any, field: str) -> str:
     return value
 
 
-def normalize_logout_path(value: Any) -> str | None:
+def normalize_logout_path(value: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """Normalise an opt-in ``logout-path`` to exactly one leading slash, or None.
 
     A missing or doubled leading slash is nothing to hand a user an error over, so it

@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable  # noqa: TC003  # stands in a runtime signature
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -17,6 +17,9 @@ from opi.http.auth.user_token_auth import (
     verify_user_token,
 )
 from opi.services.project_store import get_project_store
+
+if TYPE_CHECKING:
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,7 @@ async def _pending_rollout_for(task_service: object, project_name: str | None) -
         return None
     try:
         pending = await fetch(project_name)
-    except Exception:
+    except Exception:  # noqa: BLE001  # a count that cannot be read is no count
         logger.warning("Kon de wachtende wijzigingen van project %s niet tellen", project_name, exc_info=True)
         return None
     if not isinstance(pending, dict):
@@ -54,12 +57,12 @@ async def _pending_rollout_for(task_service: object, project_name: str | None) -
 def _validate_task_id(task_id: str) -> str:
     try:
         UUID(task_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid task_id format, expected UUID")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid task_id format, expected UUID") from e
     return task_id
 
 
-def _get_task_service(request: Request):
+def _get_task_service(request: Request) -> AsyncTaskService:
     task_service = getattr(request.app.state, "task_service", None)
     if task_service is None:
         raise HTTPException(status_code=503, detail="Task service not available")

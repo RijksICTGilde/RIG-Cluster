@@ -17,11 +17,14 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.sleep_mode.api_models import DISABLED
 from opi.services.project import Project
 from opi.services.tasks import progress_steps
+
+if TYPE_CHECKING:
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +61,7 @@ class _Steps:
     instead of showing a row of green checks for work that never happened.
     """
 
-    def __init__(self, progress: Any | None):
+    def __init__(self, progress: PersistentTaskProgressManager | None) -> None:
         self._progress = progress
         self._current: str | None = None
 
@@ -99,7 +102,7 @@ async def _verify_token(project_data: dict, deployment_name: str, presented_toke
         raise InvalidWakeTokenError("Wake token mismatch")
 
 
-async def app_is_ready(project_data: dict, deployment: dict, config: Any) -> bool:
+async def app_is_ready(project_data: dict, deployment: dict, config: Any) -> bool:  # noqa: ANN401  # a project-file value
     """Whether the app behind the waker has a ready pod, so a wake can be finished.
 
     Shared by ``finish_wake`` and the sweeper's CHECK_AWAKE, so both ask the same
@@ -131,7 +134,7 @@ async def wake(
     *,
     presented_token: str | None = None,
     now: datetime | None = None,
-    progress: Any | None = None,
+    progress: PersistentTaskProgressManager | None = None,
 ) -> WakeResult:
     """Move a matching, sleeping deployment to ``waking`` and reprocess it.
 
@@ -212,7 +215,9 @@ async def wake(
         await project_manager.close()
 
 
-async def finish_wake(project_name: str, deployment_name: str, *, progress: Any | None = None) -> WakeResult:
+async def finish_wake(
+    project_name: str, deployment_name: str, *, progress: PersistentTaskProgressManager | None = None
+) -> WakeResult:
     """Wait for the app to come back, then move ``waking -> awake`` and prune the waker.
 
     This is the second half of a wake: in ``waking`` the ArgoCD application cannot become
@@ -315,7 +320,9 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
         await project_manager.close()
 
 
-async def sleep(project_name: str, deployment_name: str, *, progress: Any | None = None) -> WakeResult:
+async def sleep(
+    project_name: str, deployment_name: str, *, progress: PersistentTaskProgressManager | None = None
+) -> WakeResult:
     """Manually move a matching, awake deployment to ``sleeping`` and reprocess it.
 
     The counterpart of ``wake``: the same load -> transition -> commit -> reprocess

@@ -13,11 +13,14 @@ for them.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import generate_public_url, get_component_ingress_map
+
+if TYPE_CHECKING:
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ def public_urls_for_deployment(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
     project_name: str,
-    project_file_handler: Any,
+    project_file_handler: ProjectFileHandler,
 ) -> list[dict[str, str]]:
     """Every public URL this deployment exposes, one entry per component/path pair.
 
@@ -90,7 +93,7 @@ def public_url_map_for_deployment(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
     project_name: str,
-    project_file_handler: Any,
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, str]:
     """Component name -> its primary public URL, for this deployment.
 
@@ -119,7 +122,9 @@ def public_url_map_for_deployment(
     return urls
 
 
-def public_urls_for_project(project_data: dict[str, Any], project_file_handler: Any) -> list[dict[str, str]]:
+def public_urls_for_project(
+    project_data: dict[str, Any], project_file_handler: ProjectFileHandler
+) -> list[dict[str, str]]:
     """Every public URL in the project, with the deployment name added to each entry.
 
     Used to offer a destination to pick. The deployment name is part of the entry because

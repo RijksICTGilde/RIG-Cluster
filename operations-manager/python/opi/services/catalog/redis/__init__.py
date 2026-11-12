@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.catalog.approval import ApprovalSpec, config_value_approval
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
@@ -12,6 +12,10 @@ from opi.services.catalog.redis.variables import RedisVariables
 from opi.services.secrets import RedisSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ class RedisService(Service):
         # From the model, so a validation error names acl-key-prefix.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.redis.editables import REDIS_ACL_KEY_PREFIX_EDITABLE
@@ -79,7 +83,7 @@ class RedisService(Service):
     def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
         APPROVAL.ensure_requested(project_data)
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         # Cached: consumers compare section identity (EDIT_SECTIONS[...] is X).

@@ -3,7 +3,7 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -65,6 +65,8 @@ from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
+
+    from starlette.middleware.base import RequestResponseEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     _backup_scheduler = BackupScheduler(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
                     await _backup_scheduler.start()
                     app.state.backup_scheduler = _backup_scheduler
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
                     logger.error("Failed to start backup scheduler: %s", e)
 
             # Start resource tuning scheduler if enabled
@@ -173,7 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     _tuning_scheduler = ResourceTuningScheduler(cluster=settings.CLUSTER_MANAGER)
                     await _tuning_scheduler.start()
                     app.state.resource_tuning_scheduler = _tuning_scheduler
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
                     logger.error("Failed to start resource tuning scheduler: %s", e)
 
             # Audit retention has no switch of its own: see AUDIT_RETENTION_HOUR.
@@ -183,7 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 _audit_retention_scheduler = AuditRetentionScheduler()
                 await _audit_retention_scheduler.start()
                 app.state.audit_retention_scheduler = _audit_retention_scheduler
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
                 logger.error("Failed to start audit retention scheduler: %s", e)
 
             # Start reconciliation scheduler if enabled
@@ -194,10 +196,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     _reconciliation_scheduler = ReconciliationScheduler(cluster=settings.CLUSTER_MANAGER)
                     await _reconciliation_scheduler.start()
                     app.state.reconciliation_scheduler = _reconciliation_scheduler
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
                     logger.error("Failed to start reconciliation scheduler: %s", e)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start task worker: %s", e)
     else:
         # Frontend-only mode: still create task_service for API endpoints
@@ -213,7 +215,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
             set_task_service(task_service)
             logger.info("Task service initialized (worker disabled)")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.warning(f"Failed to initialize task service: {e}")
 
     # Initialize federation service if configured as master
@@ -229,7 +231,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 logger.info("Federation service initialized (master mode, %d peers)", len(registry.get_all_peers()))
             else:
                 logger.warning("Federation peers configured but task_service not available or no peers")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error(f"Failed to initialize federation service: {e}")
 
     # Start the run reaper (sweeps both console and job bundles) if either is enabled.
@@ -240,7 +242,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _db_console_reaper = DbConsoleReaper(cluster=settings.CLUSTER_MANAGER)
             await _db_console_reaper.start()
             app.state.db_console_reaper = _db_console_reaper
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start database console reaper: %s", e)
 
     # Start the log watcher scheduler if enabled
@@ -251,7 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _logwatcher_scheduler = LogwatcherScheduler()
             await _logwatcher_scheduler.start()
             app.state.logwatcher_scheduler = _logwatcher_scheduler
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start log watcher scheduler: %s", e)
 
     # Start the mail relay readiness watch. Without a relay there is nothing to measure,
@@ -263,7 +265,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _mail_relay_watcher = MailRelayWatcher()
             await _mail_relay_watcher.start()
             app.state.mail_relay_watcher = _mail_relay_watcher
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start mail relay watcher: %s", e)
 
     if settings.CAPACITY_WATCH_ENABLED and settings.CAPACITY_WATCH_TENANT:
@@ -273,7 +275,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _capacity_watcher = CapacityWatcher()
             await _capacity_watcher.start()
             app.state.capacity_watcher = _capacity_watcher
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start capacity watcher: %s", e)
 
     # Start the cluster-wide OOM pod watch if this cluster runs it
@@ -293,7 +295,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             )
             await _oom_metric_sweeper.start()
             app.state.oom_metric_sweeper = _oom_metric_sweeper
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start the OOM pod watch: %s", e)
 
     # Count the pods that cannot pull their image, on every cluster. Not behind a switch
@@ -304,7 +306,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         _image_pull_observer = ImagePullObserver(interval_seconds=settings.IMAGE_PULL_OBSERVE_INTERVAL_SECONDS)
         await _image_pull_observer.start()
         app.state.image_pull_observer = _image_pull_observer
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
         logger.error("Failed to start the image-pull observer: %s", e)
 
     # Start the sleep-mode sweeper if enabled
@@ -315,7 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _sleep_mode_scheduler = SleepModeScheduler(cluster=settings.CLUSTER_MANAGER)
             await _sleep_mode_scheduler.start()
             app.state.sleep_mode_scheduler = _sleep_mode_scheduler
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start sleep-mode sweeper: %s", e)
 
     yield
@@ -410,7 +412,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     try:
         await close_database_pools()
         logger.info("Database pools closed successfully")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # shutdown continues past a failing close
         logger.error(f"Error closing database pools: {e}")
 
     # Dispose the ORM async engine (service-owned persistence, opi.core.db). Guarded by a
@@ -423,7 +425,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.info("ORM async engine disposed successfully")
     except TimeoutError:
         logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # shutdown continues past a failing close
         logger.error(f"Error disposing ORM async engine: {e}")
 
     # The shared HTTP sessions to ArgoCD: an open connector would make closing the loop
@@ -432,7 +434,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         from opi.connectors.argo import close_shared_sessions
 
         await close_shared_sessions()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # shutdown continues past a failing close
         logger.error(f"Error closing shared ArgoCD sessions: {e}")
 
     stop_loop_watchdog()
@@ -473,7 +475,7 @@ def create_app() -> FastAPI:
     )
 
     # Add custom OpenAPI schema with security definitions
-    def custom_openapi():
+    def custom_openapi() -> dict[str, Any]:
         if app.openapi_schema:
             return app.openapi_schema
 
@@ -660,7 +662,7 @@ def create_app() -> FastAPI:
     # kubectl logs.  Starlette's ServerErrorMiddleware only prints to stderr
     # via traceback.print_exc() which may not reach the log stream.
     @app.exception_handler(Exception)
-    async def _log_unhandled_exceptions(request, exc):  # type: ignore[no-untyped-def]
+    async def _log_unhandled_exceptions(request: Request, exc: Exception) -> Response:
         """Log the exception and answer with something that helps a human further.
 
         Starlette re-raises after this response, so the server keeps seeing the error.
@@ -669,7 +671,7 @@ def create_app() -> FastAPI:
         return _error_response(request, 500, None)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _error_page(request, exc):  # type: ignore[no-untyped-def]
+    async def _error_page(request: Request, exc: StarletteHTTPException) -> Response:
         """Serve an error as a page to a browser and as JSON to everything else.
 
         The client says which one it wants, so read it: an /api path or a caller that does
@@ -733,7 +735,7 @@ def create_app() -> FastAPI:
     from opi.core.flow_id import set_flow_id
 
     @app.middleware("http")
-    async def flow_id_middleware(request, call_next):  # type: ignore[no-untyped-def]
+    async def flow_id_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
         # In the scope as well as the contextvar: the handler for an unhandled exception
         # runs outside this middleware, where a contextvar no longer reaches.
         request.state.flow_id = set_flow_id("req")
@@ -798,7 +800,7 @@ def create_app() -> FastAPI:
     favicon_path = os.path.join(static_dir, "favicon.ico")
 
     @app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
-    async def favicon():
+    async def favicon() -> FileResponse:
         """Serve favicon from the expected root path."""
         return FileResponse(favicon_path, media_type="image/x-icon")
 
@@ -839,23 +841,23 @@ def create_app() -> FastAPI:
     # Liveness probe - always OK (keeps the pod alive)
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)
     @app.get("/healthz", include_in_schema=False, response_class=JSONResponse)
-    async def liveness_check():
+    async def liveness_check() -> JSONResponse:
         """Liveness probe for Kubernetes; carries the proof-target token back when it is set."""
         token = settings.SECURITY_PROOF_TOKEN
         headers = {SECURITY_PROOF_HEADER: token} if token else None
         return JSONResponse({"status": "ok"}, headers=headers)
 
     # Version info - public, so anyone (and the E2E suite) can see which build is running.
-    @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse)
-    async def version_info():
+    @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse, response_model=None)
+    async def version_info() -> dict[str, object]:
         """Return the running build's version metadata (version, commit, branch, ...)."""
         from opi.core.version import get_version_info
 
         return get_version_info()
 
     # Readiness probe - only OK when all services are up
-    @app.get("/readyz", include_in_schema=False, response_class=JSONResponse)
-    async def readiness_check():
+    @app.get("/readyz", include_in_schema=False, response_class=JSONResponse, response_model=None)
+    async def readiness_check() -> dict[str, str] | JSONResponse:
         """Readiness probe for Kubernetes - returns OK only when all services are ready."""
         from opi.core.readiness import get_readiness_state
 

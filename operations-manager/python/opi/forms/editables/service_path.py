@@ -49,7 +49,7 @@ def _service_list_at(data: dict[str, Any], yaml_path: str) -> list[Any] | None:
     return root if isinstance(root, list) else None
 
 
-def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:
+def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:  # noqa: ANN401  # a project-file value
     """The config-carrying sub-dict of a service entry, format-agnostic."""
     return service_entry_body(entry, service_name)
 
@@ -135,7 +135,7 @@ def ensure_service_in_list(
     return idx, entry
 
 
-def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
+def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:  # noqa: ANN401  # a project-file value
     """Get a value from YAML data; a service config path is walked through the services list."""
     if not is_service_config_path(yaml_path):
         return get_value(data, yaml_path)
@@ -156,7 +156,7 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
     return value
 
 
-def _read_from_sibling_roots(data: dict[str, Any], yaml_path: str) -> Any:
+def _read_from_sibling_roots(data: dict[str, Any], yaml_path: str) -> Any:  # noqa: ANN401  # a project-file value
     """Resolve *yaml_path* against the OTHER service root, when its own has nothing.
 
     A reader asks for "services/keycloak/config/..." because that is where the value
@@ -180,7 +180,7 @@ def _read_from_sibling_roots(data: dict[str, Any], yaml_path: str) -> Any:
     return None
 
 
-def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:
+def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:  # noqa: ANN401  # a project-file value
     """Resolve a service-config path against one services list."""
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
@@ -249,7 +249,7 @@ def check_requirements(
     return [path for path in requires if not smart_path_exists(form_data, path)]
 
 
-def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:
+def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """Set a value in YAML data; a service config path is written through the services list.
 
     The service entry is found or created, a string entry is promoted to a dict, and the value

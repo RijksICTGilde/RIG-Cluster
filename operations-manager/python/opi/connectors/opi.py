@@ -9,10 +9,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
+
 from opi.connectors.http import client_session
 
 if TYPE_CHECKING:
-    import aiohttp
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,9 @@ class OpiConnector:
         self.session = client_session(self.timeout, ssl=self.verify_tls)
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         if self.session:
             await self.session.close()
 
@@ -119,5 +123,5 @@ class OpiConnector:
     async def _parse_response(resp: aiohttp.ClientResponse) -> dict | str:
         try:
             return await resp.json()
-        except Exception:
+        except aiohttp.ClientError, ValueError:
             return await resp.text()

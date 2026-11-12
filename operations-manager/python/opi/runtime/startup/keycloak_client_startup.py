@@ -2,6 +2,8 @@
 
 import logging
 
+from keycloak.exceptions import KeycloakError
+
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
@@ -77,6 +79,6 @@ async def ensure_keycloak_credentials() -> bool:
             logger.error("Failed to setup operations client credentials")
             return False
 
-    except Exception as e:
+    except (KeycloakError, OSError, ValueError, KeyError) as e:
         logger.error(f"Error ensuring Keycloak credentials: {e}")
         return False

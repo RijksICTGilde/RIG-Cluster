@@ -165,7 +165,7 @@ class MailConnector:
         self,
         method: str,
         path: str,
-        payload: Any | None = None,
+        payload: Any | None = None,  # noqa: ANN401  # the JSON body of the mail API
         allow_missing: bool = False,
     ) -> dict[str, Any] | None:
         """One management call. ``allow_missing`` turns a 404 into ``None``.
@@ -191,7 +191,7 @@ class MailConnector:
         self,
         method: str,
         path: str,
-        payload: Any | None,
+        payload: Any | None,  # noqa: ANN401  # the JSON body of the mail API
         allow_missing: bool,
     ) -> dict[str, Any] | None:
         """One management call, without retries and without translating transport errors."""

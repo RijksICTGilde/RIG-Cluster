@@ -155,7 +155,7 @@ def editable_to_form_field(
     )
 
 
-def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:
+def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:  # noqa: ANN401  # a project-file value
     """Evaluate a ``show_when`` condition against a dependency value.
 
     Without a *show_when* the truthiness of *dep_value* decides. The operators:
@@ -301,7 +301,7 @@ def resolve_options_for_editable(
 def _find_converter_for_path(
     siblings: list[EditableVisualizer],
     yaml_path: str,
-) -> Any | None:
+) -> Any | None:  # noqa: ANN401  # a project-file value
     """Find the converter for the editable whose yaml_path matches *yaml_path*."""
     for sib in siblings:
         if sib.editable.yaml_path == yaml_path:
@@ -318,7 +318,7 @@ def _normalize_indices(path: str) -> str:
     return re.sub(r"\[\d+\]", "[*]", path)
 
 
-def _find_default_for_path(siblings: list[EditableVisualizer], yaml_path: str) -> Any | None:
+def _find_default_for_path(siblings: list[EditableVisualizer], yaml_path: str) -> Any | None:  # noqa: ANN401  # a project-file value
     """Find the ``default`` of the editable whose yaml_path matches *yaml_path*.
 
     ``depends_on`` is resolved to a concrete ``[index]`` inside a sequence while the

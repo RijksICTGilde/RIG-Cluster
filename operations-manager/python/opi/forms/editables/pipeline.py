@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import ContextAwareEditableValidator, Editable, EditableEnforcer
 
 
-def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
     """The error messages for one value, empty when it is valid.
 
     ``context`` carries what a validator cannot know from the value alone, such as the ids

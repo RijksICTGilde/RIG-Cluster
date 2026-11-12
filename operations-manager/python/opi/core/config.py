@@ -45,7 +45,7 @@ def _check_env_file_for_environment_var(file_path: str) -> None:
                     logger.warning("ENVIRONMENT is read from system environment variable only")
                     logger.warning(f"Remove 'ENVIRONMENT={environment_value}' from {file_path}")
                     break
-    except Exception as e:
+    except (OSError, UnicodeDecodeError, ValueError) as e:
         logger.debug(f"Could not check {file_path} for ENVIRONMENT variable: {e}")
 
 
@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     # setting than itself (a rollback, an upgrade test) still starts.
     model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8", "extra": "allow"}
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, __context: Any) -> None:  # noqa: ANN401  # the hook pydantic calls
         self._warn_about_unknown_settings()
 
     def _warn_about_unknown_settings(self) -> None:
@@ -810,7 +810,7 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
 
         return public_key, private_key
 
-    except Exception as e:
+    except (ValueError, IndexError, UnicodeDecodeError) as e:
         logger.error(f"Error parsing SOPS age key content: {e}")
         return None, None
 
@@ -875,7 +875,7 @@ def _load_sops_key_from_local_file() -> str | None:
             logger.error("Expected file structure: RIG-Cluster/security/key.txt")
             return None
 
-    except Exception as e:
+    except (OSError, UnicodeDecodeError) as e:
         logger.error(f"Failed to read local SOPS key file: {e}")
         logger.error("SOPS operations may fail without proper key configuration")
         return None

@@ -1,8 +1,9 @@
 """The services overview page (/services)."""
 
 import logging
+from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
 from opi.core.authz.actions import Action, action
@@ -12,12 +13,15 @@ from opi.http.auth.auth_decorators import get_current_user, requires_sso
 from opi.http.render.menu import get_menu_items
 from opi.services.services import ServiceAdapter
 
+if TYPE_CHECKING:
+    from opi.services.services_enums import ServiceType
+
 logger = logging.getLogger(__name__)
 
 services_router = APIRouter()
 
 
-def replacement_marker(service_type) -> str | None:
+def replacement_marker(service_type: ServiceType) -> str | None:
     """The successor's display name when this service is replaced on this cluster, else None."""
     # The import stays inside: the registry loads the service packages and some of those
     # import back into the web layer.
@@ -32,7 +36,7 @@ def replacement_marker(service_type) -> str | None:
 @services_router.get("/services", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def services_overview(request: Request):
+async def services_overview(request: Request) -> Response:
     """A card per service, with its description, icon and the variables it provides."""
     try:
         user = get_current_user(request)

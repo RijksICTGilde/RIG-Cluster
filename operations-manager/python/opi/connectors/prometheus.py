@@ -18,6 +18,8 @@ from opi.core.config import settings
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from opi.connectors.metrics_backend import MetricsBackend
+
 logger = logging.getLogger(__name__)
 
 #: Every call to Prometheus, PromQL or series API, gives up after this long.
@@ -172,7 +174,7 @@ def create_prometheus_connector() -> PrometheusConnector:
     return PrometheusConnector()
 
 
-async def get_metrics_connector() -> Any:
+async def get_metrics_connector() -> MetricsBackend:
     """The connector singleton for the configured ``METRICS_BACKEND``.
 
     PrometheusConnector queries Prometheus directly (sandbox), GrafanaPrometheusConnector goes

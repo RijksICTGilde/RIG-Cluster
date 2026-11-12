@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from opi.core.config import settings
 from opi.core.subprocess_env import child_env
 from opi.services.secrets import RegistrySecret
-from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.age import AgeEncryptionError, decrypt_password_smart_auto_sync
 from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
 
@@ -100,7 +100,7 @@ class SkopeoConnector:
             try:
                 self._registry_password = decrypt_password_smart_auto_sync(settings.REGISTRY_PASSWORD)
                 logger.info("Registry password decrypted successfully")
-            except Exception as e:
+            except (AgeEncryptionError, OSError, ValueError) as e:
                 logger.error(f"Failed to decrypt registry password: {e}")
 
         self._initialized = True
@@ -124,7 +124,7 @@ class SkopeoConnector:
         except FileNotFoundError:
             self.is_skopeo_available = False
             logger.warning("Skopeo CLI not found on system")
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             self.is_skopeo_available = False
             logger.error(f"Error checking skopeo availability: {e}")
 

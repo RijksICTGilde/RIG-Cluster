@@ -55,7 +55,7 @@ NON_HTML_ATTRIBUTES = frozenset(
 )
 
 
-def field_attrs(field: Any, handled: list[str] | None = None) -> dict[str, Any]:
+def field_attrs(field: Any, handled: list[str] | None = None) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """Every loose attribute of a field as the flat dict ``:attrs`` wants.
 
     ``handled`` names the keys this widget already sets as an explicit attribute and that must

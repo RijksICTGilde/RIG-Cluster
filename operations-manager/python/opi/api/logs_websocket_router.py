@@ -15,7 +15,7 @@ import logging
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -35,6 +35,9 @@ from opi.services.project_store import get_project_store
 from opi.services.step_up import session_step_up_until, step_up_fresh
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 logger = logging.getLogger(__name__)
 
@@ -94,19 +97,19 @@ def _validate_origin(websocket: WebSocket) -> bool:
     return True
 
 
-async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:
+async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:  # noqa: ANN401  # the JSON payload of the message
     """Send a JSON message over WebSocket. Returns False if connection is closed."""
     try:
         if websocket.client_state == WebSocketState.CONNECTED:
             message = {"type": msg_type, **kwargs}
             await websocket.send_text(json.dumps(message))
             return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a closed socket must not raise out of a send
         logger.debug(f"Failed to send WebSocket message: {e}")
     return False
 
 
-def _get_session_from_scope(websocket: WebSocket) -> Any:
+def _get_session_from_scope(websocket: WebSocket) -> MutableMapping[str, Any] | None:
     """The session the ServerSideSessionMiddleware already loaded, out of the scope.
 
     No session, or an empty one, answers None.
@@ -156,7 +159,7 @@ class RateLimiter:
     output stays capped at ``rate`` messages per second.
     """
 
-    def __init__(self, rate: float, burst: int = 10):
+    def __init__(self, rate: float, burst: int = 10) -> None:
         self.rate = rate  # messages per second (sustained cap)
         self.burst = burst
         self.tokens = float(burst)
@@ -277,7 +280,7 @@ async def stream_logs(
         user = valid_session_user(session)
         user_email = user.get("email") if user else None
 
-        if not user_email:
+        if not session or not user_email:
             logger.warning(f"WebSocket auth failed: no valid session for {project_name}")
             await websocket.close(code=4001, reason="Authentication required")
             return
@@ -493,7 +496,7 @@ async def stream_logs(
                     line = await asyncio.wait_for(current_stdout.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
-                except Exception:
+                except Exception:  # noqa: BLE001  # the read loop must not stop on one line
                     await asyncio.sleep(1.0)
                     continue
 
@@ -590,7 +593,7 @@ async def stream_logs(
                     line = await asyncio.wait_for(current_stderr.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
-                except Exception:
+                except Exception:  # noqa: BLE001  # the read loop must not stop on one line
                     await asyncio.sleep(1.0)
                     continue
 
@@ -818,7 +821,7 @@ async def stream_logs(
                 except WebSocketDisconnect:
                     running = False
                     break
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this socket; it closes cleanly
                     logger.error(f"Error handling client message: {e}")
                     running = False
                     break
@@ -897,7 +900,7 @@ async def stream_logs(
                     logger.info("cleanup: process killed")
                 except TimeoutError:
                     logger.error(f"cleanup: KILL FAILED for PID {process.pid} - process may be stuck")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                 logger.error(f"cleanup: error terminating kubectl process: {e}")
 
         if connection_registered and user_email:

@@ -722,7 +722,7 @@ def flow_context_from_base(flow_id: str, base_data: dict[str, Any] | None) -> di
     return match[0].context_from_base(base_data)
 
 
-def get_flow(flow_id: str, **context: Any) -> FormFlow:
+def get_flow(flow_id: str, **context: Any) -> FormFlow:  # noqa: ANN401  # a project-file value
     """Get a FormFlow by its ID.
 
     Both a static registry flow and an indexed family from ``INDEXED_FLOWS``

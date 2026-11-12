@@ -30,6 +30,8 @@ from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
@@ -93,7 +95,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             from opi.services.catalog.postgresql_database.editables import POSTGRESQL_SCHEMAS_EDITABLES
             from opi.services.catalog.postgresql_database.visualizers import CONNECTION_LIMIT_FIELD
@@ -105,7 +107,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             return [DEPLOYMENT_CONNECTION_LIMIT_FIELD.editable]
         return []
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -152,7 +154,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             self._config_section_cache = cached
         return cached
 
-    def deployment_form_section(self, deployment_index: int | None = None):
+    def deployment_form_section(self, deployment_index: int | None = None) -> FormSection:
         """The per-deployment connection limit; without an index it describes the layer."""
         from opi.forms.editables.reindex import materialize_wildcard_visualizer
         from opi.forms.layout import Fieldset

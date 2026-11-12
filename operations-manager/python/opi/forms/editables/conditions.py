@@ -32,7 +32,7 @@ def _effective_base_domain(
     deployment: dict[str, Any],
     deployment_index: int,
     resolvers: dict | None,
-) -> Any:
+) -> Any:  # noqa: ANN401  # a project-file value
     """The base domain a condition should judge by: stored value, else the resolver.
 
     Asks the service first (``get_domain_setting``), so both storage locations answer --
@@ -68,7 +68,7 @@ class SentinelValueCondition:
     def __init__(self, sentinel: str = CUSTOM_DOMAIN_SENTINEL) -> None:
         self.sentinel = sentinel
 
-    def check(self, value: Any) -> bool:
+    def check(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if not value:
             return False
         return str(value) == self.sentinel
@@ -88,7 +88,7 @@ class SubdomainNeedsRequestCondition:
     def set_resolvers(self, resolvers: dict) -> None:
         self._resolvers = resolvers
 
-    def check(self, value: Any) -> bool:
+    def check(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if not isinstance(value, dict):
             return False
 
@@ -133,7 +133,7 @@ class DomainNeedsRequestCondition:
     def set_resolvers(self, resolvers: dict) -> None:
         self._resolvers = resolvers
 
-    def check(self, value: Any) -> bool:
+    def check(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if not isinstance(value, dict):
             return False
 

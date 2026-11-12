@@ -10,7 +10,7 @@ from typing import Any
 
 import aiohttp
 
-from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.core.logging_redact import redact_sensitive_headers
 from opi.utils.connect_retry import retry_on_connect_error
 
@@ -124,7 +124,7 @@ class ArgoConnector:
         verify_ssl: bool = False,
         ca_bundle: str | None = None,
         connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
-    ):
+    ) -> None:
         """``token`` is sent as a bearer and skips the login path altogether.
 
         ``ca_bundle`` is the path of the mounted bundle the server certificate is verified
@@ -199,7 +199,7 @@ class ArgoConnector:
 
         try:
             return await retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
 
@@ -360,7 +360,7 @@ class ArgoConnector:
                 logger.error(f"Sync failed with status {status_code}: {response_text}")
                 return False
 
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             reason = str(e) or repr(e)
             logger.error(f"Error during sync of application '{app_name}': {reason}")
             return False
@@ -458,7 +458,7 @@ class ArgoConnector:
                 return True, response_text
             logger.warning(f"Manifest render for '{app_name}' returned status {status_code}")
             return False, response_text
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             reason = str(e) or repr(e)
             logger.error(f"Error rendering manifests for application '{app_name}': {reason}")
             return False, reason
@@ -490,7 +490,7 @@ class ArgoConnector:
                 logger.error(f"Resource tree request failed with status {status_code}: {response_text}")
                 return []
 
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             logger.error(f"Error getting resource tree for {app_name}: {_exc_text(e)}")
             return []
 
@@ -509,7 +509,7 @@ class ArgoConnector:
             else:
                 logger.error(f"List applications request failed with status {status_code}: {response_text}")
                 return []
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             logger.error(f"Error listing applications: {_exc_text(e)}")
             return []
 
@@ -563,7 +563,7 @@ class ArgoConnector:
                 logger.error(f"{refresh_type.title()} refresh failed with status {status_code}: {response_text}")
                 return None
 
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             # Some transport errors stringify to "": fall back to the repr so the line is
             # never a bare "... refresh:" with no reason.
             reason = str(e) or repr(e)
@@ -597,7 +597,7 @@ class ArgoConnector:
         app_name: str,
         max_retries: int = 5,
         retry_delay: int = 3,
-        kubectl_connector: Any = None,
+        kubectl_connector: KubectlConnector | None = None,
         namespace: str | None = None,
         progress_window_seconds: int | None = None,
         stall_retries: int = 12,
@@ -713,7 +713,16 @@ class ArgoConnector:
                     f"shows it still present (or could not confirm) - treating as NOT deleted"
                 )
 
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+                RuntimeError,
+                KubectlConnectionError,
+                KubectlExecutionError,
+            ) as e:
                 logger.error(f"Error checking application deletion status: {_exc_text(e)}")
 
             # Never raises: a measurement that fails is None, see _deletion_progress.

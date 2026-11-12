@@ -15,9 +15,12 @@ would simply never happen, and deleting task types are absent from
 refuse ``rollout=false`` with an explanation instead of ignoring it.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from opi.services.tasks.progress_steps import PHASE_CHECK, PHASE_CHECK_AND_SAVE, SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
+
+if TYPE_CHECKING:
+    from opi.manager.service.progress import ProgressReporter
 
 PAYLOAD_KEY = "rollout"
 
@@ -130,7 +133,7 @@ def rollout_requested(payload: dict) -> bool:
     return bool(payload.get(PAYLOAD_KEY, True))
 
 
-def note_rollout_skipped(progress: Any) -> None:
+def note_rollout_skipped(progress: ProgressReporter) -> None:
     """Record the skipped rollout as a completed step in the task progress."""
     step = progress.add_task(SKIPPED_STEP_LABEL)
     progress.update_current_step(SKIPPED_STEP_DETAIL)

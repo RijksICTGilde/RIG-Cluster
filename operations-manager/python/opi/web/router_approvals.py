@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -38,6 +38,10 @@ from opi.http.render.lotc_switch import render_fragment
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.http.task_helpers import queue_rollout
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.wizard.state import WizardState
 from opi.manager.project.update import ProjectChange, record_approval_decision
 from opi.manager.project_manager import ProjectManager
 from opi.services.approvals import collect_approval_items
@@ -64,7 +68,7 @@ def _create_renderer() -> FormRenderer:
 
 
 def _render_section_html(
-    section: Any,
+    section: FormSection,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
 ) -> str:
@@ -89,8 +93,8 @@ def _render_section_html(
 def _render_modal_step(
     request: Request,
     wizard_token: str | None,
-    state: Any,
-    section: Any,
+    state: WizardState,
+    section: FormSection,
     step_html: str,
     project_name: str,
     errors: dict[str, list[str]] | None = None,

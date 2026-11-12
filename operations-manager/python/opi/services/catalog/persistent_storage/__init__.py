@@ -8,6 +8,8 @@ shape (a list of mount specs) is shared with temp-storage and lives in
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
 from opi.services.catalog.persistent_storage.variables import PersistentStorageVariables
@@ -15,6 +17,13 @@ from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE, StorageConfig
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 class PersistentStorageService(BackupsPageMixin, Service):
@@ -44,7 +53,7 @@ class PersistentStorageService(BackupsPageMixin, Service):
     # Its config is a LIST of {name, size, mount-path} entries (StorageConfig is a
     # RootModel), so config_api_fields is not a flat field set -- left default.
 
-    def config_model_for(self, layer: ConfigLayer):
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         # Mount specs on the component, per-mount clone state on the deployment-component.
         from opi.services.catalog.shared.storage import StorageCloneState
 
@@ -52,17 +61,17 @@ class PersistentStorageService(BackupsPageMixin, Service):
             return StorageCloneState
         return self.config_model
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.COMPONENT:
             return []
         return [PERSISTENT_STORAGE_SEQUENCE_EDITABLE]
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.persistent_storage.visualizers import PERSISTENT_STORAGE_SEQUENCE
 
         return [PERSISTENT_STORAGE_SEQUENCE]
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Sequence
 
         return [Sequence(field_name=f"services{{{self.service_type.value}}}/config")]

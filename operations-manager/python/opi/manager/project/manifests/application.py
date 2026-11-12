@@ -276,7 +276,7 @@ class ApplicationManifests:
             )
             self._host._pending_subdomain_rollback = None
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
             logger.error(f"Failed to rollback subdomain '{subdomain}.{base_domain}': {e}")
             return False
 

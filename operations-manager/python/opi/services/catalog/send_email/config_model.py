@@ -124,7 +124,7 @@ _FromAddress = Annotated[str, AfterValidator(_valid_sender_address)]
 _MessagesPerDay = Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)]
 
 
-def _from_name_field(whose: str) -> Any:
+def _from_name_field(whose: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     return Field(
         default=None,
         alias="from-name",
@@ -137,7 +137,7 @@ def _from_name_field(whose: str) -> Any:
     )
 
 
-def _from_address_field(whose: str) -> Any:
+def _from_address_field(whose: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     return Field(
         default=None,
         alias="from-address",
@@ -149,7 +149,7 @@ def _from_address_field(whose: str) -> Any:
     )
 
 
-def _messages_per_day_field(whose: str) -> Any:
+def _messages_per_day_field(whose: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     return Field(
         default=None,
         alias="messages-per-day",
@@ -161,7 +161,7 @@ def _messages_per_day_field(whose: str) -> Any:
     )
 
 
-def _value_approval_field(alias: str, description: str) -> Any:
+def _value_approval_field(alias: str, description: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     return Field(default=None, alias=alias, json_schema_extra={PLATFORM_MANAGED: True}, description=description)
 
 

@@ -15,7 +15,7 @@ from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_reques
 logger = logging.getLogger(__name__)
 
 
-async def handle_add_component(payload: dict, progress: Any) -> dict:
+async def handle_add_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async add-component task.
 
     Adds a new component definition to a project and processes all affected
@@ -154,7 +154,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             response["warnings"] = result["warnings"]
         return response
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error adding component: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -169,7 +169,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
-async def handle_update_component(payload: dict, progress: Any) -> dict:
+async def handle_update_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async update-component task.
 
     Applies a partial update to an existing component and reprocesses the project so the
@@ -270,7 +270,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             response["warnings"] = result["warnings"]
         return response
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error updating component: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -285,7 +285,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
-async def handle_add_component_to_deployment(payload: dict, progress: Any) -> dict:
+async def handle_add_component_to_deployment(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async add-component-to-deployment task.
 
     Adds an existing component to a deployment that doesn't yet include it.
@@ -414,7 +414,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             response["warnings"] = result["warnings"]
         return response
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error adding component to deployment: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -430,7 +430,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             await project_manager.close()
 
 
-async def handle_add_service(payload: dict, progress: Any) -> dict:
+async def handle_add_service(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async add-service task.
 
     Adds a service to a project and processes affected deployments.
@@ -530,7 +530,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             response["warnings"] = result["warnings"]
         return response
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error adding service: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -540,7 +540,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
-async def handle_configure_service(payload: dict, progress: Any) -> dict:
+async def handle_configure_service(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Run a service-config write as a task: translate the payload, report the outcome.
 
     Expected payload keys:
@@ -580,7 +580,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             "error": str(refusal),
             "error_type": refusal.error_type,
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error configuring service: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -615,7 +615,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
     }
 
 
-async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
+async def handle_configure_service_values(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Run a values write as a task: translate the payload, report the outcome.
 
     Expected payload keys:
@@ -683,7 +683,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
     )
 
 
-async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
+async def handle_manage_database_schemas(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Add or remove one extra database schema (RC-59).
 
     Write first, then reconcile, like its two siblings above -- and skip the reconcile
@@ -775,7 +775,7 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
             },
         }
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Error managing database schema: {exc}"
         logger.error(error_msg)
         progress.fail_project(error_msg)
@@ -785,7 +785,7 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
-async def handle_delete_component(payload: dict, progress: Any) -> dict:
+async def handle_delete_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async component deletion task.
 
     Two steps that belong together: remove the component from the project file, then

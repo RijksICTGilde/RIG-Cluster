@@ -5,7 +5,7 @@ view them in the Prometheus graph UI through an iframe.
 import asyncio
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from opi.core.authz.actions import Action, action
@@ -83,7 +83,7 @@ def _get_prometheus_external_url() -> str:
 @metrics_explorer_router.get("/metrics-explorer", response_class=HTMLResponse)
 @action(Action.PLATFORM_METRICS)
 @requires_sso
-async def metrics_explorer_page(request: Request):
+async def metrics_explorer_page(request: Request) -> Response:
     """Serve the metrics explorer page; admins only, because it queries across every project."""
     user = require_platform_admin(request)
 
@@ -106,7 +106,7 @@ async def metrics_explorer_page(request: Request):
 @metrics_explorer_router.get("/ui/metrics-explorer/metrics/{service_id}", response_class=JSONResponse)
 @action(Action.PLATFORM_METRICS)
 @requires_sso
-async def get_service_metrics(request: Request, service_id: str):
+async def get_service_metrics(request: Request, service_id: str) -> JSONResponse:
     """The metric names available for one service; admins only, like the page it feeds.
 
     Queries Prometheus /api/v1/series with the service's match selector and extracts the unique
@@ -127,6 +127,6 @@ async def get_service_metrics(request: Request, service_id: str):
         metric_names = await asyncio.to_thread(prom.discover_metric_names, service["match"])
         return JSONResponse(content={"metrics": metric_names, "count": len(metric_names)})
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
         logger.error(f"Failed to fetch metrics for service {service_id}: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch metrics"})

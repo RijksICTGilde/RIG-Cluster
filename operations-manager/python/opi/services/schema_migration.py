@@ -927,7 +927,7 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
     return changed
 
 
-def _normalize_service_entry(entry: Any, id_key: str, *, keep_attachments_legacy: bool = True) -> Any:
+def _normalize_service_entry(entry: Any, id_key: str, *, keep_attachments_legacy: bool = True) -> Any:  # noqa: ANN401  # a project-file value
     """Convert a legacy name-as-key service entry to the uniform record form.
 
     ``{X: {config: ...}}`` -> ``{id_key: X, config: ...}``. Bare strings and entries
@@ -1315,7 +1315,7 @@ def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
     return changed
 
 
-def _normalize_upstream(url: Any) -> Any:
+def _normalize_upstream(url: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Turn a 2.8 ``url`` into the form ``UPSTREAM_PATTERN`` still allows on 2.9.
 
     The old pattern allowed a protocol, upper case and a trailing slash; without this

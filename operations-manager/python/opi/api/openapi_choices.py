@@ -35,6 +35,7 @@ from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
+    from opi.services.catalog.base import Service
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ def _annotate_declared_providers(schemas: dict[str, Any]) -> None:
                 node.update(annotation)
 
 
-def _examples_for(service: Any, layer: ConfigLayer) -> dict[str, list[str]]:
+def _examples_for(service: Service, layer: ConfigLayer) -> dict[str, list[str]]:
     """The example values per yaml path, out of the form section of *service*.
 
     Only the ``examples`` of the visualizer, not its ``placeholder``. A placeholder is
@@ -339,7 +340,7 @@ def _request_body_schema(operation: dict[str, Any]) -> dict[str, Any] | None:
     return schema if isinstance(schema, dict) else None
 
 
-def _service_for(name: str) -> Any | None:
+def _service_for(name: str) -> Service | None:
     try:
         return SERVICES.get(ServiceType(name))
     except ValueError:

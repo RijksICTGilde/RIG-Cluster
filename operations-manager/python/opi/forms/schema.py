@@ -10,7 +10,10 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 
 @dataclass
@@ -43,7 +46,7 @@ class FormMeta:
             self.attributes = {}
 
 
-def get_form_meta(field_info: Any) -> FormMeta | None:
+def get_form_meta(field_info: FieldInfo) -> FormMeta | None:
     """The ``FormMeta`` in a Pydantic field's metadata, or None when it carries none."""
     if not hasattr(field_info, "metadata"):
         return None

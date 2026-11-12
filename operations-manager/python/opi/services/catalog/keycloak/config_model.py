@@ -249,13 +249,13 @@ class KeycloakConfig(BaseModel):
 
     @field_validator("logout_path", mode="before")
     @classmethod
-    def _normalize_logout_path(cls, value: Any) -> Any:
+    def _normalize_logout_path(cls, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         """One normalisation for this field; ``KeycloakManager`` reads it through the same function."""
         return normalize_logout_path(value)
 
     @field_validator("account_link", mode="before")
     @classmethod
-    def _allow_legacy_account_link(cls, value: Any) -> Any:
+    def _allow_legacy_account_link(cls, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         """An existing project file with ``account-link: verify`` stays processable.
 
         ``verify`` is not in the enum: it did the same as choosing nothing, since both land on

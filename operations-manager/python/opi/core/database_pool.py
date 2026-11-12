@@ -144,7 +144,7 @@ class DatabasePool:
             try:
                 current_task = asyncio.current_task()
                 task_name = current_task.get_name() if current_task else None
-            except Exception:
+            except RuntimeError:
                 task_name = None
 
             caller_info = "unknown"
@@ -174,12 +174,12 @@ class DatabasePool:
                 self._active_connections[conn_id] = connection_info
 
             return conn
-        except TimeoutError:
+        except TimeoutError as e:
             logger.error(
                 f"Connection acquisition timeout (30s) from pool ({self.host}). "
                 f"This may indicate database issues or pool exhaustion."
             )
-            raise DatabasePoolError(f"Connection acquisition timeout from pool ({self.host})")
+            raise DatabasePoolError(f"Connection acquisition timeout from pool ({self.host})") from e
         except Exception as e:
             logger.exception(f"Failed to acquire connection from pool ({self.host})")
             raise DatabasePoolError(f"Connection acquisition failed: {e}") from e

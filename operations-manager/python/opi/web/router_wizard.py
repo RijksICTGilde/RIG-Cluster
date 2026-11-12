@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from jinja2 import TemplateNotFound
 from starlette.responses import Response
 
 from opi.core.authz.actions import Action, action
@@ -61,8 +62,10 @@ from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
 
 if TYPE_CHECKING:
+    from opi.forms.presets.loader import Preset
     from opi.forms.visualizers.flows import FormFlow
     from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
@@ -389,7 +392,7 @@ async def wizard_start(request: Request) -> Response:
     )
 
 
-def flow_from_path(flow_id: str, **context: Any) -> FormFlow:
+def flow_from_path(flow_id: str, **context: Any) -> FormFlow:  # noqa: ANN401  # a project-file value
     """The flow a path points at, or a 404.
 
     ``get_flow`` raises a KeyError on an unknown id; this turns that into a 404.
@@ -1081,7 +1084,7 @@ async def toggle_preset(
     return _step_response(request, context)
 
 
-def _apply_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
+def _apply_preset(preset: Preset, yaml_data: dict[str, Any]) -> None:
     """Apply a preset's values additively to yaml_data (mutates in place)."""
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
 
@@ -1099,7 +1102,7 @@ def _apply_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
             smart_set_value(yaml_data, path, value)
 
 
-def _remove_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
+def _remove_preset(preset: Preset, yaml_data: dict[str, Any]) -> None:
     """Remove a preset's values from yaml_data (mutates in place)."""
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
 
@@ -1116,7 +1119,7 @@ def _remove_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
             smart_set_value(yaml_data, path, None)
 
 
-def _list_remove_item(items: list[Any], candidate: Any) -> None:
+def _list_remove_item(items: list[Any], candidate: Any) -> None:  # noqa: ANN401  # a project-file value
     """Remove a matching item from a list (by name for dicts, by equality for scalars)."""
     if isinstance(candidate, dict):
         name = candidate.get("name")
@@ -1127,7 +1130,7 @@ def _list_remove_item(items: list[Any], candidate: Any) -> None:
         items.remove(candidate)
 
 
-def _list_contains_item(items: list[Any], candidate: Any) -> bool:
+def _list_contains_item(items: list[Any], candidate: Any) -> bool:  # noqa: ANN401  # a project-file value
     """Whether a list already contains a matching item: by ``name`` for a dict, by equality
     for a scalar.
     """
@@ -1203,7 +1206,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
             template_path,
             {"request": request},
         )
-    except Exception:
+    except TemplateNotFound:
         raise HTTPException(status_code=404, detail="Help template not found") from None
 
 
@@ -1216,7 +1219,7 @@ async def _handle_sequence_action(
     action: str,
     *,
     seq_path: str = "",
-    seq_index: Any = None,
+    seq_index: Any = None,  # noqa: ANN401  # a project-file value
 ) -> HTMLResponse | RedirectResponse:
     """Add or remove a sequence item and re-render the current step.
 
@@ -1274,7 +1277,7 @@ async def _handle_sequence_action(
     return _step_response(request, context)
 
 
-def _prune_empty_dicts(data: Any) -> None:
+def _prune_empty_dicts(data: Any) -> None:  # noqa: ANN401  # a project-file value
     """Remove empty dict values from nested data, recursively.
 
     After a field removal through ``remove_when_none``, an empty parent dict can remain; this
@@ -1338,7 +1341,7 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
 def _find_sequence_editable(
     section: FormSection,
     path: str,
-) -> Any | None:
+) -> Any | None:  # noqa: ANN401  # a project-file value
     """Find the editable definition for a sequence at *path*.
 
     Handles a top-level sequence by exact match and a nested one where ``[*]`` in the template
@@ -1346,7 +1349,7 @@ def _find_sequence_editable(
     """
     import re
 
-    def _candidate_paths(ed: Any) -> list[str]:
+    def _candidate_paths(ed: Editable) -> list[str]:
         # The rendered sequence path uses the virtualized service-config key while the editable
         # carries the real key, so rewrite with the SAME helper the renderer uses: a brace-only
         # replace of its own misses the segment form silently.
@@ -1358,7 +1361,7 @@ def _find_sequence_editable(
             paths.append(apply_virtualize(ed.yaml_path, virt))
         return paths
 
-    def _match(editable: Any) -> Any | None:
+    def _match(editable: EditableVisualizer) -> EditableVisualizer | None:
         ed = editable.editable
         for candidate in _candidate_paths(ed):
             if candidate == path:
@@ -1382,7 +1385,7 @@ def _find_sequence_editable(
     return None
 
 
-def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any:
+def _empty_sequence_item(editable: EditableVisualizer | None, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """The right empty item for a sequence.
 
     ``""`` for a simple sequence with a single non-sequence child; for a complex one a dict
@@ -1709,7 +1712,7 @@ def _deepest_existing_path(result: dict[str, Any], path: str) -> str | None:
     return path
 
 
-def _summary_text(text: Any) -> str:
+def _summary_text(text: Any) -> str:  # noqa: ANN401  # a project-file value
     """Escape a piece of text that goes into summary HTML.
 
     The functions below build an HTML string that ``wizard_review.html.j2`` renders with
@@ -1819,7 +1822,11 @@ def _build_section_fields(
     return fields
 
 
-def _resolve_service_labels(editable: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> list[str]:
+def _resolve_service_labels(
+    editable: EditableVisualizer,
+    value: Any,  # noqa: ANN401  # a project-file value
+    yaml_data: dict[str, Any] | None = None,
+) -> list[str]:
     """Resolve selected service values to their display labels."""
     from opi.forms.visualizers.bridge import resolve_options_for_editable
 
@@ -1831,7 +1838,7 @@ def _resolve_service_labels(editable: Any, value: Any, yaml_data: dict[str, Any]
 
     try:
         options = resolve_options_for_editable(editable)
-    except Exception:
+    except Exception:  # noqa: BLE001  # the outer boundary of this page; it must still render
         return [str(v) for v in value] if isinstance(value, list) else [str(value)]
 
     label_map = {str(opt.get("value", "")): opt.get("label", str(opt.get("value", ""))) for opt in options}
@@ -1840,7 +1847,7 @@ def _resolve_service_labels(editable: Any, value: Any, yaml_data: dict[str, Any]
 
 
 def _build_sequence_summary(
-    editable: Any,
+    editable: EditableVisualizer,
     yaml_data: dict[str, Any],
 ) -> str:
     """Build HTML summary for a sequence editable (components, users, etc.)."""
@@ -1943,7 +1950,7 @@ def _get_item_label(item: dict[str, Any], children: list[Any], index: int) -> st
     return f"Item {index + 1}"
 
 
-def _child_key(child: Any) -> str:
+def _child_key(child: EditableVisualizer) -> str:
     """Extract the relative key from a child editable's yaml_path.
 
     E.g. ``components[*]/resources/cpu/request`` → ``resources/cpu/request``
@@ -1955,7 +1962,7 @@ def _child_key(child: Any) -> str:
     return path
 
 
-def _nested_get(data: dict[str, Any], path: str) -> Any:
+def _nested_get(data: dict[str, Any], path: str) -> Any:  # noqa: ANN401  # a project-file value
     """Get a value from nested dict using slash-separated path."""
     current: Any = data
     for key in path.split("/"):
@@ -1966,7 +1973,7 @@ def _nested_get(data: dict[str, Any], path: str) -> Any:
     return current
 
 
-def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> str | None:
+def _format_value(editable: EditableVisualizer, value: Any, yaml_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
     """Format a value for display in the summary.
 
     Returns None if the value is empty/unset and should be omitted.
@@ -2010,13 +2017,13 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
     return display or None
 
 
-def _resolve_option_labels(editable: Any, value: Any) -> str:
+def _resolve_option_labels(editable: EditableVisualizer, value: Any) -> str:  # noqa: ANN401  # a project-file value
     """Look up display labels for select/radio/checkbox values."""
     from opi.forms.visualizers.bridge import resolve_options_for_editable
 
     try:
         options = resolve_options_for_editable(editable)
-    except Exception:
+    except Exception:  # noqa: BLE001  # the outer boundary of this page; it must still render
         # The provider failed: fall back to the raw value.
         return str(value) if not isinstance(value, list) else ", ".join(str(v) for v in value)
 
@@ -2037,7 +2044,7 @@ async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | Redire
     return await _do_submit(request, flow_id)
 
 
-def _collect_all_editable_paths(editables) -> set[str]:
+def _collect_all_editable_paths(editables: list[EditableVisualizer]) -> set[str]:
     """Recursively collect yaml_paths from editables, including group children."""
     paths: set[str] = set()
     for vis in editables:
@@ -2173,7 +2180,7 @@ class _FlowValidation(NamedTuple):
     processor: EditableFormProcessor
 
 
-async def _validate_whole_flow(request: Request, flow_id: str, state: Any) -> _FlowValidation:
+async def _validate_whole_flow(request: Request, flow_id: str, state: WizardState) -> _FlowValidation:
     """Validate EVERY active section against the merged wizard data.
 
     The validation half of the final submission, shared with the jump to the summary, which may

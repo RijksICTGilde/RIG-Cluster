@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 import tempfile
 import threading
 from typing import Any, ClassVar
@@ -64,8 +65,6 @@ class MinioConnector:
             logger.debug(f"Set MC_CONFIG_DIR to: {settings.MC_CONFIG_DIR}")
 
         try:
-            import subprocess
-
             result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)  # noqa: S607  # a tool from the image's PATH, not a fixed path
             if result.returncode == 0:
                 logger.info("MinIO CLI (mc) is available")
@@ -73,7 +72,7 @@ class MinioConnector:
             else:
                 logger.warning(f"MinIO CLI (mc) not available: {result.stderr}")
                 MinioConnector.is_mc_available = False
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error testing mc CLI availability: {e}")
             MinioConnector.is_mc_available = False
 
@@ -122,7 +121,7 @@ class MinioConnector:
                 MinioConnector.is_mc_available = False
                 return False
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error testing mc CLI availability: {e}")
             MinioConnector.is_mc_available = False
             return False
@@ -208,7 +207,15 @@ class MinioConnector:
             logger.info(f"Successfully configured and tested alias: {alias}")
             return True
 
-        except Exception as e:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            MinioConnectionError,
+            MinioExecutionError,
+            MinioValidationError,
+        ) as e:
             logger.error(f"Error configuring alias {alias}: {e}")
             return False
 
@@ -228,7 +235,15 @@ class MinioConnector:
                 MinioConnector.configured_aliases.discard(alias)
                 return False
 
-        except Exception as e:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            MinioConnectionError,
+            MinioExecutionError,
+            MinioValidationError,
+        ) as e:
             logger.error(f"Error testing alias {alias} connection: {e}")
             MinioConnector.configured_aliases.discard(alias)
             return False

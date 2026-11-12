@@ -46,7 +46,7 @@ class AliasMapValidator:
     value, validated when it was entered.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not isinstance(value, str) or not value.strip() or is_age_encrypted(value):
             return []
         if value.strip() == REDACTED:

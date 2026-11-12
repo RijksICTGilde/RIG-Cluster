@@ -19,7 +19,7 @@ from typing import Any
 IDENTITY_KEYS = ("reference", "name")
 
 
-def identity_of(item: Any) -> tuple[str, Any] | None:
+def identity_of(item: Any) -> tuple[str, Any] | None:  # noqa: ANN401  # a project-file value
     """The key field and key value of *item*, or None when it has neither."""
     if not isinstance(item, dict):
         return None
@@ -30,7 +30,7 @@ def identity_of(item: Any) -> tuple[str, Any] | None:
     return None
 
 
-def match_by_identity(item: Any, originals: list[Any], index: int) -> Any:
+def match_by_identity(item: Any, originals: list[Any], index: int) -> Any:  # noqa: ANN401  # a project-file value
     """The row from *originals* that belongs to *item*: by key, else by *index*."""
     identity = identity_of(item)
     if identity is not None:

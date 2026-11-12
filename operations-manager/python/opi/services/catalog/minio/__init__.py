@@ -20,6 +20,8 @@ from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 
 if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             return self.config_model_field_names()
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             from opi.services.catalog.minio.editables import MINIO_ENABLE_VERSIONING_EDITABLE
             from opi.services.catalog.minio.visualizers import (
@@ -92,7 +94,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             ]
         return []
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -140,7 +142,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             self._config_section_cache = cached
         return cached
 
-    def deployment_form_section(self, deployment_index: int | None = None):
+    def deployment_form_section(self, deployment_index: int | None = None) -> FormSection:
         """The limit on noncurrent versions for a bucket; without an index it describes the layer."""
         from opi.services.catalog.minio.visualizers import (
             DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD,

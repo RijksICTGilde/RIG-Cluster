@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, Template
+from ruamel.yaml.error import YAMLError
 
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
@@ -140,7 +141,7 @@ def render_template_source(source: str, variables: dict[str, Any]) -> str:
     return _compiled(source).render(**variables)
 
 
-def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
+def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:  # noqa: ANN401  # a parsed manifest document
     """Kustomize resource identity ``(apiVersion, kind, namespace, name)`` for a manifest doc.
 
     Returns ``None`` for docs that carry no resource identity (empty docs, lists, or docs
@@ -183,7 +184,7 @@ def check_duplicate_resource_identities(output_dir: str, regular_files: list[str
             continue
         try:
             docs = load_yaml_documents_safe(Path(path).read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (OSError, UnicodeDecodeError, YAMLError) as exc:
             logger.debug("Skipping duplicate-identity scan for %s: %s", rel, exc)
             continue
         for doc in docs:
@@ -227,7 +228,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
 class ManifestGenerator:
     """Generator for Kubernetes manifests with templating and kustomization support."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         logger.debug("ManifestGenerator initialized")
 
     def template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
@@ -242,7 +243,7 @@ class ManifestGenerator:
         except Exception as e:
             error_msg = f"Error templating manifest with Jinja2: {e}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def create_manifest_file(
         self, template_path: str, values: dict[str, Any], output_dir: str, output_filename: str, use_sops: bool = False
@@ -285,7 +286,7 @@ class ManifestGenerator:
 
         except Exception as e:
             logger.error(f"Error creating manifest file: {e}")
-            raise RuntimeError(f"Failed to create manifest: {e}")
+            raise RuntimeError(f"Failed to create manifest: {e}") from e
 
     def create_multiple_manifests(self, manifest_configs: list[dict[str, Any]], output_dir: str) -> list[str]:
         """Create several manifest files, and return the paths of the ones that succeeded.
@@ -315,7 +316,7 @@ class ManifestGenerator:
 
                 created_files.append(manifest_path)
 
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.error(f"Failed to create manifest from config {config}: {e}")
                 continue
 
@@ -388,7 +389,7 @@ class ManifestGenerator:
 
             return sops_files, regular_files
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Error collecting manifest files: {e}")
             return [], []
 
@@ -514,7 +515,7 @@ class ManifestGenerator:
             # A duplicate resource identity must not be swallowed into a False return: the
             # deploy has to stop before the broken kustomization is committed.
             raise
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Error creating kustomization files: {e}")
             return False
 
@@ -540,6 +541,6 @@ class ManifestGenerator:
             logger.info(f"Successfully generated {len(created_files)} manifests with kustomization")
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"Error in generate_manifests_with_kustomization: {e}")
             return False

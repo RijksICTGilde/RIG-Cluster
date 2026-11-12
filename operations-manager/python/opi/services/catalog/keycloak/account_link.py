@@ -19,7 +19,7 @@ from opi.services.services_enums import ServiceType
 LINKING_MODES: tuple[AccountLink, ...] = (AccountLink.AUTOMATIC, AccountLink.CONFIRM)
 
 
-def account_link_mode(keycloak_config: Any) -> str | None:
+def account_link_mode(keycloak_config: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """The link setting in one keycloak config, or None when it does not link on email.
 
     A separate entry point next to ``realm_account_link_mode``, because the form already has

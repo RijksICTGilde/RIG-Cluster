@@ -28,7 +28,7 @@ import logging
 import time
 from dataclasses import dataclass
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.services.catalog.base import all_application_pods_selector, is_application_pod
 from opi.services.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 
@@ -167,7 +167,7 @@ async def observe_image_pull_failures() -> int:
     args = ["get", "pods", "--all-namespaces", "-l", all_application_pods_selector(), "-o", "json"]
     try:
         stdout, stderr, code = await kubectl.run_command(args)
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
         logger.warning("Image-pull observation failed, keeping the previous snapshot: %s", e)
         return len(_snapshot)
 

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 
@@ -11,6 +12,9 @@ from opi.core.config import settings
 from opi.http.auth.auth_decorators import get_current_user
 from opi.manager.project.deployment_removal import find_removable_deployment
 from opi.services.project_store import get_project_store
+
+if TYPE_CHECKING:
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +59,7 @@ def require_removable_deployment(project_name: str, deployment_name: str) -> Non
         raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' niet gevonden in {project_name}")
 
 
-def get_task_service(request: Request):
+def get_task_service(request: Request) -> AsyncTaskService:
     """The task service out of the application state."""
     task_service = getattr(request.app.state, "task_service", None)
     if task_service is None:

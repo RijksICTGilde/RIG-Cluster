@@ -18,7 +18,7 @@ from opi.services.tasks import progress_steps as steps
 logger = logging.getLogger(__name__)
 
 
-async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+async def handle_delete_attachment(payload: dict[str, Any], progress: PersistentTaskProgressManager) -> dict[str, Any]:
     """Remove one attachment from the project's catalog.
 
     Args:
@@ -73,7 +73,9 @@ async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> di
     }
 
 
-async def handle_configure_attachment(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+async def handle_configure_attachment(
+    payload: dict[str, Any], progress: PersistentTaskProgressManager
+) -> dict[str, Any]:
     """Roll a written attachment change out to the cluster.
 
     The write already happened in the request that created this task: an attachment arrives

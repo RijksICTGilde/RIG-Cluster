@@ -150,3 +150,19 @@ async def test_timeoutmelding_noemt_de_commit_en_de_gelezen_revisie() -> None:
     assert "abc123def456" in melding
     assert "oude-revisie" in melding
     assert RECONCILED_AT in melding
+
+
+async def test_a_runtime_error_while_polling_is_retried() -> None:
+    """A 401 from ``application_exists`` is a RuntimeError; one of them must not end the wait."""
+    manager = ArgoManager(MagicMock())
+
+    connector = AsyncMock()
+    connector.login = AsyncMock(return_value=True)
+    connector.application_exists = AsyncMock(
+        side_effect=[RuntimeError("Failed to get application status: HTTP 401"), True]
+    )
+
+    with patch("opi.connectors.argo.ArgoConnector", return_value=connector), patch("asyncio.sleep", AsyncMock()):
+        assert await manager.wait_for_application_created("rig-x-main", timeout=10, poll_interval=1) is True
+
+    assert connector.application_exists.await_count == 2

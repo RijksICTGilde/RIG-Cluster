@@ -30,7 +30,7 @@ Deliberately absent, so the next reader does not go looking:
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.catalog.base import (
     ConfigLayer,
@@ -134,7 +134,7 @@ class CrossDomainAccessService(Service):
             return self.config_model_field_names()
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_EDITABLES
 
@@ -148,7 +148,7 @@ class CrossDomainAccessService(Service):
     # Both layers have a form: the project-level editor and the per-deployment patch editor.
     form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self._deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -189,7 +189,7 @@ class CrossDomainAccessService(Service):
             self._config_section_cache = cached
         return cached
 
-    def _deployment_form_section(self, deployment_index: int | None = None):
+    def _deployment_form_section(self, deployment_index: int | None = None) -> FormSection:
         """The per-deployment PATCH form: rule name + peer deployment, nothing else.
 
         With ``deployment_index`` the wildcard paths are materialized to that deployment, which
@@ -232,18 +232,18 @@ class CrossDomainAccessService(Service):
             ],
         )
 
-    def deployment_form_section(self, deployment_index: int):
+    def deployment_form_section(self, deployment_index: int) -> FormSection:
         """The patch form materialized for one deployment; the modal flow's single step."""
         return self._deployment_form_section(deployment_index)
 
-    def _project_config(self, project_data: dict[str, Any]) -> Any:
+    def _project_config(self, project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """This service's project-level config block, or None if not selected."""
         for entry in project_data.get("services", []) or []:
             if service_entry_name(entry) == self.service_type.value:
                 return service_entry_config(entry)
         return None
 
-    def _deployment_config(self, deployment: dict[str, Any]) -> Any:
+    def _deployment_config(self, deployment: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """This service's deployment-level config block on ``deployment``, or None."""
         for entry in deployment.get("services", []) or []:
             if service_entry_name(entry) == self.service_type.value:
@@ -253,8 +253,8 @@ class CrossDomainAccessService(Service):
     def _resolve_direction(
         self,
         direction: str,
-        project_config: Any,
-        deployment_config: Any,
+        project_config: Any,  # noqa: ANN401  # a project-file value
+        deployment_config: Any,  # noqa: ANN401  # a project-file value
         local_components: set[str | None],
         ctx: DeploymentManifestContext,
     ) -> list[ResolvedRule]:
@@ -344,5 +344,9 @@ class CrossDomainAccessService(Service):
 # showing it (see that module). Bound after the class so the import order holds, exactly as
 # sleep-mode does it.
 from opi.services.catalog.cross_domain_access.actions import cross_domain_actions  # noqa: E402  # bound after the class
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 CrossDomainAccessService.definition.actions_provider = cross_domain_actions

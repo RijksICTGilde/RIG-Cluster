@@ -12,13 +12,15 @@ from opi.core.readiness import get_readiness_state
 
 if TYPE_CHECKING:
     from fastapi import Request
+    from starlette.middleware.base import RequestResponseEndpoint
+    from starlette.responses import Response
 
 # Paths that bypass the maintenance page
 BYPASS_PATHS = {"/health", "/healthz", "/readyz", "/metrics", "/version"}
 
 
 class MaintenanceMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Always let health/metrics endpoints through
         if request.url.path in BYPASS_PATHS:
             return await call_next(request)

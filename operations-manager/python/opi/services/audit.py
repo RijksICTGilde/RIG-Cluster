@@ -245,7 +245,7 @@ async def list_actions(
     if before is not None and after is not None:
         raise ValueError("before and after are mutually exclusive")
 
-    def _at(cursor: AuditCursor) -> Any:
+    def _at(cursor: AuditCursor) -> ColumnElement[tuple[Any, ...]]:
         """The cursor as a row value, with the column types so the bind is right."""
         return tuple_(literal(cursor.time, NotificationEvent.time.type), literal(cursor.id, NotificationEvent.id.type))
 

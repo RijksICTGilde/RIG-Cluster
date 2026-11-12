@@ -24,7 +24,12 @@ from opi.connectors.git_repo import warm_platform_repos
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
 from opi.connectors.mail import MailRelayError
-from opi.connectors.minio_mc import create_minio_connector
+from opi.connectors.minio_mc import (
+    MinioConnectionError,
+    MinioExecutionError,
+    MinioValidationError,
+    create_minio_connector,
+)
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.rules import check_register
 from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespace
@@ -125,7 +130,7 @@ async def wait_for_keycloak_availability() -> bool:
     return True
 
 
-def print_boot_banner():
+def print_boot_banner() -> None:
     """Print a distinctive boot banner for easy log identification."""
     import datetime
 
@@ -267,7 +272,7 @@ async def ensure_cmp_key_readers() -> dict[str, int]:
     return counts
 
 
-async def register_oauth_client_after_keycloak_setup(app) -> None:
+async def register_oauth_client_after_keycloak_setup(app: FastAPI) -> None:
     """Call this once the Keycloak credentials are available, so the OAuth client is
     registered for authentication.
 
@@ -432,7 +437,15 @@ async def check_minio_availability() -> bool:
 
         return True
 
-    except Exception as e:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        MinioConnectionError,
+        MinioExecutionError,
+        MinioValidationError,
+    ) as e:
         logger.error(f"Error checking MinIO CLI availability: {e}")
         return False
 
@@ -458,13 +471,13 @@ async def _setup_database(readiness: ReadinessState) -> bool:
             logger.info("Running Alembic migrations as sanity check (primary migrations handled by entrypoint)")
             _run_alembic_migrations()
             logger.info("Alembic migration sanity check completed")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
             # Log but don't fail - entrypoint already ran migrations before this code executed
             logger.debug(f"Alembic sanity check skipped or encountered non-fatal issue: {e}")
 
         readiness.database.mark_ready()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
         readiness.database.mark_failed(str(e))
         return False
 
@@ -493,7 +506,7 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
                 if db_emails:
                     user_service.add_allowed_emails(db_emails)
                     logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
             logger.warning(f"Could not load platform users from database: {e}")
 
         # Which sessions are revoked, in memory: the per-request check reads there
@@ -520,7 +533,7 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             try:
                 known_namespace_labels = await create_kubectl_connector().get_namespace_labels_map()
                 logger.info(f"Read {len(known_namespace_labels)} namespaces in one call for the startup check")
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 # Fall back to the per-namespace path rather than skipping the check.
                 logger.warning(f"Could not pre-read namespaces, falling back to per-namespace checks: {e}")
 
@@ -530,7 +543,7 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
                     logger.info(f"Checking namespaces and secrets for project: {project.filename}")
                     await project_manager.check_and_create_namespaces(known_namespace_labels=known_namespace_labels)
                     await project_manager.check_and_create_sops_secrets_in_namespaces()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
                     logger.error(f"Error checking project {project.filename}: {e}")
                 finally:
                     await project_manager.close()
@@ -545,7 +558,7 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
 
         readiness.projects.mark_ready()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
         readiness.projects.mark_failed(str(e))
         return False
 
@@ -574,7 +587,7 @@ async def _setup_keycloak(readiness: ReadinessState, skip_checks: bool) -> bool:
 
         readiness.keycloak.mark_ready()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
         readiness.keycloak.mark_failed(str(e))
         return False
 
@@ -585,7 +598,7 @@ async def _setup_oauth(readiness: ReadinessState, app: FastAPI) -> bool:
         await register_oauth_client_after_keycloak_setup(app)
         readiness.oauth.mark_ready()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
         readiness.oauth.mark_failed(str(e))
         return False
 
@@ -694,7 +707,7 @@ async def warm_connector_singletons() -> None:
         for make in (create_kubectl_connector, create_minio_connector, create_kopia_connector, SkopeoConnector):
             try:
                 make()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
                 # A missing binary is no reason to abandon the startup: the connectors set
                 # their own availability flag and fall back.
                 logger.warning(f"Kon {make.__name__} niet vooraf bouwen: {e}")
@@ -782,13 +795,13 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Phase 6: CAA records on our own DNS zones (non-critical)
     try:
         await reconcile_caa_records()
-    except Exception as e:  # non-critical: DNS hygiene must never block boot
+    except Exception as e:  # noqa: BLE001  # DNS hygiene must never block the boot
         logger.error(f"CAA reconciliation failed: {e}")
 
     # Phase 7: no-mail records on the names we publish ourselves (non-critical)
     try:
         await reconcile_no_mail_records()
-    except Exception as e:  # non-critical: DNS hygiene must never block boot
+    except Exception as e:  # noqa: BLE001  # DNS hygiene must never block the boot
         logger.error(f"No-mail reconciliation failed: {e}")
 
     if readiness.is_ready and mail_accounts_done:

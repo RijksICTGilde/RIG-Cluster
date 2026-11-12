@@ -33,6 +33,10 @@ from opi.services.services_enums import ServiceType, UIEvent
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
 
 logger = logging.getLogger(__name__)
@@ -77,7 +81,7 @@ class AttachmentsService(Service):
         """
         return AttachmentCatalog if layer is ConfigLayer.PROJECT else None
 
-    def summarize_data(self, data: Any, private_key: str) -> Any:
+    def summarize_data(self, data: Any, private_key: str) -> Any:  # noqa: ANN401  # the DEFINE payload of a service
         """The catalog as facts about each file: id, filename, size and sha256.
 
         Never the content: a read response is not a download. The size and the digest let a
@@ -167,24 +171,24 @@ class AttachmentsService(Service):
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.COMPONENT:
             return []
         from opi.services.catalog.attachments.editables import ATTACHMENT_USE_SEQUENCE_EDITABLE
 
         return [ATTACHMENT_USE_SEQUENCE_EDITABLE]
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.attachments.visualizers import ATTACHMENT_USE_SEQUENCE
 
         return [ATTACHMENT_USE_SEQUENCE]
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Sequence
 
         return [Sequence(field_name=f"services{{{self.service_type.value}}}/config")]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             # The component layer (which attachment a component couples, and how) is
             # edited inside the component form; the base class builds that section from

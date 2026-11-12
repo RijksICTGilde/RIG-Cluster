@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from opi.connectors.argo import ArgoConnector
 from opi.manager.argo_manager import ApplicationGoneError, ArgoManager
@@ -530,7 +531,10 @@ class TestRefreshApplicationReturnsReconciledAt:
     async def test_returns_none_on_exception(self, connector: ArgoConnector):
         """Should return None when the request raises an exception."""
         with patch.object(
-            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("connection error")
+            connector,
+            "_make_authenticated_request",
+            new_callable=AsyncMock,
+            side_effect=aiohttp.ClientError("connection error"),
         ):
             result = await connector.refresh_application("my-app")
 
@@ -655,7 +659,7 @@ class TestGetApplicationManifests:
     @pytest.mark.asyncio
     async def test_transport_error_is_not_ok(self, connector: ArgoConnector):
         with patch.object(
-            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("boom")
+            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=aiohttp.ClientError("boom")
         ):
             ok, detail = await connector.get_application_manifests("my-app")
 

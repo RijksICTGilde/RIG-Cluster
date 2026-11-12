@@ -128,7 +128,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
     except Exception as e:
         if "ValueError" in str(e.__class__):
             raise
-        raise ValueError(f"Failed to parse YAML: {_yaml_failure_summary(e)}")
+        raise ValueError(f"Failed to parse YAML: {_yaml_failure_summary(e)}") from e
 
 
 def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:

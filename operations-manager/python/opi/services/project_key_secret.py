@@ -6,7 +6,7 @@ Not about the sops CLI: that, the key generation and the file names are ``opi/ut
 import logging
 from typing import TYPE_CHECKING
 
-from opi.connectors.kubectl import KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import format_age_key_file, settings
 from opi.utils.connect_retry import retry_on_connect_error
@@ -37,7 +37,7 @@ def _rbac_still_propagating(error: BaseException) -> bool:
 class ProjectKeySecretHandler:
     """Writes a project's AGE key pair into its namespace, and keeps the CMP able to read it."""
 
-    def __init__(self, kubectl_connector: KubectlConnector | None = None):
+    def __init__(self, kubectl_connector: KubectlConnector | None = None) -> None:
         self.kubectl = kubectl_connector
         self.logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class ProjectKeySecretHandler:
                 return False
             return True
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")
             return False
 

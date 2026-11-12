@@ -172,7 +172,7 @@ async def gather_deployment_errors(
     tree_available = True
     try:
         tree_nodes = await argo.get_application_resource_tree(app_name)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # a diagnostics fetch must never break the page
         logger.debug("Could not fetch resource tree for %s: %s", app_name, exc)
         tree_nodes = []
         tree_available = False
@@ -199,7 +199,7 @@ async def gather_deployment_errors(
         try:
             k8s_ns = get_prefixed_namespace(cluster, base_namespace)
             raw_events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # a diagnostics fetch must never break the page
             logger.debug("Could not fetch namespace events for %s: %s", deployment_name, exc)
             raw_events = []
 

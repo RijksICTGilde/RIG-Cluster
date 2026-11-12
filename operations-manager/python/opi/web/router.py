@@ -4,7 +4,7 @@ import asyncio
 import copy
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -97,6 +97,12 @@ from .router_wizard import wizard_router
 from .router_wizard_attachments import wizard_attachments_router
 from .services_router import services_router
 
+if TYPE_CHECKING:
+    from opi.connectors.argo import ArgoConnector
+    from opi.connectors.kubectl import KubectlConnector
+    from opi.connectors.metrics_backend import MetricsBackend
+    from opi.services.tasks.async_task_service import AsyncTaskService
+
 logger = logging.getLogger(__name__)
 
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -156,7 +162,7 @@ async def decrypt_helm_values(items: list[dict[str, Any]], name_key: str, where:
         try:
             item["helm-values"] = load_yaml_from_string(await decrypt_age_content(value, private_key))
             logger.info(f"Decrypted helm-values for {where} '{name}'")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
             logger.warning(f"Failed to decrypt helm-values for {where} '{name}': {e}")
             item["helm-values"] = None
 
@@ -197,7 +203,7 @@ async def eigen_domein(request: Request) -> Response:
 
 
 @web_router.get("/")
-async def root(request: Request):
+async def root(request: Request) -> RedirectResponse:
     """The front door: the dashboard when signed in, the introduction otherwise.
 
     DELIBERATELY WITHOUT ``@requires_sso``: the front door has to be readable without a
@@ -219,7 +225,7 @@ async def root(request: Request):
 
 
 @web_router.get("/introductie", response_class=HTMLResponse)
-async def introductie(request: Request):
+async def introductie(request: Request) -> Response:
     """What ZAD is, for whoever comes here for the first time.
 
     DELIBERATELY WITHOUT ``@requires_sso``: this is the page for someone who has no rights
@@ -243,7 +249,7 @@ async def introductie(request: Request):
 
 
 @web_router.get("/getting-started", response_class=HTMLResponse)
-async def getting_started(request: Request):
+async def getting_started(request: Request) -> Response:
     """The first steps on ZAD.
 
     DELIBERATELY WITHOUT ``@requires_sso``: public like /introductie, for people without
@@ -284,7 +290,7 @@ async def permission_denied(request: Request) -> HTMLResponse:
 
 
 @web_router.get("/projects/new")
-async def redirect_projects_new_to_wizard():
+async def redirect_projects_new_to_wizard() -> RedirectResponse:
     """Redirect the legacy /projects/new to the wizard.
 
     DELIBERATELY WITHOUT ``@requires_sso``: a blind redirect gives nothing away, and the
@@ -322,7 +328,7 @@ def _progress_page_context(task: dict, task_id: str) -> dict:
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)
 @action(Action.TASK_READ)
 @requires_sso
-async def project_progress_page(request: Request, task_id: str):
+async def project_progress_page(request: Request, task_id: str) -> Response:
     """The project-creation progress page.
 
     A shell around the shared progress fragment: the first paint is server-rendered here, and
@@ -712,7 +718,7 @@ async def project_action_confirm(
 @dev_router.get("/test-hero", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def test_hero(request: Request):
+async def test_hero(request: Request) -> Response:
     """Test route for hero component."""
     try:
         from opi.http.render.navigation_lotc import get_navigation
@@ -732,7 +738,7 @@ async def test_hero(request: Request):
 @dev_router.get("/forms/formulier", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def formulier_demo_form(request: Request):
+async def formulier_demo_form(request: Request) -> Response:
     """The demo form that shows every form field component, with its validation states."""
     try:
         return templates_lotc.TemplateResponse(
@@ -883,7 +889,7 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     }
 
 
-async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
+async def _sum_by_namespace(prom: MetricsBackend, promql: str) -> dict[str, float]:
     """Read a query with ``by (namespace)`` as namespace -> value.
 
     One query then yields the figures of every project at once instead of a query per project.
@@ -892,7 +898,7 @@ async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
     """
     try:
         result = await prom.query(promql)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
         logger.warning(f"Dashboard per-namespace query failed: {e}")
         return {}
 
@@ -943,14 +949,14 @@ async def collect_dashboard_metrics(
                     result = await prom.query(queries["cpu_cores"])
                     if result and result[0].get("value"):
                         cpu_usage_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
                     result = await prom.query(queries["cpu_limit_cores"])
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard CPU limits query failed: {e}")
 
                 mem_usage_val = 0.0
@@ -959,14 +965,14 @@ async def collect_dashboard_metrics(
                     result = await prom.query(queries["memory_bytes"])
                     if result and result[0].get("value"):
                         mem_usage_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
                     result = await prom.query(queries["memory_limit_bytes"])
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory limits query failed: {e}")
 
                 # The REQUEST as well, and for memory only: ODCN bills memory as
@@ -978,7 +984,7 @@ async def collect_dashboard_metrics(
                     result = await prom.query(queries["memory_request_bytes"])
                     if result and result[0].get("value"):
                         mem_request_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory requests query failed: {e}")
 
                 storage_used_val = 0.0
@@ -987,21 +993,21 @@ async def collect_dashboard_metrics(
                     result = await prom.query(queries["storage_used_bytes"])
                     if result and result[0].get("value"):
                         storage_used_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard storage usage query failed: {e}")
 
                 try:
                     result = await prom.query(queries["storage_capacity_bytes"])
                     if result and result[0].get("value"):
                         storage_cap_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard storage capacity query failed: {e}")
 
                 try:
                     result = await prom.query(queries["pod_count"])
                     if result and result[0].get("value"):
                         pod_count = int(float(result[0]["value"][1]))
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard pod count query failed: {e}")
 
                 # The network time series: the last 30 minutes, in steps of 5.
@@ -1041,7 +1047,7 @@ async def collect_dashboard_metrics(
                                     "v": round(float(val) / 1024, 1),
                                 }
                             )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard network query failed: {e}")
 
                 def _pct(used: float, total: float) -> int:
@@ -1097,7 +1103,7 @@ async def collect_dashboard_metrics(
                     project["memory_mb"] = sum(mem_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
                     project["memory_limit_mb"] = sum(mem_limit_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
 
     return metrics, prometheus_available, pod_count
@@ -1106,7 +1112,7 @@ async def collect_dashboard_metrics(
 @web_router.get("/dashboard", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def dashboard(request: Request):
+async def dashboard(request: Request) -> Response:
     """The dashboard: the user's projects, the Prometheus metrics and the ArgoCD status."""
     try:
         user = get_current_user(request)
@@ -1214,14 +1220,14 @@ async def dashboard(request: Request):
                                     latest_deploy = finished_at
                             else:
                                 deployment_statuses.append("Unknown")
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                             logger.debug(f"Dashboard: ArgoCD status for {deployment_name}: {e}")
                             deployment_statuses.append("Unknown")
 
                     # Worst status wins.
                     project["health"] = _derive_project_health(deployment_statuses)
                     project["last_deployed"] = latest_deploy
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
             logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
             for project in user_projects:
                 project["health"] = "Unknown"
@@ -1272,7 +1278,7 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/kaart", response_class=HTMLResponse)
 @requires_sso
-async def project_details(request: Request, project_name: str):
+async def project_details(request: Request, project_name: str) -> Response:
     """The project page without a deployment in the path; see :func:`render_project_page`."""
     return await render_project_page(request, project_name, "")
 
@@ -1298,7 +1304,7 @@ async def project_map_json(request: Request, project_name: str, deployment: str 
 @web_router.get("/projects/{project_name}/audit", response_class=HTMLResponse)
 @action(Action.AUDIT_READ)
 @requires_sso
-async def project_audit(request: Request, project_name: str):
+async def project_audit(request: Request, project_name: str) -> Response:
     """The audit tab, on a route of its own because it carries an action of its own.
 
     The same page as the other tabs (:func:`render_project_page`); only the action differs, and
@@ -1313,7 +1319,7 @@ async def project_audit(request: Request, project_name: str):
 @web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
-async def project_deployment_details(request: Request, project_name: str, deployment_name: str):
+async def project_deployment_details(request: Request, project_name: str, deployment_name: str) -> Response:
     """ONE deployment, on the Deployments, Metrics and Backups tabs.
 
     The name is in the PATH and the server renders one deployment, so the page is shareable,
@@ -1358,7 +1364,7 @@ OLD_TAB_PATHS = {
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/metrics/{project_name}/{deployment_name}", response_class=HTMLResponse)
-async def project_tab_old_shape(request: Request, project_name: str, deployment_name: str = ""):
+async def project_tab_old_shape(request: Request, project_name: str, deployment_name: str = "") -> RedirectResponse:
     """Redirect the older tab addresses, which had the tab before the project name.
 
     The project name comes first now. The old shape has been live and may have been shared, and
@@ -1378,7 +1384,7 @@ async def project_tab_old_shape(request: Request, project_name: str, deployment_
     )
 
 
-async def render_project_page(request: Request, project_name: str, deployment_name: str):
+async def render_project_page(request: Request, project_name: str, deployment_name: str) -> Response:
     """The project page: its services, components, deployments and configuration.
 
     Every tab has a PATH OF ITS OWN instead of a ``?tab=`` on a shared address, because a query
@@ -1463,7 +1469,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             elif kc_config.get("password"):
                 try:
                     kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                     kc_config["password"] = None
             # The SEED never reaches the page, because it would yield codes forever. What does
@@ -1476,7 +1482,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 try:
                     seed = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
                     kc_config["totp_code"], _ = totp_now(seed)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logger.warning(f"Failed to derive OTP code for realm {kc_config.get('realm')}: {e}")
                     kc_config["totp_code"] = None
             else:
@@ -1588,7 +1594,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
                 prom = await get_metrics_connector()
                 prometheus_available = prom.is_connected
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.debug(f"Prometheus not available: {e}")
 
         # The ArgoCD status is loaded lazily per deployment, so it does not block the page
@@ -1601,7 +1607,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 from opi.connectors.argo import create_argo_connector
 
                 argocd_available = await create_argo_connector(connect_retry_seconds=0).ensure_authenticated()
-            except Exception as argo_error:
+            except Exception as argo_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
         # Backup snapshots are NOT fetched here: listing them opens a Kopia repository over
@@ -1626,7 +1632,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             try:
                 BackupManager()
                 backups_available = True
-            except Exception as backup_init_error:
+            except Exception as backup_init_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
 
         from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
@@ -1900,8 +1906,8 @@ def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
 async def _fetch_argocd_deployment_status(
     project_name: str,
     deployment: dict[str, Any],
-    argo: Any,
-    kubectl: Any,
+    argo: ArgoConnector,
+    kubectl: KubectlConnector,
     deployment_state: DeploymentState | None = None,
     project_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -2450,11 +2456,11 @@ async def deployment_metrics_fragment(
                         # Only the PVCs of this deployment; a PVC name starts with its name.
                         prefix = f"{deployment_name}-"
                         deployment_volumes = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
-                except Exception as pvc_error:
+                except Exception as pvc_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logging.getLogger(__name__).warning(
                         f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
                     )
-        except Exception as metrics_error:
+        except Exception as metrics_error:  # noqa: BLE001  # a failed metrics query leaves the figure empty
             # A query that breaks is not "nothing measured yet": nothing was fetched because
             # the measurement itself failed.
             prometheus_reachable = False
@@ -2462,7 +2468,7 @@ async def deployment_metrics_fragment(
 
     # The template reads ``.name`` and ``.components`` as attributes.
     class DeploymentContext:
-        def __init__(self, name: str, components: list):
+        def __init__(self, name: str, components: list) -> None:
             self.name = name
             self.components = [type("C", (), {"reference": c.get("reference")})() for c in components]
 
@@ -2522,7 +2528,7 @@ def _projects_for_user(user: dict) -> list[dict]:
                     "deployments": project_data.get("deployments", []),
                 }
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
             logger.warning(f"Failed to load project data for {project_name}: {e}")
             continue
 
@@ -2563,7 +2569,7 @@ async def platform_map_json(request: Request) -> JSONResponse:
 @web_router.get("/projects", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def projects_overview(request: Request):
+async def projects_overview(request: Request) -> Response:
     """The projects overview: only the projects whose member list holds this user."""
     try:
         # ``or {}`` because get_current_user can give None. That falls out safely here: an
@@ -2596,7 +2602,7 @@ async def projects_overview(request: Request):
 @web_router.get("/cli", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def cli_pagina(request: Request):
+async def cli_pagina(request: Request) -> Response:
     """The ZAD CLI: what it is, how to install it, what it does.
 
     A signpost and not a manual: the repository keeps its own documentation, which runs ahead
@@ -2608,12 +2614,12 @@ async def cli_pagina(request: Request):
 @web_router.get("/actions", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def actions_pagina(request: Request):
+async def actions_pagina(request: Request) -> Response:
     """The ZAD Actions: deploying from your own pipeline."""
     return _signpost(request, "actions.html.j2", "bg/actions.html.j2", "/actions")
 
 
-def _signpost(request: Request, roos: str, lotc: str, path: str, **context: object):
+def _signpost(request: Request, roos: str, lotc: str, path: str, **context: object) -> Response:
     """A page without project data: the shell, its navigation and whatever ``context`` adds."""
     user = get_current_user(request)
     from opi.http.render.navigation_lotc import get_navigation
@@ -2633,7 +2639,7 @@ def _signpost(request: Request, roos: str, lotc: str, path: str, **context: obje
 @web_router.get("/account", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def account_pagina(request: Request):
+async def account_pagina(request: Request) -> Response:
     """Your own account: what is in the session, plus your second factor.
 
     ZAD keeps no profile of its own; the name and the email address come from the login
@@ -2662,7 +2668,7 @@ async def account_pagina(request: Request):
 
 
 @web_router.get("/weergave")
-async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
+async def kies_weergave(request: Request, scheme: str = "", terug: str = "/") -> RedirectResponse:
     """Remember the colour-scheme choice and go back where you came from.
 
     DELIBERATELY WITHOUT ``@requires_sso``: the choice only sets a cookie and reads no data.
@@ -2721,7 +2727,7 @@ async def security_policy(request: Request) -> HTMLResponse:
 @dev_router.get("/test-template-variables", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def test_template_variables(request: Request):
+async def test_template_variables(request: Request) -> Response:
     """Test route for debugging Jinja variables in component tags."""
     try:
         from opi.http.render.navigation_lotc import get_navigation
@@ -2747,7 +2753,7 @@ async def test_template_variables(request: Request):
 @dev_router.get("/example", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def example_page(request: Request):
+async def example_page(request: Request) -> Response:
     """A simple example page with just a header."""
     try:
         user = get_current_user(request)
@@ -2768,7 +2774,7 @@ async def example_page(request: Request):
 @web_router.get("/tools", response_class=HTMLResponse)
 @action(Action.TOOLS_USE)
 @requires_sso
-async def tools_page(request: Request):
+async def tools_page(request: Request) -> Response:
     """The AGE encryption and decryption tools page."""
     try:
         user = get_current_user(request)
@@ -2789,7 +2795,7 @@ async def tools_page(request: Request):
 @web_router.post("/tools/encrypt")
 @action(Action.TOOLS_USE)
 @requires_sso
-async def encrypt_text(request: Request):
+async def encrypt_text(request: Request) -> JSONResponse:
     """Encrypt text with an AGE public key."""
     try:
         from fastapi.responses import JSONResponse
@@ -2822,7 +2828,7 @@ async def encrypt_text(request: Request):
 @web_router.post("/tools/decrypt")
 @action(Action.TOOLS_USE)
 @requires_sso
-async def decrypt_text(request: Request):
+async def decrypt_text(request: Request) -> JSONResponse:
     """Decrypt AGE-encrypted text with a private key."""
     try:
         from fastapi.responses import JSONResponse
@@ -2963,7 +2969,9 @@ def _require_task_access(request: Request, task: dict, project_name: str) -> Non
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
 
-async def _require_task_of_project(request: Request, task_service: Any, project_name: str, task_id: str) -> dict | None:
+async def _require_task_of_project(
+    request: Request, task_service: AsyncTaskService, project_name: str, task_id: str
+) -> dict | None:
     """The task with this id, but only if it is this project's and this user's to see.
 
     The task id alone must not be enough to read any task's steps. Both fragment routes sit

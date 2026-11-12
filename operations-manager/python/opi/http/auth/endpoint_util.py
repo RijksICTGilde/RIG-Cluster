@@ -56,7 +56,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
     """Require a project-specific X-API-Key, validated against project_name in the route."""
 
     @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:  # noqa: ANN401  # the route arguments, and the body model of an upsert
         logger = logging.getLogger(__name__)
         logger.debug(f"API route {func.__name__} called with authentication")
 
@@ -272,7 +272,7 @@ def require_api_action(request: Request, project_name: str, action: Action, *, d
         raise HTTPException(status_code=403, detail={"cause": exc.cause, "message": str(exc)}) from exc
 
 
-def deployment_in_body(deployment_data: Any = None, **_: Any) -> str | None:
+def deployment_in_body(deployment_data: Any = None, **_: Any) -> str | None:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """The deployment an upsert body points at, for :func:`deployment_from`.
 
     The name sits there in the field ``deploymentName``; without this declaration the upsert
@@ -283,7 +283,7 @@ def deployment_in_body(deployment_data: Any = None, **_: Any) -> str | None:
     return str(name) if name else None
 
 
-def marking_in_body(deployment_data: Any = None, **_: Any) -> str:
+def marking_in_body(deployment_data: Any = None, **_: Any) -> str:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """The marking a deployment created by this upsert gets: the body's, or the default.
 
     Creating one on production still needs ``environment.set``, weighed separately.
@@ -291,7 +291,7 @@ def marking_in_body(deployment_data: Any = None, **_: Any) -> str:
     return str(getattr(deployment_data, "environment", None) or DEFAULT_ENVIRONMENT)
 
 
-def default_marking(**_: Any) -> str:
+def default_marking(**_: Any) -> str:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """The marking of a deployment without one, for a delete of a deployment that is gone.
 
     Deleting nothing touches nothing, so the route may answer with its own 404 instead of a
@@ -300,7 +300,7 @@ def default_marking(**_: Any) -> str:
     return DEFAULT_ENVIRONMENT.value
 
 
-def image_only_upsert(project_name: str = "", deployment_data: Any = None, **_: Any) -> Action | None:
+def image_only_upsert(project_name: str = "", deployment_data: Any = None, **_: Any) -> Action | None:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """``deployment.image-replace`` for an upsert that only replaces images, else None.
 
     On an existing deployment the upsert updates the images of the components it already
@@ -326,7 +326,7 @@ def image_only_upsert(project_name: str = "", deployment_data: Any = None, **_: 
     return Action.DEPLOYMENT_IMAGE_REPLACE
 
 
-def require_upsert_body_targets(request: Request, project_name: str, deployment_data: Any) -> None:
+def require_upsert_body_targets(request: Request, project_name: str, deployment_data: Any) -> None:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """Check the targets in an upsert body that the route gate does not see.
 
     The gate weighs ``deploymentName``; in the same body three fields point at something
@@ -356,7 +356,7 @@ def require_upsert_body_targets(request: Request, project_name: str, deployment_
         require_api_action(request, project_name, Action.DEPLOYMENT_DOMAIN_SET)
 
 
-def _changes_domain(deployment: dict[str, Any], deployment_data: Any) -> bool:
+def _changes_domain(deployment: dict[str, Any], deployment_data: Any) -> bool:  # noqa: ANN401  # the route arguments, and the body model of an upsert
     """Whether the body sends a domain field that differs from what the deployment stores."""
     return any(
         value is not None and value != get_domain_setting(deployment, setting)
@@ -455,7 +455,7 @@ def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any
     """
 
     @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:  # noqa: ANN401  # the route arguments, and the body model of an upsert
         try:
             token: str | None = extract_bearer_token(request)
         except UserTokenError:

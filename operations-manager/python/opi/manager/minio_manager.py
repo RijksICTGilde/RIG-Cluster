@@ -9,7 +9,14 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+from opi.connectors.minio_mc import (
+    MinioConnectionError,
+    MinioConnector,
+    MinioExecutionError,
+    MinioValidationError,
+    create_minio_connector,
+)
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
@@ -772,7 +779,7 @@ class MinioManager:
             if secret_data:
                 return MinIOSecret.from_k8s_secret_data(secret_data)
             return None
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.debug(f"Could not retrieve MinIO secret for {deployment_name}: {e}")
             return None
 
@@ -782,7 +789,15 @@ class MinioManager:
             user_exists = any(user.get("username") == username or user.get("access_key") == username for user in users)
             logger.debug(f"MinIO user {username} exists: {user_exists}")
             return user_exists
-        except Exception as e:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            MinioConnectionError,
+            MinioExecutionError,
+            MinioValidationError,
+        ) as e:
             logger.debug(f"Error checking if MinIO user exists: {e}")
             return False
 
@@ -814,7 +829,15 @@ class MinioManager:
                 logger.debug(f"MinIO list buckets failed for access key {access_key}: {list_result}")
 
             return success
-        except Exception as e:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            MinioConnectionError,
+            MinioExecutionError,
+            MinioValidationError,
+        ) as e:
             logger.debug(f"MinIO connection test failed for access key {access_key}: {e}")
             return False
 
@@ -1039,7 +1062,15 @@ class MinioManager:
                 logger.debug(f"Error listing buckets: {bucket_list}")
                 return False
 
-        except Exception as e:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            MinioConnectionError,
+            MinioExecutionError,
+            MinioValidationError,
+        ) as e:
             logger.debug(f"Error checking bucket existence for {bucket_name}: {e}")
             return False
 
@@ -1196,7 +1227,7 @@ class MinioManager:
                 try:
                     await minio_connector._run_mc_command(["alias", "rm", temp_alias])
                     logger.debug(f"Removed validation alias: {temp_alias}")
-                except Exception as cleanup_error:
+                except Exception as cleanup_error:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                     logger.warning(f"Failed to cleanup validation alias {temp_alias}: {cleanup_error}")
 
     async def _handle_remote_source_clone(
@@ -1405,7 +1436,7 @@ class MinioManager:
                         "bucket_exists": validation["bucket_exists"],
                     }
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.error(f"Source validation failed: {e}")
                 result["errors"].append(f"Source validation failed: {e!s}")
                 result["operations"].append({"type": "source_validation", "status": "failed", "error": str(e)})
@@ -1424,7 +1455,7 @@ class MinioManager:
                     raise Exception(f"Deployment '{deployment_name}' does not use MinIO service")
 
                 result["operations"].append({"type": "target_validation", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.error(f"Target validation failed: {e}")
                 result["errors"].append(f"Target validation failed: {e!s}")
                 result["operations"].append({"type": "target_validation", "status": "failed", "error": str(e)})
@@ -1470,7 +1501,7 @@ class MinioManager:
 
                 result["target"] = {"bucket": target_bucket, "username": target_username_final}
                 result["operations"].append({"type": "credentials_resolved", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.error(f"Credential resolution failed: {e}")
                 result["errors"].append(f"Credential resolution failed: {e!s}")
                 result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
@@ -1523,7 +1554,7 @@ class MinioManager:
                         resource_name=target_bucket,
                         source=source_desc,
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.error(f"Target preparation failed: {e}")
                 result["errors"].append(f"Target preparation failed: {e!s}")
                 result["operations"].append({"type": "target_prepared", "status": "failed", "error": str(e)})
@@ -1567,7 +1598,7 @@ class MinioManager:
                 )
                 result["operations"].append({"type": "versioning_applied", "status": "success"})
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.error(f"Bucket clone failed: {e}")
                 result["errors"].append(f"Bucket clone failed: {e!s}")
                 result["operations"].append({"type": "bucket_cloned", "status": "failed", "error": str(e)})
@@ -1578,7 +1609,7 @@ class MinioManager:
                         logger.debug(f"Removing temporary source alias: {temp_source_alias}")
                         await minio_connector._run_mc_command(["alias", "rm", temp_source_alias])
                         logger.debug(f"Removed temporary source alias: {temp_source_alias}")
-                    except Exception as cleanup_error:
+                    except Exception as cleanup_error:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                         logger.warning(f"Failed to cleanup temporary alias {temp_source_alias}: {cleanup_error}")
 
             if generation_was_incremented:
@@ -1606,7 +1637,7 @@ class MinioManager:
                             "generation": new_generation,
                         }
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     logger.warning(f"Failed to update generation in project file: {e}")
                     result["operations"].append(
                         {
@@ -1630,7 +1661,7 @@ class MinioManager:
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "minio", minio_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
                 result["operations"].append(
                     {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
@@ -1656,7 +1687,7 @@ class MinioManager:
                         }
                     )
                     logger.info(f"Successfully synced updated secrets to Git for {deployment_name}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     logger.warning(f"Failed to sync updated secrets to Git: {e}")
                     result["operations"].append(
                         {

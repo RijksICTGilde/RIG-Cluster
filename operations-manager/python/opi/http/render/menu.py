@@ -14,7 +14,7 @@ from opi.services.user_service import get_user_service
 logger = logging.getLogger(__name__)
 
 
-def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[dict[str, str]]:
+def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[dict[str, str]]:  # noqa: ANN401  # extra context a caller may pass
     """
     Get the menu items for the navigation bar.
 
@@ -64,7 +64,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
     if user and user.get("email"):
         try:
             is_admin = is_elevated_admin(get_user_service(), user["email"].lower())
-        except Exception:
+        except Exception:  # noqa: BLE001  # the menu must still render
             logger.debug("Could not check admin status for menu", exc_info=True)
 
     if is_admin:

@@ -127,7 +127,7 @@ async def auth_callback(request: Request) -> Response:
         error_param = quote_plus(f"OAuth error: {error_description}")
         return RedirectResponse(url=f"/?error={error_param}", status_code=302)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the outer boundary of this request; it must still answer
         logger.error(f"Unexpected error during OAuth callback: {e}")
         error_param = quote_plus("Authentication failed. Please try again.")
         return RedirectResponse(url=f"/?error={error_param}", status_code=302)
@@ -174,7 +174,7 @@ async def logout(request: Request) -> Response:
         logger.info("User logged out successfully (local session only)")
         return RedirectResponse(url="/", status_code=302)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the outer boundary of this request; it must still answer
         logger.error(f"Error during logout: {e}")
         # The session goes even when the logout failed.
         request.session.clear()

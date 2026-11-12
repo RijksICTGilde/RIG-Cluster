@@ -306,7 +306,9 @@ async def enforce_route_action(request: Request) -> None:
     """
     route = request.scope.get("route")
     endpoint = getattr(route, "endpoint", None)
-    requested = action_of(endpoint) if endpoint is not None else None
+    if endpoint is None:
+        return
+    requested = action_of(endpoint)
     if requested is None or rule_for(requested).audience is not Audience.PROJECT:
         return
 
@@ -332,7 +334,7 @@ async def enforce_route_action(request: Request) -> None:
 
 @pass_context
 def template_can(
-    context: Any,
+    context: Any,  # noqa: ANN401  # the Jinja context
     action: Action | str,
     project: str | None = None,
     deployment: str | None = None,

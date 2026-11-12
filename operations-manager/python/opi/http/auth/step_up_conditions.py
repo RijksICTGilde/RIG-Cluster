@@ -34,7 +34,7 @@ def _project_data(request: Request, project_name: str) -> dict[str, Any]:
     return (project.data if project is not None else None) or {}
 
 
-def always_requires_step_up(request: Request, **_: Any) -> bool:
+def always_requires_step_up(request: Request, **_: Any) -> bool:  # noqa: ANN401  # the route arguments of the call being weighed
     """Always true: this action asks for a step-up regardless of the environment.
 
     A modifying admin route touches the whole cluster (RC-377), and a token or a membership
@@ -46,7 +46,11 @@ def always_requires_step_up(request: Request, **_: Any) -> bool:
 
 
 def deployment_environment_change(
-    request: Request, *, project_name: str = "", deployment_data: Any = None, **_: Any
+    request: Request,
+    *,
+    project_name: str = "",
+    deployment_data: Any = None,  # noqa: ANN401  # the body model of the upsert being weighed
+    **_: Any,  # noqa: ANN401  # the other route arguments, unused here
 ) -> bool:
     """The call SETS or LOWERS the OTAP marking of this deployment.
 

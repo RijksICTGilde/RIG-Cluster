@@ -19,6 +19,8 @@ from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 
 if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.catalog.config_settings import ConfigSetting
 
 
@@ -63,7 +65,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         # The full config surface, broader than the UI section.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.namespace_postgres.editables import (
@@ -73,7 +75,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
 
         return [POSTGRESQL_INSTANCES_EDITABLE, POSTGRESQL_STORAGE_EDITABLE]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         cached = getattr(self, "_config_section_cache", None)

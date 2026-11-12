@@ -283,7 +283,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
     return decrypt_password_smart_sync(password, private_key)
 
 
-async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = False) -> None:
+async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = False) -> None:  # noqa: ANN401  # a project-file value
     """Recursively walk ``data`` and decrypt every encrypted string value in place.
 
     Values that will not decrypt with this key are left untouched, so the walk can be
@@ -313,7 +313,7 @@ async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = 
             if isinstance(value, str) and carries(value):
                 try:
                     data[key] = await _decrypt(value)
-                except Exception:
+                except AgeEncryptionError, OSError, ValueError:
                     logger.debug(f"Failed to decrypt field '{key}', leaving as-is")
             elif isinstance(value, dict | list):
                 await decrypt_tree(value, private_key, include_prefixed=include_prefixed)

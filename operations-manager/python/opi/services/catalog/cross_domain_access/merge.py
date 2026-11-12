@@ -72,7 +72,7 @@ def _patch(base: dict, patch: dict) -> None:
             base[key] = value
 
 
-def direction_rules(config: Any, direction: str) -> list[dict]:
+def direction_rules(config: Any, direction: str) -> list[dict]:  # noqa: ANN401  # a project-file value
     """The raw ``inbound``/``outbound`` rule dicts from a stored config block, or []."""
     if not isinstance(config, dict):
         return []

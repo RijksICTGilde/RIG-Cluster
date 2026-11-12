@@ -31,13 +31,13 @@ class UpstreamConverter:
     cannot reach a pydantic before-validator.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return value if isinstance(value, str) else ""
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         return normalize_upstream(value) if isinstance(value, str) else value
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return str(value) if value else "Niet ingevuld"
 
 
@@ -49,7 +49,7 @@ class ProjectAgeSecretConverter:
     the next save. The write side refuses rather than storing the token readable.
     """
 
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         if not isinstance(value, str) or not value:
             return ""
         if not carries_encrypted_value(value):
@@ -65,7 +65,7 @@ class ProjectAgeSecretConverter:
         logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen; de opgeslagen waarde blijft staan")
         return value
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
         if value is None:
             return None
         text = str(value).strip()
@@ -82,5 +82,5 @@ class ProjectAgeSecretConverter:
             )
         return LiteralScalarString(encrypt_age_content_sync(text, public_key))
 
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value
         return "Versleuteld opgeslagen" if value else "Niet ingevuld"

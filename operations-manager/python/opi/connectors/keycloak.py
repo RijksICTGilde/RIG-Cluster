@@ -107,7 +107,7 @@ class KeycloakConnector:
         admin_password: str | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
-    ):
+    ) -> None:
         """Authenticate against the master realm.
 
         With the client-credentials service account (client_id plus client_secret), or as a
@@ -303,7 +303,7 @@ class KeycloakConnector:
                     await self.configure_sso_redirect_flow(realm_name, "sso-rijk")
                     logger.info(f"Configured direct SSO redirect flow for realm {realm_name}")
 
-                except Exception as e:
+                except (KeycloakError, OSError, ValueError) as e:
                     logger.warning(f"Failed to add master OIDC provider to realm {realm_name}: {e}")
 
             discovery_url = self.get_discovery_url(realm_name)
@@ -1842,7 +1842,7 @@ class KeycloakConnector:
             else:
                 logger.warning(f"Failed to assign custom client scope to client '{client_id}'")
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError) as e:
             logger.warning(f"Error assigning custom client scope to client '{client_id}': {e}")
 
     async def configure_sso_redirect_flow(self, realm_name: str, provider_alias: str) -> None:
@@ -2999,8 +2999,8 @@ class KeycloakConnector:
 
             try:
                 idp = self.admin.get_idp(idp_alias=provider_alias)
-            except KeycloakGetError:
-                raise KeycloakError(f"Identity provider '{provider_alias}' not found in realm '{realm_name}'")
+            except KeycloakGetError as e:
+                raise KeycloakError(f"Identity provider '{provider_alias}' not found in realm '{realm_name}'") from e
 
             idp["postBrokerLoginFlowAlias"] = flow_alias
 

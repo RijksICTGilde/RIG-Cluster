@@ -14,11 +14,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable  # noqa: TC003  # dataclass fields, so needed at runtime
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opi.core.actor import ACTOR_UNKNOWN, Actor
 
 if TYPE_CHECKING:
+    from starlette.requests import Request
+
     from opi.core.authz.actions import Action
 
 
@@ -373,7 +375,7 @@ class RecordedDecision:
 
 
 def record_decision(
-    request: Any, *, action: Action, resource: Resource, decision: Decision, step_up_fresh: bool
+    request: Request, *, action: Action, resource: Resource, decision: Decision, step_up_fresh: bool
 ) -> None:
     """Put the four attributes of design 8.3 on the request, and add the decision to the list.
 

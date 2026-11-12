@@ -61,7 +61,7 @@ class PersistentTaskProgressManager:
     Local state is written to the database via AsyncTaskService by a periodic flush loop.
     """
 
-    def __init__(self, task_id: str, project_name: str, task_service: AsyncTaskService):
+    def __init__(self, task_id: str, project_name: str, task_service: AsyncTaskService) -> None:
         self._task_id = task_id  # async_tasks.id in the database
         self._project_name = project_name
         self._task_service = task_service

@@ -8,7 +8,7 @@ They have NO dependency on FastAPI Request objects.
 
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import is_reserved_project_name
 from opi.services.oom_watcher import reset_oom_tune_attempts
@@ -17,10 +17,13 @@ from opi.services.tasks.task_errors import platform_failure_fields
 from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.utils.yaml_util import load_yaml_from_string
 
+if TYPE_CHECKING:
+    from opi.manager.project.deployment_upsert import DeploymentUpsert, DeploymentUpsertResult
+
 logger = logging.getLogger(__name__)
 
 
-async def handle_create_project(payload: dict, progress: Any) -> dict:
+async def handle_create_project(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async project creation task.
 
     Supports two paths:
@@ -101,7 +104,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 len(yaml_content),
             )
             progress.complete_task(yaml_task)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
             error_msg = f"Failed to generate YAML: {exc}"
             progress.fail_task(yaml_task, error_msg)
             progress.fail_project(error_msg)
@@ -204,7 +207,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         progress.fail_task(git_task, error_msg)
         progress.fail_project(error_msg)
         return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "conflict"}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Failed Git operations: {exc}"
         progress.fail_task(git_task, error_msg)
         progress.fail_project(error_msg)
@@ -324,13 +327,13 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 },
             }
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
         error_msg = f"Failed deployment: {exc}"
         progress.fail_project(error_msg)
         return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
 
-async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
+async def handle_upsert_deployment(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async upsert deployment task.
 
     A translator: the payload becomes a :class:`DeploymentUpsert`, and the outcome or the
@@ -398,7 +401,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     return _upsert_answer(change, result)
 
 
-def _upsert_answer(change: Any, result: Any) -> dict[str, Any]:
+def _upsert_answer(change: DeploymentUpsert, result: DeploymentUpsertResult) -> dict[str, Any]:
     """The answer every upsert entrance has always given, built from the use case's result."""
     action = "created" if result.created else "updated"
     failure = result.processing.get("error")
@@ -437,7 +440,7 @@ def _schedule_oom_check(project_name: str, deployment_name: str, attempt: int) -
         schedule_oom_check(project_name, deployment_name, attempt=attempt)
 
 
-async def handle_delete_project(payload: dict, progress: Any) -> dict:
+async def handle_delete_project(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Handle async project deletion task.
 
     The whole teardown: deployments, ArgoCD, namespace, databases, buckets and the project

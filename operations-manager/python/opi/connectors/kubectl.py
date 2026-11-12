@@ -5,8 +5,9 @@ import base64
 import json
 import logging
 import re
+import subprocess
 from datetime import UTC
-from typing import Any
+from typing import Any, Self
 
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
@@ -134,13 +135,13 @@ class KubectlConnector:
     is_connected = False
     _retry_task = None
 
-    def __new__(cls):
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Inside a cluster kubectl picks up the service account mounted into the pod."""
         if self._initialized:
             return
@@ -151,8 +152,6 @@ class KubectlConnector:
 
         # Synchronously, so is_connected is set before any command runs.
         try:
-            import subprocess
-
             result = subprocess.run(
                 ["kubectl", "auth", "whoami"],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                 capture_output=True,
@@ -166,7 +165,7 @@ class KubectlConnector:
             else:
                 logger.warning(f"Kubectl connection failed: {result.stderr}")
                 KubectlConnector.is_connected = False
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error testing kubectl connection: {e}")
             KubectlConnector.is_connected = False
 
@@ -206,12 +205,12 @@ class KubectlConnector:
                 self._handle_connection_failure(stderr_str)
                 return False
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error testing kubectl connection: {e}")
             KubectlConnector.is_connected = False
             return False
 
-    def _handle_connection_failure(self, stderr_str: str):
+    def _handle_connection_failure(self, stderr_str: str) -> None:
         """On a refused connection, mark it down and start the retry task."""
         if "connection refused" in stderr_str.lower():
             KubectlConnector.is_connected = False
@@ -1100,7 +1099,7 @@ class KubectlConnector:
             )
             return True
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error applying annotation to {resource_type}/{resource_name}: {e}")
             return False
 
@@ -1133,7 +1132,7 @@ class KubectlConnector:
 
             return log_lines
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error getting deployment logs: {e}")
             return []
 
@@ -1214,7 +1213,7 @@ class KubectlConnector:
             logger.info(f"Started log stream for {target} in {namespace} (PID: {process.pid}, tail={lines})")
             return process
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error starting log stream for {target}: {e}")
             return None
 
@@ -1289,7 +1288,7 @@ class KubectlConnector:
 
             return events
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error getting namespace events: {e}")
             return []
 
@@ -1327,7 +1326,7 @@ class KubectlConnector:
         ]
         try:
             stdout, stderr, code = await self._run_kubectl_command(args, timeout=15)
-        except Exception as exc:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as exc:
             logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {exc}")
             return []
 
@@ -1414,7 +1413,7 @@ class KubectlConnector:
                 stderr=asyncio.subprocess.PIPE,
                 env=self.env,
             )
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error starting the pod watch ({label_selector}): {e}")
             return None
 
@@ -1493,7 +1492,7 @@ class KubectlConnector:
 
             return deployments
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error getting deployment status: {e}")
             return []
 
@@ -1518,7 +1517,7 @@ class KubectlConnector:
             data = json.loads(stdout)
             return data.get("status", {}).get("conditions", [])
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.warning(f"Error getting deployment conditions for {deployment_name}: {e}")
             return None
 
@@ -1546,7 +1545,7 @@ class KubectlConnector:
             logger.info(f"Successfully deleted {resource_type} {resource_name}")
             return True
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error deleting {resource_type} {resource_name}: {e}")
             return False
 
@@ -1572,7 +1571,7 @@ class KubectlConnector:
 
             return parse_vpa_status(json.loads(stdout), container_name)
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error getting VPA recommendation for '{workload_name}': {e}")
             return None
 
@@ -1636,7 +1635,7 @@ class KubectlConnector:
             logger.debug(f"Found {len(items)} {resource_type} resources with selector {label_selector}")
             return items
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.error(f"Error getting {resource_type} resources: {e}")
             return []
 

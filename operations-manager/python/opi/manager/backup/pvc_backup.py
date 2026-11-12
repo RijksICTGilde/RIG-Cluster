@@ -442,9 +442,7 @@ class PVCBackupManager(BaseBackupManager):
         """
         try:
             return await self.list_snapshots_or_raise(cluster, namespace, pvc_name, project_name)
-        # Broad on purpose: this is the existing contract of the read path, which swallowed
-        # every failure into an empty list.
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the contract of this read path: any failure is an empty result
             logger.warning(f"Failed to list snapshots via Kopia CLI: {e}")
             return []
 
@@ -580,7 +578,7 @@ class PVCBackupManager(BaseBackupManager):
                             size_bytes=data.get("size_bytes"),
                         )
                     )
-        except Exception as e:
+        except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"Error parsing snapshot list: {e}")
 
         return snapshots
@@ -879,7 +877,7 @@ spec:
                 try:
                     args = ["delete", "pvc", target_pvc_name, "-n", namespace, "--ignore-not-found=true"]
                     await self.kubectl.run_command(args)
-                except Exception as cleanup_err:
+                except Exception as cleanup_err:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                     logger.warning(f"Failed to cleanup PVC after restore failure: {cleanup_err}")
 
                 return RestoreResult(
@@ -1015,14 +1013,14 @@ spec:
             args = ["delete", "pvc", clone_pvc_name, "-n", namespace, "--ignore-not-found=true"]
             await self.kubectl.run_command(args)
             logger.debug(f"Deleted clone PVC {clone_pvc_name}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
             logger.warning(f"Failed to delete clone PVC {clone_pvc_name}: {e}")
 
         try:
             args = ["delete", "volumesnapshot", snapshot_name, "-n", namespace, "--ignore-not-found=true"]
             await self.kubectl.run_command(args)
             logger.debug(f"Deleted snapshot {snapshot_name}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
             logger.warning(f"Failed to delete snapshot {snapshot_name}: {e}")
 
         logger.info(f"Cleanup completed for {namespace}")

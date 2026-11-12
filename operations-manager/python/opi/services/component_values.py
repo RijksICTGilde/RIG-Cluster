@@ -175,7 +175,7 @@ def locate(
     return Project.locate(deployment.get("components") or [], reference=component_name)
 
 
-def decode(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
+def decode(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:  # noqa: ANN401  # a project-file value
     """The plaintext values currently stored under a component's owned property.
 
     *raw* is whatever the project file holds there: absent, an AGE block, a plain
@@ -193,7 +193,7 @@ def decode(raw: Any, project_data: dict[str, Any], private_key: str | None = Non
     return _decode_block(raw, project_data, private_key)
 
 
-def _decode_block(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:
+def _decode_block(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:  # noqa: ANN401  # a project-file value
     if isinstance(raw, dict):
         # Legacy mapping shape, from before the value became a single string. Read only:
         # a write always stores one block. A plaintext mapping is the supported
@@ -236,12 +236,12 @@ def to_block(values: dict[str, str]) -> str:
     return "\n".join(f"{key}={value}" for key, value in values.items())
 
 
-def encode(values: dict[str, str], project_data: dict[str, Any]) -> Any:
+def encode(values: dict[str, str], project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """The stored shape for *values*, encrypted with the project's own public key."""
     return encode_with_key(values, get_project_public_key(project_data))
 
 
-def encode_with_key(values: dict[str, str], public_key: str | None) -> Any:
+def encode_with_key(values: dict[str, str], public_key: str | None) -> Any:  # noqa: ANN401  # a project-file value
     """The stored shape for *values*, for a caller that already holds the public key.
 
     Returns ``None`` for an empty map, which is the caller's signal to remove the

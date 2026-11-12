@@ -58,7 +58,7 @@ async def push_image(
     try:
         connector.validate_push_target(project_name, image_name, tag)
     except SkopeoValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Without a registry this path does not exist on this instance, which is not a server error.
     if not settings.REGISTRY_URL:
@@ -106,10 +106,10 @@ async def push_image(
         raise
     except SkopeoConnectionError as e:
         logger.error(f"Skopeo not available: {e}")
-        raise HTTPException(status_code=503, detail="Image push service is unavailable")
+        raise HTTPException(status_code=503, detail="Image push service is unavailable") from e
     except SkopeoValidationError as e:
         logger.error(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except SkopeoExecutionError as e:
         logger.error(f"Push failed for {project_name}/{image_name}:{tag}: {e}")
         raise HTTPException(

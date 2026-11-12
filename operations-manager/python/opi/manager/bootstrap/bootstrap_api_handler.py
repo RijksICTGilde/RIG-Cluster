@@ -134,7 +134,7 @@ class BootstrapApiHandler:
             if fail_on_error:
                 raise
 
-    def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:
+    def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         """Recursively substitute {{ variable }} placeholders in a str, dict or list."""
         if isinstance(value, str):
             match = re.fullmatch(r"\{\{\s*([^}]+)\s*\}\}", value)
@@ -157,7 +157,7 @@ class BootstrapApiHandler:
 
         return value
 
-    def _get_nested_value(self, data: dict[str, Any], path: str) -> Any:
+    def _get_nested_value(self, data: dict[str, Any], path: str) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         """The value at a dot-separated ``path``, looked up in the outputs before the context."""
         # A filter, as in {{ var | default('value') }}.
         if "|" in path:
@@ -178,7 +178,7 @@ class BootstrapApiHandler:
 
         return self._get_value_by_path(path, data)
 
-    def _get_value_by_path(self, path: str, data: dict[str, Any]) -> Any:
+    def _get_value_by_path(self, path: str, data: dict[str, Any]) -> Any:  # noqa: ANN401  # a bootstrap YAML value
         keys = path.split(".")
 
         if keys[0] in self.outputs:

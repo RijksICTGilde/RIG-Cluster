@@ -111,7 +111,7 @@ def collect_backups_sections(ctx: DeploymentPageContext) -> list[DetailPageSecti
     return backup_deployment_sections(ctx)
 
 
-def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
+def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:  # noqa: ANN401  # a kopia snapshot object
     return {
         "snapshot_id": snapshot.snapshot_id,
         "pvc_name": snapshot.pvc_name,
@@ -182,7 +182,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
             per_namespace[k8s_namespace] = await manager.list_snapshots(
                 current_cluster, k8s_namespace, project_name=project_name
             )
-        except Exception as backup_err:
+        except Exception as backup_err:  # noqa: BLE001  # the contract of this read path: any failure is an empty result
             # Shown, not swallowed: an empty list and an unreachable repository look
             # identical to a user otherwise.
             logger.warning(f"Failed to fetch backups for namespace {k8s_namespace}: {backup_err}")

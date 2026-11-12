@@ -52,8 +52,6 @@ _CRASH_TITLE = "Applicatie crasht herhaaldelijk"
 _CRASH_WITH_SERVING_TITLE = "Nieuwe versie start niet op"
 
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
-    # (title, suggestion, severity)
-    #
     # Image problems (ErrImagePull / ImagePullBackOff get a dynamic suggestion,
     # see _image_pull_suggestion; only the static ones remain here)
     "InvalidImageName": (
@@ -150,7 +148,6 @@ _UNBOUND_PVC_TRANSLATION = (
 
 # Pattern-based translations for ArgoCD health messages.
 _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
-    # (pattern, title, suggestion, severity)
     # (image-pull failures are handled dynamically before _MESSAGE_PATTERNS, see
     # _image_pull_suggestion / _IMAGE_PULL_RE)
     (_UNBOUND_PVC_RE, *_UNBOUND_PVC_TRANSLATION),

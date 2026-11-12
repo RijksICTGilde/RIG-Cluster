@@ -15,7 +15,7 @@ from typing import Any
 from keycloak.exceptions import KeycloakError
 
 from opi.connectors.keycloak import REQUIRED_OTP_BROWSER_FLOW, create_keycloak_connector
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.core.cluster_config import get_namespace
 from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
@@ -34,7 +34,7 @@ SECONDS_PER_DAY = 86400
 class KeycloakSetup:
     """Handles the complete Keycloak setup sequence for the operations manager."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.keycloak = None
         self.kubectl = None
 
@@ -98,7 +98,7 @@ class KeycloakSetup:
 
             return success
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError, KeyError) as e:
             logger.error(f"Keycloak setup failed with exception: {e}")
             return False
 
@@ -342,7 +342,7 @@ class KeycloakSetup:
                 logger.error("Failed to update operations manager secret")
                 return False
 
-        except Exception as e:
+        except (KeycloakError, OSError, ValueError, KeyError) as e:
             logger.error(f"Failed to setup operations client: {e}")
             return False
 
@@ -400,7 +400,15 @@ class KeycloakSetup:
 
                 return True
 
-        except Exception as e:
+        except (
+            KeycloakError,
+            OSError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+            KubectlConnectionError,
+            KubectlExecutionError,
+        ) as e:
             logger.error(f"Error updating operations secret: {e}")
             return False
 

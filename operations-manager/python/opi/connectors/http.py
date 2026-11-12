@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import aiohttp
 
@@ -20,6 +20,7 @@ from opi.utils.age import decrypt_password_smart_auto
 
 if TYPE_CHECKING:
     from ssl import SSLContext
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +49,19 @@ class AuthType(Enum):
 
 
 class HttpConnector:
-    def __init__(self, base_url: str, auth_config: dict[str, Any] | None = None):
+    def __init__(self, base_url: str, auth_config: dict[str, Any] | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.auth_config = auth_config or {"type": "none"}
         self.session: aiohttp.ClientSession | None = None
         self._access_token: str | None = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         self.session = client_session(HTTP_TIMEOUT_SECONDS)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         if self.session:
             await self.session.close()
 

@@ -25,7 +25,7 @@ _STEPS = {
 }
 
 
-async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+async def handle_sleep_transition(payload: dict[str, Any], progress: PersistentTaskProgressManager) -> dict[str, Any]:
     """Move one deployment to sleeping or awake, reporting progress while it runs.
 
     Args:

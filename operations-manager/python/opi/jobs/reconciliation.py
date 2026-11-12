@@ -18,6 +18,7 @@ import os
 import shutil
 from typing import TYPE_CHECKING, Any
 
+from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.connectors.seaweedfs_shell import SeaweedfsConnector, create_seaweedfs_connector
@@ -728,7 +729,7 @@ async def _purge_backup_data(
                         snapshot.snapshot_id,
                         resource_name,
                     )
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KopiaConnectionError, KopiaExecutionError) as e:
                 logger.warning(
                     "Error deleting snapshot %s for '%s': %s",
                     snapshot.snapshot_id,

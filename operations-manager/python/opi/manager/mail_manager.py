@@ -44,6 +44,7 @@ from opi.utils.passwords import generate_secure_password
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +510,7 @@ class MailManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: Any = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Clean up when send-email is removed from a deployment.
 

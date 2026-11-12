@@ -42,16 +42,19 @@ from opi.utils.project_names import validate_project_name
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from opi.manager.project_manager import ProjectManager
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
+
 logger = logging.getLogger(__name__)
 
 
-def terminated_sync_fields(project_manager: Any) -> dict[str, list[str]]:
+def terminated_sync_fields(project_manager: ProjectManager) -> dict[str, list[str]]:
     """The deployments whose running sync this run aborted, when there are any."""
     terminated = project_manager.get_terminated_sync_operations()
     return {"terminated_syncs": terminated} if terminated else {}
 
 
-async def handle_clone_database(payload: dict, progress: Any) -> dict:
+async def handle_clone_database(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Clone a PostgreSQL database from an external source into a deployment.
 
     The payload holds ``project_name``, ``deployment_name``, ``source_database``,
@@ -82,7 +85,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
     )
 
 
-async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
+async def handle_clone_bucket(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Clone a MinIO bucket from an external source into a deployment.
 
     The payload holds ``project_name``, ``deployment_name``, ``source_bucket``,
@@ -137,7 +140,7 @@ def _clone_method(source: ExternalSource) -> str:
 
 async def _cloned_or_failed(
     run_clone: Callable[[], Awaitable[dict[str, Any]]],
-    progress: Any,
+    progress: PersistentTaskProgressManager,
     clone_task: str,
     failure: str,
 ) -> dict:
@@ -167,7 +170,9 @@ async def _cloned_or_failed(
     }
 
 
-async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects: bool = False) -> None:
+async def _sync_or_fail_step(
+    progress: PersistentTaskProgressManager, task_id: str, *, reconcile_projects: bool = False
+) -> None:
     """Pick up outside changes, and fail the step when git does not cooperate.
 
     Closing the step is what tells the user the task failed and why. The message is the
@@ -182,7 +187,7 @@ async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects:
         raise
 
 
-async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
+async def handle_refresh_deployment(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Reprocess ONE deployment from the project YAML file, re-running its provisioning steps.
 
     The payload holds ``project_name``, ``deployment_name`` and ``force_clone``.
@@ -339,7 +344,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
-async def handle_rotate_credentials(payload: dict, progress: Any) -> dict:
+async def handle_rotate_credentials(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Replace the credentials of a deployment and roll the deployment out again.
 
     The rotation itself happens in the ordinary processing: the managers make a new value for
@@ -360,7 +365,7 @@ async def handle_rotate_credentials(payload: dict, progress: Any) -> dict:
     return result
 
 
-async def handle_refresh_project(payload: dict, progress: Any) -> dict:
+async def handle_refresh_project(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Reprocess EVERY deployment of a project from the project YAML file, the async V2
     equivalent of the V1 GET /:refresh endpoint.
 
@@ -513,7 +518,7 @@ async def _carry_over_backup_passwords(
     return carried
 
 
-async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
+async def handle_rotate_project_key(payload: dict, progress: PersistentTaskProgressManager) -> dict:
     """Replace the AGE key pair of one project.
 
     See ``features/projectsleutel-vervangen.md`` for what this does and does not do.

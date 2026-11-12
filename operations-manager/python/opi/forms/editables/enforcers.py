@@ -58,7 +58,7 @@ class FieldWarning(Exception):
 class AdminRequiredEnforcer:
     """At least one member with the ``admin`` role; without one nobody can manage members."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         if not value or not isinstance(value, list):
             raise ValueError("Er moet minimaal één gebruiker zijn")
         has_admin = any(isinstance(user, dict) and Role.ADMIN.value in (user.get("roles") or []) for user in value)
@@ -73,7 +73,7 @@ class UniqueNamesEnforcer:
     def __init__(self, field_name: str = "name") -> None:
         self.field_name = field_name
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         if not value or not isinstance(value, list):
             return value
         names: list[str] = []
@@ -92,7 +92,7 @@ class UniqueNamesEnforcer:
 class UniqueReferencesEnforcer:
     """Ensures deployment components have unique references."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         deployments = value.get("deployments", []) if isinstance(value, dict) else []
         for deployment in deployments:
             if not isinstance(deployment, dict):
@@ -135,7 +135,7 @@ def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val:
 class ComponentServicesEnforcer:
     """Section-level enforcer: validates component services and memory request/limit."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         services = extract_service_names(value.get("services", []))
 
         components = value.get("components", [])
@@ -178,7 +178,7 @@ class UniqueDeploymentNameEnforcer:
     def __init__(self, deployment_index: int = 0) -> None:
         self.deployment_index = deployment_index
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         deployments = value.get("deployments", []) if isinstance(value, dict) else []
         if self.deployment_index >= len(deployments):
             return value
@@ -212,7 +212,7 @@ class DomainConfigEnforcer:
         self.deployment_index = deployment_index
         self.denied_blocks = denied_blocks
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         deployments = value.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return value
@@ -485,7 +485,7 @@ class UniqueSourceCodeUrlEnforcer:
     _PATH = "source-code"
     _MESSAGE = "Deze link staat er al."
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         links = value.get(self._PATH) or []
         seen: set[str] = set()
         for index, entry in enumerate(links):
@@ -515,7 +515,7 @@ class UniqueInviteKeyEnforcer:
 
     _MESSAGE = "Deze uitnodigingssleutel is al in gebruik."
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         from opi.forms.editables.service_path import smart_get_value
         from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.project_store import get_project_store
@@ -564,7 +564,7 @@ class UniqueSchemaEnforcer:
 
     _PATH = "services/postgresql-database/config/schemas"
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         from opi.forms.editables.service_path import smart_get_value
         from opi.services.catalog.postgresql_database.variables import reserved_database_variable_names
         from opi.utils.naming import generate_extra_database_schema, generate_schema_variable_name
@@ -613,7 +613,7 @@ class UniqueSchemaEnforcer:
 class ServiceDependencyEnforcer:
     """Ensures component services are valid project-level services."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         if not value or not isinstance(value, list):
             return value
         project_services = context.get("project_services", [])

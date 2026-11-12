@@ -281,7 +281,7 @@ def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator requiring a valid SSO bearer token on a route."""
 
     @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:  # noqa: ANN401  # forwarded to the wrapped route
         await _authenticate_bearer(request, func.__name__)
         return await func(*args, request=request, **kwargs)
 
@@ -299,7 +299,7 @@ def validate_platform_admin_token(func: Callable[..., Any]) -> Callable[..., Any
     """
 
     @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:  # noqa: ANN401  # forwarded to the wrapped route
         user = await _authenticate_bearer(request, func.__name__)
         if not get_user_service().is_platform_admin(user["email"]):
             logger.warning("Platform admin refused for route %s (user: %s)", func.__name__, user["email"])

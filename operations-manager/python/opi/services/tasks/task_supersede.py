@@ -39,7 +39,7 @@ over, and to whom, without reading a sentence.
 from __future__ import annotations
 
 import logging
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any
 
@@ -144,12 +144,12 @@ class RunningTask:
 _current_task: ContextVar[RunningTask | None] = ContextVar("current_running_task", default=None)
 
 
-def set_current_task(task: RunningTask | None):
+def set_current_task(task: RunningTask | None) -> Token[RunningTask | None]:
     """Bind the executing task to this context. Returns the token to reset with."""
     return _current_task.set(task)
 
 
-def reset_current_task(token) -> None:
+def reset_current_task(token: Token[RunningTask | None]) -> None:
     _current_task.reset(token)
 
 
@@ -171,7 +171,7 @@ async def find_superseding_task() -> dict | None:
             task_id=current.task_id,
             project_name=current.project_name,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # a supersede lookup that fails must not stop the task
         logger.debug("Supersede lookup failed for task %s: %s", current.task_id, exc)
         return None
 

@@ -38,7 +38,7 @@ def _validator_accepts_context(validator_type: type) -> bool:
     return "context" in inspect.signature(validator_type.validate).parameters
 
 
-def _coerce_to_list(value: Any) -> list[Any]:
+def _coerce_to_list(value: Any) -> list[Any]:  # noqa: ANN401  # a project-file value
     """Ensure a value is a list.
 
     HTMX sends a single string when only one checkbox of a checkbox_group is checked, and
@@ -73,7 +73,7 @@ def _prune_paths(item: dict[str, Any], rel_paths: list[str]) -> dict[str, Any]:
     return item
 
 
-def _reorder_like(original: Any, merged: Any) -> Any:
+def _reorder_like(original: Any, merged: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Reorder ``merged``'s keys in place to follow ``original``'s order, recursively.
 
     Keeps the keys that already existed in ``original`` first, in their original order, then
@@ -166,7 +166,7 @@ def _prune_service_map_entry(data: dict[str, Any], path: str) -> None:
         return
 
 
-def _entry_carries_only_its_name(entry: Any, service_name: str) -> bool:
+def _entry_carries_only_its_name(entry: Any, service_name: str) -> bool:  # noqa: ANN401  # a project-file value
     """Whether a services-list entry holds nothing beyond its identity.
 
     Both entry shapes, because both occur in the fleet: the uniform record
@@ -191,17 +191,17 @@ def _entry_carries_only_its_name(entry: Any, service_name: str) -> bool:
 
 
 if TYPE_CHECKING:
-    from opi.forms.editables.editable import Editable
+    from opi.forms.editables.editable import Editable, EditableConverter
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-def _converter_write(converter: Any, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+def _converter_write(converter: EditableConverter, value: Any, context_data: dict[str, Any] | None = None) -> Any:  # noqa: ANN401  # a project-file value
     """Call ``converter.write()`` with the context data."""
     return converter.write(value, context_data=context_data)
 
 
-def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
+def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:  # noqa: ANN401  # a project-file value
     """Read a field value from submitted data, respecting virtualize.
 
     Through the list-aware ``smart_get_value``, so the read stays symmetric with the
@@ -226,7 +226,7 @@ class EditableFormProcessor:
         #: Project data of the submission being processed, for computed defaults.
         self._yaml_data: dict[str, Any] = {}
 
-    def _effective_value(self, vis: EditableVisualizer, value: Any) -> Any:
+    def _effective_value(self, vis: EditableVisualizer, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         """The submitted value, or the editable's default when nothing was submitted.
 
         The bridge applies defaults when it RENDERS a field, so a value typed into the form
@@ -248,7 +248,7 @@ class EditableFormProcessor:
     def _validate_field(
         vis: EditableVisualizer,
         path: str,
-        value: Any,
+        value: Any,  # noqa: ANN401  # a project-file value
         errors: dict[str, list[str]],
         context: dict[str, Any] | None = None,
     ) -> None:
@@ -393,7 +393,7 @@ class EditableFormProcessor:
     def _write_field(
         editable: Editable,
         path: str,
-        value: Any,
+        value: Any,  # noqa: ANN401  # a project-file value
         data: dict[str, Any],
     ) -> None:
         """Convert and write a single field value, respecting remove_when_none.
@@ -1065,7 +1065,7 @@ class EditableFormProcessor:
         segments = wildcard_path.split("/")
         count = 0
 
-        def _walk(current: Any, depth: int) -> int:
+        def _walk(current: Any, depth: int) -> int:  # noqa: ANN401  # a project-file value
             nonlocal count
             if depth >= len(segments):
                 return count

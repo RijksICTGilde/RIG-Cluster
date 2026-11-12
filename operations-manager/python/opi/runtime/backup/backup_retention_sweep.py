@@ -111,7 +111,7 @@ def classify_snapshot(
 
 
 class BackupRetentionSweep:
-    def __init__(self, cluster: str):
+    def __init__(self, cluster: str) -> None:
         self._cluster = cluster
 
     async def run(self) -> None:

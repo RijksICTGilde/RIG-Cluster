@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.authz.actions import Action
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
@@ -50,6 +50,10 @@ from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.services import ConfigAdvice, ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceType, UIEvent
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 logger = logging.getLogger(__name__)
 
@@ -273,14 +277,14 @@ class InviteService(Service):
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.invite.editables import INVITE_EDITABLES
 
         return INVITE_EDITABLES
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         cached = getattr(self, "_config_section_cache", None)

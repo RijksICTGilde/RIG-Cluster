@@ -14,7 +14,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.argo import ArgoConnector
+from opi.connectors.argo import ArgoConnector, ArgoTransportError
 from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 
 
@@ -588,6 +588,25 @@ async def test_a_kubectl_that_raises_does_not_escalate_out_of_the_wait(gooit_op:
 
 
 @pytest.mark.asyncio
+async def test_an_argo_transport_error_does_not_escape_the_wait() -> None:
+    """An ArgoCD that does not answer is no confirmed deletion, and must not blow up the wait.
+
+    ``get_application_status`` names ``ArgoTransportError`` in its Raises (timeout, connect
+    error, 5xx), which is exactly the stressed control plane this wait was built for. If it
+    escapes, the caller catches it broadly and in force mode sets ``argocd_app_deleted =
+    True``: the project file loses the deployment while the cluster still has it.
+    """
+    argo = ArgoConnector()
+    kubectl = _kubectl_returning(True)  # k8s: still present, so no confirmed deletion
+    broken = AsyncMock(side_effect=ArgoTransportError("argocd answers 503"))
+    with patch.object(argo, "application_exists", broken), patch("asyncio.sleep", AsyncMock()):
+        result = await argo.wait_for_application_deletion("app", max_retries=3, kubectl_connector=kubectl)
+
+    assert result is False
+    assert broken.await_count == 3, "the wait should finish its polls instead of escalating"
+
+
+@pytest.mark.asyncio
 async def test_an_inventory_that_throws_once_keeps_being_measured_after_it() -> None:
     """Een inventaris die EEN keer gooit zet de meting van de rest van de wacht niet uit.
 
@@ -814,3 +833,20 @@ async def test_een_kind_dat_het_cluster_niet_namespaced_serveert_valt_terug() ->
             "secrets",
             "services",
         ]
+
+
+@pytest.mark.asyncio
+async def test_a_plain_runtime_error_does_not_escape_the_wait() -> None:
+    """A 401 from a failed re-login is a plain RuntimeError, not an ArgoTransportError.
+
+    ``get_application_status`` raises it for any status it has no branch for. It must keep
+    the wait polling, for the same reason as the transport error above.
+    """
+    argo = ArgoConnector()
+    kubectl = _kubectl_returning(True)
+    broken = AsyncMock(side_effect=RuntimeError("Failed to get application status: HTTP 401"))
+    with patch.object(argo, "application_exists", broken), patch("asyncio.sleep", AsyncMock()):
+        result = await argo.wait_for_application_deletion("app", max_retries=3, kubectl_connector=kubectl)
+
+    assert result is False
+    assert broken.await_count == 3, "the wait should finish its polls instead of escalating"

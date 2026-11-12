@@ -201,7 +201,7 @@ def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
     return str(e)
 
 
-def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:  # noqa: ANN401  # a project-file value
     """Validate one service's DEFINE-side ``data`` block against its provider's model.
 
     The counterpart of ``_validate_one_config`` for the definitions a service stores
@@ -494,7 +494,7 @@ def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str)
     _check_declared_settings(service, block, project_name)
 
 
-def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
+def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:  # noqa: ANN401  # a project-file value
     """Validate one owned-property value against its service's model; fail closed.
 
     The model is passed in rather than read off the service again, so the narrowing the
@@ -549,7 +549,7 @@ def validate_component_references(project_data: dict, components: list, context:
     return {"success": True, "error": None, "invalid_references": None}
 
 
-def _validate_services_listed_once(services: Any, project_name: str, where: str) -> None:
+def _validate_services_listed_once(services: Any, project_name: str, where: str) -> None:  # noqa: ANN401  # a project-file value
     """A services list may name each service at most once.
 
     The list is a selection set keyed by service name, so a repeat has no meaning: a

@@ -13,7 +13,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from deepdiff import DeepDiff
+from ruamel.yaml.error import YAMLError
 
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
@@ -253,7 +255,7 @@ def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = N
     }
 
 
-def _normalize_path_config(raw: Any, default_match: str = "/") -> dict[str, str | None]:
+def _normalize_path_config(raw: Any, default_match: str = "/") -> dict[str, str | None]:  # noqa: ANN401  # a project-file value
     """
     Build a validated {"match": ..., "rewrite": ...} entry from a raw path item.
 
@@ -529,7 +531,7 @@ def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
     del res[key]
 
 
-def _localize(text: Any, language: str) -> str | None:
+def _localize(text: Any, language: str) -> str | None:  # noqa: ANN401  # a project-file value
     """Pick one language out of an invite text: a plain string, or ``{nl: ..., en: ...}``.
 
     A dict without the requested language falls back to nl, then en. Returns None when the
@@ -630,7 +632,15 @@ class ProjectFileHandler:
             logger.debug(f"Successfully retrieved and parsed previous version of {file_path}")
             return previous_content
 
-        except Exception as e:
+        except (
+            OSError,
+            YAMLError,
+            ValueError,
+            TypeError,
+            KeyError,
+            GitCommandTimeoutError,
+            GitRemoteUnavailableError,
+        ) as e:
             logger.warning(f"Error retrieving previous YAML content: {e}")
             return None
 
@@ -730,7 +740,7 @@ class ProjectFileHandler:
         return clean_path
 
     @staticmethod
-    def _resolve_deepdiff_value(data: dict[str, Any], deepdiff_path: str) -> Any:
+    def _resolve_deepdiff_value(data: dict[str, Any], deepdiff_path: str) -> Any:  # noqa: ANN401  # a project-file value
         """Resolve a DeepDiff path like ``root['key1']['key2']`` to the value in *data*."""
         # Strip "root" prefix and extract bracket segments
         segments = re.findall(r"\['([^']+)'\]|\[(\d+)\]", deepdiff_path)
@@ -805,8 +815,12 @@ class ProjectFileHandler:
         return {"current_yaml": current_yaml, "previous_yaml": previous_yaml, "diff": diff, "changes": changes}
 
     def extract_value_by_path(
-        self, data: dict[str, Any], path: str, default: Any = None, private_key: str | None = None
-    ) -> Any:
+        self,
+        data: dict[str, Any],
+        path: str,
+        default: Any = None,  # noqa: ANN401  # a project-file value
+        private_key: str | None = None,
+    ) -> Any:  # noqa: ANN401  # a project-file value
         """
         Extract a value from nested dictionary using JSONPath expression.
 
@@ -1777,7 +1791,7 @@ class ProjectFileHandler:
         """
         changed = False
 
-        def compact(resources: Any) -> None:
+        def compact(resources: Any) -> None:  # noqa: ANN401  # a project-file value
             nonlocal changed
             if not isinstance(resources, dict):
                 return
@@ -2798,7 +2812,7 @@ class ProjectFileHandler:
                 if isinstance(parsed_values, dict):
                     logger.info(f"Parsed helm values for chart '{chart_name}'")
                     return parsed_values
-            except Exception as e:
+            except (YAMLError, ValueError, TypeError, KeyError) as e:
                 logger.warning(f"Could not parse helm values as YAML for chart '{chart_name}': {e}")
 
         logger.debug(f"No helm-values found for chart '{chart_name}'")
@@ -2845,7 +2859,7 @@ class ProjectFileHandler:
                         f"in deployment '{deployment_name}'"
                     )
                     return parsed_values
-            except Exception as e:
+            except (YAMLError, ValueError, TypeError, KeyError) as e:
                 logger.warning(
                     f"Could not parse helm values as YAML for chart '{chart_reference}' "
                     f"in deployment '{deployment_name}': {e}"
@@ -3041,7 +3055,7 @@ class ProjectFileHandler:
                 if isinstance(parsed_values, dict):
                     logger.info(f"Parsed helm values for helmfile '{helmfile_name}'")
                     return parsed_values
-            except Exception as e:
+            except (YAMLError, ValueError, TypeError, KeyError) as e:
                 logger.warning(f"Could not parse helm values as YAML for helmfile '{helmfile_name}': {e}")
 
         logger.debug(f"No helm-values found for helmfile '{helmfile_name}'")
@@ -3088,7 +3102,7 @@ class ProjectFileHandler:
                         f"in deployment '{deployment_name}'"
                     )
                     return parsed_values
-            except Exception as e:
+            except (YAMLError, ValueError, TypeError, KeyError) as e:
                 logger.warning(
                     f"Could not parse helm values as YAML for helmfile '{helmfile_reference}' "
                     f"in deployment '{deployment_name}': {e}"
@@ -3657,7 +3671,7 @@ def extract_attachment_catalog(project_data: dict[str, Any]) -> dict[str, dict[s
     return catalog
 
 
-def find_attachment_data_list(services: Any) -> list[Any] | None:
+def find_attachment_data_list(services: Any) -> list[Any] | None:  # noqa: ANN401  # a project-file value
     """Return the existing attachments ``data`` list within a services list, or None.
 
     Single source of truth for where the catalog lives, for callers that mutate it in place
@@ -3881,7 +3895,7 @@ def validate_attachment_couplings(project_data: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _publish_on_web_provided_ref(config: Any) -> str | None:
+def _publish_on_web_provided_ref(config: Any) -> str | None:  # noqa: ANN401  # a project-file value
     """The attachment id of a publish-on-web config, only when its tls mode is 'provided'."""
     if isinstance(config, dict) and config.get("tls") == "provided":
         ref = config.get("attachment")
@@ -3952,7 +3966,7 @@ def attachment_usage_sites(project_data: dict[str, Any]) -> dict[str, list[Attac
 
     usage: dict[str, list[AttachmentUsageSite]] = {}
 
-    def add(ref: Any, site: AttachmentUsageSite) -> None:
+    def add(ref: Any, site: AttachmentUsageSite) -> None:  # noqa: ANN401  # a project-file value
         if not isinstance(ref, str) or not ref:
             return
         sites = usage.setdefault(ref, [])
@@ -4022,7 +4036,7 @@ def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -
     return attachment_id in attachment_usage_sites(project_data)
 
 
-def _attachment_coupling_slot(entry: Any) -> tuple[dict[str, Any], str] | None:
+def _attachment_coupling_slot(entry: Any) -> tuple[dict[str, Any], str] | None:  # noqa: ANN401  # a project-file value
     """The dict and key holding one component service entry's attachment couplings.
 
     Two shapes carry the same list and a writer has to hit whichever one is there: the
@@ -4188,7 +4202,7 @@ def component_usage_sites(project_data: dict[str, Any]) -> dict[str, list[Compon
 
     usage: dict[str, list[ComponentUsageSite]] = {}
 
-    def add(name: Any, site: ComponentUsageSite) -> None:
+    def add(name: Any, site: ComponentUsageSite) -> None:  # noqa: ANN401  # a project-file value
         if not isinstance(name, str) or not name:
             return
         sites = usage.setdefault(name, [])

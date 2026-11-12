@@ -143,3 +143,23 @@ async def test_fresh_install_passes_the_check_after_setup(monkeypatch: pytest.Mo
     )
 
     assert await ensure_keycloak_credentials() is True
+
+
+async def test_a_manifest_that_cannot_be_written_returns_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``create_manifest_file`` wraps every failure in RuntimeError; the update reports False."""
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
+    generator = MagicMock()
+    generator.return_value.create_manifest_file.side_effect = RuntimeError("Failed to create manifest file")
+    monkeypatch.setattr(keycloak_setup_mod, "ManifestGenerator", generator)
+    setup = KeycloakSetup()
+    setup.kubectl = MagicMock(apply_manifest=AsyncMock())
+
+    client_info = {
+        "client_id": "rig-platform-operations-manager",
+        "client_secret": "right",
+        "discovery_url": OPERATIONS_DISCOVERY_URL,
+        "base_url": "https://keycloak.example",
+        "realm": "operations-manager",
+    }
+    assert await setup._update_operations_secret(client_info) is False
+    setup.kubectl.apply_manifest.assert_not_awaited()

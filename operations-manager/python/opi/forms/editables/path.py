@@ -61,7 +61,7 @@ def _parse_segment(part: str) -> tuple[str, str | None, str | None]:
     return m.group("key"), m.group("idx"), m.group("filter")
 
 
-def get_value(data: dict[str, Any], yaml_path: str) -> Any:
+def get_value(data: dict[str, Any], yaml_path: str) -> Any:  # noqa: ANN401  # a project-file value
     """Extract the value at *yaml_path*; missing data gives None rather than an exception.
 
     A wildcard ``[*]`` returns the list of all matches.
@@ -71,7 +71,7 @@ def get_value(data: dict[str, Any], yaml_path: str) -> Any:
     return _get_recursive(data, yaml_path.split("/"))
 
 
-def _get_recursive(current: Any, parts: list[str]) -> Any:
+def _get_recursive(current: Any, parts: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     for i, part in enumerate(parts):
         key, idx, filt = _parse_segment(part)
 
@@ -109,7 +109,7 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
     return current
 
 
-def _filter_get(items: list[Any], filt: str) -> Any:
+def _filter_get(items: list[Any], filt: str) -> Any:  # noqa: ANN401  # a project-file value
     """Apply a filter expression to a list and return the matched value.
 
     {K}     → find the entry identified by K, return its body
@@ -142,7 +142,7 @@ def _is_record_for(item: dict[str, Any], name: str) -> bool:
     return item.get("name") == name or item.get("reference") == name
 
 
-def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:
+def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """Set a value at *yaml_path*, mutating *data* in place and returning it.
 
     Creates intermediate dicts, extends lists, and promotes or creates entries for filter
@@ -215,7 +215,7 @@ def _set_terminal(
     key: str,
     idx: str | None,
     filt: str | None,
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
 ) -> None:
     """Set a value at a terminal (last) segment."""
     if filt is not None:
@@ -258,7 +258,7 @@ def _set_intermediate(
     return current[key]
 
 
-def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
+def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:  # noqa: ANN401  # a project-file value
     """Set a value at a filter-matched position (terminal segment)."""
     if "=" in filt:
         field, match_val = filt.split("=", 1)

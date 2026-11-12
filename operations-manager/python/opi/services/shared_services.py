@@ -487,7 +487,7 @@ async def fetch_resources() -> Block:
 
     try:
         answers = await _run_queries(queries)
-    except Exception as fout:
+    except Exception as fout:  # noqa: BLE001  # deliberately broad: this block falls, not the page around it
         # Caught broadly for the same reason as in fetch_storage: this block must not take
         # the page down with it, and a failed measurement belongs at WARNING in the log and
         # as an error on the screen.
@@ -536,7 +536,7 @@ async def fetch_storage() -> Block:
     """How full every PVC is, fullest first."""
     try:
         answers = await _run_queries(_STORAGE_QUERIES)
-    except Exception as fout:
+    except Exception as fout:  # noqa: BLE001  # deliberately broad: this block falls, not the page around it
         # Caught broadly, against the house rule, and deliberately: this block must not take
         # the PAGE down with it. Each connector raises its own error (Prometheus, Grafana) and
         # httpx and network errors come through as well, so catching only the known names
@@ -590,7 +590,7 @@ async def fetch_databases() -> Block:
     """
     try:
         answers = await _run_queries(_DATABASE_QUERIES)
-    except Exception as fout:
+    except Exception as fout:  # noqa: BLE001  # deliberately broad: this block falls, not the page around it
         # See fetch_storage: caught broadly so an unreachable metrics source costs this block
         # and not the page, and at WARNING so it does not happen quietly.
         logger.warning("Kon de databasemetrieken niet ophalen: %s", fout, exc_info=True)
@@ -668,7 +668,7 @@ async def fetch_keycloak() -> Block:
         query_names = list(_KEYCLOAK_QUERIES)
         outcomes = await asyncio.gather(*(prom.query(_KEYCLOAK_QUERIES[query_name]) for query_name in query_names))
         answers = dict(zip(query_names, outcomes, strict=True))
-    except Exception as fout:
+    except Exception as fout:  # noqa: BLE001  # deliberately broad: this block falls, not the page around it
         # See fetch_storage: caught broadly so this block falls and not the page, and at
         # WARNING so a failed measurement does not look like "nothing to report".
         logger.warning("Kon de Keycloak-metrieken niet ophalen: %s", fout, exc_info=True)

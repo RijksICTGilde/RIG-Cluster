@@ -25,6 +25,7 @@ from opi.services.services import deployment_index
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.services_enums import ServiceType
 
 MAX_NONCURRENT_VERSIONS: Final = IntegerSetting(
@@ -64,7 +65,7 @@ class NoncurrentVersionRule:
     expire_days: int | None
 
 
-def noncurrent_config_field(setting: IntegerSetting, description: str) -> Any:
+def noncurrent_config_field(setting: IntegerSetting, description: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     """The pydantic field of one of these two settings, for the config model.
 
     The bounds are judged by the declaration (``check_settings``) and not by ``ge``/``le``
@@ -88,7 +89,7 @@ def _layer_values(project_data: dict[str, Any], deployment_name: str | None) -> 
 
 def _resolve(
     setting: IntegerSetting, project_data: dict[str, Any], deployment_name: str | None, service: ServiceType
-) -> Any:
+) -> Any:  # noqa: ANN401  # the resolved setting value, an int or None
     values = {
         layer: service_setting_value(entries, service, setting)
         for layer, entries in _layer_values(project_data, deployment_name).items()
@@ -115,7 +116,9 @@ def deployment_noncurrent_rule(
     )
 
 
-def noncurrent_deployment_section(section_prefix: str, fields: Sequence[Any], deployment_index: int | None) -> Any:
+def noncurrent_deployment_section(
+    section_prefix: str, fields: Sequence[EditableVisualizer], deployment_index: int | None
+) -> FormSection:
     """The section of the deployment modal: the limit on one deployment's bucket.
 
     Without an index it describes the layer (the fields then carry their wildcard path), with an

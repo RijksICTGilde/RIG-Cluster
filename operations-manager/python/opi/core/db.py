@@ -131,7 +131,7 @@ async def dispose_engine() -> None:
     _sessionmaker = None
 
 
-def include_orm_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
+def include_orm_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:  # noqa: ANN401  # the hook alembic calls
     """Alembic ``include_object`` hook that scopes autogenerate to ORM-managed tables.
 
     A table is managed iff it is on :data:`Base.metadata`; indexes/constraints/columns

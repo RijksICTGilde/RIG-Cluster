@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from opi.api.params import ProjectNamePath
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
@@ -183,7 +183,7 @@ async def _run_sanitize(
                     desired = int(status.get("replicas", "1"))
                     if desired > 0 and ready == 0:
                         reasons.append(f"0/{desired} pods ready")
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 logger.warning(f"Failed to get deployment status for {unique_name}: {e}")
 
             restart_count = 0
@@ -194,7 +194,7 @@ async def _run_sanitize(
                         if pod_name.startswith(unique_name):
                             count = int(float(pod_data.get("value", [0, 0])[1]))
                             restart_count = max(restart_count, count)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Failed to query restarts for {unique_name}: {e}")
 
             if restart_count > restart_threshold:
@@ -220,7 +220,7 @@ async def _run_sanitize(
                             f"the pull, and skipping the sanitize for it: {event.get('message', '')}"
                         )
                         break
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
 
             if image_pull_seen:

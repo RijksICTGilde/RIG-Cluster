@@ -44,7 +44,7 @@ class ProjectUser(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def accept_the_old_single_role(cls, data: Any) -> Any:
+    def accept_the_old_single_role(cls, data: Any) -> Any:  # noqa: ANN401  # a project-file value
         """``role: admin`` reads as ``roles: [...]``.
 
         The project store migrates a file as it reads it (schema version 2.13), but this model

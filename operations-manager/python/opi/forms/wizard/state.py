@@ -30,7 +30,7 @@ merging.
 """
 
 
-def _strip_cleared_fields(value: Any) -> None:
+def _strip_cleared_fields(value: Any) -> None:  # noqa: ANN401  # a project-file value
     """Recursively remove dict entries whose value is the CLEARED_FIELD marker."""
     if isinstance(value, dict):
         for key in [k for k, v in value.items() if v == CLEARED_FIELD]:
@@ -42,7 +42,7 @@ def _strip_cleared_fields(value: Any) -> None:
             _strip_cleared_fields(item)
 
 
-def _config_overlay(entry: Any, name: str | None) -> dict[str, Any] | None:
+def _config_overlay(entry: Any, name: str | None) -> dict[str, Any] | None:  # noqa: ANN401  # a project-file value
     """The config-bearing fields of a service entry, without its identity key.
 
     ``service_entry_body`` returns the entry itself for the record form, so its
@@ -58,7 +58,7 @@ def _config_overlay(entry: Any, name: str | None) -> dict[str, Any] | None:
     return body
 
 
-def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> None:
+def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> None:  # noqa: ANN401  # a project-file value
     """Fold one virtual payload onto its real sibling inside *container*."""
     real_data = container.get(real_key)
     if isinstance(real_data, list) and isinstance(virt_data, (list, dict)):
@@ -124,7 +124,7 @@ def _update_item(target: dict[str, Any], src: dict[str, Any]) -> None:
             target[key] = copy.deepcopy(value)
 
 
-def _devirtualize(value: Any, virt_mappings: dict[str, str]) -> None:
+def _devirtualize(value: Any, virt_mappings: dict[str, str]) -> None:  # noqa: ANN401  # a project-file value
     """Fold virtual keys onto their real siblings at every level, then drop them.
 
     A virtual key (e.g. ``_services-config``) is a form-transport concern: it

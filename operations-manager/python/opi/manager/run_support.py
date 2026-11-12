@@ -19,6 +19,8 @@ from opi.services.project import Project
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from opi.connectors.kubectl import KubectlConnector
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ STALE_STARTING_SECONDS = 180
 _background_tasks: set[asyncio.Task] = set()
 
 
-def spawn(coro) -> None:
+def spawn(coro: Coroutine[Any, Any, Any]) -> None:
     """Fire-and-forget a coroutine, holding a strong ref until it completes."""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)

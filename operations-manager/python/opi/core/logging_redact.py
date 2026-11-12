@@ -111,7 +111,7 @@ def redact_text(text: str) -> str:
     return text
 
 
-def redact_structure(value: Any) -> Any:
+def redact_structure(value: Any) -> Any:  # noqa: ANN401  # any structure that goes into a log line
     """Mask the secret shapes in every string inside a dict, a list or a text.
 
     For the ``result`` field of a task: that goes to the client as JSON and carries the same

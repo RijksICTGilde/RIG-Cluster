@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,7 +84,7 @@ def _resolve_state(
     return None, None
 
 
-def _staged(state: Any) -> dict[str, dict[str, Any]]:
+def _staged(state: WizardState) -> dict[str, dict[str, Any]]:
     """The staged-attachments map (id -> {filename, content}) from the session state.
 
     Stored on the dedicated ``staged_attachments`` field and NOT in ``step_data``: the latter
@@ -96,11 +96,11 @@ def _staged(state: Any) -> dict[str, dict[str, Any]]:
 
 def _attachments_list_response(
     request: Request,
-    state: Any,
+    state: WizardState,
     wizard_token: str | None,
     error: str | None = None,
     reset: bool = False,
-):
+) -> Response:
     """The unified attachments list: the existing catalog plus the files staged this session.
 
     htmx does not swap a non-2xx response and an ``HTTPException`` renders as JSON, so an
@@ -123,7 +123,7 @@ def _attachments_list_response(
     )
 
 
-def _id_field_response(request: Request, error: str | None, attachment_id: str):
+def _id_field_response(request: Request, error: str | None, attachment_id: str) -> Response:
     """Re-render the identifier field with the standard field-error state."""
     return templates_lotc.TemplateResponse(
         request,
@@ -141,7 +141,7 @@ def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str
     return validate_field(ATTACHMENT_ID_EDITABLE, attachment_id, {"existing_attachment_ids": existing})
 
 
-def _replace_target(state: Any) -> str:
+def _replace_target(state: WizardState) -> str:
     """The attachment this session was opened to replace, or "" when it is an add.
 
     Set once, when the modal is opened from the Vervangen button, and read here rather than
@@ -153,7 +153,7 @@ def _replace_target(state: Any) -> str:
     return (getattr(state, "base_data", None) or {}).get(REPLACE_TARGET_KEY) or ""
 
 
-def _check_replace(state: Any, attachment_id: str) -> str | None:
+def _check_replace(state: WizardState, attachment_id: str) -> str | None:
     """Refuse a replacement that is not the one this session was opened for.
 
     Three ways it is wrong: this session is not replacing anything, it is replacing a different
@@ -169,24 +169,24 @@ def _check_replace(state: Any, attachment_id: str) -> str | None:
     return None
 
 
-def _session_services(state: Any) -> list:
+def _session_services(state: WizardState) -> list:
     """The project services carried in the wizard session (includes the attachments catalog)."""
     if state is None:
         return []
     return state.get_merged_data().get("services") or []
 
 
-def _session_public_key(state: Any) -> str | None:
+def _session_public_key(state: WizardState) -> str | None:
     """The AGE public key of the project this session edits, or of the one it is creating."""
     return get_project_public_key(state.get_merged_data())
 
 
-def _catalog_ids(state: Any) -> list[str]:
+def _catalog_ids(state: WizardState) -> list[str]:
     """Identifiers already present in the project's attachments catalog (this session)."""
     return list(extract_attachment_catalog(state.get_merged_data()).keys()) if state else []
 
 
-def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
+def _remove_from_session_catalog(state: WizardState, attachment_id: str) -> None:
     """Drop an attachment from the catalog carried in step_data so the save persists the removal."""
     for section_data in state.step_data.values():
         data = find_attachment_data_list(section_data.get("services"))
@@ -197,7 +197,9 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
 @action(Action.WIZARD_USE)
 @requires_sso
-async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
+async def list_staged(
+    request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")
+) -> Response:
     """Render the unified attachments list (used on section load)."""
     state, _ = _resolve_state(request, wizard_token, flow_id)
     return _attachments_list_response(request, state, wizard_token)
@@ -213,7 +215,7 @@ async def stage_attachment(
     file: UploadFile = File(...),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
     mode: str = Form(""),
-):
+) -> Response:
     """Stage an uploaded file and record a reference in the wizard session.
 
     With ``mode=replace`` the file is new content for an attachment already in the catalog: the
@@ -287,7 +289,7 @@ async def validate_attachment_id(
     attachment_id: str = Form(""),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
     mode: str = Form(""),
-):
+) -> Response:
     """Validate the identifier on change, so the error surfaces before the file upload.
 
     Returns an inline HTML alert, or empty to clear it; an empty field is not an error.
@@ -316,7 +318,7 @@ async def unstage_attachment(
     flow_id: str,
     attachment_id: str,
     wizard_token: str | None = Form(None, alias="_wizard_token"),
-):
+) -> Response:
     """Remove a staged attachment and delete its staged file.
 
     ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the c-button
@@ -344,7 +346,7 @@ async def remove_existing_attachment(
     flow_id: str,
     attachment_id: str,
     wizard_token: str | None = Form(None, alias="_wizard_token"),
-):
+) -> Response:
     """Remove an existing catalog attachment within the wizard session (applied on save).
 
     Done in the session (not an immediate delete) because the wizard carries the catalog

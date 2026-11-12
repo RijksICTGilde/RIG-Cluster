@@ -107,7 +107,7 @@ class TaskWorker:
     Each task gets its own heartbeat coroutine and runs independently.
     """
 
-    def __init__(self, task_service: AsyncTaskService, cluster: str):
+    def __init__(self, task_service: AsyncTaskService, cluster: str) -> None:
         self._task_service = task_service
         self._cluster = cluster
         self._running = False
@@ -379,11 +379,11 @@ class TaskWorker:
                     "Task %s rejected the request after %.1fs: %s", task_id, time.monotonic() - started, error_msg
                 )
 
-            except TimeoutError:
+            except TimeoutError as exc:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
                 logger.error("Task %s timed out after %.1fs: %s", task_id, time.monotonic() - started, error_msg)
                 await progress.close()
-                raise TimeoutError(error_msg)
+                raise TimeoutError(error_msg) from exc
 
             except Exception as exc:
                 # Close progress manager even on failure
@@ -422,7 +422,7 @@ class TaskWorker:
             await asyncio.sleep(settings.TASK_WORKER_HEARTBEAT_INTERVAL)
             try:
                 await self._task_service.send_heartbeat(task_id)
-            except Exception:
+            except Exception:  # noqa: BLE001  # a background loop must not stop
                 logger.warning("Failed to send heartbeat for task %s", task_id, exc_info=True)
 
     async def _stale_recovery_loop(self) -> None:

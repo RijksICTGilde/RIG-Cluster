@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any
 
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
@@ -422,7 +423,7 @@ class PVCManager:
 
         try:
             git_connector = await self.project_manager.get_deployment_workspace(repo_name, repo_config)
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, GitCommandTimeoutError, GitRemoteUnavailableError) as e:
             error_msg = (
                 f"Cannot access git workspace for repository '{repo_name}' "
                 f"- cannot rename PVC manifests for deferred deletion: {e}"

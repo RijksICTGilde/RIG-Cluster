@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from opi.core.config import settings
 from opi.services.catalog.base import (
@@ -18,6 +19,11 @@ from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariabl
 from opi.services.secrets import MetricsAuthSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +54,17 @@ class MetricsScraperService(Service):
         # port/path live on the component reference's config.
         return self.config_model_field_names() if layer is ConfigLayer.COMPONENT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.COMPONENT:
             return []
         return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE]
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.metrics_scraper.visualizers import METRICS_PATH, METRICS_PORT
 
         return [METRICS_PORT, METRICS_PATH]
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value

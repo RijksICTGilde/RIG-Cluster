@@ -47,7 +47,7 @@ Deliberately absent, so the next reader does not go looking:
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.core.cluster_config import (
     CLUSTER_CONFIG,
@@ -80,6 +80,13 @@ from opi.utils.naming import (
     generate_network_policy_name,
     generate_unique_name,
 )
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
+    from opi.services.catalog.approval import ApprovalSpec
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +482,7 @@ class SendEmailService(Service):
     config_section_id: ClassVar[str] = "send-email-config"
     modal_flow_id = "modal-edit-send-email-config"
 
-    def config_model_for(self, layer: ConfigLayer):
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         # Two layers, two shapes: the project decides for all its deployments (and carries the
         # service's own approval), a deployment overrides three fields.
         if layer is ConfigLayer.PROJECT:
@@ -489,7 +496,7 @@ class SendEmailService(Service):
             return self.config_model_field_names(layer)
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         from opi.services.catalog.send_email.editables import (
             SEND_EMAIL_DEPLOYMENT_EDITABLES,
             SEND_EMAIL_FROM_ADDRESS_EDITABLE,
@@ -507,7 +514,7 @@ class SendEmailService(Service):
             return list(SEND_EMAIL_DEPLOYMENT_EDITABLES)
         return []
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -551,7 +558,7 @@ class SendEmailService(Service):
         """Section visibility: the same question as everywhere else in this module."""
         return _selected(project_data)
 
-    def config_approvals(self, layer: ConfigLayer):
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
         """Five approvals through the generic mechanism, on two layers.
 
         Project: may this project mail, under which address, and how much. They are
@@ -577,7 +584,9 @@ class SendEmailService(Service):
         DEPLOYMENT_FROM_ADDRESS_APPROVAL.ensure_requested(project_data)
         DEPLOYMENT_MESSAGES_PER_DAY_APPROVAL.ensure_requested(project_data)
 
-    def deployment_form_section(self, deployment_index: int | None = None, inherited: dict[str, str] | None = None):
+    def deployment_form_section(
+        self, deployment_index: int | None = None, inherited: dict[str, str] | None = None
+    ) -> FormSection:
         """The sender and the daily budget of ONE deployment; without an index it describes the
         layer.
 
@@ -613,7 +622,7 @@ class SendEmailService(Service):
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.mail_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
 
-    def contribute_manifest_context(self, ctx: ManifestContext):
+    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         """No approval, no envFrom secret and no secret file.
 
         Gated here as well as in the manager, and that is not belt-and-braces: the

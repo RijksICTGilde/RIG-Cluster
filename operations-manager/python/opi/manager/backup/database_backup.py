@@ -580,7 +580,12 @@ class DatabaseBackupManager(BaseBackupManager):
         project_name: str | None = None,
     ) -> list[SnapshotInfo]:
         """The database snapshots of a namespace, optionally only those of one reference."""
-        from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
+        from opi.connectors.kopia import (
+            KopiaConnectionError,
+            KopiaConnector,
+            KopiaExecutionError,
+            KopiaRepositoryConfig,
+        )
 
         backup_prefix = generate_backup_prefix(cluster, namespace)
         kopia_password = await self._derive_backup_key(namespace)
@@ -639,7 +644,7 @@ class DatabaseBackupManager(BaseBackupManager):
             logger.debug(f"Found {len(snapshots)} database snapshots for {namespace}")
             return snapshots
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KopiaConnectionError, KopiaExecutionError) as e:
             logger.warning(f"Failed to list database snapshots via Kopia CLI: {e}")
             return []
 

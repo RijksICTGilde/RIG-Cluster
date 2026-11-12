@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
@@ -258,7 +260,7 @@ class RedisManager:
                     }
                 )
                 logger.info(f"Deleted Redis ACL user: {redis_username}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 error_msg = f"Failed to delete Redis ACL user {redis_username}: {e}"
                 deletion_results["operations"].append(
                     {"type": "redis_acl_user_delete", "status": "error", "message": error_msg}
@@ -278,7 +280,7 @@ class RedisManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: Any = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Clean up when the Redis service is removed from a deployment.
 
@@ -322,7 +324,7 @@ class RedisManager:
             if secret_data:
                 return RedisSecret.from_k8s_secret_data(secret_data)
             return None
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.debug(f"Could not retrieve Redis secret for {deployment_name}: {e}")
             return None
 
@@ -387,7 +389,7 @@ class RedisManager:
                 writer.close()
                 await writer.wait_closed()
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.debug(f"Redis connection test failed at {host}:{port}: {e}")
             return False
 
@@ -507,6 +509,6 @@ class RedisManager:
                 writer.close()
                 await writer.wait_closed()
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.debug(f"Failed to check Redis ACL user {username}: {e}")
             return False

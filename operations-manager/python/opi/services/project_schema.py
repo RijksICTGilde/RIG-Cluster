@@ -174,7 +174,7 @@ def known_schema_versions() -> tuple[SchemaVersion, ...]:
     return (*_legacy_patch_versions(), latest_schema_version())
 
 
-def _merge_patch(target: Any, patch: Any) -> Any:
+def _merge_patch(target: Any, patch: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Apply an RFC 7386 JSON Merge Patch. A ``null`` value removes the key."""
     if not isinstance(patch, dict):
         return patch
@@ -390,14 +390,14 @@ def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
 _AGE_PATTERN_MARKER = "BEGIN AGE ENCRYPTED FILE"
 
 
-def _walk_errors(errors: Any) -> Any:
+def _walk_errors(errors: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Yield validation errors depth-first, including anyOf/oneOf sub-errors."""
     for error in errors:
         yield error
         yield from _walk_errors(error.context or [])
 
 
-def age_pattern_violations(validator: Draft202012Validator, data: Any, *, prefix: str = "") -> list[str]:
+def age_pattern_violations(validator: Draft202012Validator, data: Any, *, prefix: str = "") -> list[str]:  # noqa: ANN401  # a project-file value
     """Paths in ``data`` that a schema wants AGE-encrypted but that hold plain text.
 
     Derived from the schema (a ``pattern`` carrying the AGE marker) and not from a field

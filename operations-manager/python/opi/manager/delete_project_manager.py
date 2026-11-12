@@ -1574,7 +1574,7 @@ class DeleteProjectManager:
                     logger.info(f"Deleted {deleted_subdomains} subdomain registration(s) for project '{project_name}'")
                 else:
                     logger.debug(f"No subdomain registrations found for project '{project_name}'")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 error_msg = f"Error cleaning up subdomain registrations: {e}"
                 deletion_results["errors"].append(error_msg)
                 deletion_results["operations"].append({"type": "subdomain_cleanup", "status": "error", "error": str(e)})
@@ -1610,7 +1610,7 @@ class DeleteProjectManager:
                             }
                         )
                         logger.info(f"Project '{project_name}' was not found in in-memory database")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     error_msg = f"Error removing project from in-memory database: {e}"
                     deletion_results["errors"].append(error_msg)
                     deletion_results["operations"].append(
@@ -1701,7 +1701,7 @@ class DeleteProjectManager:
     # The service-type to manager-key mapping lives on each provider as
     # `cleanup_manager_key`; this only resolves a key to its manager instance, and is invoked
     # via RemovalContext.get_manager.
-    async def _get_manager_for_service(self, manager_key: ManagerKey) -> Any:
+    async def _get_manager_for_service(self, manager_key: ManagerKey) -> Any:  # noqa: ANN401  # one of the service managers, which share no base
         """Resolve the manager instance for a given manager key.
 
         Database is special (an async ensure); the rest are plain attributes, so a dict lookup

@@ -2690,7 +2690,7 @@ async def create_self_service_project(
         # Note: subdomain_registered will be False since registration failed
         elapsed_time = time.time() - start_time
         logger.warning(f"Subdomain error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         if subdomain_registered and project_data.subdomain and project_data.base_domain:
             await _rollback_subdomain_registration(
@@ -2726,7 +2726,7 @@ async def _rollback_subdomain_registration(
             )
         else:
             logger.debug(f"No subdomain registration to rollback for '{project_name}/{deployment_name}'")
-    except Exception as rollback_error:
+    except Exception as rollback_error:  # noqa: BLE001  # best-effort rollback; it must not hide the failure it follows
         # Best effort: a rollback that fails may not hide the failure it follows.
         logger.error(f"Failed to rollback subdomain registration for '{project_name}': {rollback_error}")
 

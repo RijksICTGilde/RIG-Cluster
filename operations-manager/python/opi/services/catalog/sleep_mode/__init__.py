@@ -11,7 +11,7 @@ must stay free of).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import (
     ConfigLayer,
@@ -63,7 +63,7 @@ class SleepModeService(Service):
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.sleep_mode.editables import SLEEP_MODE_EDITABLES
@@ -182,7 +182,7 @@ class SleepModeService(Service):
             return []
         return ["Deze deployment sliep en is gewekt, want er is nieuwe inhoud uitgerold."]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         # Built once and cached so consumers comparing section identity keep one object.
@@ -211,5 +211,9 @@ class SleepModeService(Service):
 # state helpers -- so it cannot be imported before the class exists. The definition is a
 # mutable dataclass and the registry imports this module at startup, before any request.
 from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402  # bound after the class, see above
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 SleepModeService.definition.actions_provider = sleep_actions

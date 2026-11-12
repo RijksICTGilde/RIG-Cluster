@@ -20,7 +20,7 @@ _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-temp
 _PLACEHOLDER_RE = re.compile(r"\$\{(\w+)\}")
 
 
-def _resolve_placeholders(value: Any) -> Any:
+def _resolve_placeholders(value: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Recursively resolve ``${SETTING}`` placeholders in strings."""
     if isinstance(value, str):
         return _PLACEHOLDER_RE.sub(lambda m: str(getattr(settings, m.group(1), m.group(0))), value)

@@ -42,7 +42,7 @@ class Herlogin:
     code_verifier: str
 
 
-def herlogin_is_valid(claims: Any, user: dict[str, Any], *, now: float | None = None) -> bool:
+def herlogin_is_valid(claims: Any, user: dict[str, Any], *, now: float | None = None) -> bool:  # noqa: ANN401  # the JWT claims
     """Whether these id_token claims are a fresh login of THIS signed-in user."""
     moment = time.time() if now is None else now
     email = str(user.get("email", "")).lower()

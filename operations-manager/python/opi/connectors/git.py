@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from opi.core.actor import Actor, get_actor
@@ -20,6 +20,9 @@ from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
 from opi.utils.yaml_util import YAMLError, load_yaml_safe
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +485,7 @@ class GitConnector:
         project_name: str | None = None,
         name: str | None = None,
         full_history: bool = False,
-    ):
+    ) -> None:
         """``repo_url`` takes git://, ssh://, https:// and the git@host:path shorthand.
 
         ``repo_path`` is the path WITHIN the repository, ``branch`` a name without the
@@ -547,11 +550,13 @@ class GitConnector:
 
         logger.debug("GitConnector initialization completed")
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         await self.ensure_repo_cloned()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> bool:
         await self.close()
         return False
 
@@ -796,7 +801,7 @@ class GitConnector:
                 obfuscated_url = _obfuscate_git_command(self.repo_url)
                 context_parts.append(f"server={obfuscated_url}")
                 return f"git [{', '.join(context_parts)}]"
-        except Exception:
+        except AttributeError, KeyError, TypeError, ValueError:
             # If anything goes wrong, return a simple fallback
             project_part = f" for project {self.project_name}" if self.project_name else ""
             return f"git server [URL: {_obfuscate_git_command(self.repo_url)}]{project_part}"
@@ -1028,8 +1033,7 @@ class GitConnector:
             stdout, stderr, code = await self._run_git_command(ls_remote_cmd)
 
             if code == 0 and stdout:
-                # Parse output to find the default branch
-                # Format: "ref: refs/heads/main	HEAD"
+                # Each line is a ref line: the symref prefix, the ref name, a tab, HEAD.
                 for line in stdout.strip().split("\n"):
                     if line.startswith("ref: refs/heads/"):
                         default_branch = line.split("refs/heads/")[1].split("\t")[0]
@@ -1040,7 +1044,7 @@ class GitConnector:
             logger.debug(f"Could not detect remote default branch, using configured: {self.branch}")
             return self.branch
 
-        except Exception as e:
+        except (OSError, ValueError, GitCommandTimeoutError, GitRemoteUnavailableError) as e:
             logger.debug(f"Error detecting remote default branch: {e}, using configured: {self.branch}")
             return self.branch
 
@@ -1101,7 +1105,7 @@ class GitConnector:
                         logger.warning(f"Failed to create new branch {self.branch}: {stderr}")
 
             logger.debug(f"Successfully ensured branch: {self.branch}")
-        except Exception as e:
+        except (OSError, ValueError, GitCommandTimeoutError, GitRemoteUnavailableError) as e:
             logger.warning(f"Error ensuring correct branch: {e}")
             # Don't raise here, as the repository might still be usable
 
@@ -1308,7 +1312,7 @@ class GitConnector:
         await self.ensure_repo_cloned()
         logger.debug("Repository cloned successfully")
 
-    async def get_working_dir(self):
+    async def get_working_dir(self) -> str:
         await self.ensure_repo_cloned()
         return self.__working_dir
 
@@ -1792,7 +1796,7 @@ class GitConnector:
             logger.debug(f"File {file_path} does not exist in {prev_commit}: {stderr}")
             return None
 
-        except Exception as e:
+        except (OSError, ValueError, GitCommandTimeoutError, GitRemoteUnavailableError) as e:
             logger.warning(f"Error retrieving previous file content for {file_path}: {e}")
             return None
 

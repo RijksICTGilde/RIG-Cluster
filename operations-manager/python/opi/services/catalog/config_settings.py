@@ -212,7 +212,7 @@ class ConfigSetting(ABC):
         return config_path(layer, service, "config", *self.path_parts)
 
     @abstractmethod
-    def check(self, value: Any) -> Any:
+    def check(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         """Judge one value and return it (normalised where that means the same value).
 
         Raises:
@@ -227,7 +227,7 @@ class ConfigSetting(ABC):
         time, which is what keeps the screen and the validation on the same bounds.
         """
 
-    def check_change(self, previous: Any, new: Any) -> None:  # noqa: B027 - opt-in hook, most fields move both ways
+    def check_change(self, previous: Any, new: Any) -> None:  # noqa: B027, ANN401 - opt-in hook, most fields move both ways
         """Judge a value against the one it replaces. Default: any change is fine.
 
         Only a setting whose field cannot move both ways overrides this.
@@ -249,7 +249,7 @@ class IntegerSetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}': minimum {self.minimum} ligt boven maximum {self.maximum}")
         super().__post_init__()
 
-    def check(self, value: Any) -> int:
+    def check(self, value: Any) -> int:  # noqa: ANN401  # a project-file value
         # bool is an int in Python, and "true" is not a number anyone meant to write.
         if isinstance(value, bool):
             raise SettingError(f"'{self.path}' moet een geheel getal zijn; je gaf {value!r}.")
@@ -289,7 +289,7 @@ class QuantitySetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}': minimum {self.minimum} ligt boven maximum {self.maximum}")
         super().__post_init__()
 
-    def _parse(self, value: Any) -> float:
+    def _parse(self, value: Any) -> float:  # noqa: ANN401  # a project-file value
         """The value as a number in the kind's base unit (MiB or millicores)."""
         if not isinstance(value, str):
             raise SettingError(
@@ -313,7 +313,7 @@ class QuantitySetting(ConfigSetting):
                 f"Gebruik iets als {self.minimum} of {self.maximum}."
             ) from None
 
-    def check(self, value: Any) -> str:
+    def check(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         amount = self._parse(value)
         if not self._parse(self.minimum) <= amount <= self._parse(self.maximum):
             raise SettingError(f"'{self.path}' moet tussen {self.minimum} en {self.maximum} liggen; je gaf {value}.")
@@ -323,7 +323,7 @@ class QuantitySetting(ConfigSetting):
     def judges_changes(self) -> bool:
         return self.grow_only
 
-    def check_change(self, previous: Any, new: Any) -> None:
+    def check_change(self, previous: Any, new: Any) -> None:  # noqa: ANN401  # a project-file value
         if not self.grow_only:
             return
         if self._parse(new) < self._parse(previous):
@@ -352,7 +352,7 @@ class ChoiceSetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}' noemt geen enkele toegestane waarde")
         super().__post_init__()
 
-    def check(self, value: Any) -> str:
+    def check(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if not isinstance(value, str) or value not in self.allowed:
             raise SettingError(
                 f"'{self.path}' moet een van deze waarden zijn: {', '.join(self.allowed)}; je gaf {value!r}."
@@ -369,7 +369,7 @@ def wrong_layer_message(setting: ConfigSetting, layer: ConfigLayer) -> str:
     return f"'{setting.path}' kun je niet {_LAYER_LABEL[layer]} zetten; dat kan alleen {allowed}."
 
 
-def read_setting_value(config: Any, setting: ConfigSetting) -> Any:
+def read_setting_value(config: Any, setting: ConfigSetting) -> Any:  # noqa: ANN401  # a project-file value
     """The raw value of ``setting`` in one config block, or ``MISSING``.
 
     Walks ``setting.path`` key by key. Anything that is not a dict on the way down means
@@ -384,7 +384,7 @@ def read_setting_value(config: Any, setting: ConfigSetting) -> Any:
     return node
 
 
-def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSetting) -> Any:
+def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSetting) -> Any:  # noqa: ANN401  # a project-file value
     """What one ``services`` list says about ``setting`` for ``service``, or None.
 
     The layer is the list: a project's ``services``, or a deployment's. Reads the entry
@@ -399,7 +399,7 @@ def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSet
     return None
 
 
-def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -> Any:
+def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """The effective value: the most specific layer that says something, else the default.
 
     ``values`` maps a layer to what the project file has there; a layer that is absent,
@@ -419,7 +419,7 @@ def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -
     return setting.default
 
 
-def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: ConfigLayer) -> None:
+def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: ConfigLayer) -> None:  # noqa: ANN401  # a project-file value
     """Judge every declared setting that ``config`` mentions, at ``layer``.
 
     Two refusals: a value outside the declared room, and a value on a layer the service
@@ -443,7 +443,7 @@ def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: Config
             raise SettingError(str(e), setting=setting) from None
 
 
-def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:
+def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:  # noqa: ANN401  # a project-file value
     """Judge what ``config`` changes about the settings, against ``previous``.
 
     A field a version does not mention stands on the service default, and that holds for

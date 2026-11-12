@@ -141,7 +141,7 @@ def get_domain_config(deployment: dict[str, Any]) -> dict[str, Any] | None:
     return config if isinstance(config, dict) else None
 
 
-def get_domain_setting(deployment: dict[str, Any], setting: DomainSetting, default: Any = None) -> Any:
+def get_domain_setting(deployment: dict[str, Any], setting: DomainSetting, default: Any = None) -> Any:  # noqa: ANN401  # a project-file value
     """One web-address setting of ``deployment``: service config first, root as fallback.
 
     ``default`` is returned when the key is absent from both places. A key that IS present
@@ -217,7 +217,7 @@ def ensure_domain_config(deployment: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def set_domain_setting(deployment: dict[str, Any], setting: DomainSetting, value: Any) -> None:
+def set_domain_setting(deployment: dict[str, Any], setting: DomainSetting, value: Any) -> None:  # noqa: ANN401  # a project-file value
     """Write one web-address setting onto ``deployment``, at the service path."""
     ensure_domain_config(deployment)[setting.value] = value
 

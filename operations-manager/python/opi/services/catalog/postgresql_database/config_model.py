@@ -32,7 +32,7 @@ from opi.services.catalog.shared.revisions import CloneState
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
 
 
-def _connection_limit_field(description: str) -> Any:
+def _connection_limit_field(description: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     # The bounds are judged by CONNECTION_LIMIT (check_settings), not by ge/le here.
     return Field(
         default=None,
@@ -68,7 +68,7 @@ class PostgresqlDatabaseConfig(CloneState):
     )
 
 
-def schema_postfix_field() -> Any:
+def schema_postfix_field() -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     """The ``postfix`` field, as a factory so the API can carry the same definition.
 
     ``POST .../schemas`` takes a postfix and a description and nothing else, so it cannot
@@ -93,7 +93,7 @@ def schema_postfix_field() -> Any:
     )
 
 
-def schema_description_field() -> Any:
+def schema_description_field() -> Any:  # noqa: ANN401  # pydantic Field() fits any field
     """The ``description`` field, shared with the API for the same reason."""
     return Field(default="", description="What this schema is for, for whoever reads the project file.")
 

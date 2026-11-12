@@ -9,9 +9,9 @@ and by the OOM watcher (oom_watcher).
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.connectors.prometheus import get_metrics_connector
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.core.cluster_config import (
@@ -44,6 +44,10 @@ from opi.services.resource_analyzer import (
     passes_deviation_gate,
 )
 from opi.utils.naming import generate_unique_name
+
+if TYPE_CHECKING:
+    from opi.connectors.metrics_backend import MetricsBackend
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +126,7 @@ async def trigger_reprocessing(
     filename: str,
     deployment_name: str | None = None,
     argocd_resources_changed: bool = True,
-    task_progress_manager: Any | None = None,
+    task_progress_manager: PersistentTaskProgressManager | None = None,
     wait_for_healthy: bool = True,
 ) -> bool:
     """
@@ -398,7 +402,7 @@ def _honour_user_intent(
 
 
 async def _analyze_component_resources(
-    connector: Any,
+    connector: MetricsBackend,
     file_handler: ProjectFileHandler,
     project_data: dict[str, Any],
     dep_name: str,
@@ -493,7 +497,7 @@ async def _analyze_component_resources(
                         f"(reason: {reason}), memory data would be misleading"
                     )
                     return None
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
 
     # Query Prometheus for max and average memory usage (app container only)
@@ -525,7 +529,7 @@ async def _analyze_component_resources(
             for result in avg_results:
                 value = float(result.get("value", [0, 0])[1])
                 avg_observed_mb = max(avg_observed_mb, value / (1024 * 1024))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed measurement must not stop the tune
         logger.warning(f"Failed to query memory usage for {unique_name}: {e}")
         return None
 
@@ -552,7 +556,7 @@ async def _analyze_component_resources(
         )
         oom_results = await connector.query(oom_query)
         has_oom_kills = has_oom_kills or bool(oom_results)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed measurement must not stop the tune
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
 
     # On VPA-capable clusters, prefer the recommender's target over the raw
@@ -565,7 +569,7 @@ async def _analyze_component_resources(
     if supports_vpa(cluster) and kubectl is not None and KubectlConnector.is_connected:
         try:
             vpa_rec = await kubectl.get_vpa_recommendation(namespace, unique_name)
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
             logger.warning(f"Failed to read VPA recommendation for {unique_name}: {e}")
     # The recommender never advises below its built-in floor (VPA_MEMORY_FLOOR_MI),
     # so a target at the floor means "usage is below this" rather than a real need.
@@ -943,7 +947,7 @@ async def observe_recent_oom_kills(
     )
     try:
         results = await connector.query(query)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed measurement must not stop the tune
         logger.warning(f"OOM check failed for {deployment_name}: {e}, reporting nothing")
         return []
 

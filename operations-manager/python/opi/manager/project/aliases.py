@@ -340,7 +340,7 @@ class DeploymentAliases:
 
         return categorized_aliases
 
-    async def _get_by_json_path(self, json_path: str) -> Any:
+    async def _get_by_json_path(self, json_path: str) -> Any:  # noqa: ANN401  # a project-file value
         """The value at *json_path* in the project file, or None when nothing matches."""
         project_data = await self._host.get_contents(record_base=False)
 

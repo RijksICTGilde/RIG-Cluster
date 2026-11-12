@@ -29,7 +29,7 @@ _REGISTRIES_PATH = config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES
 class RegistryTokenEnforcer:
     """Checks per registry whether the credentials may read a repository of this project."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         registries = smart_get_value(value, _REGISTRIES_PATH) or []
         if not isinstance(registries, list):
             return value
@@ -127,7 +127,7 @@ def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str 
 def _project_images(data: dict[str, Any]) -> list[str]:
     """Every image this project names anywhere, normalised."""
 
-    def images_of(components: Any) -> list[str]:
+    def images_of(components: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         return [
             normalize_image(component["image"])
             for component in components or []

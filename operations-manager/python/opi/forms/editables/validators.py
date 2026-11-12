@@ -38,7 +38,7 @@ class ModelFieldValidator:
         self._adapter: TypeAdapter[Any] = TypeAdapter(cast("Any", annotation))
         self._message = message
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         # Emptiness is ``required``'s business, not the field rule's.
         if value is None or value == "":
             return []
@@ -52,7 +52,7 @@ class ModelFieldValidator:
 class SlugValidator:
     """A slug: a leading letter, then lowercase letters, digits and hyphens."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         value_str = str(value)
@@ -73,7 +73,7 @@ class EmailValidator:
 
     _PATTERN = re.compile(EMAIL_PATTERN)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         if not self._PATTERN.match(str(value)):
@@ -92,7 +92,7 @@ class MinMaxLengthValidator:
         self.min_length = min_length
         self.max_length = max_length
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         value_str = str(value)
@@ -115,7 +115,7 @@ class RangeValidator:
         self.min_value = min_value
         self.max_value = max_value
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         try:
@@ -143,7 +143,7 @@ class ComponentNameValidator:
     also checks uniqueness.
     """
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -173,7 +173,7 @@ class KubernetesNameValidator:
         self._label = label
         self._max_length = max_length
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -197,7 +197,7 @@ class AttachmentIdValidator:
     When called with context containing ``existing_attachment_ids``, also checks uniqueness.
     """
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -234,7 +234,7 @@ class SchemaPostfixValidator:
     from the schema name in their database rather than from the response.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return ["Postfix is verplicht"]
         if not re.match(SCHEMA_POSTFIX_PATTERN, str(value)):
@@ -257,7 +257,7 @@ class InviteKeyValidator:
     only a non-empty, malformed key is rejected.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # empty is generated at save time
         value_str = str(value)
@@ -284,7 +284,7 @@ class ContainerImageValidator:
     _PATTERN = re.compile(CONTAINER_IMAGE_PATTERN)
     _ALLOWED_CHAR = re.compile(r"[A-Za-z0-9._:/@-]")
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -306,7 +306,7 @@ class ContainerImageValidator:
 class RealmRoleValidator:
     """Validates Keycloak realm role names: alphanumeric, hyphens, underscores, max 255 chars."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -325,7 +325,7 @@ class EnvNameValidator:
 
     _PATTERN = re.compile(ENV_VAR_NAME_PATTERN)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         if not self._PATTERN.match(str(value)):
@@ -338,7 +338,7 @@ class EnvNameValidator:
 class PathValidator:
     """Validates publication path format: must start with / and contain no spaces."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         v = str(value)
@@ -354,7 +354,7 @@ class SafePathValidator:
     The rule is shared with configmodel so form and API behave identically.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -378,7 +378,7 @@ class LogoutPathValidator:
         "deployment ervoor."
     )
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -395,7 +395,7 @@ class RedirectUriValidator:
     host, which are exactly the forms refused here.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -408,7 +408,7 @@ class RedirectUriValidator:
 class UrlValidator:
     """Validates that a value is a valid HTTP(S) URL."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         v = str(value)
@@ -420,7 +420,7 @@ class UrlValidator:
 class RequiredValidator:
     """Validates that a field has a non-empty value."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return ["Dit veld is verplicht"]
         if isinstance(value, str) and not value.strip():
@@ -436,7 +436,7 @@ class AllowedValuesValidator:
     def __init__(self, allowed: list[str]) -> None:
         self.allowed = allowed
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
         if str(value) not in self.allowed:
@@ -454,7 +454,7 @@ class StorageSizeValidator:
     hand-made POST sets any size it likes.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
         from opi.services.catalog.shared.storage import check_storage_size
@@ -488,7 +488,7 @@ class MemoryRangeValidator:
 
         return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
         from opi.services.resource_analyzer import parse_k8s_memory_to_mi
@@ -519,7 +519,7 @@ class MemoryRequestRangeValidator(MemoryRangeValidator):
 class SubdomainValidator:
     """Validates subdomain format using the canonical validation from subdomain connector."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         from opi.services.catalog.publish_on_web.subdomain import validate_subdomain
@@ -531,7 +531,7 @@ class SubdomainValidator:
 class BaseDomainValidator:
     """Validates that a base domain is in the supported domains list."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         if str(value) == "__custom__":
@@ -545,7 +545,7 @@ class BaseDomainValidator:
 class CustomDomainValidator:
     """Validates custom domain format."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         from opi.services.catalog.publish_on_web.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
@@ -559,7 +559,7 @@ class CustomDomainValidator:
 class DomainFormatValidator:
     """Validates that domain-format is a known template ID."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
@@ -591,7 +591,7 @@ class CommandLineValidator:
 
     MAX_LENGTH = 4096
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         text = str(value)
@@ -620,7 +620,7 @@ class ConfigSettingValidator:
     def __init__(self, setting: ConfigSetting) -> None:
         self.setting = setting
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         # Emptiness is ``required``'s business; an empty field falls back to the
         # service default, which the declaration already vouched for.
         if value is None or (isinstance(value, str) and not value.strip()):

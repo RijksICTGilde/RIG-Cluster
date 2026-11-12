@@ -32,6 +32,7 @@ from opi.middleware.authorization import SKIP_AUTH_EXACT, SKIP_AUTH_PREFIXES
 from opi.services.session_store import get_session_store
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from concurrent.futures import Future
 
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -77,11 +78,11 @@ class ServerSideSession(MutableMapping[str, Any]):
         self.accessed = False
         self.modified = False
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> Any:  # noqa: ANN401  # a session value
         self.accessed = True
         return self._data[key]
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: Any) -> None:  # noqa: ANN401  # a session value
         self.accessed = True
         self.modified = True
         self._data[key] = value
@@ -93,7 +94,7 @@ class ServerSideSession(MutableMapping[str, Any]):
         del self._data[key]
         self._write_through()
 
-    def __iter__(self) -> Any:
+    def __iter__(self) -> Iterator[str]:
         self.accessed = True
         return iter(self._data)
 

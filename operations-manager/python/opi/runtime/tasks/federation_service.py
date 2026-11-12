@@ -198,7 +198,7 @@ class FederationService:
             cluster = handler.extract_deployment_cluster(project_data, deployment_name)
             if cluster:
                 return cluster
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # a background loop must not stop
             logger.warning(
                 "Federation: failed to resolve cluster for %s/%s: %s",
                 project_name,

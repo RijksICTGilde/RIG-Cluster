@@ -95,7 +95,7 @@ async def _monitor_argocd_and_deployment(
 
                 await asyncio.sleep(2)
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a background loop must not stop
                 logger.warning(f"Error checking ArgoCD apps (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(2)
 
@@ -130,6 +130,6 @@ async def _monitor_argocd_and_deployment(
 
         task_progress_manager.complete_task(monitor_task)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a background loop must not stop
         logger.error(f"Error monitoring ArgoCD for {project_name}: {e}")
         task_progress_manager.fail_task(monitor_task, f"Monitoring failed: {e}")

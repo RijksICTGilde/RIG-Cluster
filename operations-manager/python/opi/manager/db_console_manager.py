@@ -239,7 +239,7 @@ class DbConsoleManager:
             )
         try:
             latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.DB_CONSOLE)
-        except Exception:
+        except Exception:  # noqa: BLE001  # an unreadable run row must not block the start
             latest = None
         if latest and latest.get("status") == "starting":
             # No pod exists (checked above). A 'starting' row with no pod is either

@@ -64,7 +64,7 @@ class IPRateLimiter:
         cleanup_interval: float = 60.0,
         per_ip_requests_per_minute: float | None = None,
         max_new_clients_per_minute: int | None = MAX_NEW_CLIENTS_PER_MINUTE,
-    ):
+    ) -> None:
         # float, not int: a limit per HOUR is less than one request per minute (the invite
         # routes), and the sum below already divides by 60.0.
         self.rate = requests_per_minute / 60.0  # requests per second

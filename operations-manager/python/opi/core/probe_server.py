@@ -36,7 +36,7 @@ class _ProbeHandler(BaseHTTPRequestHandler):
 
     # No access log: with a probe every ten seconds that is noise only, and writing it is the
     # only I/O this thread would otherwise do.
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002  # base class signature
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, ANN401  # base class signature
         pass
 
     def _respond(self, code: int, body: dict[str, Any]) -> None:

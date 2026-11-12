@@ -905,7 +905,7 @@ class ArgoManager:
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
                 logger.warning(f"Error checking application creation status: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
@@ -1050,7 +1050,7 @@ class ArgoManager:
                 elapsed_time = _elapsed_since(start)
             except RuntimeError:
                 raise
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(f"Error checking infrastructure status: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
                 elapsed_time = _elapsed_since(start)
@@ -1258,7 +1258,7 @@ class ArgoManager:
                 await asyncio.sleep(poll_interval)
                 elapsed_time = _elapsed_since(start)
                 continue
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
                 await asyncio.sleep(poll_interval)
                 elapsed_time = _elapsed_since(start)

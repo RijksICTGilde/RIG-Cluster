@@ -165,7 +165,7 @@ async def close_database_pools() -> None:
         try:
             await pool.close()
             logger.info(f"Closed database pool: {name}")
-        except Exception as e:
+        except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
             logger.error(f"Error closing database pool {name}: {e}")
 
     _pools.clear()
@@ -216,14 +216,14 @@ async def recover_database_pool(name: str = "main") -> bool:
             try:
                 await pool.close()
                 logger.info(f"Closed existing pool '{name}' for recovery")
-            except Exception as e:
+            except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
                 logger.warning(f"Error closing pool '{name}' during recovery: {e}")
 
         await _initialize_database_pool_with_retry(pool, name)
         logger.info(f"Successfully recovered database pool '{name}'")
         return True
 
-    except Exception as e:
+    except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
         logger.error(f"Failed to recover database pool '{name}': {e}")
         return False
 
@@ -246,7 +246,7 @@ async def check_and_recover_all_pools() -> dict[str, bool]:
                 logger.debug(f"Database pool '{name}' is healthy")
                 recovery_results[name] = True
 
-        except Exception as e:
+        except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
             logger.error(f"Health check failed for pool '{name}': {e}")
             recovery_results[name] = await recover_database_pool(name)
 

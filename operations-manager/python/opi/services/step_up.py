@@ -30,6 +30,8 @@ from opi.services.project_environment import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from starlette.requests import Request
 
     from opi.services.user_service import UserService
@@ -255,7 +257,7 @@ def step_up_until(request: Request) -> datetime | None:
     return session_step_up_until(session)
 
 
-def session_step_up_until(session: Any) -> datetime | None:
+def session_step_up_until(session: Mapping[str, Any]) -> datetime | None:
     """:func:`step_up_until` for a caller holding only the session, such as a WebSocket."""
     stamp = session.get(STEP_UP_SESSION_KEY)
     if not isinstance(stamp, str):
@@ -287,7 +289,7 @@ def is_elevated_admin(users: UserService, email: str) -> bool:
     return step_up_fresh.get() and users.is_platform_admin(email)
 
 
-def _names(items: Any) -> set[str]:
+def _names(items: Any) -> set[str]:  # noqa: ANN401  # a project-file value
     return {str(i["name"]) for i in items or [] if isinstance(i, dict) and i.get("name")}
 
 

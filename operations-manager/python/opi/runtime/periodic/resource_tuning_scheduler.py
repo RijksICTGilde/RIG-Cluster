@@ -44,7 +44,7 @@ def _seconds_until_next_run(hour: int, now: datetime) -> float:
 
 
 class ResourceTuningScheduler:
-    def __init__(self, cluster: str):
+    def __init__(self, cluster: str) -> None:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None

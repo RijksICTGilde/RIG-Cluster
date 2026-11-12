@@ -39,7 +39,7 @@ def extract_single_field(
     name: str,
     path: str,
     field_info: FieldInfo,
-    value: Any = None,
+    value: Any = None,  # noqa: ANN401  # a project-file value
     field_errors: list[str] | None = None,
 ) -> FormField:
     field_errors = field_errors or []

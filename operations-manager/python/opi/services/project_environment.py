@@ -47,7 +47,7 @@ ENVIRONMENT_LABELS: dict[Omgeving, str] = {
 _ORDER: tuple[Omgeving, ...] = tuple(Omgeving)
 
 
-def _parse(value: Any) -> Omgeving | None:
+def _parse(value: Any) -> Omgeving | None:  # noqa: ANN401  # a project-file value
     """The marking as it stands in the file, or None when it is not there.
 
     An unknown value never gets here: the schema refuses it.

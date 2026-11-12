@@ -18,7 +18,7 @@ class UserService:
     Includes email-based access control with an allowlist of permitted users.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the in-memory user store and email allowlist."""
         self._users: dict[str, dict[str, Any]] = {}
         self._allowed_emails: set[str] = set()

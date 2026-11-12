@@ -8,30 +8,30 @@ from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_safe
 class Converter(Protocol):
     """``to_form`` goes from storage to the form, ``from_form`` back from a submission to storage."""
 
-    async def to_form(self, value: Any) -> Any: ...
+    async def to_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
-    async def from_form(self, value: Any) -> Any: ...
+    async def from_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
 
 class IdentityConverter:
     """The default converter, for a field that needs no transformation."""
 
-    async def to_form(self, value: Any) -> Any:
+    async def to_form(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    async def from_form(self, value: Any) -> Any:
+    async def from_form(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
 
 class StringConverter:
     """``None`` becomes the empty string; ``from_form`` also strips the submitted value."""
 
-    async def to_form(self, value: Any) -> str:
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    async def from_form(self, value: Any) -> str:
+    async def from_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value).strip()
@@ -43,12 +43,12 @@ class IntegerConverter:
     def __init__(self, default: int = 0) -> None:
         self.default = default
 
-    async def to_form(self, value: Any) -> str:
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    async def from_form(self, value: Any) -> int:
+    async def from_form(self, value: Any) -> int:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return self.default
         try:
@@ -60,7 +60,7 @@ class IntegerConverter:
 class BooleanConverter:
     """A string counts as true when it reads ``true``, ``1``, ``yes`` or ``on``."""
 
-    async def to_form(self, value: Any) -> bool:
+    async def to_form(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if value is None:
             return False
         if isinstance(value, bool):
@@ -69,7 +69,7 @@ class BooleanConverter:
             return value.lower() in ("true", "1", "yes", "on")
         return bool(value)
 
-    async def from_form(self, value: Any) -> bool:
+    async def from_form(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if value is None:
             return False
         if isinstance(value, bool):
@@ -82,7 +82,7 @@ class BooleanConverter:
 class ListConverter:
     """A comma-separated string is split, anything else becomes a one-item list."""
 
-    async def to_form(self, value: Any) -> list[str]:
+    async def to_form(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return []
         if isinstance(value, list):
@@ -91,7 +91,7 @@ class ListConverter:
             return [v.strip() for v in value.split(",") if v.strip()]
         return [str(value)]
 
-    async def from_form(self, value: Any) -> list[str]:
+    async def from_form(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return []
         if isinstance(value, list):
@@ -104,7 +104,7 @@ class ListConverter:
 class IntegerListConverter:
     """Comma-separated on the form, ``list[int]`` in storage; an unparseable entry is skipped."""
 
-    def to_form(self, value: Any) -> str:
+    def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, list):
@@ -113,7 +113,7 @@ class IntegerListConverter:
             return value
         return str(value)
 
-    def from_form(self, value: Any) -> list[int]:
+    def from_form(self, value: Any) -> list[int]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         if isinstance(value, list):
@@ -129,7 +129,7 @@ class IntegerListConverter:
             result.extend(parsed)
         return result
 
-    def _try_parse_single_int(self, value: Any) -> list[int]:
+    def _try_parse_single_int(self, value: Any) -> list[int]:  # noqa: ANN401  # a project-file value
         """One item, or nothing at all when the value is not an integer."""
         if isinstance(value, str):
             value = value.strip()
@@ -144,14 +144,14 @@ class IntegerListConverter:
 class YAMLConverter:
     """YAML that does not parse comes back as the raw string, not as an error."""
 
-    async def to_form(self, value: Any) -> str:
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, str):
             return value
         return dump_yaml_to_string(value)
 
-    async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:
+    async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return {}
         if not isinstance(value, str):
@@ -166,7 +166,7 @@ class YAMLConverter:
 class KeyValueConverter:
     """Reads both ``KEY=VALUE`` and ``KEY: VALUE`` lines, and skips a line starting with ``#``."""
 
-    async def to_form(self, value: Any) -> str:
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, str):
@@ -176,7 +176,7 @@ class KeyValueConverter:
             return "\n".join(lines)
         return str(value)
 
-    async def from_form(self, value: Any) -> dict[str, str]:
+    async def from_form(self, value: Any) -> dict[str, str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -209,7 +209,7 @@ CONVERTER_REGISTRY: dict[str, type[Converter]] = {
 }
 
 
-def get_converter(name: str, **kwargs: Any) -> Converter:
+def get_converter(name: str, **kwargs: Any) -> Converter:  # noqa: ANN401  # a project-file value
     if name not in CONVERTER_REGISTRY:
         raise KeyError(f"Unknown converter: {name}")
     return CONVERTER_REGISTRY[name](**kwargs)

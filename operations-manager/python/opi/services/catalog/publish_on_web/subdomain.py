@@ -45,7 +45,7 @@ audit_logger = logging.getLogger("opi.audit.subdomain")
 # ---------------------------------------------------------------------------
 
 
-def _find_publish_on_web_definition(project_data: dict[str, Any]) -> Any:
+def _find_publish_on_web_definition(project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """Return the root ``services:`` entry that defines publish-on-web, or None."""
     from opi.services.services import service_entry_name
     from opi.services.services_enums import ServiceType
@@ -436,7 +436,7 @@ def is_subdomain_allowed_for_project(
         return True, None
     if status == "requested":
         return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is aangevraagd maar nog niet goedgekeurd.")
-    # status == "denied"
+    # The only status left is denied.
     return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is afgewezen.")
 
 

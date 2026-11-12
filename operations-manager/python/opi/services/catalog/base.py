@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
@@ -847,7 +848,7 @@ class Service(ABC):
         """
         return None
 
-    def summarize_data(self, data: Any, private_key: str) -> Any:
+    def summarize_data(self, data: Any, private_key: str) -> Any:  # noqa: ANN401  # the DEFINE payload of a service
         """What a read may show of this service's DEFINE-side payload at that layer.
 
         A definition is the thing being used, so it is the one place in a project file
@@ -1174,7 +1175,7 @@ class Service(ABC):
         """
         return []
 
-    def config_component_layout(self) -> list[Any]:
+    def config_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).
 
         Component-level services (storage, metrics-scraper, ...) don't get a standalone
@@ -1212,7 +1213,7 @@ class Service(ABC):
         """
         return []
 
-    def config_deployment_component_layout(self) -> list[Any]:
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service hooks into the per-deployment component form.
 
         The deployment-component counterpart of ``config_component_layout()``: fields a

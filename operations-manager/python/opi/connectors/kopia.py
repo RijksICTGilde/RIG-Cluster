@@ -223,7 +223,7 @@ class KopiaConnector:
         except FileNotFoundError:
             logger.warning("Kopia CLI not found in PATH")
             KopiaConnector.is_kopia_available = False
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             logger.error(f"Error testing Kopia CLI availability: {e}")
             KopiaConnector.is_kopia_available = False
 
@@ -335,7 +335,7 @@ class KopiaConnector:
                 config_file=config_file,
                 timeout=10,
             )
-        except Exception as e:
+        except (OSError, ValueError, KopiaConnectionError, KopiaExecutionError) as e:
             logger.debug(f"Failed to disconnect from repository (non-fatal): {e}")
 
     async def list_snapshots(
@@ -659,7 +659,7 @@ class KopiaConnector:
                 source_host=source_host,
             )
 
-        except Exception as e:
+        except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to parse snapshot item: {e}")
             return None
 

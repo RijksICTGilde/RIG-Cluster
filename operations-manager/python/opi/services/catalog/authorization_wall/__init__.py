@@ -8,7 +8,7 @@ to the manifests. Depends on keycloak (see ServiceDefinition.requires).
 from __future__ import annotations
 
 import secrets
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.authorization_wall.config_model import AuthorizationWallConfig
 from opi.services.catalog.base import (
@@ -22,6 +22,11 @@ from opi.services.catalog.base import (
 from opi.services.secrets import KeycloakSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 class AuthorizationWallService(Service):
@@ -82,14 +87,14 @@ class AuthorizationWallService(Service):
         # Derived from AuthorizationWallConfig (banner), not re-declared here.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.authorization_wall.editables import AUTH_WALL_BANNER_EDITABLE
 
         return [AUTH_WALL_BANNER_EDITABLE]
 
-    def component_form_notices(self):
+    def component_form_notices(self) -> list[EditableVisualizer]:
         """A signpost in the component form, not configuration.
 
         This service is the only one in the catalog that is switched on at ONE layer and
@@ -110,7 +115,7 @@ class AuthorizationWallService(Service):
 
         return [AUTH_WALL_COMPONENT_INFO]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         # Built once and cached so consumers that compare section identity (e.g.

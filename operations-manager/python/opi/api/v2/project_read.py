@@ -58,7 +58,7 @@ ATTACHMENTS_SERVICE = "attachments"
 _SERVICE_NAMES = {service_type.value for service_type in ServiceType}
 
 
-def redact_secrets(value: Any) -> Any:
+def redact_secrets(value: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Replace every stored secret in a config tree with ``***``.
 
     A service config is free-form (it is the service's own model), so this walks it
@@ -207,7 +207,7 @@ def project_defines_anything(project_data: dict[str, Any]) -> bool:
     return any(service_entry_data(entry) is not None for entry in project_data.get("services") or [])
 
 
-def _usage(target: ConfigLayer, entry: Any, private_key: str, **ids: str | None) -> ServiceUsage:
+def _usage(target: ConfigLayer, entry: Any, private_key: str, **ids: str | None) -> ServiceUsage:  # noqa: ANN401  # a project-file value
     """Build one usage record from a services-list entry.
 
     The ``data`` of a definition is dropped from ``config`` before anything else happens.
@@ -253,7 +253,7 @@ def collect_project_services(project_data: dict[str, Any], private_key: str) -> 
     """
     found: dict[str, list[ServiceUsage]] = {}
 
-    def add(services: Any, target: ConfigLayer, **ids: str | None) -> None:
+    def add(services: Any, target: ConfigLayer, **ids: str | None) -> None:  # noqa: ANN401  # a project-file value
         for entry in services or []:
             name = service_entry_name(entry)
             if name is None:

@@ -147,12 +147,12 @@ def action(which: Action, *, audit_fields: tuple[str, ...] = ()) -> Callable[[F]
     return mark
 
 
-def action_of(endpoint: Any) -> Action | None:
+def action_of(endpoint: Callable[..., object]) -> Action | None:
     """The action of a route endpoint, or None when it carries none."""
     return getattr(endpoint, ACTION_ATTR, None)
 
 
-def audit_fields_of(endpoint: Any) -> tuple[str, ...]:
+def audit_fields_of(endpoint: Callable[..., object]) -> tuple[str, ...]:
     """The fields this route names in the audit row, or an empty tuple."""
     return tuple(getattr(endpoint, AUDIT_FIELDS_ATTR, ()))
 
@@ -179,7 +179,7 @@ def deployment_from(resolve: Callable[..., str | None]) -> Callable[[F], F]:
     return mark
 
 
-def deployment_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
+def deployment_of(endpoint: Callable[..., object], route_kwargs: dict[str, Any]) -> str | None:
     """The deployment this route points at out of its own arguments, or None."""
     resolve = getattr(endpoint, DEPLOYMENT_ATTR, None)
     return resolve(**route_kwargs) if resolve is not None else None
@@ -206,7 +206,7 @@ def marking_if_absent(resolve: Callable[..., str]) -> Callable[[F], F]:
     return mark
 
 
-def marking_if_absent_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
+def marking_if_absent_of(endpoint: Callable[..., object], route_kwargs: dict[str, Any]) -> str | None:
     """The marking this route gives a deployment that does not exist, or None."""
     resolve = getattr(endpoint, ABSENT_MARKING_ATTR, None)
     return resolve(**route_kwargs) if resolve is not None else None
@@ -231,7 +231,7 @@ def weighed_action_from(resolve: Callable[..., Action | None]) -> Callable[[F], 
     return mark
 
 
-def weighed_action_of(endpoint: Any, route_kwargs: dict[str, Any]) -> Action | None:
+def weighed_action_of(endpoint: Callable[..., object], route_kwargs: dict[str, Any]) -> Action | None:
     """The action this request is weighed as instead of the declared one, or None."""
     resolve = getattr(endpoint, WEIGHED_ACTION_ATTR, None)
     return resolve(**route_kwargs) if resolve is not None else None
@@ -259,6 +259,6 @@ def targets_in_query(*names: str) -> Callable[[F], F]:
     return mark
 
 
-def query_targets_of(endpoint: Any) -> frozenset[str]:
+def query_targets_of(endpoint: Callable[..., object]) -> frozenset[str]:
     """The target names this route lets the query be read for, or an empty set."""
     return frozenset(getattr(endpoint, QUERY_TARGETS_ATTR, frozenset()))

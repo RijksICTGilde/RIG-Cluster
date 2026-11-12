@@ -98,7 +98,7 @@ def singular_config_model(config_model: type[BaseModel], names: frozenset[str]) 
     return built
 
 
-def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | None:
+def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | None:  # noqa: ANN401  # a project-file value
     """The first list from *names* in *config* with more than one entry, and how many.
 
     ``None`` when the facade is true: zero or one entry per list, or nothing of this service.
@@ -112,7 +112,7 @@ def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | No
     return None
 
 
-def to_singular(config: Any, names: frozenset[str]) -> Any:
+def to_singular(config: Any, names: frozenset[str]) -> Any:  # noqa: ANN401  # a project-file value
     """Stored form -> API form: the list becomes its only entry, or ``None`` when empty.
 
     Call this only once ``overflowing_list`` found nothing: with more than one entry this
@@ -128,7 +128,7 @@ def to_singular(config: Any, names: frozenset[str]) -> Any:
     return result
 
 
-def to_stored(config: Any, names: frozenset[str]) -> Any:
+def to_stored(config: Any, names: frozenset[str]) -> Any:  # noqa: ANN401  # a project-file value
     """API form -> stored form: the one entry becomes a list of one.
 
     A field the sender did not name is absent (``exclude_unset``) and stays absent: what they

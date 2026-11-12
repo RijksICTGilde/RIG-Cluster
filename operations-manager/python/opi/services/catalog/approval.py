@@ -135,15 +135,15 @@ class ApprovalSpec:
     requires_approval_for: Callable[[Any], bool] | None = None
     approved_values: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
-    def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """The approval status of ``value`` given the current project state."""
         return self.status_of(project_data, value)
 
-    def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:
+    def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:  # noqa: ANN401  # a project-file value
         """Whether ``value`` is approved -- the common yes/no check for gating."""
         return self.status_of(project_data, value) is ApprovalStatus.APPROVED
 
-    def requires_approval(self, config: Any) -> bool:
+    def requires_approval(self, config: Any) -> bool:  # noqa: ANN401  # a project-file value
         """Whether a service enrolling with ``config`` needs a request for this.
 
         Decides whether the service may enrol implicitly (``implicit_project_entry``). The
@@ -366,7 +366,7 @@ def service_use_approval(
     name = service_type.value
     state = _ApprovalState(name, "approval")
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """THE CHECK. ``value`` is not read: there is ONE approval per project."""
         return state.status(project_data)
 
@@ -448,7 +448,7 @@ VALUE_APPROVAL_SUFFIX = "-approval"
 LAST_APPROVED_KEY = "approved-value"
 
 
-def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) -> ApprovalStatus:
+def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
     """THE CHECK on a value: a verdict applies only to the value it was about."""
     block = state.read(data)
     if block is None:
@@ -463,7 +463,7 @@ def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) ->
 def _record_value(
     state: _ApprovalState,
     data: dict[str, Any],
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
     item: ApprovalItem,
     history_entry: dict[str, Any],
 ) -> None:
@@ -486,7 +486,7 @@ def _record_value(
         (state.read(data) or {}).pop(LAST_APPROVED_KEY, None)
 
 
-def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: Any) -> None:
+def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: Any) -> None:  # noqa: ANN401  # a project-file value
     """THE REQUEST on a value: setting the value IS the request."""
     if value is None:
         # A decision applies only to the state it was given for. If the block stayed when the
@@ -542,7 +542,7 @@ def _value_item(
     *,
     field: str,
     block: dict[str, Any],
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
     subject: str,
     name: str,
     extra: dict[str, Any] | None = None,
@@ -645,23 +645,23 @@ def config_value_approval(
 
     state = _ApprovalState(service_type.value, f"{field}{VALUE_APPROVAL_SUFFIX}")
 
-    def _requested(project_data: dict[str, Any]) -> Any:
+    def _requested(project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         """The value a decision is needed about, or None when nothing is requested."""
         if requested_value is not None:
             return requested_value(project_data) or None
         config = state.service_config(project_data)
         return config.get(field) if required_when is not None and required_when(config) else None
 
-    def _activity(value: Any) -> str:
+    def _activity(value: Any) -> str:  # noqa: ANN401  # a project-file value
         return activity(value) if callable(activity) else activity
 
     def _consequence(project_data: dict[str, Any], deployment: dict[str, Any]) -> str:
         return consequence(project_data, deployment) if callable(consequence) else consequence
 
-    def _last_approved(project_data: dict[str, Any]) -> Any:
+    def _last_approved(project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         return (state.read(project_data) or {}).get(LAST_APPROVED_KEY)
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         return _status_of_value(state, project_data, value)
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
@@ -845,19 +845,19 @@ def deployment_value_approval(
             if isinstance(deployment, dict) and deployment.get("name")
         ]
 
-    def _requested(project_data: dict[str, Any], deployment_name: str) -> Any:
+    def _requested(project_data: dict[str, Any], deployment_name: str) -> Any:  # noqa: ANN401  # a project-file value
         """The value a decision is needed about, or None when nothing is requested."""
         return requested_value(project_data, deployment_name) or None
 
-    def _activity(value: Any) -> str:
+    def _activity(value: Any) -> str:  # noqa: ANN401  # a project-file value
         return activity(value) if callable(activity) else activity
 
-    def _subject(project_data: dict[str, Any], deployment_name: str, value: Any) -> str:
+    def _subject(project_data: dict[str, Any], deployment_name: str, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if subject is not None:
             return subject(project_data, deployment_name, str(value))
         return f"{_activity(value)} voor deployment {deployment_name}"
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """THE CHECK, with the deployment inside ``value``: generic code does not know the layer.
 
         ``value`` is the pair (deployment, value) here. The generic layer treats it as an
@@ -1059,15 +1059,15 @@ def config_item_value_approval(
     def _state(item_name: str) -> _ItemApprovalState:
         return _ItemApprovalState(service, map_key, item_name)
 
-    def _requested(project_data: dict[str, Any], item_name: str) -> Any:
+    def _requested(project_data: dict[str, Any], item_name: str) -> Any:  # noqa: ANN401  # a project-file value
         return requested_value(project_data, item_name) or None
 
-    def _subject(project_data: dict[str, Any], item_name: str, value: Any) -> str:
+    def _subject(project_data: dict[str, Any], item_name: str, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if subject is not None:
             return subject(project_data, item_name, str(value))
         return activity(item_name, value)
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """The CHECK, with the item in ``value``: the pair (item, value), as per deployment."""
         item_name, item_value = value
         return _status_of_value(_state(item_name), project_data, item_value)

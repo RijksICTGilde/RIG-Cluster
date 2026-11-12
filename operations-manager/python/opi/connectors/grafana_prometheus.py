@@ -147,9 +147,7 @@ class GrafanaPrometheusConnector:
                 self._mark_unavailable("no prometheus or mimir datasource in Grafana")
                 return False
             await self._execute_query("up", instant=True)
-        except Exception as e:
-            # Broad on purpose, against the house rule: anything escaping here kills the
-            # recovery task, and a dead recovery task is the failure this replaces.
+        except Exception as e:  # noqa: BLE001  # anything escaping here kills the recovery task
             logger.debug("Grafana probe failed: %s", e)
             return False
         return True

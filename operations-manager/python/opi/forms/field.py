@@ -7,15 +7,15 @@ from typing import Any, Protocol
 class Converter(Protocol):
     """Protocol for value converters (e.g., AGE encryption)."""
 
-    async def to_form(self, value: Any) -> Any: ...
+    async def to_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
-    async def from_form(self, value: Any) -> Any: ...
+    async def from_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
 
 class Validator(Protocol):
     """Protocol for custom validators beyond Pydantic."""
 
-    async def validate(self, value: Any, context: dict[str, Any]) -> list[str]:
+    async def validate(self, value: Any, context: dict[str, Any]) -> list[str]:  # noqa: ANN401  # a project-file value
         """The error messages for *value*, empty when it is valid."""
         ...
 

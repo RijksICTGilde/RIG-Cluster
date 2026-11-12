@@ -970,7 +970,7 @@ class DatabaseManager:
                     try:
                         await self.postgres_connector.delete_database(db_database)
                         logger.info(f"Cleaned up database {db_database} after failed clone")
-                    except Exception as cleanup_err:
+                    except Exception as cleanup_err:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                         logger.error(f"Failed to clean up database {db_database} after failed clone: {cleanup_err}")
                 else:
                     await self._drop_schemas_created_since(db_database, schemas_before, clone_schemas)
@@ -1809,7 +1809,7 @@ class DatabaseManager:
                         "table_count": validation["table_count"],
                     }
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Source validation failed: {e!s}")
                 result["operations"].append({"type": "source_validation", "status": "failed", "error": str(e)})
                 return result
@@ -1827,7 +1827,7 @@ class DatabaseManager:
                     raise Exception(f"Deployment '{deployment_name}' does not use PostgreSQL service")
 
                 result["operations"].append({"type": "target_validation", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Target validation failed: {e!s}")
                 result["operations"].append({"type": "target_validation", "status": "failed", "error": str(e)})
                 return result
@@ -1870,7 +1870,7 @@ class DatabaseManager:
                 result["target"] = {"database": target_database, "schema": target_schema, "username": target_username}
                 result["resolved_password"] = target_password
                 result["operations"].append({"type": "credentials_resolved", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Credential resolution failed: {e!s}")
                 result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
                 return result
@@ -1969,7 +1969,7 @@ class DatabaseManager:
                         # the refusal in postgres.py:1809 stands.
                         schemas_present = await self._schema_names(target_database)
                         clone_already_finished = target_schema in schemas_present
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Database preparation failed: {e!s}")
                 result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
                 return result
@@ -2002,7 +2002,7 @@ class DatabaseManager:
                         raise Exception(f"Clone failed: {clone_result.get('message')}")
 
                     result["operations"].append({"type": "database_cloned", "status": "success"})
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     await self._drop_schemas_created_since(
                         target_database, schemas_before, {target_schema, source_schema}
                     )
@@ -2048,7 +2048,7 @@ class DatabaseManager:
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "database", database_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
                 result["operations"].append(
                     {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
@@ -2074,7 +2074,7 @@ class DatabaseManager:
                         }
                     )
                     logger.info(f"Successfully synced updated secrets to Git for {deployment_name}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     logger.warning(f"Failed to sync updated secrets to Git: {e}")
                     result["operations"].append(
                         {

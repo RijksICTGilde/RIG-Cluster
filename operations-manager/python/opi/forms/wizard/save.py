@@ -43,7 +43,7 @@ from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 
 if TYPE_CHECKING:
-    from opi.forms.visualizers.flows import FormFlow
+    from opi.forms.visualizers.flows import FlowTarget, FormFlow
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.wizard.state import WizardState
 
@@ -57,7 +57,7 @@ IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
 def guard_target_still_points_at_the_same_item(
     existing_data: dict[str, Any],
     state: WizardState,
-    target: Any | None,
+    target: FlowTarget | None,
 ) -> None:
     """Refuse the save when the flow's INDEX now names a different item.
 
@@ -194,7 +194,7 @@ def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_nam
             new_dep[field_name] = fallback
 
 
-def _only_project_choice(project_data: dict[str, Any], field_name: str) -> Any | None:
+def _only_project_choice(project_data: dict[str, Any], field_name: str) -> Any | None:  # noqa: ANN401  # a project-file value
     """The project's single cluster or repository, or None when it is not a single one.
 
     ``clusters`` is a list of names; ``repositories`` a list of blocks with a ``name``.
@@ -243,7 +243,7 @@ def _hook_editables(all_editables: list[Any]) -> list[EditableVisualizer]:
     ]
 
 
-def _component_resources(existing_data: dict[str, Any], target: Any | None) -> dict[str, str] | None:
+def _component_resources(existing_data: dict[str, Any], target: FlowTarget | None) -> dict[str, str] | None:
     """The stored resource values of the component this flow edits, or None.
 
     None means "this flow is not a component edit", a new component included: it has no
@@ -259,7 +259,7 @@ def _component_resources(existing_data: dict[str, Any], target: Any | None) -> d
 
 def _record_user_resource_intent(
     existing_data: dict[str, Any],
-    target: Any | None,
+    target: FlowTarget | None,
     resources_before: dict[str, str] | None,
 ) -> None:
     """Put a resource change from the component modal through the shared user-intent path.
