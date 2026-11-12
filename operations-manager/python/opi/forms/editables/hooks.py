@@ -104,9 +104,8 @@ class ResolveAttachmentsHook:
     The modal-edit flow already has the project AGE key in ``yaml_data`` at PRE_SAVE,
     so staged uploads (passed via ``context['staged_attachments']``, a map id ->
     {filename, content="staging:<token>"}) are written into the project-level
-    attachments service ``data`` list and encrypted here. The create flow does the
-    same via AttachmentStagingResolveGenerator instead, because its key is generated
-    only after PRE_SAVE.
+    attachments service ``data`` list and encrypted here. The create flow reaches the
+    same AttachmentStagingResolveGenerator through its ``_generated`` path instead.
     """
 
     order: int = 1

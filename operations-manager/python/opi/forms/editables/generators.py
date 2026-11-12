@@ -61,9 +61,10 @@ class AttachmentStagingResolveGenerator:
 
     During the create-wizard a file is parked in the staging store and the catalog entry
     carries ``content: "staging:<token>"``. At submit time this generator reads each staged
-    file, encrypts it with the project public key into an AGE block, replaces the placeholder
-    and removes the staged file. It sits on a ``_generated`` path, so its return value is
-    discarded during cleanup.
+    file (which the staging store holds encrypted under the same key pair), re-encrypts it
+    with the project public key into an AGE block, replaces the placeholder and removes the
+    staged file. It sits on a ``_generated`` path, so its return value is discarded during
+    cleanup.
     """
 
     _PREFIX = "staging:"
@@ -72,9 +73,10 @@ class AttachmentStagingResolveGenerator:
         from ruamel.yaml.scalarstring import LiteralScalarString
 
         from opi.services import upload_staging
-        from opi.utils.age import encrypt_file_to_age_block_sync
+        from opi.utils.age import encrypt_file_to_age_block_sync, get_decoded_project_private_key_sync
 
         public_key = get_project_public_key(yaml_data)
+        private_key: str | None = None
 
         for service in yaml_data.get("services", []):
             if not isinstance(service, dict) or not isinstance(service.get("attachments"), dict):
@@ -86,16 +88,18 @@ class AttachmentStagingResolveGenerator:
                 if not isinstance(content, str) or not content.startswith(self._PREFIX):
                     continue
                 token = content[len(self._PREFIX) :]
-                staged = upload_staging.read_staged(token)
-                if staged is None:
-                    logger.warning("Staged attachment '%s' not found; skipping", entry.get("id"))
-                    continue
                 if not public_key:
                     # Fail closed: returning here commits the literal 'staging:<token>'
                     # placeholder, which then fails AGE decryption at deploy time.
                     raise ValueError(
                         f"Kan bijlage '{entry.get('id')}' niet versleutelen: project heeft geen AGE-publieke sleutel."
                     )
+                if private_key is None:
+                    private_key = get_decoded_project_private_key_sync(yaml_data)
+                staged = upload_staging.read_staged(token, private_key)
+                if staged is None:
+                    logger.warning("Staged attachment '%s' not found; skipping", entry.get("id"))
+                    continue
                 raw_bytes, _ = staged
                 entry["content"] = LiteralScalarString(encrypt_file_to_age_block_sync(raw_bytes, public_key))
                 upload_staging.delete_staged(token)

@@ -112,12 +112,12 @@ services:
               ...
 ```
 
-`totp_secret` is AGE-encrypted with the project public key (same as `password`)
-and accepts a `plain:` prefix for manual values. It is a typed optional field on
-the `KeycloakRealm` config model, so pre-OTP realms (no `totp_secret`) keep
-validating. `password` itself no longer takes `plain:`: since RC-463 it carries
-`AGE_ENCRYPTED_PATTERN`, the same shape rule as every other secret field in a
-service config.
+`totp_secret` is AGE-encrypted with the project public key (same as `password`).
+It is a typed optional field on the `KeycloakRealm` config model, so pre-OTP realms
+(no `totp_secret`) keep validating. Since RC-486 it carries `AGE_ENCRYPTED_PATTERN`
+just like `password` does, so a `plain:` or bare seed is refused: the seed yields
+valid codes for as long as the credential exists, which makes it as sensitive as the
+password next to it.
 
 ## Scope and retrofit
 

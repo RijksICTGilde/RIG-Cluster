@@ -128,7 +128,7 @@
     },
     "age-encrypted": {
       "type": "string",
-      "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:)"
+      "pattern": "^\\s*(-----BEGIN AGE ENCRYPTED FILE-----\\s[A-Za-z0-9+/=\\s]+-----END AGE ENCRYPTED FILE-----|base64\\+age:[A-Za-z0-9+/=]+)\\s*$"
     },
     "user": {
       "type": "object",

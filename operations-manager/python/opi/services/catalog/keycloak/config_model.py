@@ -152,9 +152,10 @@ class KeycloakRealm(BaseModel):
     )
     totp_secret: str | None = Field(
         default=None,
+        pattern=AGE_ENCRYPTED_PATTERN,
         description=(
-            "Shared TOTP seed for the realm-admin account, stored like the password. Only present when the "
-            "cluster provisions admin OTP."
+            "Shared TOTP seed for the realm-admin account, stored like the password: AGE-encrypted. "
+            "Only present when the cluster provisions admin OTP."
         ),
     )
 

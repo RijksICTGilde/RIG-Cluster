@@ -58,7 +58,7 @@
         },
         "password": {
           "description": "That account's password, AGE-encrypted.",
-          "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:)",
+          "pattern": "^\\s*(-----BEGIN AGE ENCRYPTED FILE-----\\s[A-Za-z0-9+/=\\s]+-----END AGE ENCRYPTED FILE-----|base64\\+age:[A-Za-z0-9+/=]+)\\s*$",
           "title": "Password",
           "type": "string"
         },
@@ -70,6 +70,7 @@
         "totp_secret": {
           "anyOf": [
             {
+              "pattern": "^\\s*(-----BEGIN AGE ENCRYPTED FILE-----\\s[A-Za-z0-9+/=\\s]+-----END AGE ENCRYPTED FILE-----|base64\\+age:[A-Za-z0-9+/=]+)\\s*$",
               "type": "string"
             },
             {
@@ -77,7 +78,7 @@
             }
           ],
           "default": null,
-          "description": "Shared TOTP seed for the realm-admin account, stored like the password. Only present when the cluster provisions admin OTP.",
+          "description": "Shared TOTP seed for the realm-admin account, stored like the password: AGE-encrypted. Only present when the cluster provisions admin OTP.",
           "title": "Totp Secret"
         },
         "username": {

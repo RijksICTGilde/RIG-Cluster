@@ -216,8 +216,8 @@ def _op_2_11_versleuteld() -> dict:
         "users": [{"email": "beheerder@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "config": {
             "age-public-key": "age1x",
-            "age-private-key": "-----BEGIN AGE ENCRYPTED FILE-----\ningepakte-sleutel\n-----END AGE ENCRYPTED FILE-----",
-            "api-key": "-----BEGIN AGE ENCRYPTED FILE-----\nversleutelde-sleutel\n-----END AGE ENCRYPTED FILE-----",
+            "age-private-key": "-----BEGIN AGE ENCRYPTED FILE-----\naW5nZXBha3RlLXNsZXV0ZWw=\n-----END AGE ENCRYPTED FILE-----",
+            "api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndmVyc2xldXRlbGRlLXNsZXV0ZWw=\n-----END AGE ENCRYPTED FILE-----",
         },
     }
 

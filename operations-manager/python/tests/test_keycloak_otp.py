@@ -7,26 +7,42 @@ the KEYCLOAK_ENFORCE_ADMIN_OTP gate for the retrofit path.
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from opi.connectors.keycloak import KeycloakConnector
 from opi.core.config import settings
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.catalog.keycloak.config_model import KeycloakRealm
+from pydantic import ValidationError
 
 #: The realm-admin password only takes an encrypted form (schema version 2.18); the value
-#: itself is never read here.
+#: itself is never read here. The OTP seed takes the same form.
 ENCRYPTED_PASSWORD = "base64+age:Y2lwaGVydGV4dA=="
+ENCRYPTED_SEED = "base64+age:c2VlZA=="
 
 
 def test_keycloak_realm_accepts_totp_secret() -> None:
-    """The realm-admin connection model carries the shared OTP seed as a string."""
+    """The realm-admin connection model carries the shared OTP seed, encrypted."""
     realm = KeycloakRealm(
         host="https://kc.example",
         realm="proj-local",
         username="proj_local_admin",
         password=ENCRYPTED_PASSWORD,
-        totp_secret="plain:seed",
+        totp_secret=ENCRYPTED_SEED,
     )
-    assert realm.totp_secret == "plain:seed"
+    assert realm.totp_secret == ENCRYPTED_SEED
+
+
+def test_keycloak_realm_refuses_an_unencrypted_totp_secret() -> None:
+    """The seed yields valid codes forever, so it carries the same shape rule as the password."""
+    for value in ("plain:seed", "JBSWY3DPEHPK3PXP"):
+        with pytest.raises(ValidationError):
+            KeycloakRealm(
+                host="https://kc.example",
+                realm="proj-local",
+                username="proj_local_admin",
+                password=ENCRYPTED_PASSWORD,
+                totp_secret=value,
+            )
 
 
 def test_keycloak_realm_totp_secret_defaults_none() -> None:

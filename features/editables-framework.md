@@ -292,6 +292,12 @@ Het AGE-sleutelpaar van een nieuw project kwam hier ook uit, bij de eindinzendin
 RC-463 maakt `build_new_project_base_data()` het bij de START van de wizard: anders stond
 elk geheim dat de gebruiker eerder intypte als platte tekst in het wizardstaatbestand.
 
+Dezelfde sleutel dekt sinds RC-486 ook de stagingopslag (`opi/services/upload_staging.py`).
+Een geuploade bijlage wordt bij `stage_file` met de publieke sleutel van die sessie
+versleuteld en bij `read_staged` weer geopend, zodat er tussen upload en inzending geen
+platte bytes op schijf staan. De generator hierboven ontsleutelt dus met de projectsleutel
+voordat hij het AGE-blok voor de catalogus maakt.
+
 ### Condition — conditioneel veldgedrag
 
 Bepaalt wanneer een veld zich "terugtrekt" ten gunste van een ander veld (deferred fields):

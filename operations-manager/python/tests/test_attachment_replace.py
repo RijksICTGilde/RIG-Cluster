@@ -25,10 +25,11 @@ from typing import Any
 
 import pytest
 from fastapi import UploadFile
+from opi.core.config import settings
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.secrets import reachable_leaf_keys, redact_unreachable_secrets
-from opi.forms.wizard.session import save_modal_state_by_token
+from opi.forms.wizard.session import load_modal_state_for_user, save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
 from opi.services import upload_staging
 from opi.services.project_file_handler import (
@@ -36,7 +37,7 @@ from opi.services.project_file_handler import (
     extract_component_attachment_uses,
     merge_staged_attachments,
 )
-from opi.utils.age import decrypt_age_block_to_bytes_sync
+from opi.utils.age import decrypt_age_block_to_bytes_sync, wrap_project_key_sync
 from opi.web.router_wizard import _split_data_across_sections
 from opi.web.router_wizard_attachments import (
     REPLACE_TARGET_KEY,
@@ -115,15 +116,25 @@ _age_available = pytest.mark.skipif(
 
 
 @pytest.fixture
-def age_keypair() -> tuple[str, str]:
+def age_keypair(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    """A project key pair, and the platform settings that can unwrap it.
+
+    The resolve generator reads the project PRIVATE key now (the staging store holds the
+    upload encrypted), and that key is stored wrapped, so a project built on this pair also
+    needs a platform key that opens the wrapping.
+    """
     result = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
     lines = result.stdout.splitlines() + result.stderr.splitlines()
     private_key = next(line for line in lines if line.startswith("AGE-SECRET-KEY"))
     public_key = next(line.split(": ", 1)[1].strip() for line in lines if "public key:" in line.lower())
+    monkeypatch.setattr(settings, "SOPS_AGE_PRIVATE_KEY", private_key)
+    monkeypatch.setattr(settings, "SOPS_AGE_PUBLIC_KEY", public_key)
+    monkeypatch.setattr(settings, "PROJECT_KEK_PUBLIC_KEY", "")
+    monkeypatch.setattr(settings, "PROJECT_KEK_PRIVATE_KEY", "")
     return public_key, private_key
 
 
-def _project(public_key: str) -> dict[str, Any]:
+def _project(public_key: str, private_key: str) -> dict[str, Any]:
     """Een project met een gekoppelde bijlage EN een realm-wachtwoord.
 
     De twee horen in hetzelfde bestand: de bijlage moet de sessieredactie overleven, en het
@@ -157,6 +168,7 @@ def _project(public_key: str) -> dict[str, Any]:
         ],
         "config": {
             "age-public-key": public_key,
+            "age-private-key": wrap_project_key_sync(private_key),
             "keycloak": [
                 {
                     "host": "https://keycloak.example.invalid",
@@ -214,9 +226,9 @@ async def test_vervangen_laat_de_koppelingen_staan(age_keypair: tuple[str, str])
     dezelfde id is een project dat niemand meer kan lezen.
     """
     public_key, private_key = age_keypair
-    project_data = _project(public_key)
+    project_data = _project(public_key, private_key)
     nieuwe_inhoud = b"-----BEGIN CERTIFICATE-----\nNIEUW\n-----END CERTIFICATE-----\n"
-    token = upload_staging.stage_file(nieuwe_inhoud, "nieuw.pem")
+    token = upload_staging.stage_file(nieuwe_inhoud, "nieuw.pem", public_key)
 
     saved = await _save_with_replacement(
         project_data,
@@ -240,11 +252,11 @@ async def test_vervangen_laat_de_koppelingen_staan(age_keypair: tuple[str, str])
 @pytest.mark.asyncio
 async def test_vervangen_levert_geen_tweede_catalogusregel_op(age_keypair: tuple[str, str]) -> None:
     """Niet via de samenvatting maar op de LIJST zelf: een dubbele id is geen catalogus."""
-    public_key, _ = age_keypair
-    token = upload_staging.stage_file(b"nieuw", "nieuw.pem")
+    public_key, private_key = age_keypair
+    token = upload_staging.stage_file(b"nieuw", "nieuw.pem", public_key)
 
     saved = await _save_with_replacement(
-        _project(public_key),
+        _project(public_key, private_key),
         {"server-cert": {"filename": "nieuw.pem", "content": f"staging:{token}", "replace": True}},
     )
 
@@ -281,11 +293,17 @@ def _request() -> Request:
     )
 
 
-def _session_state(replace_target: str | None, catalog_ids: tuple[str, ...] = ("server-cert",)) -> WizardState:
+def _session_state(
+    replace_target: str | None,
+    catalog_ids: tuple[str, ...] = ("server-cert",),
+    public_key: str | None = None,
+) -> WizardState:
     state = WizardState(flow_id=FLOW_ID, current_step="attachments", project_name=PROJECT_NAME, owner_email=OWNER_EMAIL)
     state.base_data = {
         "services": [{"attachments": {"data": [{"id": att_id, "filename": f"{att_id}.pem"} for att_id in catalog_ids]}}]
     }
+    if public_key:
+        state.base_data["config"] = {"age-public-key": public_key}
     if replace_target:
         state.base_data[REPLACE_TARGET_KEY] = replace_target
     save_modal_state_by_token(TOKEN, state)
@@ -346,6 +364,42 @@ async def test_een_bestaande_id_bij_toevoegen_wordt_nog_steeds_geweigerd() -> No
 
     assert "nog niet opgeslagen" not in body, "de upload is toch gestaged"
     assert "bestaat al" in body
+
+
+@_age_available
+@pytest.mark.asyncio
+async def test_a_successful_upload_lands_encrypted_on_disk(age_keypair: tuple[str, str]) -> None:
+    """The key the route encrypts with comes from the session, and nothing stays plain.
+
+    Every other route test here stops at a refusal, so without this one a route that no
+    longer finds that key would stay green while every upload in production breaks.
+    """
+    public_key, private_key = age_keypair
+    _session_state(None, catalog_ids=(), public_key=public_key)
+
+    await _stage("nieuw-cert", mode="")
+
+    state = load_modal_state_for_user(_request(), TOKEN)
+    assert state is not None
+    token = state.staged_attachments["nieuw-cert"]["content"].removeprefix("staging:")
+    data_path, _ = upload_staging._paths(token)
+    with open(data_path, "rb") as handle:
+        assert handle.read().startswith(b"-----BEGIN AGE ENCRYPTED FILE-----")
+    assert upload_staging.read_staged(token, private_key) == (b"inhoud", "nieuw.pem")
+    upload_staging.delete_staged(token)
+
+
+@pytest.mark.asyncio
+async def test_a_session_without_a_public_key_refuses_the_upload_in_dutch() -> None:
+    """A session without a public key must refuse the upload in Dutch, not internal errors."""
+    _session_state(None, catalog_ids=())
+
+    body = await _stage("nieuw-cert", mode="")
+
+    assert "geen sleutel" in body
+    state = load_modal_state_for_user(_request(), TOKEN)
+    assert state is not None
+    assert "nieuw-cert" not in state.staged_attachments
 
 
 @pytest.mark.asyncio

@@ -192,8 +192,18 @@ BASE64_AGE_PREFIX = "base64+age:"
 
 #: The two stored forms as one regex, for a pydantic field or a JSON schema. Also what
 #: ``find_plaintext_service_config_violations`` recognises a secret field BY, so a field that
-#: must hold a secret carries this pattern and nothing looser.
-AGE_ENCRYPTED_PATTERN = rf"({AGE_BLOCK_BEGIN}|^{re.escape(BASE64_AGE_PREFIX)})"
+#: must hold a secret carries this pattern and nothing looser. Anchored over the whole value,
+#: with whitespace around it allowed because every reader strips it. Inside the block only
+#: base64 and whitespace, so a second END marker or plaintext between the markers is refused.
+#: The separator after BEGIN is one ``\s`` and not ``\s+``: the class behind it already covers
+#: whitespace, so ``+`` only adds backtracking (quadratic on Python's ``re``, which the JSON
+#: schema uses) without accepting a single value more.
+#: The BEGIN/END markers stay unescaped: ``age_pattern_violations`` recognises an AGE field by
+#: finding one in the pattern.
+AGE_ENCRYPTED_PATTERN = (
+    rf"^\s*({AGE_BLOCK_BEGIN}\s[A-Za-z0-9+/=\s]+{AGE_BLOCK_END}"
+    rf"|{re.escape(BASE64_AGE_PREFIX)}[A-Za-z0-9+/=]+)\s*$"
+)
 
 #: Prefix that marks a value as deliberately NOT encrypted. A project file may no longer
 #: carry one (schema version 2.18); a setting still may, because the env secret is a SOPS file.

@@ -50,6 +50,7 @@ from opi.services.project_file_handler import (
     extract_attachment_catalog,
     find_attachment_data_list,
 )
+from opi.utils.age import get_project_public_key
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 
 logger = logging.getLogger(__name__)
@@ -175,6 +176,11 @@ def _session_services(state: Any) -> list:
     return state.get_merged_data().get("services") or []
 
 
+def _session_public_key(state: Any) -> str | None:
+    """The AGE public key of the project this session edits, or of the one it is creating."""
+    return get_project_public_key(state.get_merged_data())
+
+
 def _catalog_ids(state: Any) -> list[str]:
     """Identifiers already present in the project's attachments catalog (this session)."""
     return list(extract_attachment_catalog(state.get_merged_data()).keys()) if state else []
@@ -241,8 +247,20 @@ async def stage_attachment(
         raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
     if raw is None:
         return _attachments_list_response(request, state, wizard_token, error=too_large_detail(MAX_ATTACHMENT_BYTES))
+    # Staged encrypted to the session's own key pair, which the wizard owns from its first
+    # step. Refused in words rather than left to stage_file: its ValueError is an internal
+    # English string, and this one renders in the banner the user reads.
+    public_key = _session_public_key(state)
+    if not public_key:
+        logger.error(f"Wizard flow '{flow_id}' carries no AGE public key; refusing to stage an upload")
+        return _attachments_list_response(
+            request,
+            state,
+            wizard_token,
+            error="Deze wizardsessie heeft geen sleutel, dus de bijlage kan niet veilig worden opgeslagen. Begin de wizard opnieuw.",
+        )
     try:
-        token = upload_staging.stage_file(raw, file.filename or attachment_id)
+        token = upload_staging.stage_file(raw, file.filename or attachment_id, public_key)
     except ValueError as exc:
         return _attachments_list_response(request, state, wizard_token, error=str(exc))
 
