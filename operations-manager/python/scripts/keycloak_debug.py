@@ -3,22 +3,22 @@
 Keycloak debugging script for investigating realm/client configurations.
 
 Usage:
-    python keycloak_debug.py --url https://keycloak.kind --user admin --password changeMe123!
+    uv run python scripts/keycloak_debug.py --url https://keycloak.kind --user admin --password changeMe123!
 
     # List all realms
-    python keycloak_debug.py ... list-realms
+    uv run python scripts/keycloak_debug.py ... list-realms
 
     # Get realm details including themes
-    python keycloak_debug.py ... get-realm mijn-bureau-docs-local
+    uv run python scripts/keycloak_debug.py ... get-realm mijn-bureau-docs-local
 
     # List clients in a realm
-    python keycloak_debug.py ... list-clients mijn-bureau-docs-local
+    uv run python scripts/keycloak_debug.py ... list-clients mijn-bureau-docs-local
 
     # Get client details
-    python keycloak_debug.py ... get-client mijn-bureau-docs-local operations-manager-invites
+    uv run python scripts/keycloak_debug.py ... get-client mijn-bureau-docs-local operations-manager-invites
 
     # Get all theme settings for a realm
-    python keycloak_debug.py ... get-themes mijn-bureau-docs-local
+    uv run python scripts/keycloak_debug.py ... get-themes mijn-bureau-docs-local
 """
 
 import argparse

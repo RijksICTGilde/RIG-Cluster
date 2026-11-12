@@ -7,8 +7,10 @@ The Operations Manager supports hierarchical configuration loading from multiple
 Configuration is loaded in the following order (later sources override earlier ones):
 
 1. **Base `.env` file** - Default development configuration
-2. **Local `.env.local` file** - Local development overrides (optional)
+2. **`.env.{ENVIRONMENT}` files** - One per name in `ENVIRONMENT`, in that order (optional)
 3. **ConfigMap mounted `.env` file** - Container/Kubernetes production overrides (optional)
+
+`ENVIRONMENT` is read from the process environment only, never from an `.env` file; OPI logs a warning when a file sets it. It defaults to `production` and takes a comma-separated list: `ENVIRONMENT=local` loads `.env` and `.env.local`, `ENVIRONMENT=production,kubernetes` loads `.env`, `.env.production` and `.env.kubernetes`.
 
 ## Environment Files
 
@@ -16,14 +18,13 @@ Configuration is loaded in the following order (later sources override earlier o
 The base `.env` file contains default configuration values for development:
 
 ```bash
-ENVIRONMENT=development
 DEBUG=true
 GIT_PROJECTS_SERVER_URL=git://localhost:9090/
 # ... other development defaults
 ```
 
 ### 2. Local Development Overrides (`.env.local`)
-Create a `.env.local` file to override settings for your local development environment:
+With `ENVIRONMENT=local`, a `.env.local` file overrides settings for your local development environment:
 
 ```bash
 # Local development overrides
@@ -45,16 +46,14 @@ metadata:
   namespace: rig-system
 data:
   .env: |
-    ENVIRONMENT=production
     DEBUG=false
     GIT_PROJECTS_SERVER_URL=https://git.example.com/repos/
     OIDC_CLIENT_ID=operations-manager-prod
-    API_TOKEN=production-secret-token
 ```
 
 ## ConfigMap Mount Paths
 
-The application automatically checks for ConfigMap mounted `.env` files at these paths:
+The application uses the first of these paths that exists:
 
 1. `/etc/config/.env` (recommended)
 2. `/app/config/.env`
@@ -97,15 +96,12 @@ spec:
 kubectl create configmap operations-manager-config \
   --from-file=.env=config/production.env \
   -n rig-system
-
-# Or apply from YAML
-kubectl apply -f examples/configmap-config.yaml
 ```
 
 ## Configuration Variables
 
 ### Core Settings
-- `ENVIRONMENT`: Environment name (development, staging, production)
+- `ENVIRONMENT`: Which `.env.{name}` files to load, comma-separated; process environment only, default `production`
 - `DEBUG`: Enable debug logging (true/false)
 - `API_TOKEN`: API authentication token
 
@@ -134,14 +130,10 @@ kubectl apply -f examples/configmap-config.yaml
 
 ## Configuration Debugging
 
-The application logs detailed information about configuration loading:
+The application logs which files it loaded, in order:
 
 ```
-=== Configuration Loading Debug ===
-Loading configuration from 3 files:
-  1. .env
-  2. .env.local
-  3. /etc/config/.env
+Configuration loading order: ['.env', '.env.local', '/etc/config/.env']
 ```
 
 This helps verify which configuration files are being loaded and in what order.
@@ -157,14 +149,11 @@ This helps verify which configuration files are being loaded and in what order.
 ## Example Configuration Flow
 
 ```
-Development:
+Development (ENVIRONMENT=local):
 .env (base) → .env.local (dev overrides)
 
-Production:
-.env (base) → /etc/config/.env (ConfigMap overrides)
-
-Staging:
-.env (base) → /etc/config/.env (ConfigMap overrides)
+Production and staging:
+.env (base) → .env.production (if present) → /etc/config/.env (ConfigMap overrides)
 ```
 
 This ensures consistent base configuration while allowing environment-specific customization.

@@ -9,8 +9,6 @@
 # The task only removes. Adding an entry is a hand edit, and it has to be defended in the PR.
 
 [lint.per-file-ignores]
-"examples/empty_repo_demo.py" = ["ANN201", "BLE001"]
-"keycloak_debug.py" = ["ANN201", "ANN401", "BLE001"]
 "opi/api/backup_router.py" = ["C901"]
 "opi/api/image_router.py" = ["C901", "PLR0912"]
 "opi/api/invite_routes.py" = ["C901", "PLR0912", "PLR0915"]
@@ -172,6 +170,7 @@
 "scripts/compare_deployments_diff.py" = ["C901"]
 "scripts/diagnose_oom.py" = ["C901", "PLR0912", "PLR0913", "PLR0915"]
 "scripts/grafana_loki_logs.py" = ["C901", "PLR0913"]
+"scripts/keycloak_debug.py" = ["ANN201", "ANN401", "BLE001"]
 "scripts/keycloak_flow_tool.py" = ["PLR0913"]
 "scripts/keycloak_thema_shots.py" = ["BLE001", "PLR0915"]
 "scripts/lotc_shots.py" = ["BLE001"]
