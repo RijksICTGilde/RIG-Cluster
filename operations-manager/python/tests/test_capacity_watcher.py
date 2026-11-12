@@ -67,11 +67,21 @@ async def test_notifies_once_per_level_and_rearms(monkeypatch: pytest.MonkeyPatc
         await watcher.tick()
 
     assert [c.args[1] for c in send.await_args_list] == ["default", "high", "default"]
-    assert "cpu-limits: 290.0 van 320" in send.await_args_list[0].args[0]
+    assert "cpu-limits: van 290.0 naar 290.0, maximaal 320, 91% in gebruik" in send.await_args_list[0].args[0]
 
 
-def test_memory_is_shown_in_gib() -> None:
-    assert capacity_watcher._format(_q("memory-limits", 200 * GIB, 240 * GIB)) == "200 van 240 GiB"
+def test_format_shows_yesterday_today_and_the_limit() -> None:
+    assert capacity_watcher._format(_q("cpu-limits", 180, 500, ago=170)) == "van 170.0 naar 180.0, maximaal 500"
+    assert (
+        capacity_watcher._format(_q("memory-limits", 200 * GIB, 240 * GIB, ago=150 * GIB))
+        == "van 150 naar 200 GiB, maximaal 240 GiB"
+    )
+    assert capacity_watcher._format(Quota("memory-limits", 200 * GIB, 240 * GIB, None)) == "200 van 240 GiB"
+
+
+def test_growth_reason_is_relative_to_yesterday() -> None:
+    assert evaluate(_q("cpu-limits", 160, 320, ago=120))[1] == ["stijging 33% in 24 uur"]
+    assert evaluate(_q("services-lb", 1, 3, ago=0))[1] == ["stijging in 24 uur"]
 
 
 @pytest.mark.parametrize("fout", [GrafanaConnectionError("niet beschikbaar"), GrafanaQueryError("status 500")])

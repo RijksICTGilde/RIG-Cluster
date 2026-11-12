@@ -77,15 +77,22 @@ def evaluate(quota: Quota) -> tuple[int, list[str]]:
         relative = growth / quota.used_24h_ago * 100 if quota.used_24h_ago > 0 else 0.0
         if points >= GROWTH_POINTS or (relative >= GROWTH_RELATIVE and percent >= GROWTH_RELATIVE_MIN_PERCENT):
             level = max(level, WARNING)
-            reasons.append(f"+{points:.0f} procentpunt (+{relative:.0f}%) in 24 uur")
+            reasons.append(f"stijging {relative:.0f}% in 24 uur" if quota.used_24h_ago > 0 else "stijging in 24 uur")
 
     return level, reasons
 
 
 def _format(quota: Quota) -> str:
-    if "memory" in quota.resource or quota.resource.endswith("storage"):
-        return f"{quota.used / 1024**3:.0f} van {quota.limit / 1024**3:.0f} GiB"
-    return f"{quota.used:.1f} van {quota.limit:.0f}"
+    in_gib = "memory" in quota.resource or quota.resource.endswith("storage")
+    unit = " GiB" if in_gib else ""
+
+    def amount(value: float) -> str:
+        return f"{value / 1024**3:.0f}" if in_gib else f"{value:.1f}"
+
+    limit = f"{quota.limit / 1024**3 if in_gib else quota.limit:.0f}{unit}"
+    if quota.used_24h_ago is None:
+        return f"{amount(quota.used)} van {limit}"
+    return f"van {amount(quota.used_24h_ago)} naar {amount(quota.used)}{unit}, maximaal {limit}"
 
 
 class CapacityWatcher:
@@ -151,9 +158,15 @@ class CapacityWatcher:
         tenant = settings.CAPACITY_WATCH_TENANT
         uid = settings.GRAFANA_BILLING_DATASOURCE_UID
         usage = _METRIC.format(kind="usage", tenant=tenant)
+        # max by: a second series per resource (e.g. a controller restart) must not pick one at random.
+        # max_over_time: one low reading 24h ago, such as Capsule recounting after a restart, is not growth.
         used, limit, ago = [
             _by_resource(await connector.custom_query(query, datasource_uid=uid))
-            for query in (usage, _METRIC.format(kind="limit", tenant=tenant), f"{usage} offset 24h")
+            for query in (
+                f"max by (resource) ({usage})",
+                f"max by (resource) ({_METRIC.format(kind='limit', tenant=tenant)})",
+                f"max by (resource) (max_over_time({usage}[2h] offset 24h))",
+            )
         ]
         return [
             Quota(resource=r, used=used[r], limit=limit[r], used_24h_ago=ago.get(r)) for r in sorted(used) if r in limit
