@@ -26,18 +26,13 @@ and remove the root copy, so the state cannot split.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services import service_entry_body, service_entry_name
 from opi.services.services_enums import ServiceType
 
 #: The closed set of hostname-template ids ``domain-format`` accepts.
-#:
-#: It lives here rather than beside ``DOMAIN_FORMAT_TEMPLATES`` in ``opi/utils/naming.py``
-#: for one reason: ``config_model.py`` needs it to type its field, and ``naming`` already
-#: imports this module, so taking it from there is an import cycle. The templates keep the
-#: assertion that the two stay in sync, so there is still exactly one authority.
 #:
 #: WHICH of these ids fits a given deployment is a second, narrower question, answered by
 #: ``DomainFormatOptionsProvider`` against the deployment's base-domain: the dotted variants
@@ -55,6 +50,56 @@ DomainFormatId = Literal[
     "component.deployment.subdomain",
     "deployment.subdomain",
     "component.subdomain",
+]
+
+
+# Each format ID maps to a pair of templates: (dash_template, dot_template).
+# The dash variant joins prefix parts with hyphens; the dot variant uses dots.
+# Which variant is used depends on the domain's supports_dots in the cluster config.
+#
+# Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
+#   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
+
+DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
+    # Dash variants (always available)
+    "component-deployment-project": "{component}-{deployment}-{project}.{domain}",
+    "deployment-project": "{deployment}-{project}.{domain}",
+    "component-deployment-subdomain": "{component}-{deployment}-{subdomain}.{domain}",
+    "deployment-subdomain": "{deployment}-{subdomain}.{domain}",
+    "component-subdomain": "{component}-{subdomain}.{domain}",
+    "subdomain": "{subdomain}.{domain}",
+    # Dot variants (only when domain supports dot-separated hostnames)
+    "component.deployment.project": "{component}.{deployment}.{project}.{domain}",
+    "deployment.project": "{deployment}.{project}.{domain}",
+    "component.deployment.subdomain": "{component}.{deployment}.{subdomain}.{domain}",
+    "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
+    "component.subdomain": "{component}.{subdomain}.{domain}",
+}
+
+# Safe fallback format: always works, no approval needed. Used when the requested
+# domain plus subdomain is not approved yet.
+SAFE_FALLBACK_FORMAT = "component-deployment-project"
+
+# The alias above is the typed view of this table; the assertion keeps the two in sync.
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # an import-time check on two lists that have to stay equal
+    "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
+)
+
+# Computed sets derived from templates for use by editables and enforcers.
+SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
+ROOT_COMPONENT_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
+]
+
+#: The formats that build a hostname out of the deployment alone: no subdomain to fill in,
+#: and no dot-separated labels to certify.
+#:
+#: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
+#: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
+#: produces a multi-label host the single-label wildcard certificate cannot cover (the
+#: `regel-k4c` regression).
+SELF_CONTAINED_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
 ]
 
 
@@ -260,7 +305,7 @@ def clear_domain_name_settings(deployment: dict[str, Any]) -> None:
 
     Which formats survive the loss of the name is a question about the formats, not about
     the settings, so it is answered where the templates live
-    (``naming.SELF_CONTAINED_FORMAT_IDS``).
+    (:data:`SELF_CONTAINED_FORMAT_IDS`).
     """
     for setting in DOMAIN_NAME_SETTINGS:
         pop_domain_setting(deployment, setting)

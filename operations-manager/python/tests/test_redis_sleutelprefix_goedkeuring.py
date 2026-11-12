@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.responses import HTMLResponse
-from opi.manager.project_validation import validate_approval_decisions
 from opi.services.approvals import (
     apply_approval_verdicts,
     collect_approval_items,
@@ -29,6 +28,7 @@ from opi.services.catalog.redis import APPROVAL as REDIS_APPROVAL
 from opi.services.catalog.redis import is_acl_key_prefix_approved
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
 from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_approval_decisions
 from opi.services.registry import SERVICES, approval_services
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION_VALUE,

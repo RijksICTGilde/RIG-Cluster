@@ -90,7 +90,7 @@ De packages onder `opi/` vormen lagen. Een laag importeert alleen uit de lagen *
 
 `handlers` is als package verdwenen: elke module daaruit staat nu in het domein, de orchestratie of bij een connector.
 
-Dit is de indeling, en `import-linter` dwingt hem af: het contract staat in `operations-manager/python/pyproject.toml` en draait als gate (hoofdstuk 11). De 57 pijlen omhoog die opschoonronde 6 heeft laten staan zijn uitzonderingen in dat contract, per oorzaak gegroepeerd, en die lijst kan alleen krimpen. Het zijn vooral de catalogus-plugins die hun eigen route en flow dragen, `core.metrics` dat gauges uit hogere lagen leest, en connectors die ZAD-begrippen kennen.
+Dit is de indeling, en `import-linter` dwingt hem af: het contract staat in `operations-manager/python/pyproject.toml` en draait als gate (hoofdstuk 11). De pijlen omhoog die nog staan zijn uitzonderingen in dat contract, per oorzaak gegroepeerd, en die lijst kan alleen krimpen. Opschoonronde 10c bracht ze van 55 naar 10. Wat er staat, staat er omdat het een ontwerpkeuze vraagt die buiten een opschoonronde valt: een dienst die een eigen ingang draagt (een API-actie, een taakhandler, een scheduler) en daarvandaan een use case aanroept, en de ENE LOTC-sjabloonomgeving die in de ingangslaag staat terwijl de domeinlaag componenten-markup oplevert. Het commentaar bij elke groep noemt de keuze.
 
 ### Eén pad per handeling
 

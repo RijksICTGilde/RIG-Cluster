@@ -1,4 +1,48 @@
-"""Shared constants for the backup subsystem."""
+"""Shared constants and vocabulary for the backup subsystem."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+#: What the API, the wizard and the scheduler call a bucket backup. The snapshot tag and
+#: :class:`ResourceType` say ``bucket``; the label is part of the API contract.
+BUCKET_BACKUP_LABEL = "minio"
+
+
+class ResourceType(StrEnum):
+    PVC = "pvc"
+    DATABASE = "database"
+    BUCKET = "bucket"
+
+    @classmethod
+    def from_string(cls, value: str | None) -> ResourceType:
+        """Unknown or missing values become PVC, the type that predates the tag."""
+        if not value:
+            return cls.PVC
+        try:
+            return cls(value.lower())
+        except ValueError:
+            return cls.PVC
+
+    @classmethod
+    def from_backup_label(cls, label: str) -> ResourceType:
+        """The resource type behind a backup label (``pvc``, ``database``, ``minio``).
+
+        The API and the wizard say ``minio`` where the snapshot tag says ``bucket``, and
+        :meth:`from_string` would quietly make that a PVC.
+
+        Raises:
+            ValueError: on a label no backup writes.
+        """
+        if label == BUCKET_BACKUP_LABEL:
+            return cls.BUCKET
+        return cls(label)
+
+    @property
+    def backup_label(self) -> str:
+        """This type in the vocabulary of the API, the wizard and the scheduler."""
+        return BUCKET_BACKUP_LABEL if self is ResourceType.BUCKET else self.value
+
 
 DEFAULT_BACKUP_RESOURCE_TYPES: list[str] = ["pvc", "database", "minio"]
 

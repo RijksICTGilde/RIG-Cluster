@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import Response
 
-from opi.middleware.server_side_session import ServerSideSession
+from opi.http.session import ServerSideSession
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_service import get_user_service
 

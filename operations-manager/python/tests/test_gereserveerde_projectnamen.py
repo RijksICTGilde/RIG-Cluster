@@ -19,9 +19,9 @@ from opi.core.cluster_config import (
     is_platform_namespace,
     is_reserved_project_name,
 )
-from opi.manager.project_validation import validate_project_structure
 from opi.services.project_key_secret import ProjectKeySecretHandler
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 PLATFORM_NAMESPACE = "rig-prd-operations"

@@ -1091,7 +1091,7 @@ grenzen houden dat in het gareel:
    (`"{{ waarde }}"`) breekt op een backslash of een regeleinde; de YAML-emitter escapet
    precies wat YAML eist. Alle manifesten lopen daarvoor door één Jinja-omgeving:
    `KubectlConnector.template_manifest` rendert via `render_template_source` uit
-   `opi/generation/manifests.py`, niet via een eigen `Environment()`.
+   `opi/utils/manifest_render.py`, niet via een eigen `Environment()`.
 3. **Het shellscript van de pod leest uit de omgeving.** `${NAMESPACE}`, `${PVC_NAME}`,
    `${TARGET_PVC_NAME}`, `${REFERENCE_NAME}` en `${RESTORE_SNAPSHOT_ID}` zijn `env`-items,
    geen geïnterpoleerde tekst: YAML-quoting is geen shell-quoting, dus een waarde die

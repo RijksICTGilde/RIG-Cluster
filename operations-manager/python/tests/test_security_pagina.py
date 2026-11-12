@@ -2,7 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from opi.web.security_policy import REPO_BLOB_URL, render_security_policy
+from opi.core.config import REPO_BLOB_URL
+from opi.web.security_policy import render_security_policy
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient

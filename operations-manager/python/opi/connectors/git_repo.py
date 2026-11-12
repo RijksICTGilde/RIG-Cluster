@@ -47,12 +47,11 @@ from opi.connectors.git import (
     strip_url_credentials,
 )
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.metrics import PHASE_GIT_PREPARE, PHASE_GIT_PUSH, rollout_phase
-from opi.generation.manifests import CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import generate_argocd_project_folder_path, generate_infrastructure_argocd_folder_path
-from opi.utils.sops import TO_SOPS_SUFFIX
+from opi.utils.sops import CMP_ENV_PLAINTEXT_FILENAME, TO_SOPS_SUFFIX
 
 if TYPE_CHECKING:
     from opi.core.actor import Actor

@@ -19,12 +19,7 @@ from opi.core.cluster_config import (
     get_prefixed_namespace,
 )
 from opi.core.config import settings
-from opi.generation.manifests import (
-    CMP_ENV_NAME,
-    CMP_ENV_PLAINTEXT_FILENAME,
-    MANIFEST_TEMPLATES_DIR,
-    cmp_env_rejection,
-)
+from opi.generation.manifests import MANIFEST_TEMPLATES_DIR, cmp_env_rejection
 from opi.manager.project.emitters import emit_letsencrypt_issuer
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
@@ -44,7 +39,13 @@ from opi.utils.naming import (
     generate_public_url,
 )
 from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
-from opi.utils.sops import TO_SOPS_SUFFIX, encrypt_to_sops_files_or_fail, sops_filenames
+from opi.utils.sops import (
+    CMP_ENV_NAME,
+    CMP_ENV_PLAINTEXT_FILENAME,
+    TO_SOPS_SUFFIX,
+    encrypt_to_sops_files_or_fail,
+    sops_filenames,
+)
 from opi.utils.yaml_util import dump_yaml_for_go, dump_yaml_for_go_unfolded, load_yaml_round_trip
 
 if TYPE_CHECKING:

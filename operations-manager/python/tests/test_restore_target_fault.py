@@ -40,10 +40,10 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from opi.api.restore_router import restore_router
 from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
 from opi.core.errors import ErrorCategory
-from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.services.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.manifest_render import MANIFEST_FILTERS
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 

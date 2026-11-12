@@ -79,7 +79,8 @@ ELK sjabloon in de catalogus op zijn tegenhanger, niet alleen de projectblokken.
 Die poort stond eerst alleen op `*/section-detail.html.j2`, en dat was precies te smal: het
 deploymentblok van metrics_scraper, het backupblok en de twee dialogen (job,
 databaseconsole) vielen erbuiten. De twee dialogen kozen hun sjabloon zelfs helemaal niet -
-`jobs.py` en `db_console.py` deden een kale `TemplateResponse` op het roos-sjabloon - dus
+`jobs.py` en `db_console.py` (sinds RC-489 `opi/web/router_jobs.py` en
+`router_db_console.py`) deden een kale `TemplateResponse` op het roos-sjabloon - dus
 op een NLDD-pagina kwam de dialoog onopgemaakt binnen. Ze gaan nu allebei via
 `opi.http.render.lotc_switch.render()`.
 

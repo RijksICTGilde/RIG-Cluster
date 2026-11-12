@@ -2,7 +2,7 @@
 
 import pytest
 from opi.connectors.vpa import parse_k8s_cpu_to_m, parse_vpa_status
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 # Real recommendation shape from a live odcn VPA: the recommender emits memory
 # in decimal-kilo form ("262144k"), not plain bytes. Regression guard - an

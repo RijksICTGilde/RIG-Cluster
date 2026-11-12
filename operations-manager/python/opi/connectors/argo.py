@@ -11,8 +11,8 @@ from typing import Any
 import aiohttp
 
 from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.logging_redact import redact_sensitive_headers
-from opi.utils.connect_retry import retry_on_connect_error
 
 logger = logging.getLogger(__name__)
 

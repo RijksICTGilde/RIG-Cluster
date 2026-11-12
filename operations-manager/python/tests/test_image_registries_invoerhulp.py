@@ -14,7 +14,6 @@ import pytest
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries import _section_description
 from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, RegistryEntry
@@ -24,6 +23,7 @@ from opi.services.catalog.image_registries.naming import registry_slug
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.upstream import normalize_upstream, upstream_from_project_images
 from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE, REGISTRY_UPSTREAM
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType

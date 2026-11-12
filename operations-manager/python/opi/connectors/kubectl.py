@@ -12,11 +12,10 @@ from typing import Any, Self
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
+from opi.core.connect_retry import backoff_delays, retry_on_connect_error
 from opi.core.subprocess_env import child_env
-from opi.generation.manifests import render_template_source
-from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
-from opi.utils.connect_retry import backoff_delays, retry_on_connect_error
+from opi.utils.manifest_render import render_template_source
 
 logger = logging.getLogger(__name__)
 
@@ -1140,6 +1139,7 @@ class KubectlConnector:
         self,
         deployment_name: str,
         namespace: str,
+        container: str,
         lines: int = 100,
         pod_name: str | None = None,
         previous: bool = False,
@@ -1184,7 +1184,7 @@ class KubectlConnector:
                     "-f",
                     pod_name,
                     "-c",
-                    APPLICATION_CONTAINER_NAME,
+                    container,
                     "-n",
                     namespace,
                     f"--tail={lines}",
@@ -1292,7 +1292,7 @@ class KubectlConnector:
             logger.error(f"Error getting namespace events: {e}")
             return []
 
-    async def get_application_pods(self, namespace: str, deployment_name: str) -> list[dict[str, Any]]:
+    async def get_application_pods(self, namespace: str, selector: str, container: str) -> list[dict[str, Any]]:
         """The application pods of one deployment, with what each of them is actually doing.
 
         This answers the question the ArgoCD status cannot: *which pod is serving traffic
@@ -1300,9 +1300,9 @@ class KubectlConnector:
         version still serving and the new one failing to come up, and ArgoCD reports the
         deployment Degraded for both. Only the pod list tells them apart.
 
-        One ``kubectl get pods -l <selector> -o json``; the selector comes from
-        ``deployment_pod_selector`` so the service-owned pods (sleep-mode's waker and
-        friends) are excluded exactly as everywhere else.
+        One ``kubectl get pods -l <selector> -o json``. The caller names the selector and
+        the container whose status is read, so which pods count as a deployment's own is
+        decided in one place above this connector.
 
         One dict per pod with ``name``, ``app`` (the component's unique name),
         ``pod_template_hash``, ``deleting``, and from the ``app`` container's status
@@ -1311,7 +1311,7 @@ class KubectlConnector:
         logs and yields an empty list, never raises.
         """
         if not KubectlConnector.is_connected:
-            logger.debug("kubectl not available; no application pods for %s", deployment_name)
+            logger.debug("kubectl not available; no application pods for %s", selector)
             return []
 
         args = [
@@ -1320,24 +1320,24 @@ class KubectlConnector:
             "-n",
             namespace,
             "-l",
-            deployment_pod_selector(deployment_name),
+            selector,
             "-o",
             "json",
         ]
         try:
             stdout, stderr, code = await self._run_kubectl_command(args, timeout=15)
         except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as exc:
-            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {exc}")
+            logger.warning(f"Could not list application pods for {namespace} ({selector}): {exc}")
             return []
 
         if code != 0:
-            logger.warning(f"Could not list application pods for {namespace}/{deployment_name}: {stderr}")
+            logger.warning(f"Could not list application pods for {namespace} ({selector}): {stderr}")
             return []
 
         try:
             items = json.loads(stdout).get("items", []) or []
         except (json.JSONDecodeError, AttributeError) as exc:
-            logger.warning(f"Unparsable pod list for {namespace}/{deployment_name}: {exc}")
+            logger.warning(f"Unparsable pod list for {namespace} ({selector}): {exc}")
             return []
 
         pods: list[dict[str, Any]] = []
@@ -1355,20 +1355,20 @@ class KubectlConnector:
                 "started_at": None,
                 "has_previous_attempt": False,
             }
-            for container in (item.get("status", {}) or {}).get("containerStatuses", []) or []:
-                if container.get("name") != APPLICATION_CONTAINER_NAME:
+            for status in (item.get("status", {}) or {}).get("containerStatuses", []) or []:
+                if status.get("name") != container:
                     continue
-                pod["ready"] = bool(container.get("ready"))
-                pod["image"] = container.get("image", "") or ""
-                pod["restart_count"] = int(container.get("restartCount") or 0)
+                pod["ready"] = bool(status.get("ready"))
+                pod["image"] = status.get("image", "") or ""
+                pod["restart_count"] = int(status.get("restartCount") or 0)
                 # The container's own start, not ``status.startTime`` of the pod: after a
                 # restart the first is the truth and the second is when the pod was created.
-                pod["started_at"] = ((container.get("state", {}) or {}).get("running", {}) or {}).get("startedAt")
-                pod["has_previous_attempt"] = bool((container.get("lastState", {}) or {}).get("terminated"))
+                pod["started_at"] = ((status.get("state", {}) or {}).get("running", {}) or {}).get("startedAt")
+                pod["has_previous_attempt"] = bool((status.get("lastState", {}) or {}).get("terminated"))
                 break
             pods.append(pod)
 
-        logger.debug("Found %d application pod(s) for %s/%s", len(pods), namespace, deployment_name)
+        logger.debug("Found %d application pod(s) in %s for %s", len(pods), namespace, selector)
         return pods
 
     async def watch_pods(self, label_selector: str) -> asyncio.subprocess.Process | None:

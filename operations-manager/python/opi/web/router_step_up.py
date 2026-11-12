@@ -15,7 +15,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from opi.core.authz.actions import Action, action
 from opi.core.logging_redact import sanitize_for_log
-from opi.http.auth.auth_decorators import ELEVATE_PATH, elevate_url, get_current_user, requires_sso
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import ELEVATE_PATH, elevate_url, requires_sso
 from opi.http.auth.step_up_dialog import read_follow_fields, render_step_up_dialog, render_step_up_repeat
 from opi.http.render.lotc_switch import render_fragment
 from opi.services.audit import record_step_up_attempt

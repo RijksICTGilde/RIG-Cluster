@@ -10,11 +10,6 @@ import pytest
 import yaml
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_validation import (
-    ProjectIntegrityError,
-    validate_approval_decisions,
-    validate_service_configs,
-)
 from opi.services.approvals import apply_approval_verdicts, collect_approval_items
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
@@ -28,6 +23,11 @@ from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL, effectiv
 from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
 from opi.services.config_lists import patchable_lists
 from opi.services.project_utils import deployments_touched
+from opi.services.project_validation import (
+    ProjectIntegrityError,
+    validate_approval_decisions,
+    validate_service_configs,
+)
 from opi.services.services import ServiceAdapter
 from pydantic import ValidationError
 

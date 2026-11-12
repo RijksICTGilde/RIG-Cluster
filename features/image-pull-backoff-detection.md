@@ -77,7 +77,7 @@ De gegevens komen uit de telling hieronder, dus de kaart kost er geen clusteraan
 
 `opi/services/image_pull_report.py` telt elke minuut (`IMAGE_PULL_OBSERVE_INTERVAL_SECONDS`)
 met een `kubectl get pods --all-namespaces` hoeveel applicatiepods hun image niet kunnen
-ophalen. De collector in `opi/core/metrics.py` geeft dat uit als:
+ophalen. `image_pull_metrics` in datzelfde bestand geeft dat uit als:
 
 | metriek | labels | wanneer |
 |---|---|---|
@@ -237,8 +237,7 @@ replicas zonder waker, en geen daarvan was een slachtoffer van die storing.
 | bestand | waarvoor |
 |---|---|
 | `opi/services/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
-| `opi/services/image_pull_report.py` | de telling, de momentopname en wat de kaart ervan leest |
-| `opi/core/metrics.py` | de drie gauges |
+| `opi/services/image_pull_report.py` | de telling, de momentopname, de drie gauges en wat de kaart ervan leest |
 | `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | de twee alarmen |
 | `opi/templates_lotc/bg/_argocd-deployment-card.html.j2` | het blok op de deploymentkaart |
 | `opi/services/event_interpreter.py` | de tekst per fout op de detailpagina |

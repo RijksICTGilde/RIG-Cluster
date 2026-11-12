@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core.backup_constants import ResourceType
 from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
-from opi.manager.backup.base import ResourceType
 from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 from opi.manager.backup.database_backup import create_database_backup_manager
 from opi.manager.backup.pvc_backup import create_backup_manager

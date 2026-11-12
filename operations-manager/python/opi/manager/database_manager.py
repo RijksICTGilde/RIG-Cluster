@@ -21,14 +21,14 @@ from opi.connectors.postgres import (
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
-from opi.manager.clone_validation import (
+from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
+from opi.services.catalog.shared.postgres import DedicatedPostgresFields
+from opi.services.clone_validation import (
     composite_name_collision,
     other_project_deployments,
     resolve_clone_source_deployment,
 )
-from opi.services import CloneFromType, ServiceType
-from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
-from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.postgres_scope import (
     database_generation_service_type,
     get_dedicated_postgres_config,
@@ -1428,12 +1428,8 @@ class DatabaseManager:
         ``service_endpoint`` (the fully qualified database service DNS name),
         ``storage_class``, ``cluster_name`` and ``database_operator_namespace``.
         """
-        from opi.core.cluster_config import (
-            get_database_cluster_service_endpoint,
-            get_database_operator_namespace,
-            get_infrastructure_namespace,
-            get_storage_class_name,
-        )
+        from opi.core.cluster_config import get_database_operator_namespace, get_storage_class_name
+        from opi.utils.naming import get_database_cluster_service_endpoint, get_infrastructure_namespace
 
         project_name = project_data.get("name")
         if not project_name:

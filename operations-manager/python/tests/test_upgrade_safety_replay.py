@@ -47,9 +47,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from opi.manager.project_validation import validate_project_structure
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.services.project_validation import validate_project_structure
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from opi.utils.yaml_util import load_yaml_from_path
 

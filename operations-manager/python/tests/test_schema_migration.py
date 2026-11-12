@@ -4,10 +4,10 @@ import copy
 import logging
 
 import pytest
-from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 from opi.services.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
+from opi.services.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,

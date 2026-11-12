@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from prometheus_client.core import CounterMetricFamily
 from sqlalchemy import Text, cast, delete, literal, or_, select, tuple_, update
 
 from opi.core.actor import user_actor
@@ -24,11 +25,13 @@ from opi.core.config import settings
 from opi.core.db import session_scope
 from opi.core.flow_id import get_flow_id
 from opi.core.logging_redact import sanitize_for_log
+from opi.core.metrics import register_metric_source
 from opi.services.persistence.notification_events import NotificationEvent
 
 if TYPE_CHECKING:
     import uuid
 
+    from prometheus_client.core import Metric
     from sqlalchemy.sql.elements import ColumnElement
 
     from opi.core.actor import Actor
@@ -64,7 +67,7 @@ _write_failures = 0
 
 
 def write_failures() -> int:
-    """The number of failed audit writes since startup; ``opi/core/metrics.py`` reads this."""
+    """The number of failed audit writes since startup."""
     return _write_failures
 
 
@@ -304,3 +307,21 @@ async def run_retention(now: datetime | None = None) -> dict[str, int]:
             .values(actor=None, origin=None)
         )
     return {"pseudonymized": pseudonymized.rowcount or 0, "deleted": deleted.rowcount or 0}
+
+
+def audit_metrics() -> list[Metric]:
+    """The audit write failures, for the Prometheus scrape.
+
+    ``record_action`` raises nothing at its caller, so without this counter a broken audit
+    trail would be silent. The name follows the house prefix opi_, not the zad_ from the
+    design.
+    """
+    failures = CounterMetricFamily(
+        "opi_audit_write_failures",
+        "Mislukte schrijfacties naar het audittrail sinds de start",
+    )
+    failures.add_metric([], _write_failures)
+    return [failures]
+
+
+register_metric_source(audit_metrics)

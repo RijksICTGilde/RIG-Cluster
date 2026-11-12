@@ -12,9 +12,11 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from prometheus_client.core import GaugeMetricFamily, Metric
 from pydantic import BaseModel, model_validator
 
 from opi.core.authz.engine import role_label
+from opi.core.metrics import register_metric_source
 from opi.services.members import MemberKind
 from opi.services.project import Project
 from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
@@ -360,3 +362,17 @@ def initialize_project_service() -> ProjectService:
     service = ProjectService()
     logger.info("Project service singleton ready")
     return service
+
+
+def project_cache_metrics() -> list[Metric]:
+    """The size of the in-memory project cache, for the Prometheus scrape."""
+    cached = GaugeMetricFamily(
+        "opi_projects_cached",
+        "Number of projects in ProjectService in-memory cache",
+    )
+    if ProjectService._instance is not None:
+        cached.add_metric([], len(ProjectService._instance._projects))
+    return [cached]
+
+
+register_metric_source(project_cache_metrics)

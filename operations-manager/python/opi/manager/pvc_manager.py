@@ -7,9 +7,9 @@ import re
 from typing import Any
 
 from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
-from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
+from opi.services.clone_validation import resolve_clone_source_deployment
 from opi.utils.naming import generate_deployment_manifest_path, generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)

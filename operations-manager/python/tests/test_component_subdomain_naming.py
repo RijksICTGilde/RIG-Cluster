@@ -12,12 +12,12 @@ from opi.core.cluster_config import (
     get_supported_domain_names,
     is_domain_supported,
 )
-from opi.utils.naming import (
+from opi.services.catalog.publish_on_web.hostnames import (
     find_root_component,
-    generate_root_hostname,
     get_component_ingress_map,
     get_deployment_hostnames,
 )
+from opi.utils.naming import generate_root_hostname
 
 _CLUSTER = "local"
 

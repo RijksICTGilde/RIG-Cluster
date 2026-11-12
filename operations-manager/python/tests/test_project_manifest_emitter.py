@@ -25,9 +25,9 @@ import yaml
 from opi.generation.manifests import render_template
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project.manifests.pruning import select_obsolete_service_manifests
-from opi.manager.project_validation import validate_project_structure
 from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_utils import project_level_deployment
+from opi.services.project_validation import validate_project_structure
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     PROJECT_LEVEL_DIR,

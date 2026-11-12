@@ -11,11 +11,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.connect_retry import retry_on_connect_error
 from opi.manager.project.infrastructure import DATABASE_CONNECT_TIMEOUT_SECONDS, Infrastructure
 from opi.manager.project_manager import ProjectManager
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.tasks import progress_steps
-from opi.utils.connect_retry import retry_on_connect_error
 from tests import project_manager_sources
 
 HOST = "demo-db-rw.rig-prd-demo-infrastructure.svc.cluster.local"
@@ -55,7 +55,7 @@ class TestRetryOnOwnExceptionType:
                 raise ConnectionRefusedError("[Errno 111] Connect call failed")
             return "ok"
 
-        with patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()) as sleep:
+        with patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()) as sleep:
             assert await retry_on_connect_error(operation, 30, "db", retry_on=(OSError,)) == "ok"
 
         assert len(attempts) == 3
@@ -67,7 +67,7 @@ class TestRetryOnOwnExceptionType:
             raise ConnectionRefusedError("refused")
 
         with (
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
             pytest.raises(ConnectionRefusedError),
         ):
             await retry_on_connect_error(operation, 3, "db", retry_on=(OSError,))
@@ -94,7 +94,7 @@ class TestWaitUntilDatabaseAcceptsConnections:
 
         with (
             patch(f"{_INFRA}.asyncpg.connect", new=connect),
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
         ):
             await infrastructure.wait_until_database_accepts_connections(
                 project_name="demo", cluster_name="odcn-production", username="postgres", password="geheim"
@@ -111,7 +111,7 @@ class TestWaitUntilDatabaseAcceptsConnections:
 
         with (
             patch(f"{_INFRA}.asyncpg.connect", new=connect),
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
             pytest.raises(RuntimeError) as fout,
         ):
             await infrastructure.wait_until_database_accepts_connections(

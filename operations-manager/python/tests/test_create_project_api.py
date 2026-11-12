@@ -20,10 +20,10 @@ from opi.api.v2 import router as v2_router
 from opi.api.v2.models import CreateProjectRequest
 from opi.core.config import settings
 from opi.http.auth.user_token_auth import get_metadata_cache
-from opi.manager.project_validation import validate_project_structure
 from opi.services import project_utils
 from opi.services.project_members import hash_of
 from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_project_structure
 from opi.utils import age, api_keys
 from opi.utils.age import generate_age_key_pair
 from opi.utils.yaml_util import load_yaml_from_string

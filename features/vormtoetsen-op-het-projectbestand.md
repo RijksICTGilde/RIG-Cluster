@@ -24,7 +24,7 @@ twee teksten. `tests/test_project_schema_validation.py` toetst dat ze gelijk zij
 | veld | vorm | bron |
 |---|---|---|
 | `name` | projectnaam: letter-begin, max 20 in `validate_project_name` | `PROJECT_NAME`, `opi/utils/patterns.py`; `PROJECT_NAME_MAX_LENGTH=20` |
-| `components[*]/resources/**`, `deployments[*]/components[*]/resources/**` | Kubernetes-hoeveelheid (`500m`, `1`, `256Mi`, `1.5Gi`) | `K8S_QUANTITY_PATTERN`, `opi/services/resource_analyzer.py`, overgenomen in `$defs/k8s-quantity` |
+| `components[*]/resources/**`, `deployments[*]/components[*]/resources/**` | Kubernetes-hoeveelheid (`500m`, `1`, `256Mi`, `1.5Gi`) | `K8S_QUANTITY_PATTERN`, `opi/utils/k8s_quantity.py`, overgenomen in `$defs/k8s-quantity` |
 | `env-vars`, `user-env-vars` als mapping | variabelenaam als sleutel, waarde zonder CR, LF of NUL | `ENV_VAR_NAME_PATTERN`, `opi/utils/env_vars.py`, overgenomen in `$defs/env-var-map` |
 | `users[*]/email` | e-mailadres | `EMAIL_PATTERN`, `opi/forms/editables/validators.py`, overgenomen in `$defs/user` |
 | `components[*]/name`, `deployments[*]/name`, `deployments[*]/components[*]/reference` | DNS-1123-label dat met een letter begint | `$defs/dns-1123-label-letter-first` |

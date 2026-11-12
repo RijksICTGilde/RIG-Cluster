@@ -17,13 +17,10 @@ from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
-from opi.services.catalog.image_registries.web import (
-    _expires_soon,
-    _organization_status,
-    image_registries_router,
-    registry_status_fragment,
-)
+from opi.services.catalog.image_registries.web import _expires_soon, _organization_status
 from opi.services.services_enums import UIEvent
+from opi.web import router_image_registries as route_module
+from opi.web.router_image_registries import registry_status_fragment
 
 REGISTRY = {
     "name": "code-overheid",
@@ -87,10 +84,13 @@ class TestHetBlok:
         (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([REGISTRY]))
         assert "rcr" not in str(section.context["registries"])
 
-    def test_de_dienst_brengt_zijn_eigen_endpoint_mee(self) -> None:
-        """Een blok dat lazy laadt bezit de route die het vult; anders blijft de helft
-        achter in de algemene router."""
-        assert image_registries_router in ImageRegistriesService().web_routers()
+    def test_het_endpoint_van_het_blok_hangt_in_de_webrouter(self) -> None:
+        """Een blok dat lazy laadt moet zijn vulling kunnen ophalen; zonder deze bedrading
+        vraagt het htmx-blok een pad op dat niet bestaat."""
+        from opi.web.router import web_router
+
+        paden = {getattr(route, "path", "") for route in web_router.routes}
+        assert "/projects/details/{project_name}/image-registries/status" in paden
 
 
 def _kubectl(stdout: str, code: int = 0) -> Any:
@@ -231,7 +231,7 @@ class TestDeLeeswegVanHetStatusEndpoint:
         store = SimpleNamespace(get=lambda name: project, get_decrypted=_geen_ontsleuteling)
 
         monkeypatch.setattr(web, "get_project_store", lambda: store)
-        monkeypatch.setattr(web, "is_user_authorized_for_project", lambda project_name, email: True)
+        monkeypatch.setattr(route_module, "is_user_authorized_for_project", lambda project_name, email: True)
         monkeypatch.setattr(
             web,
             "get_image_registries_config",
@@ -250,7 +250,7 @@ class TestDeLeeswegVanHetStatusEndpoint:
             gerenderd.append(context)
             return HTMLResponse("")
 
-        monkeypatch.setattr(web, "render", _render)
+        monkeypatch.setattr(route_module, "render", _render)
         return gerenderd
 
     def _request(self) -> Any:
@@ -278,7 +278,7 @@ class TestDeLeeswegVanHetStatusEndpoint:
         ongedekt: hem weghalen laat de rest van de suite groen, terwijl het fragment dan de
         namen en upstreams van andermans registries teruggeeft."""
         gerenderd = self._patch(monkeypatch, [REGISTRY])
-        monkeypatch.setattr(web, "is_user_authorized_for_project", lambda project_name, email: False)
+        monkeypatch.setattr(route_module, "is_user_authorized_for_project", lambda project_name, email: False)
 
         with pytest.raises(HTTPException) as opgevangen:
             await registry_status_fragment(self._request(), "demo")

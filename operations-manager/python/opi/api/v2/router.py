@@ -102,7 +102,8 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.logging_redact import sanitize_for_log
-from opi.http.auth.auth_decorators import get_current_user, requires_step_up
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.endpoint_util import (
     default_marking,
     deployment_in_body,

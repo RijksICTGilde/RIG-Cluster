@@ -342,22 +342,6 @@ def collect_deployment_page_sections(ctx: DeploymentPageContext) -> list:
     return sections
 
 
-def collect_service_routers() -> list[Any]:
-    """Every distinct ``APIRouter`` the services deliver, for mounting on the web app.
-
-    A service that owns a page block owns its endpoints too (the backups fragment, the
-    database-console and job modals). Routers shared by several services -- the backup
-    fragment is owned by all backupable services -- are returned as the same object and
-    mounted once, so a shared route is not registered per owner.
-    """
-    routers: list[Any] = []
-    for service in SERVICES.values():
-        for router in service.web_routers():
-            if not any(existing is router for existing in routers):
-                routers.append(router)
-    return routers
-
-
 def component_service_editables() -> list[Editable]:
     """Component-level editables every service contributes to the component form,
     flattened in ``config_component_order`` (RC-5). This replaces the hand-synced tail

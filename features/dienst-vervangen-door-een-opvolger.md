@@ -35,7 +35,7 @@ Twee lezers, dezelfde twee als bij `available_on_cluster`:
 | Waar | Gedrag |
 |---|---|
 | De dienstenkiezer (`ServiceOptionsProvider`) | De kaart staat er niet meer voor een project dat de dienst niet heeft. Een project dat hem WEL heeft ziet de kaart nog, aangevinkt en uit te zetten, met twee korte pillen: "Vervangen door `<opvolger>`" en "Uitzetten kan niet terug". Kort, want een `<c-tag>` breekt niet af en een kaart van een derde kolom houdt ongeveer veertig tekens; het hele verhaal staat achter het vraagteken. |
-| `validate_service_availability` (`opi/manager/project_validation.py`) | Weigert een deployment die de vervangen dienst erbij krijgt, met een melding die de opvolger noemt. Een deployment die hem al had, slaagt. |
+| `validate_service_availability` (`opi/services/project_validation.py`) | Weigert een deployment die de vervangen dienst erbij krijgt, met een melding die de opvolger noemt. Een deployment die hem al had, slaagt. |
 
 De weigering is de regel die telt: een weggelaten kaart dekt alleen de wizard, en de API en
 een met de hand geschreven projectbestand komen daar nooit langs. Beide paden lopen door

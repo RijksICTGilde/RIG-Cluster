@@ -5,8 +5,9 @@ Tests is_deployment_domain_approved(), is_domain_format_dot_based(),
 and apply_domain_approval_fallback().
 """
 
+from opi.services.catalog.publish_on_web.domain_config import SAFE_FALLBACK_FORMAT
+from opi.services.catalog.publish_on_web.hostnames import apply_domain_approval_fallback
 from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved, is_domain_format_dot_based
-from opi.utils.naming import SAFE_FALLBACK_FORMAT, apply_domain_approval_fallback
 
 # ---------------------------------------------------------------------------
 # is_deployment_domain_approved

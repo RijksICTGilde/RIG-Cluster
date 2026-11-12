@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.shared.postgres import POST_INIT_SQL_PATTERN
 from opi.services.config_schema import fragment_path
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError

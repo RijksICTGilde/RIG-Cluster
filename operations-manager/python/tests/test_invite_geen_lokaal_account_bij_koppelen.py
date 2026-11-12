@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.forms.visualizers.providers import InviteAuthMethodOptionsProvider
-from opi.manager.project_validation import validate_project_structure
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 
 #: Zestien tekens of meer, want de ondergrens van ``InviteService`` keurt een nieuwe
 #: kortere sleutel af en deze toetsen gaan niet over de sleutel.

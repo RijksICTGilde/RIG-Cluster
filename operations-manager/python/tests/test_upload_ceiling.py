@@ -39,7 +39,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
-from opi.api.image_router import image_router
+from opi.api.image_router import image_router, push_image
 from opi.core.authz.engine import Cause
 from opi.core.config import settings
 from opi.forms.wizard.session import save_modal_state_by_token
@@ -222,7 +222,7 @@ def _app(*, leest_de_body: bool = False) -> FastAPI:
 
     if leest_de_body:
         app.add_middleware(_LeestDeBody)
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, image_push_endpoint=push_image)
     return app
 
 
@@ -318,7 +318,7 @@ def test_een_te_grote_image_push_wordt_geweigerd_voor_de_route_draait(monkeypatc
         request.app.state.gedraaid.append("push")
         return {"gelezen": len(await request.body())}
 
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, image_push_endpoint=push_image)
     client = TestClient(app)
 
     response = client.post("/api/v1/projects/test-project/images/push", content=b"x" * (image_push_body_limit() + 1))
@@ -637,7 +637,7 @@ def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestCli
     app = FastAPI()
     app.include_router(image_router)
     teller = _TeltOntvangen(app)
-    return TestClient(BodyLimitMiddleware(teller)), teller
+    return TestClient(BodyLimitMiddleware(teller, image_push_endpoint=push_image)), teller
 
 
 def test_een_push_zonder_sleutel_leest_geen_body(
@@ -793,7 +793,7 @@ def push_met_rol(
         app = FastAPI()
         app.include_router(image_router)
         teller = _TeltOntvangen(app)
-        return TestClient(BodyLimitMiddleware(teller)), teller
+        return TestClient(BodyLimitMiddleware(teller, image_push_endpoint=push_image)), teller
 
     return bouw
 

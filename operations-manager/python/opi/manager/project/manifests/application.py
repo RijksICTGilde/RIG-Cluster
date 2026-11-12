@@ -15,7 +15,6 @@ from opi.core.cluster_config import (
     get_ca_certificate_config,
     get_cluster_cidrs,
     get_external_dns_target_for_hostname,
-    get_infrastructure_namespace,
     get_ingress_cluster_issuer,
     get_ingress_controller_selector,
     get_ingress_ip_whitelist,
@@ -53,7 +52,12 @@ from opi.services.catalog.base import (
 from opi.services.catalog.image_registries.resolution import (
     resolve_deployment_component_image,
 )
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    ROOT_COMPONENT_FORMAT_IDS,
+    DomainSetting,
+    get_domain_setting,
+)
+from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
 from opi.services.catalog.publish_on_web.subdomain import (
     get_supported_base_domains,
@@ -68,7 +72,6 @@ from opi.services.secrets import BaseSecret, KeycloakSecret, PlatformSecret, Use
 from opi.utils.age import project_private_key_or_none
 from opi.utils.env_vars import substitute_known_variables
 from opi.utils.naming import (
-    ROOT_COMPONENT_FORMAT_IDS,
     generate_bare_domain_hostname,
     generate_ingress_name_from_path,
     generate_issuer_name,
@@ -82,7 +85,7 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_tls_secret_name,
     generate_unique_name,
-    get_component_ingress_map,
+    get_infrastructure_namespace,
 )
 from opi.utils.sops import sops_filenames
 

@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES, validated_backup_resource_types
+from opi.core.request_user import get_current_user
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.i18n import get_default_nl_translator
@@ -50,7 +51,7 @@ from opi.forms.wizard.session import (
     load_modal_state_for,
     save_modal_state_by_token,
 )
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.auth.authz import (
     authorize,
     authorized_project,
@@ -62,10 +63,8 @@ from opi.http.auth.request_authority import RequestAuthority
 from opi.http.auth.restore_guard import require_restore_source_access
 from opi.http.auth.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 from opi.http.render.lotc_switch import render_fragment
-from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.http.render.templates_lotc import templates_lotc
 from opi.http.task_helpers import queue_rollout
-from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project.update import (
     ALL_GUARDS,
     EditGuard,
@@ -75,6 +74,7 @@ from opi.manager.project.update import (
     update_project,
 )
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
+from opi.services.clone_validation import build_restore_target_deployment
 from opi.services.project import Project
 from opi.services.project_environment import environment_markings
 from opi.services.project_file_handler import extract_attachment_catalog
@@ -87,6 +87,7 @@ from opi.services.step_up import (
     save_requires_step_up,
 )
 from opi.utils.csrf import reject_misfired_form_get
+from opi.utils.nldd_iconen import to_nldd_icon
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,

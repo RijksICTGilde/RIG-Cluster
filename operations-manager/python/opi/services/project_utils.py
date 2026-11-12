@@ -14,7 +14,11 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.core.config import settings
 from opi.services import ServiceAdapter
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    ROOT_COMPONENT_FORMAT_IDS,
+    DomainSetting,
+    set_domain_setting,
+)
 from opi.services.component_values import encode_with_key, to_block, validate_value_for_storage
 from opi.services.project_members import expiry_date, hash_of, new_token
 from opi.services.project_roles import CREATOR_ROLES, roles_from_value
@@ -27,7 +31,6 @@ from opi.utils.age import (
     wrap_project_key,
 )
 from opi.utils.env_vars import validate_and_parse_env_vars
-from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_from_string, load_yaml_round_trip
 
 logger = logging.getLogger(__name__)
@@ -172,7 +175,7 @@ def apply_resource_limits(
     A memory request must not exceed the memory limit, so an existing request
     above the new limit is lowered to it (and an absent request is set to it).
     """
-    from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+    from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
     if cpu_limit is None and memory_limit is None:
         return

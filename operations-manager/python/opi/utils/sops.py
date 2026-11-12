@@ -18,6 +18,16 @@ SOPS_SUFFIX = ".sops.yaml"
 TO_SOPS_SUFFIX = ".to-sops.yaml"
 
 
+#: A helmfile deployment's env vars go to git encrypted: OPI writes
+#: ``cmp-env.to-sops.yaml``, SOPS turns that into ``cmp-env.sops.yaml`` and the plugin
+#: decrypts it after fetching the project key.
+CMP_ENV_NAME = "cmp-env"
+
+#: The plaintext file from before the encrypted form. OPI cleans it up where it is still
+#: there, and the git guard refuses a new or changed copy.
+CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
+
+
 class SopsFilenames(NamedTuple):
     plaintext: str
     encrypted: str

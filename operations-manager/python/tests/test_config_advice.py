@@ -27,10 +27,10 @@ from unittest.mock import patch
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.manager.project.notices import config_advice_warnings
-from opi.manager.project_validation import validate_declared_choices, validate_project_structure
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.invite.editables import INVITE_REALM_ROLE_ITEM_EDITABLE
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_declared_choices, validate_project_structure
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ConfigAdvice, ServiceAdapter, collect_config_advice
 from opi.services.services_enums import ServiceType

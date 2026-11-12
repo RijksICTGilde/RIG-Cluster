@@ -8,12 +8,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from opi.services.resource_analyzer import parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
+from opi.utils.k8s_quantity import parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 logger = logging.getLogger(__name__)
 
 # parse_k8s_cpu_to_m is re-exported: callers import it from here, not from
-# opi/services/resource_analyzer.py where it lives.
+# opi/utils/k8s_quantity.py where it lives.
 __all__ = ["VpaContainerRecommendation", "parse_k8s_cpu_to_m", "parse_vpa_status"]
 
 

@@ -38,9 +38,13 @@ from opi.forms.editables.validators import (
     SubdomainValidator,
 )
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.catalog.publish_on_web.domain_config import (
+    ROOT_COMPONENT_FORMAT_IDS,
+    SUBDOMAIN_FORMAT_IDS,
+    DomainSetting,
+    domain_setting_path,
+)
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS, SUBDOMAIN_FORMAT_IDS
 
 PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
     yaml_path="components[*]/services{publish-on-web}/config/tls",

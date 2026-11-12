@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
 from opi.core.audit_trail import fields_from_form
+from opi.core.request_user import get_current_user
 from opi.services.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
 
 if TYPE_CHECKING:
@@ -33,24 +34,6 @@ def requires_sso(func: Callable) -> Callable:
     wrapper._requires_sso = True
     logger.debug(f"Marked function {func.__name__} as requiring SSO")
     return wrapper
-
-
-def get_current_user(request: Request) -> dict[str, Any] | None:
-    """The authenticated user on this request, or None.
-
-    Three routes fill ``request.state.user``: the authorization middleware out of a
-    session, the bearer decorators out of a verified SSO token, and ``enforce`` out of a
-    personal API token (RC-322). A filled value therefore says WHO the caller is and NOT
-    that they went through a browser flow: hang no check on it that assumes a session or a
-    second factor. A step-up belongs on ``@requires_step_up``, which reads the window of
-    this person.
-    """
-    user = getattr(request.state, "user", None)
-    if user:
-        logger.debug(f"Retrieved current user: {user.get('email', 'unknown')}")
-    else:
-        logger.debug("No current user found in request state")
-    return user
 
 
 def require_platform_admin(request: Request) -> dict[str, Any]:

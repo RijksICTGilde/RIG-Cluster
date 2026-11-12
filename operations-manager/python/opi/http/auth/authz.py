@@ -32,8 +32,8 @@ from opi.core.authz.engine import (
     record_decision,
     rule_for,
 )
-from opi.http.auth.auth_decorators import get_current_user
-from opi.manager.clone_validation import new_or_changed_clone_sources
+from opi.core.request_user import get_current_user
+from opi.services.clone_validation import new_or_changed_clone_sources
 from opi.services.project_members import member_named
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles, resource_path
 from opi.services.project_store import get_project_store

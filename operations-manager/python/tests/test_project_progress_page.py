@@ -71,7 +71,7 @@ def client(mock_settings: Any, mock_task_service: AsyncMock) -> Iterator[TestCli
     with (
         patch("opi.middleware.authorization.get_user", return_value=mock_user),
         patch("opi.middleware.authorization.get_user_service", return_value=mock_user_service),
-        patch("opi.http.auth.auth_decorators.get_current_user", return_value=mock_user),
+        patch("opi.core.request_user.get_current_user", return_value=mock_user),
         patch("opi.web.router.get_current_user", return_value=mock_user),
     ):
         yield TestClient(app)

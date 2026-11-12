@@ -33,6 +33,7 @@ from opi.services.catalog.aliases.references import is_reference as _alias_is_re
 from opi.services.event_interpreter import group_component_failures
 from opi.services.project_environment import environment_label
 from opi.services.registry import deployment_action_key
+from opi.utils.nldd_iconen import to_nldd_icon
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -51,16 +52,11 @@ def csp_nonce(request: Request) -> str:
 def _to_nldd_icon(name: str | None) -> str | None:
     """Translate an icon name out of the service definitions into the NLDD vocabulary.
 
-    The import sits inside to avoid the same cycle as elsewhere in this file:
-    navigation_lotc leans on the menu construction, and that passes here through the routes.
-
-    Empty stays empty. The filter now sits at every place where an icon name comes out of
-    DATA, and part of that is optional (``submit.icon`` is None without an icon, a menu item
+    Empty stays empty. The filter sits at every place where an icon name comes out of DATA,
+    and part of that is optional (``submit.icon`` is None without an icon, a menu item
     without an icon gives ''). Without this line such a place would translate an empty name
     and warn about nothing.
     """
-    from opi.http.render.navigation_lotc import to_nldd_icon
-
     if not name:
         return name
 

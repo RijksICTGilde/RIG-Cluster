@@ -97,7 +97,8 @@ Draaiende applicatie:
 | `opi/templates_lotc/bg/wizard-page.html.j2`, `wizard-start.html.j2`, `_wizard-step.html.j2`, `_wizard-steps.html.j2`, `_wizard-review.html.j2` | de wizard: de hele pagina, de startpagina, en de drie fragmenten die htmx wisselt |
 | `opi/http/render/lotc_switch.py` | `render()`/`render_fragment()`, plus de vorm waarin een route zijn gegevens aanlevert |
 | `opi/web/lotc_fixtures/` | voorbeeldprojecten voor de proefopstelling |
-| `opi/http/render/navigation_lotc.py` | de indeling van de navigatie en de icoonvertaling |
+| `opi/http/render/navigation_lotc.py` | de indeling van de navigatie |
+| `opi/utils/nldd_iconen.py` | de icoonvertaling, en welke namen NLDD echt levert |
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
 | `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
@@ -410,14 +411,14 @@ geklikt).
 `icons.json` van `lord_of_the_components` en de bundel die de browser laadt lopen
 uiteen, en een naam die alleen in de lijst staat rendert als niets. Hoe groot dat gat is
 verschilt per versie: op 0.8.80 waren het 56 namen, op 0.8.92 nog 2. De actuele meting
-staat in de docstring van `opi/http/render/nldd_iconen.py`; hier geen tweede kopie, want die
+staat in de docstring van `opi/utils/nldd_iconen.py`; hier geen tweede kopie, want die
 veroudert bij elke bump.
 
 Dat is geen randgeval: op 0.8.80 kostte het 37 lege plekken in de interface, waaronder de
 bewerkknop en de verwijderknop, terwijl de test die erop bewaakte groen stond - want die
 las de lijst.
 
-De bron is nu `opi/http/render/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
+De bron is nu `opi/utils/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
 En let op het tweede gat dat daarbij hoorde: `ROOS_TO_NLDD_ICONS` wordt toegepast door het
 `nldd_icon`-FILTER. Een letterlijke `icon="verwijderen"` in een sjabloon komt daar nooit
 langs. In een sjabloon schrijf je dus een NLDD-naam; de tabel is voor namen die uit

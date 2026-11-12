@@ -17,10 +17,13 @@ import pytest
 from opi.core.cluster_config import get_domain_supports_dots, get_supported_domain_names
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
-from opi.utils.naming import (
+from opi.services.catalog.publish_on_web.domain_config import (
     DOMAIN_FORMAT_TEMPLATES,
     SELF_CONTAINED_FORMAT_IDS,
+    DomainSetting,
+    domain_setting_path,
+)
+from opi.services.catalog.publish_on_web.hostnames import (
     generate_hostname_from_format,
     get_component_ingress_map,
     get_deployment_hostnames,
@@ -416,7 +419,7 @@ class TestPerDomainDotSupport:
 class TestDomainEditablesShowWhen:
     def test_subdomain_shows_for_subdomain_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_SUBDOMAIN_EDITABLE
-        from opi.utils.naming import SUBDOMAIN_FORMAT_IDS
+        from opi.services.catalog.publish_on_web.domain_config import SUBDOMAIN_FORMAT_IDS
 
         assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == domain_setting_path(DomainSetting.DOMAIN_FORMAT)
         assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {"value": SUBDOMAIN_FORMAT_IDS}
@@ -436,7 +439,7 @@ class TestDomainEditablesShowWhen:
 
     def test_root_component_shows_for_dot_component_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
-        from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
+        from opi.services.catalog.publish_on_web.domain_config import ROOT_COMPONENT_FORMAT_IDS
 
         assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == domain_setting_path(DomainSetting.DOMAIN_FORMAT)
         assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ROOT_COMPONENT_FORMAT_IDS}

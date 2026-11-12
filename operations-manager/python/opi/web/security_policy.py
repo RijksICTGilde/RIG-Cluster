@@ -11,12 +11,10 @@ from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
 
+from opi.core.config import REPO_BLOB_URL
+
 if TYPE_CHECKING:
     from markdown_it.token import Token
-
-#: Where the relative links in ``SECURITY.md`` point: paths in the repo, which would be a 404
-#: in the app.
-REPO_BLOB_URL = "https://github.com/RijksICTGilde/RIG-Cluster/blob/main/"
 
 _OPI_DIR = Path(__file__).resolve().parent.parent
 

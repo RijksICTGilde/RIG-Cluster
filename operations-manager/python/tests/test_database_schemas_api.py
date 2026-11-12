@@ -32,11 +32,11 @@ from fastapi import HTTPException
 from opi.api.task_models import TASK_RESULT_MODELS
 from opi.api.v2.router import AddDatabaseSchemaRequest, v2_router
 from opi.forms.editables.validators import SchemaPostfixValidator
-from opi.manager.project_validation import validate_project_structure, validate_service_configs
 from opi.runtime.tasks.handler_registry import standalone_worker_handlers, task_handlers
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
 from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
+from opi.services.project_validation import validate_project_structure, validate_service_configs
 from opi.services.services_enums import ServiceType
 from opi.services.tasks.async_task_service import TaskType
 from opi.services.tasks.task_rollout import DEFERRABLE_TASK_TYPES

@@ -335,7 +335,7 @@ def page_data(slug: str) -> dict[str, Any]:
         from opi.forms.visualizers.flows import get_flow
         from opi.forms.wizard.resolver import get_section_metadata, resolve_active_sections
         from opi.forms.wizard.state import WizardState
-        from opi.http.render.navigation_lotc import to_nldd_icon
+        from opi.utils.nldd_iconen import to_nldd_icon
         from opi.web.router_wizard import _render_step_html
 
         flow = get_flow("create-project")
@@ -586,8 +586,8 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     The registry and not a list of its own: a second list next to it drifts away from what the
     application actually offers.
     """
-    from opi.http.render.navigation_lotc import to_nldd_icon
     from opi.services.services import ServiceAdapter
+    from opi.utils.nldd_iconen import to_nldd_icon
 
     used_by: dict[str, list[str]] = {}
     for project in projects:

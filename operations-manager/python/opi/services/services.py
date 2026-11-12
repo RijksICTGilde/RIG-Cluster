@@ -1365,7 +1365,7 @@ class ServiceAdapter:
         Guards the form path like set_service_config guards the API path. Mutates in place.
         """
         # Lazy: project_validation imports this module.
-        from opi.manager.project_validation import iter_service_config_blocks
+        from opi.services.project_validation import iter_service_config_blocks
 
         stored_blocks = {
             (block.location, block.name, block.owned_property): block.config

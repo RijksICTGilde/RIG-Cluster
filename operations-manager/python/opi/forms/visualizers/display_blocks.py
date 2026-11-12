@@ -6,9 +6,9 @@ from typing import Any
 
 from opi.core import config as opi_config
 from opi.core.cluster_config import CLUSTER_CONFIG
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES, DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.hostnames import generate_hostname_from_format
 from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
 def _get_default_domain() -> str:

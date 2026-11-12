@@ -26,14 +26,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.minio_manager import MinioManager
 from opi.manager.project.deployment_mutations import DeploymentMutations
-from opi.manager.project_validation import validate_project_structure
+from opi.services.clone_validation import composite_name_collision, other_project_deployments
 from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
+from opi.services.project_validation import validate_project_structure
 
 
 @pytest.fixture(autouse=True)

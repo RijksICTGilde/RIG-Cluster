@@ -15,7 +15,8 @@ from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
-from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso, requires_step_up
 from opi.http.auth.authz import enforce_route_action, may
 from opi.http.render.lotc_switch import (
     CONDITIONAL_TABS,
@@ -48,6 +49,7 @@ from opi.services.argocd_operation import (
     seconds_since,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -60,7 +62,7 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_members import human_members
 from opi.services.project_store import get_project_store
-from opi.services.registry import collect_service_routers, find_deployment_action
+from opi.services.registry import find_deployment_action
 from opi.services.step_up import StepUpAction, is_elevated_admin
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
@@ -82,8 +84,12 @@ from ..utils.age import decrypt_age_content, is_age_encrypted
 from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
+from .router_backups import backups_router
+from .router_db_console import db_console_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
+from .router_image_registries import image_registries_router
+from .router_jobs import jobs_router
 from .router_otp import otp_router
 from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
@@ -131,11 +137,10 @@ web_router.include_router(otp_router)
 web_router.include_router(step_up_router)
 web_router.include_router(token_web_router)
 web_router.include_router(env_vars_web_router)
-
-# The routers the services themselves deliver: a service that owns a page block owns the
-# endpoints that fill it, instead of leaving half the block behind in this router.
-for _service_router in collect_service_routers():
-    web_router.include_router(_service_router)
+web_router.include_router(backups_router)
+web_router.include_router(image_registries_router)
+web_router.include_router(db_console_router)
+web_router.include_router(jobs_router)
 
 
 async def decrypt_helm_values(items: list[dict[str, Any]], name_key: str, where: str, private_key: str) -> None:
@@ -1976,7 +1981,8 @@ async def _fetch_argocd_deployment_status(
                 # non-zero exit or unparsable output logs and returns [].
                 pods = await kubectl.get_application_pods(
                     get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
-                    deployment_name,
+                    deployment_pod_selector(deployment_name),
+                    APPLICATION_CONTAINER_NAME,
                 )
                 pod_summaries = summarize_component_pods(pods, deployment=deployment, project_data=project_data)
         else:

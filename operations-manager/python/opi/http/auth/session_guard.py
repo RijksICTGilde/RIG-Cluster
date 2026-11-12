@@ -16,6 +16,8 @@ from opi.services.user_service import get_user_service
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
+    from starlette.requests import Request
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,3 +59,21 @@ def drop_refused_session(session: MutableMapping[str, Any]) -> None:
     """
     if session.get("user"):
         session.clear()
+
+
+def get_user(request: Request) -> dict[str, Any] | None:
+    """The user on this request's session, or None when unauthenticated.
+
+    A session past its absolute lifetime, or one revoked by a logout elsewhere, counts as
+    unauthenticated.
+    """
+    if not hasattr(request, "session"):
+        logger.debug("No session available in request")
+        return None
+
+    user = valid_session_user(request.session)
+    if user:
+        logger.debug(f"Found authenticated user: {user.get('email', 'unknown')}")
+    else:
+        logger.debug("No valid user found in session")
+    return user

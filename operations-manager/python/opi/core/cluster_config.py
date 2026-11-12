@@ -949,41 +949,6 @@ def get_mail_from_address(cluster_name: str) -> str:
     return cluster_config["mail_from_address"]
 
 
-def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
-    """The base infrastructure namespace name of a project with the cluster's namespace prefix
-    in front of it.
-
-    Examples:
-        get_infrastructure_namespace("local", "myproject")
-        -> "rig-myproject-infrastructure"
-
-        get_infrastructure_namespace("odcn-production", "myproject")
-        -> "rig-prd-myproject-infrastructure"
-    """
-    from opi.utils.naming import generate_infrastructure_namespace_base
-
-    base_name = generate_infrastructure_namespace_base(project_name)
-    return get_prefixed_namespace(cluster_name, base_name)
-
-
-def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) -> str:
-    """The database service endpoint with the infrastructure namespace in it, so DNS resolves
-    across namespaces.
-
-    Examples:
-        get_database_cluster_service_endpoint("local", "myproject")
-        -> "myproject-db-rw.rig-myproject-infrastructure.svc.cluster.local"
-
-        get_database_cluster_service_endpoint("odcn-production", "myproject")
-        -> "myproject-db-rw.rig-prd-myproject-infrastructure.svc.cluster.local"
-    """
-    from opi.utils.naming import _sanitize_for_lowercase
-
-    infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
-    project_clean = _sanitize_for_lowercase(project_name)
-    return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"
-
-
 def get_min_memory_limit_mi(cluster_name: str) -> int:
     """The floor below which the container runtime does not accept a memory limit."""
     cluster_config = get_cluster_config(cluster_name)

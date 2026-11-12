@@ -9,7 +9,7 @@ read the API's label through it would restore a bucket snapshot as if it were a 
 from __future__ import annotations
 
 import pytest
-from opi.manager.backup.base import ResourceType
+from opi.core.backup_constants import ResourceType
 
 
 class TestFromBackupLabel:

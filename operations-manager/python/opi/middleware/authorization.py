@@ -6,7 +6,6 @@ unauthenticated users to the login page.
 
 import logging
 import typing
-from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -15,7 +14,7 @@ from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
 from opi.core.logging_redact import redact_invite_key_in_path
-from opi.http.auth.session_guard import drop_refused_session, valid_session_user
+from opi.http.auth.session_guard import drop_refused_session, get_user
 from opi.services.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
 
@@ -40,24 +39,6 @@ SKIP_AUTH_PREFIXES = (
 )
 
 RequestResponseEndpoint = typing.Callable[[Request], typing.Awaitable[Response]]
-
-
-def get_user(request: Request) -> dict[str, Any] | None:
-    """Extract user information from the session, or None when unauthenticated.
-
-    A session past its absolute lifetime, or one revoked by a logout elsewhere, counts
-    as unauthenticated (see opi/http/auth/session_guard.py).
-    """
-    if not hasattr(request, "session"):
-        logger.debug("No session available in request")
-        return None
-
-    user = valid_session_user(request.session)
-    if user:
-        logger.debug(f"Found authenticated user: {user.get('email', 'unknown')}")
-    else:
-        logger.debug("No valid user found in session")
-    return user
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):

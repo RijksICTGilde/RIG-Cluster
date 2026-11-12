@@ -20,13 +20,13 @@ from opi.connectors.minio_mc import (
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
-from opi.manager.clone_validation import (
+from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
+from opi.services.clone_validation import (
     composite_name_collision,
     other_project_deployments,
     resolve_clone_source_deployment,
 )
-from opi.services import CloneFromType, ServiceType
-from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
 from opi.services.project import Project
 from opi.services.secrets import MinIOSecret
 from opi.services.tasks import progress_steps as steps

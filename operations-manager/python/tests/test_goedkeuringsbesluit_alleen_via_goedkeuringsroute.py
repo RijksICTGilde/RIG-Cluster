@@ -20,9 +20,9 @@ from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import resolve_active_sections
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
-from opi.manager.project_validation import validate_project_structure
 from opi.services.approvals import ensure_approval_requests
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 from opi.services.services import service_entry_config, service_entry_name
 from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections

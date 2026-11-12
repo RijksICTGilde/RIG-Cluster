@@ -20,6 +20,10 @@ VERSION: str = os.environ.get("ZAD_VERSION", "0.1.0")
 BUILD_DATE: str = os.environ.get("ZAD_BUILD_DATE", "")
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
+#: Where a relative path in this repository resolves on the web: the security policy
+#: rewrites its own links with it, and the platform map links documents the same way.
+REPO_BLOB_URL = "https://github.com/RijksICTGilde/RIG-Cluster/blob/main/"
+
 #: The only cluster that may be a target of the attack proof.
 PROOF_TARGET_CLUSTER = "sandboxed-local"
 

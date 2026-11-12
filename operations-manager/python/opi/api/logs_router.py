@@ -19,7 +19,8 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import reference_for, with_reference
 from opi.http.auth.endpoint_util import validate_api_token
-from opi.middleware.authorization import get_user
+from opi.http.auth.session_guard import get_user
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project import Project
 from opi.services.project_authorization import is_user_authorized_for_project
@@ -70,7 +71,9 @@ async def resolve_component_pods(
 
     namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, project_name)
     unique_name = generate_unique_name(deployment_name, component)
-    pods = await kubectl.get_application_pods(namespace, deployment_name)
+    pods = await kubectl.get_application_pods(
+        namespace, deployment_pod_selector(deployment_name), APPLICATION_CONTAINER_NAME
+    )
     return [pod for pod in pods if pod.get("app") == unique_name]
 
 

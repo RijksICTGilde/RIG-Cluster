@@ -25,11 +25,11 @@ import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 from opi.forms.editables.converters import InviteTargetConverter
-from opi.manager.project_validation import validation_reasons
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.catalog.invite.target_format import join_target, split_target
 from opi.services.project_store import ProjectSummary, ProjectUser
+from opi.services.project_validation import validation_reasons
 from pydantic import ValidationError
 from tests.inmemory_session_store import InMemorySessionStore
 

@@ -12,12 +12,12 @@ from typing import Any
 
 import pytest
 from opi.forms.editables.fields.domains import WIZARD_DEPLOYMENT_NAME_EDITABLE
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.keycloak.variables import KeycloakVariables
 from opi.services.catalog.minio.variables import MinIOVariables
 from opi.services.catalog.persistent_storage.variables import PersistentStorageVariables
 from opi.services.catalog.publish_on_web.variables import WebVariables
 from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_service_configs
 from opi.services.secrets import MinIOSecret
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.naming import generate_unique_name

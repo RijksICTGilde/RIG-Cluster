@@ -29,7 +29,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from opi.forms.visualizers.providers import PROVIDER_REGISTRY, UNDECLARED_SOURCE, OptionsSource
-from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.base import CHOICES_KEY, CHOICES_PROVIDER_KEY, CHOICES_SOURCE_KEY, ConfigLayer
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceType
 
@@ -38,26 +38,6 @@ if TYPE_CHECKING:
     from opi.services.catalog.base import Service
 
 logger = logging.getLogger(__name__)
-
-CHOICES_KEY = "x-choices"
-"""The values this field offers, as ``{const, title, description}``."""
-
-CHOICES_SOURCE_KEY = "x-choices-source"
-"""Where the values come from when they differ per project."""
-
-CHOICES_PROVIDER_KEY = "x-choices-provider"
-"""Declaration ON a model field: which provider yields the choices of this field.
-
-For the service config that coupling comes out of the editables of the service, which covers
-everything arriving through ``/services/{service}/config/...``. The same field also exists
-outside those routes: ``base-domain`` stands both on the publish-on-web config and on the
-request to create a deployment. A field names its provider in ``json_schema_extra`` and the
-annotation below makes the same ``x-choices`` or ``x-choices-source`` of it as for a config
-field, so a new request model gets it by declaring one line.
-
-The declaration is internal and is removed again after annotating: the name of a Python class
-is of no use to a client.
-"""
 
 API_DESCRIPTION = """\
 GitOps Operations and Project Infrastructure API for self-service Kubernetes environments.

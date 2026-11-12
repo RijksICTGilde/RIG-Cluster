@@ -20,7 +20,6 @@ from pydantic import BaseModel, ValidationError
 from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
-from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
 from opi.services.approvals import collect_approval_items, collect_approved_values
 from opi.services.catalog.approval import ApprovalStatus
@@ -28,6 +27,7 @@ from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
+from opi.services.clone_validation import composite_name_collision, other_project_deployments
 from opi.services.project import Project
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.project_schema import ProjectIntegrityError, age_pattern_violations

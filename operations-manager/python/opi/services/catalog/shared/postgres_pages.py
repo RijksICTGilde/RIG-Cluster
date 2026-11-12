@@ -53,18 +53,3 @@ def database_actions(project_data: dict[str, Any], deployment_name: str) -> list
             modal_title=f"Job uitvoeren - {deployment_name}",
         ),
     ]
-
-
-class DatabasePagesMixin:
-    """Mixed into both PostgreSQL services: it brings the two modals' routes.
-
-    Imported lazily so the catalog is not pulled into the manager imports those route
-    modules need; the collector mounts each distinct router once. Cooperative
-    (``super()``), because these services also carry ``BackupsPageMixin``.
-    """
-
-    def web_routers(self) -> list[Any]:
-        from opi.services.catalog.shared.db_console import db_console_router
-        from opi.services.catalog.shared.jobs import jobs_router
-
-        return [*super().web_routers(), db_console_router, jobs_router]  # type: ignore[misc]

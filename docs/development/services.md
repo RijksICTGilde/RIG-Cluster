@@ -713,7 +713,7 @@ INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
   default would reject values the API legitimately takes. Set it only where the value is a
   *reference into this project*, i.e. on a provider that declares an `OptionsSource`.
 - **Enforced at the save chokepoint**, `validate_declared_choices` in
-  `opi/manager/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
+  `opi/services/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
   select can only show what it offers, while the API and hand-written YAML never pass one.
 - **An empty source is skipped**, on purpose. It means the project's values come from
   somewhere the provider cannot see (the four pre-service invite files name roles of a
@@ -817,7 +817,6 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
 | `@on(UIEvent.PROJECT_SECTIONS)` on a method taking `ProjectPageContext` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
 | `@on(UIEvent.DEPLOYMENT_SECTIONS)` on a method taking `DeploymentPageContext` | the same, for ONE deployment | `registry.collect_deployment_page_sections()` |
 | `definition.actions_provider(project_data, deployment_name)` | `DeploymentAction`s (buttons) | `registry.collect_deployment_actions()` |
-| `web_routers()` | the `APIRouter`s that serve this service's own fragments/modals | `registry.collect_service_routers()` |
 
 - `ctx.project_data` is the **decrypted** project dict, so a service can surface managed
   credentials; `ctx.user_role` lets the service gate on the viewer (return `[]` to omit).
@@ -841,19 +840,29 @@ that the view probed, because a service must not call a connector itself.
 
 Backups belong to every service with a `backup_label`; the two modals belong to both
 PostgreSQL services. Such a block is delivered by each owner (through a shared mixin in
-`catalog/shared/`), and the collectors keep one copy: sections dedupe on template name,
-actions on (label, endpoint), routers on object identity -- so return the SAME router
-object from every owner. Page mixins do NOT have to cooperate through `super()` (RC-39):
+`catalog/shared/`), and the collectors keep one copy: sections dedupe on template name and
+actions on (label, endpoint). Page mixins do NOT have to cooperate through `super()` (RC-39):
 a service carries every handler it inherits, and the dispatch concatenates what they
 return. A mixin that forgot to chain used to swallow the other one's block silently.
 
-### Endpoints belong with the block
+### Endpoints van een blok staan in de ingangslaag
 
 A block that lazy-loads (backups) or is a modal (the database console, the job runner)
-needs routes. Declare them on the service via `web_routers()` and they are mounted onto
-the web app, so the block and the endpoints that fill it travel together. Import the
-route module **inside** `web_routers()`: those modules import managers, which the catalog
-itself must not do.
+needs routes. Those routes are **entry points**, so they live in `opi/web/` next to the
+other routers, and the service delivers what they have to show: a function on the service
+side, a route on the web side.
+
+| Blok | Route | Wat de dienst levert |
+|---|---|---|
+| backups | `opi/web/router_backups.py` | `_snapshot_to_dict` en het sjabloon van het blok |
+| image-registries | `opi/web/router_image_registries.py` | `registry_status_context()` |
+| db-console, job runner | `opi/web/router_db_console.py`, `opi/web/router_jobs.py` | het modal-sjabloon; de hele beslissing zit in de manager |
+
+Until RC-489 a service declared its own routes through `web_routers()`. That hook is gone:
+a route needs the auth decorators and the render switch out of `opi/http`, and the catalog
+sits below that (the layer contract in chapter 5 of `coding-rules.md`). What the hook was
+really protecting -- that a lazy-loading block cannot lose the endpoint that fills it -- is
+kept by a test per block that reads the mounted `web_router`.
 
 A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
 `endpoint`; the shared modal shell loads that URL (`openServiceModal`). One or the other,
@@ -875,7 +884,6 @@ Every hook a service may implement, so a new service knows what it can own:
 | `api_actions()` | extra API actions the service declares (fields, verbs, example) beyond the generic config endpoints |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
-| `web_routers()` | the endpoints those blocks need (fragments, modals) |
 | `api_singular_lists` | config lists this service shows the API as ONE entry (a temporary facade; today only `invite.active`, see `features/service-config-api.md`) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
@@ -1106,11 +1114,11 @@ The verdict history (`{date, status, by, message}`) is appended by the spec's `r
 last status wins and the file is the audit trail. The *consequence* of a verdict is service
 knowledge: publish-on-web writes the sentence itself, because only it knows that an
 unapproved domain does not block the deployment but moves it to the cluster address
-(`apply_domain_approval_fallback` in `opi/utils/naming.py`).
+(`apply_domain_approval_fallback` in `opi/services/catalog/publish_on_web/hostnames.py`).
 
 **Een besluit komt alleen van de goedkeuringsroute.** De store weigert elke opslag die een
 status van je spec op `approved` of `denied` zet of laat ontstaan
-(`validate_approval_decisions` in `opi/manager/project_validation.py`), tenzij de opslag
+(`validate_approval_decisions` in `opi/services/project_validation.py`), tenzij de opslag
 zich als besluit meldt met `save_and_commit_project(..., approval_decision=True)`. Die
 markering staat op precies een plek, `opi/web/router_approvals.py`, en hoort daar te
 blijven. Je service hoeft er niets voor te doen: de regel leest je `list_items`, dus hij
@@ -1262,7 +1270,7 @@ its four wiring points are listed under "Forms and wizard screens".
 
 - **A filtered card is not validation.** A service that only some clusters can deliver
   answers `available_on_cluster`, and BOTH consumers matter: the wizard leaves the card
-  out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
+  out, and `validate_service_availability` (`opi/services/project_validation.py`) refuses
   the save. The API and a hand-written project file never pass a card at all. vlam is the
   first inhabitant.
 - **A replaced service is not an unavailable one.** `available_on_cluster` is all-or-nothing

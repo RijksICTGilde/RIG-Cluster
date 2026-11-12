@@ -31,10 +31,7 @@ from opi.connectors.git_repo import (
 )
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.actor import get_actor
-from opi.core.cluster_config import (
-    get_infrastructure_namespace,
-    is_reserved_project_name,
-)
+from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.metrics import (
     PHASE_GENERATE,
@@ -71,7 +68,6 @@ from opi.manager.project.results import (  # noqa: TC001 - used in an eagerly-ev
 )
 from opi.manager.project.rollout import DeploymentRollout, deployments_being_deleted
 from opi.manager.project.service_config_mutations import ServiceConfigMutations
-from opi.manager.project_validation import validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.services.catalog.base import (
     ProvisionContext,
@@ -95,6 +91,7 @@ from opi.services.project_utils import (
     normalize_container_image,
     resolve_deployment_filter,
 )
+from opi.services.project_validation import validate_project_structure
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     provisioning_services,
@@ -111,6 +108,7 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_cluster_manifest_folder_path,
     generate_project_manifest_folder_path,
+    get_infrastructure_namespace,
 )
 
 if TYPE_CHECKING:
@@ -333,9 +331,8 @@ class ProjectManager:
             else:
                 return self._database_manager
 
-        from opi.core.cluster_config import get_database_cluster_service_endpoint
         from opi.manager.database_manager import DatabaseManager
-        from opi.utils.naming import generate_postgres_superuser_secret_name
+        from opi.utils.naming import generate_postgres_superuser_secret_name, get_database_cluster_service_endpoint
 
         project_data = await self.get_contents(record_base=False)
         project_name = await self.get_name()
@@ -880,7 +877,7 @@ class ProjectManager:
     async def _validate_structural_integrity(self, project_data: dict[str, Any]) -> None:
         """Validate cross-field structural integrity of a complete project dict.
 
-        Delegates to opi.manager.project_validation, which holds the single
+        Delegates to opi.services.project_validation, which holds the single
         implementation so ProjectManager and ProjectStore run exactly the same
         checks on the final state. Meant to run AFTER json-schema validation and
         BEFORE any write or commit. Raises ProjectIntegrityError; fails closed.

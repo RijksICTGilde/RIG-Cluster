@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.authz.actions import Action
 from opi.forms.wizard.members import restore_hidden_members
-from opi.manager.clone_validation import new_or_changed_clone_sources
 from opi.manager.project.errors import StepUpRequiredError
 from opi.services.approvals import ensure_approval_requests
+from opi.services.clone_validation import new_or_changed_clone_sources
 from opi.services.members import member_list_changed
 from opi.services.project_environment import environment_markings, log_production_downgrades
 from opi.services.project_utils import deployments_touched

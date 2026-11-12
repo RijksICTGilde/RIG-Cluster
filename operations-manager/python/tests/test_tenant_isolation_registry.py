@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
 from opi.connectors.skopeo import SkopeoConnector
-from opi.manager.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_claims,
@@ -25,6 +24,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_registry_entry_ownership,
 )
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 
 PROJECT_A = "project-a"
 PROJECT_B = "project-b"
@@ -170,7 +170,7 @@ class TestReadOwnership:
 
     @pytest.fixture(autouse=True)
     def _registry_configured(self):
-        with patch("opi.manager.project_validation.settings") as mocked:
+        with patch("opi.services.project_validation.settings") as mocked:
             mocked.REGISTRY_URL = REGISTRY_URL
             mocked.REGISTRY_ORG = REGISTRY_ORG
             yield
@@ -234,7 +234,7 @@ class TestReadOwnership:
             assert validate_platform_registry_image_ownership(self._project_with_image(image)) == []
 
     def test_missing_registry_configuration_disables_the_check(self):
-        with patch("opi.manager.project_validation.settings") as mocked:
+        with patch("opi.services.project_validation.settings") as mocked:
             mocked.REGISTRY_URL = ""
             mocked.REGISTRY_ORG = ""
             data = self._project_with_image(f"{PLATFORM_REPO}:{PROJECT_B}_backend-latest")

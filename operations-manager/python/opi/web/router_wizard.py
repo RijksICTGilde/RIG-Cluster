@@ -14,6 +14,7 @@ from jinja2 import TemplateNotFound
 from starlette.responses import Response
 
 from opi.core.authz.actions import Action, action
+from opi.core.request_user import get_current_user
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import (
@@ -41,12 +42,12 @@ from opi.forms.wizard.session import (
 )
 from opi.forms.wizard.state import CLEARED_FIELD
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.auth.authz import authorize, authorized_project
 from opi.http.auth.request_authority import RequestAuthority
 from opi.http.render.lotc_switch import render
 from opi.http.render.menu import get_menu_items
-from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
+from opi.http.render.navigation_lotc import get_navigation
 from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.project.update import ProjectChange, StepUpRequiredError, update_project
 from opi.services.approvals import ensure_approval_requests
@@ -59,6 +60,7 @@ from opi.services.project_store import ConflictError
 from opi.services.project_utils import apply_literal_scalars
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
+from opi.utils.nldd_iconen import to_nldd_icon
 from opi.utils.yaml_util import dump_yaml_to_string
 
 if TYPE_CHECKING:

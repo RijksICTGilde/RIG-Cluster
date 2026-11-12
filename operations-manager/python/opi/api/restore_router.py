@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
 from opi.core.authz.actions import Action, action
-from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
+from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES, ResourceType
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.errors import ErrorCategory, reference_for, with_reference
 from opi.http.auth.endpoint_util import validate_api_token
@@ -19,7 +19,6 @@ from opi.http.task_helpers import create_async_task, wait_for_task_answer
 from opi.manager.backup import (
     BucketRestoreResult,
     DatabaseRestoreResult,
-    ResourceType,
     RestoreResult,
     SnapshotInfo,
     backup_run_source_deployments,

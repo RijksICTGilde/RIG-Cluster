@@ -33,8 +33,8 @@ from opi.forms.visualizers.providers import PublishTlsModeOptionsProvider, Publi
 from opi.forms.wizard.save import guard_target_still_points_at_the_same_item
 from opi.forms.wizard.state import WizardState
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
-from opi.manager.project_validation import validate_service_configs
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.web.router_detail_edit import _fully_owned_list_keys, _pad_sparse_submission
 from opi.web.router_wizard import _create_renderer, _extract_section_data, _split_data_across_sections
 

@@ -22,12 +22,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.http.auth.authz import require_clone_source_access
-from opi.manager.clone_validation import (
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.clone_validation import (
     build_restore_target_deployment,
     derive_deployment_from_source,
     new_or_changed_clone_sources,
 )
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router_detail_edit import _authorize_restore, _process_and_save_modal_edit
 

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 from opi.core.config import settings
 from opi.core.subprocess_env import child_env
-from opi.services.secrets import RegistrySecret
 from opi.utils.age import AgeEncryptionError, decrypt_password_smart_auto_sync
+from opi.utils.dockerconfig import dockerconfigjson
 from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
 
@@ -51,9 +51,7 @@ def _authfile(registry: str, username: str, password: str) -> Iterator[str]:
     with tempfile.TemporaryDirectory(prefix="skopeo-auth-") as directory:
         path = os.path.join(directory, "auth.json")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
-            handle.write(
-                RegistrySecret(registry_url=registry, username=username, password=password).to_dockerconfigjson()
-            )
+            handle.write(dockerconfigjson(registry, username, password))
         yield path
 
 

@@ -40,6 +40,29 @@ if TYPE_CHECKING:
     from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
 
 
+#: The three JSON Schema annotations a config field carries into the API document. Here
+#: because the catalog produces those schemas; ``opi/api/openapi_choices.py`` writes them.
+CHOICES_KEY = "x-choices"
+"""The values this field offers, as ``{const, title, description}``."""
+
+CHOICES_SOURCE_KEY = "x-choices-source"
+"""Where the values come from when they differ per project."""
+
+CHOICES_PROVIDER_KEY = "x-choices-provider"
+"""Declaration ON a model field: which provider yields the choices of this field.
+
+For the service config that coupling comes out of the editables of the service, which covers
+everything arriving through ``/services/{service}/config/...``. The same field also exists
+outside those routes: ``base-domain`` stands both on the publish-on-web config and on the
+request to create a deployment. A field names its provider in ``json_schema_extra`` and the
+annotation below makes the same ``x-choices`` or ``x-choices-source`` of it as for a config
+field, so a new request model gets it by declaring one line.
+
+The declaration is internal and is removed again after annotating: the name of a Python class
+is of no use to a client.
+"""
+
+
 class ConfigLayer(Enum):
     """The level of the project file at which a service contributes config.
 
@@ -1160,20 +1183,6 @@ class Service(ABC):
         if config is None:
             return self.service_type.value
         return {"name": self.service_type.value, "config": config}
-
-    def web_routers(self) -> list[Any]:
-        """The ``APIRouter``s carrying this service's own web endpoints (default none).
-
-        A section is more than its HTML: the backups block lazy-loads its rows over
-        ``hx-get``, the database console and the job runner are modals with their own
-        start/status/stop routes. ``registry.collect_service_routers()`` gathers these
-        routers and ``opi/web/router.py`` mounts them.
-
-        Return the SAME router object from every service that shares it (the backup
-        fragment belongs to all backupable services); the collector mounts each distinct
-        router once. Typed loosely so this module stays free of a FastAPI import.
-        """
-        return []
 
     def config_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).

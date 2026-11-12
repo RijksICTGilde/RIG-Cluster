@@ -195,7 +195,7 @@ def test_the_guard_reports_a_plain_value_as_plain_text() -> None:
 
 
 def test_the_guard_reports_a_plain_registry_token() -> None:
-    from opi.manager.project_validation import find_plaintext_service_config_violations
+    from opi.services.project_validation import find_plaintext_service_config_violations
 
     project = {
         "name": "plain-guard",

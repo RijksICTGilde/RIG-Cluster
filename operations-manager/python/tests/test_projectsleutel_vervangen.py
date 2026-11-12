@@ -478,7 +478,7 @@ async def test_het_backupwachtwoord_verhuist_mee_naar_de_nieuwe_sleutel(
         patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(return_value={"status": "success"})),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value=oud_wachtwoord)),
-        patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),
+        patch("opi.manager.backup.base.create_kopia_connector", return_value=kopia),
     ):
         result = await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
 
@@ -530,7 +530,7 @@ async def test_de_wachtwoordwissel_komt_na_de_opslag_en_voor_het_verwerken(
         patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(side_effect=refresh)),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value="oud")),
-        patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),
+        patch("opi.manager.backup.base.create_kopia_connector", return_value=kopia),
     ):
         await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
 
@@ -560,7 +560,7 @@ async def test_een_mislukte_wachtwoordverhuizing_verwerkt_het_project_niet_meer(
         patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", refresh),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value="oud")),
-        patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),
+        patch("opi.manager.backup.base.create_kopia_connector", return_value=kopia),
         pytest.raises(KopiaExecutionError),
     ):
         await handlers.handle_rotate_project_key({"project_name": "demo"}, progress)

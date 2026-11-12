@@ -230,9 +230,6 @@ startup:
       git:
         status: exempt
         reason: leest de gpg-sleutel uit de omgeving; wat de ondertekening met Forgejo doet staat op de commit-regels
-  - step: check_route_actions
-    where: run_startup_tasks
-    dependencies: {}
   - step: check_register
     where: run_startup_tasks
     dependencies: {}

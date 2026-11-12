@@ -14,12 +14,12 @@ from typing import Any
 import pytest
 from opi.forms.visualizers.bridge import editable_to_form_field
 from opi.forms.visualizers.providers import PostgresStorageSizeOptionsProvider
-from opi.manager.project_validation import validate_project_structure, validate_service_configs
 from opi.services.catalog.namespace_postgres.visualizers import POSTGRESQL_STORAGE
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.catalog.shared.postgres_settings import POSTGRES_RESOURCES, POSTGRES_STORAGE
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure, validate_service_configs
 from pydantic import ValidationError
 
 _PG = "postgresql-database"

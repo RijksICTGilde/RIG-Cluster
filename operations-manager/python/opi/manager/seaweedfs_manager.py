@@ -24,9 +24,9 @@ from opi.connectors.seaweedfs_shell import (
 from opi.core.cluster_config import get_prefixed_namespace, get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
-from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import ServiceType
 from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
+from opi.services.clone_validation import resolve_clone_source_deployment
 from opi.services.secrets import SeaweedFSSecret
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import CloneFromType

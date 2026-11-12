@@ -10,7 +10,6 @@ from opi.core.cluster_config import (
     get_backup_namespace,
     get_cluster_cidrs,
     get_database_operator_namespace,
-    get_infrastructure_namespace,
     get_ingress_controller_selector,
     get_letsencrypt_contact_email,
     get_namespace,
@@ -24,6 +23,7 @@ from opi.utils.naming import (
     generate_issuer_secret_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
+    get_infrastructure_namespace,
 )
 
 if TYPE_CHECKING:

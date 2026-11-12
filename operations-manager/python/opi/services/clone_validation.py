@@ -32,6 +32,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.publish_on_web.domain_config import (
+    SELF_CONTAINED_FORMAT_IDS,
     DomainSetting,
     clear_domain_name_settings,
     get_domain_setting,
@@ -43,7 +44,6 @@ from opi.services.project import Project
 from opi.services.registry import deployment_runtime_keys
 from opi.services.services_enums import CloneFromType
 from opi.utils.naming import (
-    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_filename,
     generate_argocd_application_name,
     generate_bucket_name,

@@ -21,7 +21,6 @@ from opi.services.catalog.postgresql_database.config_model import (
 from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
-from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
 from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.secrets import DatabaseSecret
 from opi.services.services import ServiceDefinition
@@ -37,7 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
+class PostgresqlDatabaseService(BackupsPageMixin, Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
     definition = ServiceDefinition(
         name="PostgreSQL Database",

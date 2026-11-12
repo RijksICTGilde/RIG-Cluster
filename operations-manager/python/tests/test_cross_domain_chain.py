@@ -202,7 +202,7 @@ class TestWizardToNetworkPolicy:
 
     @pytest.mark.asyncio
     async def test_the_saved_rule_passes_the_projects_own_validation(self) -> None:
-        from opi.manager.project_validation import validate_service_configs
+        from opi.services.project_validation import validate_service_configs
 
         project = await _submit(
             _service().config_form_section(ConfigLayer.PROJECT), _project_submission("prod"), _own_project()

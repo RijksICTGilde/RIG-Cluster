@@ -29,7 +29,8 @@ from pydantic import BaseModel, Field
 
 from opi.api.params import ProjectNamePath
 from opi.core.authz.actions import Action, action
-from opi.http.auth.auth_decorators import get_current_user, requires_step_up
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.auth.user_token_auth import validate_user_token
 from opi.services.api_token_service import (

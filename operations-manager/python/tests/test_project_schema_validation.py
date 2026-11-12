@@ -12,13 +12,13 @@ import copy
 from pathlib import Path
 
 import pytest
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.shared.storage import StorageEntry
 from opi.services.project_schema import (
     ProjectSchemaError,
     validate_declared_project_schema,
     validate_project_schema,
 )
+from opi.services.project_validation import validate_service_configs
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -850,7 +850,7 @@ class TestHetSchemaEnDeConstantesZeggenHetzelfde:
         return _load_latest_schema()["$defs"]
 
     def test_de_hoeveelheid(self) -> None:
-        from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN
+        from opi.utils.k8s_quantity import K8S_QUANTITY_PATTERN
 
         assert self._defs()["k8s-quantity"]["pattern"] == K8S_QUANTITY_PATTERN
 

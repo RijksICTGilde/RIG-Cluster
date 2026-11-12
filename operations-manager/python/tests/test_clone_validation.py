@@ -1,4 +1,4 @@
-"""Tests for the :validate-clone pre-flight check (opi/manager/clone_validation.py).
+"""Tests for the :validate-clone pre-flight check (opi/services/clone_validation.py).
 
 The endpoint used to call ``project_manager._clone_manager``, an attribute that no
 longer exists, so every call answered with an AttributeError dressed up as a 500.
@@ -7,7 +7,7 @@ check what is missing.
 """
 
 import pytest
-from opi.manager.clone_validation import resolve_clone_source_deployment, validate_clone_readiness
+from opi.services.clone_validation import resolve_clone_source_deployment, validate_clone_readiness
 from opi.utils.naming import generate_bucket_name, generate_database_name
 
 

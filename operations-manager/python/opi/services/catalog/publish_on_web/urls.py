@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
-from opi.utils.naming import generate_public_url, get_component_ingress_map
+from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
+from opi.utils.naming import generate_public_url
 
 if TYPE_CHECKING:
     from opi.services.project_file_handler import ProjectFileHandler

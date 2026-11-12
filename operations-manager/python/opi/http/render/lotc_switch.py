@@ -74,7 +74,8 @@ def build_lotc_services(
     user: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Turn the real service data into what the redrawn services page expects."""
-    from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
+    from opi.http.render.navigation_lotc import get_navigation
+    from opi.utils.nldd_iconen import to_nldd_icon
 
     # Every service the route supplies lands on the page, including one with
     # ``hidden=True``: that flag means "do not offer in the WIZARD", and the overview page
@@ -124,9 +125,10 @@ def build_lotc_introduction(user: dict[str, Any] | None) -> dict[str, Any]:
     the service picker asks) and a service with ``hidden=True`` are both left out: neither
     is a choice for whoever starts here.
     """
-    from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
+    from opi.http.render.navigation_lotc import get_navigation
     from opi.services.registry import SERVICE_DEFINITIONS, get_service
     from opi.services.services_enums import ServiceKind
+    from opi.utils.nldd_iconen import to_nldd_icon
 
     selectable: list[dict[str, str]] = []
     background: list[dict[str, str]] = []

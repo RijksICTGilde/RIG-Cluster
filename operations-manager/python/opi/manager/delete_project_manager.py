@@ -892,9 +892,8 @@ class DeleteProjectManager:
         Args:
             force: Carry on through errors, and remove a finalizer when needed.
         """
-        from opi.core.cluster_config import get_infrastructure_namespace
         from opi.services.services import ServiceType
-        from opi.utils.naming import generate_infrastructure_manifest_path
+        from opi.utils.naming import generate_infrastructure_manifest_path, get_infrastructure_namespace
 
         namespace_services = {
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,

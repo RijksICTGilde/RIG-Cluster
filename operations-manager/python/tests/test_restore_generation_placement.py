@@ -27,7 +27,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.restore_router import restore_router
-from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult, ResourceType
+from opi.core.backup_constants import ResourceType
+from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
 from opi.manager.backup.restore import GenerationUpdate, set_restored_generation
 from opi.services.project_file_handler import create_project_file_handler
 from opi.services.schema_migration import relocate_resource_generations_to_deployment

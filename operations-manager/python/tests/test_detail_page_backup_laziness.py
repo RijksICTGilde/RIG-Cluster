@@ -17,7 +17,7 @@ import inspect
 import re
 from pathlib import Path
 
-from opi.services.catalog.shared import backups
+from opi.web import router_backups
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog" / "shared"
 
@@ -33,7 +33,7 @@ def test_the_page_handler_does_not_list_snapshots() -> None:
 
 
 def test_the_fragment_does_list_snapshots() -> None:
-    source = inspect.getsource(backups.backups_fragment)
+    source = inspect.getsource(router_backups)
     assert "list_snapshots" in source
     assert "is_user_authorized_for_project" in source, "the fragment is a separate entry point and needs its own check"
 
@@ -68,7 +68,7 @@ def test_the_fragment_lists_each_namespace_once() -> None:
     18 wies deployments live in one namespace; listing per deployment would reopen
     the same Kopia repository 18 times even in a single request.
     """
-    source = inspect.getsource(backups.backups_fragment)
+    source = inspect.getsource(router_backups)
     assert "per_namespace" in source
     assert "if k8s_namespace in per_namespace" in source, "must skip a namespace already listed"
 
@@ -103,7 +103,7 @@ def test_a_failed_backup_lookup_is_shown_not_swallowed() -> None:
     fragment = (_TEMPLATES / "_backup-snapshots-one.html.j2").read_text()
     assert "backups_error" in fragment
 
-    source = inspect.getsource(backups.backups_fragment)
+    source = inspect.getsource(router_backups)
     assert "backups_error" in source or "error" in source
 
 
@@ -112,7 +112,7 @@ def test_mag_terugzetten_follows_the_operate_role_not_membership() -> None:
     button's visibility from that gate, not from plain project membership (which
     `is_user_authorized_for_project` above already checks for every viewer).
     """
-    source = inspect.getsource(backups.backups_fragment)
+    source = inspect.getsource(router_backups)
     assert (
         '"mag_terugzetten": may_on_any_deployment(request, action=Action.RESTORE_RUN, project_name=project_name)'
         in source

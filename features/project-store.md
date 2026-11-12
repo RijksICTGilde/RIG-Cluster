@@ -210,7 +210,7 @@ Every write runs, on the final state, before anything is persisted:
 2. `validate_project_structure` — references, uniqueness, paths, root component, domains,
    attachments (`ProjectIntegrityError`)
 
-Both live in `opi/manager/project_validation.py` so `ProjectManager` and `ProjectStore` run
+Both live in `opi/services/project_validation.py` so `ProjectManager` and `ProjectStore` run
 identical checks. `enforce_validation=False` is for trusted narrow mutators (auto-tune, oom_watcher,
 restore, keycloak config): the same checks still run and log, but pre-existing unrelated drift does
 not block a recovery write. It is not a less-validated path.
@@ -284,7 +284,7 @@ pins the host key and a later change is an error instead of a silent accept.
 ## Files
 
 - `opi/services/project_store.py` — interface, dataclasses, `GitProjectStore`
-- `opi/manager/project_validation.py` — shared schema/structural validation
+- `opi/services/project_validation.py` — shared schema/structural validation
 - `opi/connectors/git.py` — `show_file_at`, `list_file_revisions`, `list_changed_files`,
   `build_commit`/`set_branch_ref`/`sync_worktree_to_head` (the plumbing write path),
   `push_changes(allow_rebase=...)`

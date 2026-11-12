@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
-from opi.utils.naming import get_component_ingress_map
 
 CLUSTER = "local"
 PROJECT = "webadres"

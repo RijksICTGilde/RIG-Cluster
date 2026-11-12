@@ -743,7 +743,7 @@ class ArgoManager:
         Args:
             database_config: Image, storage and instances from the parsed services.
         """
-        from opi.core.cluster_config import get_infrastructure_namespace
+        from opi.utils.naming import get_infrastructure_namespace
 
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD infrastructure application for project: {project_name}")

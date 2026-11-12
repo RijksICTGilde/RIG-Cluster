@@ -20,8 +20,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 import yaml
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.image_registries.resolution import project_registries
+from opi.services.project_validation import validate_service_configs
 from tests.e2e.helpers.wizard import (
     WizardHelper,
     kies_verplichte_keuzelijsten,

@@ -405,68 +405,26 @@ layers = [
 unmatched_ignore_imports_alerting = "error"
 # Exact pairs, no wildcards: a wildcard would let a new arrow in the same corner pass.
 ignore_imports = [
-    # Catalog plugins are vertical slices. Move the route to the entry layer and the flow to manager. (22)
+    # A service owns an entry point of its own (an API action, a task handler, a scheduler, a
+    # flow), and from there it drives a manager use case. Both are deliberate: see
+    # docs/development/services.md for the service hooks, chapter 5 of coding-rules.md for
+    # the layer. Which of the two gives way is an open choice; PR 468 sets out the options. (5)
     "opi.services.catalog.attachments.api -> opi.manager.project_manager",
     "opi.services.catalog.attachments.task -> opi.manager.project_manager",
-    "opi.services.catalog.image_registries.web -> opi.http.auth.auth_decorators",
-    "opi.services.catalog.image_registries.web -> opi.http.render.lotc_switch",
-    "opi.services.catalog.shared.backups -> opi.http.auth.auth_decorators",
-    "opi.services.catalog.shared.backups -> opi.http.auth.authz",
-    "opi.services.catalog.shared.backups -> opi.http.render.lotc_switch",
-    "opi.services.catalog.shared.backups -> opi.manager.backup",
-    "opi.services.catalog.shared.db_console -> opi.http.auth.auth_decorators",
-    "opi.services.catalog.shared.db_console -> opi.http.auth.authz",
-    "opi.services.catalog.shared.db_console -> opi.http.render.lotc_switch",
-    "opi.services.catalog.shared.db_console -> opi.manager.db_console_manager",
-    "opi.services.catalog.shared.db_console -> opi.manager.run_support",
-    "opi.services.catalog.shared.jobs -> opi.http.auth.auth_decorators",
-    "opi.services.catalog.shared.jobs -> opi.http.auth.authz",
-    "opi.services.catalog.shared.jobs -> opi.http.render.lotc_switch",
-    "opi.services.catalog.shared.jobs -> opi.manager.job_manager",
-    "opi.services.catalog.shared.jobs -> opi.manager.run_support",
-    "opi.services.catalog.sleep_mode.api_models -> opi.api.openapi_choices",
     "opi.services.catalog.sleep_mode.flow -> opi.manager.project_manager",
-    "opi.services.catalog.sleep_mode.router -> opi.http.auth.endpoint_util",
     "opi.services.catalog.sleep_mode.scheduler -> opi.manager.project_manager",
-    # Domain modules that call a use case. Invert: the manager calls the domain. (4)
-    "opi.services.deployment_observation -> opi.manager.project_manager",
-    "opi.services.project_store -> opi.manager.project_validation",
     "opi.services.resource_tuning_service -> opi.manager.project_manager",
-    "opi.services.services -> opi.manager.project_validation",
-    # Rendering and session lookups from the domain. The entry layer passes the rendered result. (9)
+    # The after-sync observation commits once for every hook that changed something. Its two
+    # callers sit on either side of the boundary (manager/project/rollout.py and
+    # services/oom_watcher.py), so handing the commit to the caller moves the arrow instead
+    # of removing it. Same open choice. (1)
+    "opi.services.deployment_observation -> opi.manager.project_manager",
+    # The one LOTC template environment lives in the entry layer (it wires `can` and
+    # `static_url`), while the domain layer produces component markup. Removing these four
+    # needs a decision on where presentation belongs; see PR 468. (4)
     "opi.forms.renderer -> opi.http.render.templates_lotc",
     "opi.forms.widgets.fields -> opi.http.render.templates_lotc",
     "opi.forms.widgets.lotc -> opi.http.render.templates_lotc",
-    "opi.forms.wizard.session -> opi.http.auth.auth_decorators",
-    "opi.services.help_text -> opi.http.render.navigation_lotc",
     "opi.services.help_text -> opi.http.render.templates_lotc",
-    "opi.services.zad_map.platform -> opi.web.security_policy",
-    # core.metrics reaches into upper layers to collect gauges. Invert to registration. (7)
-    "opi.core.metrics -> opi.api.logs_websocket_router",
-    "opi.core.metrics -> opi.api.router",
-    "opi.core.metrics -> opi.http.auth.principal",
-    "opi.core.metrics -> opi.services.audit",
-    "opi.core.metrics -> opi.services.backup_schedule_report",
-    "opi.core.metrics -> opi.services.image_pull_report",
-    "opi.core.metrics -> opi.services.project_service",
-    # Connectors that know ZAD concepts. Pass the value as a parameter, or move the constant down. (7)
-    "opi.connectors.git -> opi.generation.manifests",
-    "opi.connectors.git_repo -> opi.generation.manifests",
-    "opi.connectors.kopia -> opi.manager.backup.base",
-    "opi.connectors.kubectl -> opi.generation.manifests",
-    "opi.connectors.kubectl -> opi.services.catalog.base",
-    "opi.connectors.skopeo -> opi.services.secrets",
-    "opi.connectors.vpa -> opi.services.resource_analyzer",
-    # utils.naming holds domain rules and shares a cycle with cluster_config. Split naming. (3)
-    "opi.core.cluster_config -> opi.utils.naming",
-    "opi.utils.naming -> opi.services.catalog.publish_on_web.domain_config",
-    "opi.utils.naming -> opi.services.catalog.publish_on_web.subdomain",
-    # Entry points that import each other. Move the shared part down to opi.http. (3)
-    "opi.api.auth_routes -> opi.middleware.server_side_session",
-    "opi.api.logs_router -> opi.middleware.authorization",
-    "opi.middleware.body_limit -> opi.api.image_router",
-    # Startup checks the route table with an http-layer guard. Move the call to the composition root. (1)
-    "opi.runtime.startup.startup -> opi.http.auth.endpoint_util",
-    # The retry helper is generic. Move it from utils to core, or pass it to the pool. (1)
-    "opi.core.database_pools -> opi.utils.connect_retry",
 ]
+

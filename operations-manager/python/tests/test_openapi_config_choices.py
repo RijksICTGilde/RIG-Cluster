@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.api.openapi_choices import _CONFIG_ROUTE_RE, CHOICES_KEY, CHOICES_SOURCE_KEY, _resolve, _walk
+from opi.api.openapi_choices import _CONFIG_ROUTE_RE, _resolve, _walk
 from opi.core.config import settings
 from opi.forms.visualizers.providers import (
     PROVIDER_REGISTRY,
@@ -26,7 +26,7 @@ from opi.forms.visualizers.providers import (
     WakeModeOptionsProvider,
 )
 from opi.server import app
-from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.base import CHOICES_KEY, CHOICES_SOURCE_KEY, ConfigLayer
 from opi.services.catalog.sleep_mode.options import sleep_after_deploy_options, sleep_after_wake_options
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceType

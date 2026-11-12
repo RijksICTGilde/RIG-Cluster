@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from opi.http.auth.auth_decorators import get_current_user
+from opi.core.request_user import get_current_user
 from opi.http.auth.authz import authorize
 from opi.services.step_up import has_fresh_step_up
 

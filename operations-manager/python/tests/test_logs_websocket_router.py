@@ -19,6 +19,7 @@ from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 
 
 class TestSendMessage(unittest.IsolatedAsyncioTestCase):
@@ -392,6 +393,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
                 lines=100,
             )
 
@@ -450,6 +452,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
                 lines=100,
                 **kwargs,
             )
@@ -474,6 +477,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
             )
 
         self.assertIsNone(result)

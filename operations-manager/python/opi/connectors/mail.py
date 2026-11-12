@@ -20,8 +20,8 @@ import aiohttp
 
 from opi.connectors.http import client_session
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.utils.age import decrypt_password_smart_auto
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import mail_sender_address_error
 
 logger = logging.getLogger(__name__)

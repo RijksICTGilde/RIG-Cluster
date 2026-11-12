@@ -7,8 +7,8 @@ definitions) and the component level (storage mounts, metrics port/path).
 """
 
 import pytest
-from opi.manager.project_validation import validate_service_configs
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 
 
 def test_valid_configs_pass():

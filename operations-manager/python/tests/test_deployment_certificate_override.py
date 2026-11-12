@@ -293,8 +293,8 @@ def test_removing_a_certificate_used_by_an_override_is_refused() -> None:
 
 
 def test_project_with_a_per_deployment_certificate_validates() -> None:
-    from opi.manager.project_validation import validate_project_structure
     from opi.services.project_schema import validate_project_schema
+    from opi.services.project_validation import validate_project_structure
 
     project = {
         "schema-version": 2,

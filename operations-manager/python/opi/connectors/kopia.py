@@ -9,7 +9,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
-from opi.manager.backup.base import ResourceType
+from opi.core.backup_constants import ResourceType
 
 logger = logging.getLogger(__name__)
 

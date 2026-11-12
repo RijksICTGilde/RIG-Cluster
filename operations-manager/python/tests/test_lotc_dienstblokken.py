@@ -296,11 +296,12 @@ def test_de_dialoogroutes_gaan_langs_de_gedeelde_render() -> None:
     """Twee sjablonen zijn niets waard als de route er langs rendert.
 
     Precies dat was het geval: beide modules riepen ``templates_lotc`` rechtstreeks aan.
-    Gemeten op de BRON van de module en niet op een gerenderd antwoord, want de route
+    Gemeten op de BRON van de routemodule en niet op een gerenderd antwoord, want de route
     erachter heeft een cluster nodig.
     """
-    for module in ("jobs", "db_console"):
-        bron = (CATALOG_DIR / "shared" / f"{module}.py").read_text()
+    routes = Path(__file__).resolve().parents[1] / "opi" / "web"
+    for module in ("router_jobs", "router_db_console"):
+        bron = (routes / f"{module}.py").read_text()
         assert "templates_lotc" not in bron, (
             f"{module}.py rendert rechtstreeks; ga via opi.http.render.lotc_switch.render()"
         )

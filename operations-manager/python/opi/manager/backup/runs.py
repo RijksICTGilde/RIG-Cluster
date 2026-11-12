@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.backup.pvc_backup import BackupManager
-from opi.manager.clone_validation import resolve_clone_source_deployment
+from opi.services.clone_validation import resolve_clone_source_deployment
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

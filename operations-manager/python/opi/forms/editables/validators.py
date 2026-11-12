@@ -491,7 +491,7 @@ class MemoryRangeValidator:
     def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
-        from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+        from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
         try:
             mi = parse_k8s_memory_to_mi(str(value))
@@ -562,7 +562,7 @@ class DomainFormatValidator:
     def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+        from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES
 
         if str(value) not in DOMAIN_FORMAT_TEMPLATES:
             return [f"Onbekend URL-formaat: {value}"]

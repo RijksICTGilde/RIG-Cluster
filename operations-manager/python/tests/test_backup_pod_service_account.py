@@ -10,11 +10,11 @@ import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
 from opi.core.config import settings
-from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.database_backup import DatabaseBackupManager
 from opi.manager.backup.pvc_backup import PVCBackupManager
+from opi.utils.manifest_render import MANIFEST_FILTERS
 
 PROJECT = "amt"
 SERVICE_ACCOUNT = "amt-sa"

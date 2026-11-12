@@ -51,7 +51,7 @@ from pathlib import Path
 
 import lotc_nldd
 import opi
-from opi.http.render.nldd_iconen import _dist_directory
+from opi.utils.nldd_iconen import _dist_directory
 
 PYTHON_DIR = Path(opi.__file__).parent.parent
 STATIC_CSS = PYTHON_DIR / "static" / "css"

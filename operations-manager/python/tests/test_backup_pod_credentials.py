@@ -23,10 +23,10 @@ from opi.core.backup_constants import (
     BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
     RESTORE_TARGET_UNUSABLE_EXIT_CODE,
 )
-from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import mc_endpoint_is_usable, mc_host_url, pod_credentials_secret_name
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.pvc_backup import PVCBackupManager
+from opi.utils.manifest_render import MANIFEST_FILTERS
 from opi.utils.yaml_util import dump_yaml_for_go_unfolded
 from tests.test_backup_pod_service_account import POD_CREATORS, PROJECT, _manager
 

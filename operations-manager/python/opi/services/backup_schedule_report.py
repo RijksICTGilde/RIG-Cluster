@@ -16,8 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from prometheus_client.core import GaugeMetricFamily
+
+from opi.core.metrics import register_metric_source
+
 if TYPE_CHECKING:
     from datetime import datetime
+
+    from prometheus_client.core import Metric
 
 
 @dataclass(frozen=True)
@@ -83,3 +89,30 @@ def forget_missing(seen: set[tuple[str, str]]) -> None:
     """
     for key in set(_states) - seen:
         del _states[key]
+
+
+def backup_schedule_metrics() -> list[Metric]:
+    """The last scheduled backup per deployment, for the Prometheus scrape.
+
+    One series per deployment with a schedule, refreshed by the backup scheduler on every
+    tick. The timestamp is 0 while no scheduled snapshot has ever been seen: a gauge that
+    is simply absent cannot be told apart from a backup that is simply late.
+    """
+    last_success = GaugeMetricFamily(
+        "opi_backup_last_scheduled_success_timestamp_seconds",
+        "Unix timestamp of the last successful scheduled backup per deployment (0: never seen one)",
+        labels=["project", "deployment"],
+    )
+    unknown = GaugeMetricFamily(
+        "opi_backup_schedule_unknown",
+        "1 when the last scheduler tick could not ask Kopia about this deployment",
+        labels=["project", "deployment"],
+    )
+    for state in backup_schedule_states():
+        labels = [state.project, state.deployment]
+        last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
+        unknown.add_metric(labels, 1 if state.unknown_streak else 0)
+    return [last_success, unknown]
+
+
+register_metric_source(backup_schedule_metrics)

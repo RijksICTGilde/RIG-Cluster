@@ -190,13 +190,13 @@ class TestStructuralValidationRefusesNamelessEntries:
     """
 
     async def test_component_without_a_name(self) -> None:
-        from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
+        from opi.services.project_validation import ProjectIntegrityError, validate_project_structure
 
         with pytest.raises(ProjectIntegrityError, match="component zonder naam"):
             await validate_project_structure({"name": "demo", "components": [{"type": "deployment"}]})
 
     async def test_deployment_without_a_name(self) -> None:
-        from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
+        from opi.services.project_validation import ProjectIntegrityError, validate_project_structure
 
         with pytest.raises(ProjectIntegrityError, match="deployment zonder naam"):
             await validate_project_structure({"name": "demo", "deployments": [{"cluster": "local"}]})

@@ -17,7 +17,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.backup.base import BackupLockBusyError, ResourceType
+from opi.core.backup_constants import ResourceType
+from opi.manager.backup.base import BackupLockBusyError
 from opi.manager.backup.restore import GENERATION_NOT_RECORDED, TERUGZETTEN_MISLUKT
 from opi.manager.backup.restore_run import (
     RefreshPolicy,

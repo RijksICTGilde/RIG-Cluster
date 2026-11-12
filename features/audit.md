@@ -261,7 +261,7 @@ persoonsgegevens zonder termijn. Hij start met de taakwerker mee
 - `notification_events`, Alembic-migratie `013`, model in
   `opi/services/persistence/notification_events.py`
 - `Actor` en `ActorKind` uit `opi/core/actor.py`
-- de teller in `opi/core/metrics.py`
+- de teller `audit_metrics` onderaan `opi/services/audit.py`, geregistreerd bij de scrape
 - het rechtensysteem: `record_decision` en het regelregister (`opi/core/authz/`)
 - `client_ip` uit `opi/utils/client_ip.py` voor `origin`
 

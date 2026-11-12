@@ -10,8 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
-from opi.manager.backup.base import ResourceType
+from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES, ResourceType
 from opi.manager.backup.restore_run import (
     NewDeploymentRestore,
     RefreshPolicy,

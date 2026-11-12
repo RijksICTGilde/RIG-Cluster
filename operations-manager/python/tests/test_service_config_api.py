@@ -17,9 +17,9 @@ keeps the endpoint tests small.
 from __future__ import annotations
 
 import pytest
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ConfigLayer
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.services import (
     ServiceAdapter,
     ServiceValidationError,

@@ -17,8 +17,7 @@ from opi.core.cluster_config import (
     is_domain_subdomain_restricted,
     is_platform_domain,
 )
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES, DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
 # Dedicated audit logger for subdomain operations

@@ -61,7 +61,7 @@ the AGE key, is the same one, so nothing is decrypted. Changing them is the env-
 job, with its own step-up.
 
 What a new deployment inherits from an existing one is one derivation,
-`derive_deployment_from_source` in `opi/manager/clone_validation.py`. The upsert with
+`derive_deployment_from_source` in `opi/services/clone_validation.py`. The upsert with
 `cloneFrom` uses it too, so cloning and restoring cannot drift apart; see
 `features/kloon-erft-de-vorm-van-het-webadres.md`. On top of that,
 `build_restore_target_deployment` adds the wizard's choices and the `clone-from` pointing at
@@ -112,7 +112,7 @@ while the API did let them back up a non-production deployment.
 | `opi/templates/wizard/partials/restore_select_backup.html.j2` | Backup run selection |
 | `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection (mode toggle) |
 | `opi/forms/visualizers/wizard_sections.py` (`build_restore_new_deployment_sections`) | New deployment config editables (steps 3 to 5, conditional) |
-| `opi/manager/clone_validation.py` | `derive_deployment_from_source` and `build_restore_target_deployment` |
+| `opi/services/clone_validation.py` | `derive_deployment_from_source` and `build_restore_target_deployment` |
 
 ### Key Design Decisions
 

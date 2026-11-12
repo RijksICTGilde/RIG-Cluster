@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import format_age_key_file, settings
-from opi.utils.connect_retry import retry_on_connect_error
+from opi.core.connect_retry import retry_on_connect_error
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector

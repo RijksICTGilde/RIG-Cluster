@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from opi.services import ServiceType
 from opi.services.services import ServiceAdapter
+from opi.utils.dockerconfig import dockerconfigjson
 from opi.utils.naming import generate_schema_variable_name
 
 if TYPE_CHECKING:
@@ -451,19 +452,8 @@ class RegistrySecret(BaseSecret):
         super().__post_init__()
 
     def to_dockerconfigjson(self) -> str:
-        """The .dockerconfigjson content in auth-only format.
-
-        The shape is ``{"auths": {"registry.example.com": {"auth": "base64(user:pass)"}}}``.
-        """
-        import base64
-        import json
-
-        auth_string = f"{self.username}:{self.password}"
-        auth_base64 = base64.b64encode(auth_string.encode()).decode()
-
-        config = {"auths": {self.registry_url: {"auth": auth_base64}}}
-
-        return json.dumps(config)
+        """The .dockerconfigjson content in auth-only format."""
+        return dockerconfigjson(self.registry_url, self.username, self.password)
 
     def to_k8s_secret_data(self) -> dict[str, str]:
         """For registry secrets, return the .dockerconfigjson key."""

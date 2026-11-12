@@ -13,7 +13,8 @@ from starlette.responses import Response
 
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns, other_rules, sections
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.render.lotc_switch import render
 from opi.http.render.menu import get_menu_items
 from opi.http.render.navigation_lotc import get_navigation

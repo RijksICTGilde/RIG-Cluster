@@ -16,7 +16,7 @@ from opi.api.admin_router import admin_router
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
 from opi.api.federation_router import federation_router
-from opi.api.image_router import image_router
+from opi.api.image_router import image_router, push_image
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
@@ -25,6 +25,7 @@ from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
+from opi.api.sleep_mode_router import sleep_mode_router
 from opi.api.step_up_router import step_up_api_router
 from opi.api.task_router import task_router
 from opi.api.token_router import token_router
@@ -47,6 +48,7 @@ from opi.core.errors import (
 )
 from opi.core.logging_redact import redact_invite_key_in_path
 from opi.http.auth.auth_decorators import REQUIRES_STEP_UP, requires_sso
+from opi.http.auth.endpoint_util import check_route_actions
 from opi.http.auth.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
 from opi.http.auth.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.http.render.lotc_switch import render
@@ -59,7 +61,11 @@ from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from opi.runtime.startup.startup import run_startup_tasks, warm_connector_singletons
-from opi.services.catalog.sleep_mode.router import sleep_mode_router
+
+# Importing a module registers the metric source it owns. This one is otherwise only
+# reached once the backup scheduler starts, while /metrics carries its families from the
+# first scrape on.
+from opi.services import backup_schedule_report  # noqa: F401
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import dev_router, web_router
 
@@ -729,7 +735,7 @@ def create_app() -> FastAPI:
     app.add_middleware(PeerAddressMiddleware)
     # Outside session, CSRF and authorization: an oversized attachment upload is refused
     # before the multipart parser receives its body.
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, image_push_endpoint=push_image)
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request
     from opi.core.flow_id import set_flow_id
@@ -868,6 +874,11 @@ def create_app() -> FastAPI:
             status_code=503,
             content={"status": "unavailable", "services": readiness.summary()},
         )
+
+    # A guarded route without an action would quietly open everything the caller was already
+    # allowed, and an action without a rule opens nothing without anyone noticing. Here and
+    # not in the startup tasks: the route table is finished as soon as the app is composed.
+    check_route_actions(app.routes)
 
     return app
 

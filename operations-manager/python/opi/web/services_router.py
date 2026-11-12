@@ -9,7 +9,8 @@ from fastapi.responses import HTMLResponse
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.core.errors import log_render_failure
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.render.menu import get_menu_items
 from opi.services.services import ServiceAdapter
 

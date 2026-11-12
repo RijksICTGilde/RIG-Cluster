@@ -45,8 +45,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Final
 
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 from opi.services.services import service_entry_config, service_entry_name
+from opi.utils.k8s_quantity import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from prometheus_client.core import GaugeMetricFamily
 from starlette.websockets import WebSocketState
 from websockets.exceptions import ConnectionClosed
 
@@ -25,8 +26,10 @@ from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_co
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.metrics import register_metric_source
 from opi.http.auth.session_guard import valid_session_user
 from opi.manager.run_support import LABEL_RUN
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.project import Project
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -38,6 +41,8 @@ from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
+
+    from prometheus_client.core import Metric
 
 logger = logging.getLogger(__name__)
 
@@ -405,6 +410,7 @@ async def stream_logs(
         process = await kubectl.stream_deployment_logs(
             deployment_name=current_k8s_name,
             namespace=namespace,
+            container=APPLICATION_CONTAINER_NAME,
             lines=lines,
             pod_name=current_pod,
             previous=current_previous,
@@ -467,6 +473,7 @@ async def stream_logs(
                 process = await kubectl.stream_deployment_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
+                    container=APPLICATION_CONTAINER_NAME,
                     lines=tail,
                     pod_name=current_pod,
                     previous=current_previous,
@@ -563,6 +570,7 @@ async def stream_logs(
                 new_process = await kubectl.stream_deployment_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
+                    container=APPLICATION_CONTAINER_NAME,
                     lines=0,
                     pod_name=current_pod,
                 )
@@ -911,3 +919,21 @@ async def stream_logs(
                 await websocket.close()
 
         logger.info(f"WebSocket closed for {user_email}: {project_name}/{deployment}/{component}")
+
+
+def websocket_metrics() -> list[Metric]:
+    """The open log sockets of this worker, for the Prometheus scrape."""
+    ws_global = GaugeMetricFamily(
+        "opi_websocket_connections_global",
+        "Number of active global WebSocket connections",
+    )
+    ws_users = GaugeMetricFamily(
+        "opi_websocket_connections_users",
+        "Number of distinct users with active WebSocket connections",
+    )
+    ws_global.add_metric([], len(_global_connections))
+    ws_users.add_metric([], len(_active_connections))
+    return [ws_global, ws_users]
+
+
+register_metric_source(websocket_metrics)

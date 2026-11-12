@@ -5,8 +5,8 @@ import logging
 import asyncpg
 
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.database_pool import DatabasePool, DatabasePoolError
-from opi.utils.connect_retry import retry_on_connect_error
 
 logger = logging.getLogger(__name__)
 

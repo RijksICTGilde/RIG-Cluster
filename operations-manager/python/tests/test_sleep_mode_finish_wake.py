@@ -303,7 +303,7 @@ def _verzoek() -> Any:
 @pytest.mark.asyncio
 async def test_de_api_route_plant_de_afronding_in_na_het_antwoord() -> None:
     from fastapi import BackgroundTasks
-    from opi.services.catalog.sleep_mode.router import finish_wake_after_response, wake
+    from opi.api.sleep_mode_router import finish_wake_after_response, wake
 
     background = BackgroundTasks()
     with (
@@ -323,7 +323,7 @@ async def test_de_api_route_plant_de_afronding_in_na_het_antwoord() -> None:
 @pytest.mark.asyncio
 async def test_een_noop_plant_geen_afronding_in() -> None:
     from fastapi import BackgroundTasks
-    from opi.services.catalog.sleep_mode.router import wake
+    from opi.api.sleep_mode_router import wake
 
     background = BackgroundTasks()
     with patch.object(flow, "wake", AsyncMock(return_value=flow.WakeResult(changed=False, state="awake"))):
@@ -336,7 +336,7 @@ async def test_een_noop_plant_geen_afronding_in() -> None:
 @pytest.mark.asyncio
 async def test_de_achtergrondafronding_laat_een_mislukte_wek_aan_de_sweeper() -> None:
     """Niemand kijkt mee achter de route, dus een time-out wordt gelogd, niet gegooid."""
-    from opi.services.catalog.sleep_mode.router import finish_wake_after_response
+    from opi.api.sleep_mode_router import finish_wake_after_response
 
     with patch.object(flow, "finish_wake", AsyncMock(side_effect=flow.WakeTimeoutError("kwam niet terug"))):
         await finish_wake_after_response(PROJECT, DEPLOYMENT)

@@ -9,10 +9,9 @@ project member; starting and stopping ask for an operational role, because a job
 with the deployment's database credentials. Live status comes from the cluster, history from
 the runs registry.
 
-The modal template sits next to this module and the routes are mounted through
-``Service.web_routers``, so the block and the endpoints driving it travel together. This module
-is imported lazily from ``web_routers`` (never at catalog import time), so the catalog itself
-stays free of manager imports.
+The modal template sits with the PostgreSQL services that own the block
+(``opi/services/catalog/shared/``); these routes fill it. They are entry points, so they
+live here and not in the catalog: everything they decide, they decide in the manager.
 """
 
 from __future__ import annotations
@@ -24,12 +23,13 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.auth.authz import may
 from opi.http.render.lotc_switch import render
 from opi.manager.job_manager import JobError, get_job_manager
-from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind
+from opi.services.runs_support import pending_state, spawn
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,8 @@ async def _render(
         if job is not None:
             state = job.state
         elif include_pending:
-            state, error = await pending_state(project_name, deployment_name, RunKind.JOB, "job", error)
+            state, message = await pending_state(project_name, deployment_name, RunKind.JOB, "job")
+            error = message or error
         else:
             state = "none"
 

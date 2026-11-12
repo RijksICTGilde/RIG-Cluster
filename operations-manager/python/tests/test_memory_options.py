@@ -10,7 +10,7 @@ from opi.forms.visualizers.providers import (
     MemoryRequestOptionsProvider,
     get_memory_steps,
 )
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 # ---------------------------------------------------------------------------
 # parse_k8s_memory_to_mi

@@ -310,28 +310,28 @@ The `/metrics` endpoint is implemented in `opi/api/prometheus_router.py` and exp
 
 ### Adding New Metrics
 
-To add a new metric to the Operations Manager:
-
-1. Edit `opi/core/metrics.py`
-2. Add a new `GaugeMetricFamily` in `OPICollector.collect()`
-3. Import and read the relevant internal state
-4. The metric will be available at `/metrics` immediately on next scrape
-
-Example:
+A metric about state that `opi/core` owns itself (memory, the event loop, the database pools) goes in `OPICollector.collect()`. A metric about state a higher layer owns lives with that state: the module writes a producer and registers it, so `core` never reads upward.
 
 ```python
-# In OPICollector.collect():
-my_gauge = GaugeMetricFamily(
-    "opi_my_new_metric",
-    "Description of what this measures",
-)
-try:
-    from opi.some_module import some_state
-    my_gauge.add_metric([], len(some_state))
-except Exception:
-    logger.debug("Failed to collect my_new_metric", exc_info=True)
-yield my_gauge
+# In the module that owns the state:
+from prometheus_client.core import GaugeMetricFamily, Metric
+
+from opi.core.metrics import register_metric_source
+
+
+def my_metrics() -> list[Metric]:
+    my_gauge = GaugeMetricFamily(
+        "opi_my_new_metric",
+        "Description of what this measures",
+    )
+    my_gauge.add_metric([], len(_some_state))
+    return [my_gauge]
+
+
+register_metric_source(my_metrics)
 ```
+
+A producer that raises is logged and skipped, so one broken metric never fails the scrape. The metric is available at `/metrics` on the next scrape, provided the module is imported; `opi/server.py` imports the one module that nothing else reaches before the scheduler starts.
 
 ## Dependencies
 

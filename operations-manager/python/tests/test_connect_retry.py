@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 from aiohttp.client_reqrep import ConnectionKey
-from opi.utils.connect_retry import backoff_delays, retry_on_connect_error
+from opi.core.connect_retry import backoff_delays, retry_on_connect_error
 
 
 def _connect_error() -> aiohttp.ClientConnectorError:

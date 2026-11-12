@@ -34,7 +34,6 @@ from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretR
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.generation.manifests import ManifestGenerator, render_template
-from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN, UPSTREAM_PATTERN, RegistryEntry
@@ -43,6 +42,7 @@ from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLD
 from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.services.project_store import GitProjectStore
+from opi.services.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType

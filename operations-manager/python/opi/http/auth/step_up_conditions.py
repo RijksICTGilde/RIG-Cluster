@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from opi.http.auth.auth_decorators import get_current_user
+from opi.core.request_user import get_current_user
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_environment import Omgeving, effective_environment
 from opi.services.project_store import get_project_store

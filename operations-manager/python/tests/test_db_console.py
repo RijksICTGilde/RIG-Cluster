@@ -367,7 +367,7 @@ def test_de_databaseconsole_hangt_aan_database_console(rollen: list[str], mag: b
     """
     from opi.core.authz.actions import Action, action_of
     from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
-    from opi.services.catalog.shared.db_console import db_console_start, db_console_stop
+    from opi.web.router_db_console import db_console_start, db_console_stop
 
     assert action_of(db_console_start) is Action.DATABASE_CONSOLE
     assert action_of(db_console_stop) is Action.DATABASE_CONSOLE
@@ -384,15 +384,15 @@ def test_de_databaseconsole_hangt_aan_database_console(rollen: list[str], mag: b
 
 @pytest.mark.asyncio
 async def test_db_console_start_allows_developer(project_with_roles) -> None:
-    from opi.services.catalog.shared.db_console import db_console_start
+    from opi.web.router_db_console import db_console_start
 
     manager = MagicMock()
     manager.begin = AsyncMock(return_value=SimpleNamespace(session_id="run1"))
 
     with (
-        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
-        patch("opi.services.catalog.shared.db_console.spawn", lambda coro: coro.close()),
-        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.web.router_db_console.get_db_console_manager", return_value=manager),
+        patch("opi.web.router_db_console.spawn", lambda coro: coro.close()),
+        patch("opi.web.router_db_console._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await db_console_start(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1", "tool": "pgweb"}),
@@ -407,14 +407,14 @@ async def test_db_console_start_allows_developer(project_with_roles) -> None:
 
 @pytest.mark.asyncio
 async def test_db_console_stop_allows_developer(project_with_roles) -> None:
-    from opi.services.catalog.shared.db_console import db_console_stop
+    from opi.web.router_db_console import db_console_stop
 
     manager = MagicMock()
     manager.teardown_session = AsyncMock(return_value="dep1")
 
     with (
-        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
-        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.web.router_db_console.get_db_console_manager", return_value=manager),
+        patch("opi.web.router_db_console._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await db_console_stop(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1"}),
@@ -494,7 +494,7 @@ async def test_get_latest_run_queries_newest(orm_db):
 def test_is_stale_starting():
     """A pod-less 'starting' run older than the window is reconcilable (so begin() can
     clear it instead of wedging forever); a fresh one, a terminal one, or None is not."""
-    from opi.manager.run_support import is_stale_starting
+    from opi.services.runs_support import is_stale_starting
 
     fresh = {"status": "starting", "started_at": datetime.now(UTC).isoformat()}
     stale = {"status": "starting", "started_at": (datetime.now(UTC) - timedelta(seconds=600)).isoformat()}
@@ -508,10 +508,10 @@ def test_is_stale_starting():
 async def test_pending_state_maps_registry(monkeypatch):
     """The status poll derives starting/failed/stale/none from the runs registry.
 
-    pending_state is the shared run_support helper used by both the db-console and
+    pending_state is the shared runs_support helper used by both the db-console and
     job routers; here it is exercised for the db-console kind.
     """
-    from opi.manager import run_support as r
+    from opi.services import runs_support as r
     from opi.services.runs_service import RunKind
 
     class _FakeRuns:
@@ -522,7 +522,7 @@ async def test_pending_state_maps_registry(monkeypatch):
             return self._run
 
     async def call():
-        return await r.pending_state("p", "d", RunKind.DB_CONSOLE, "console", None)
+        return await r.pending_state("p", "d", RunKind.DB_CONSOLE, "console")
 
     # in-flight start -> 'starting'
     monkeypatch.setattr(

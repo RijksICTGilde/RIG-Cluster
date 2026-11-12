@@ -9,114 +9,13 @@ import hashlib
 import logging
 import posixpath
 import re
-from typing import Any, get_args
 
-from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.core.cluster_config import CLUSTER_CONFIG, get_prefixed_namespace
+from opi.core.config import settings
 from opi.utils.patterns import PROJECT_NAME
 from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
-
-
-# Each format ID maps to a pair of templates: (dash_template, dot_template).
-# The dash variant joins prefix parts with hyphens; the dot variant uses dots.
-# Which variant is used depends on the domain's supports_dots in the cluster config.
-#
-# Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
-#   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
-
-DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
-    # Dash variants (always available)
-    "component-deployment-project": "{component}-{deployment}-{project}.{domain}",
-    "deployment-project": "{deployment}-{project}.{domain}",
-    "component-deployment-subdomain": "{component}-{deployment}-{subdomain}.{domain}",
-    "deployment-subdomain": "{deployment}-{subdomain}.{domain}",
-    "component-subdomain": "{component}-{subdomain}.{domain}",
-    "subdomain": "{subdomain}.{domain}",
-    # Dot variants (only when domain supports dot-separated hostnames)
-    "component.deployment.project": "{component}.{deployment}.{project}.{domain}",
-    "deployment.project": "{deployment}.{project}.{domain}",
-    "component.deployment.subdomain": "{component}.{deployment}.{subdomain}.{domain}",
-    "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
-    "component.subdomain": "{component}.{subdomain}.{domain}",
-}
-
-# Safe fallback format: always works, no approval needed. Used when the requested
-# domain plus subdomain is not approved yet.
-SAFE_FALLBACK_FORMAT = "component-deployment-project"
-
-# The type alias lives in the service package (``publish_on_web/domain_config.py``) because
-# that service's ``config_model`` types its ``domain-format`` field with it, and this module
-# already imports that one -- taking it from here would be an import cycle. It is re-exported
-# here so every existing reader keeps its import, and the assertion that it matches the
-# templates stays where the templates are.
-assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # an import-time check on two lists that have to stay equal
-    "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
-)
-
-# Computed sets derived from templates for use by editables and enforcers.
-SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
-ROOT_COMPONENT_FORMAT_IDS: list[str] = [
-    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
-]
-
-#: The formats that build a hostname out of the deployment alone: no subdomain to fill in,
-#: and no dot-separated labels to certify.
-#:
-#: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
-#: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
-#: produces a multi-label host the single-label wildcard certificate cannot cover (the
-#: `regel-k4c` regression).
-SELF_CONTAINED_FORMAT_IDS: list[str] = [
-    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
-]
-
-
-def resolve_domain_tail(
-    base_domain: str | None,
-    ingress_postfix: str,
-) -> str:
-    """Resolve the domain tail for template interpolation.
-
-    Returns base_domain when set, otherwise ingress_postfix with leading dot stripped.
-    """
-    if base_domain:
-        return base_domain
-    return ingress_postfix.lstrip(".")
-
-
-def generate_hostname_from_format(
-    domain_format: str,
-    component_name: str,
-    deployment_name: str,
-    project_name: str,
-    subdomain: str | None,
-    domain: str,
-) -> str:
-    """Resolve a hostname from a domain-format template.
-
-    Args:
-        domain_format: Template ID from DOMAIN_FORMAT_TEMPLATES
-        component_name: Component name
-        deployment_name: Deployment name
-        project_name: Project name
-        subdomain: Optional subdomain
-        domain: Domain tail (resolved via resolve_domain_tail)
-
-    Raises:
-        ValueError: If domain_format is not a known template ID.
-    """
-    template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
-    if template is None:
-        raise ValueError(f"Unknown domain-format: {domain_format}")
-
-    return template.format(
-        component=_sanitize_for_lowercase(component_name),
-        deployment=_sanitize_for_lowercase(deployment_name),
-        project=_sanitize_for_lowercase(project_name),
-        subdomain=_sanitize_for_lowercase(subdomain or ""),
-        domain=domain,
-    )
 
 
 def generate_unique_name(deployment_name: str, component_name: str) -> str:
@@ -1124,6 +1023,37 @@ def generate_infrastructure_namespace_base(project_name: str) -> str:
     return f"{project_clean}-infrastructure"
 
 
+def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
+    """The base infrastructure namespace name of a project with the cluster's namespace prefix
+    in front of it.
+
+    Examples:
+        get_infrastructure_namespace("local", "myproject")
+        -> "rig-myproject-infrastructure"
+
+        get_infrastructure_namespace("odcn-production", "myproject")
+        -> "rig-prd-myproject-infrastructure"
+    """
+    base_name = generate_infrastructure_namespace_base(project_name)
+    return get_prefixed_namespace(cluster_name, base_name)
+
+
+def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) -> str:
+    """The database service endpoint with the infrastructure namespace in it, so DNS resolves
+    across namespaces.
+
+    Examples:
+        get_database_cluster_service_endpoint("local", "myproject")
+        -> "myproject-db-rw.rig-myproject-infrastructure.svc.cluster.local"
+
+        get_database_cluster_service_endpoint("odcn-production", "myproject")
+        -> "myproject-db-rw.rig-prd-myproject-infrastructure.svc.cluster.local"
+    """
+    infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"
+
+
 def generate_argocd_appproject_prefix(project_name: str, namespace: str) -> str:
     """
     Generate a consistent project-namespace prefix for ArgoCD AppProject naming.
@@ -1775,248 +1705,6 @@ def generate_bare_domain_hostname(base_domain: str) -> str:
     return base_domain.lower()
 
 
-def find_root_component(deployment: dict) -> str | None:
-    """
-    Find the root component for a deployment.
-
-    The root component receives traffic for the root hostname (subdomain.base_domain)
-    in nice-url mode. It is specified via the ``root-component`` field on the deployment.
-
-    Args:
-        deployment: Deployment dictionary with optional 'root-component' field
-
-    Returns:
-        Component name, or None if no root component is configured
-
-    Examples:
-        >>> find_root_component({"name": "prod", "root-component": "frontend"})
-        'frontend'
-
-        >>> find_root_component({"name": "prod"})
-        None
-    """
-    return get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-
-
-def apply_domain_approval_fallback(
-    domain_format: str | None,
-    base_domain: str | None,
-    subdomain: str | None,
-    ingress_postfix: str,
-    project_data: dict[str, Any],
-    cluster: str,
-) -> tuple[str | None, str | None]:
-    """Check domain approval and return the effective format + domain.
-
-    If the requested domain+subdomain combination is approved, returns
-    them unchanged. If not approved, falls back to the safe format
-    (component-deployment-project) on the cluster domain.
-
-    ``domain_format`` may be None: a deployment that names no format composes its
-    hostname through the legacy dispatch in :func:`get_component_ingress_map`, and that
-    shape needs the very same verdict. An approved domain is handed back untouched
-    (None stays None, so the caller keeps its own dispatch); an unapproved one gets the
-    safe format regardless of what was asked for, because "no format named" is not a
-    reason to publish on a domain nobody approved.
-
-    Args:
-        domain_format: Requested domain format ID, or None when none is named
-        base_domain: Requested base domain
-        subdomain: Requested subdomain
-        ingress_postfix: Cluster ingress postfix (for fallback domain)
-        project_data: Project YAML data (for approval check)
-        cluster: Cluster name (for approval check)
-    """
-    from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
-
-    if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
-        return domain_format, base_domain
-
-    # Not approved: fall back to safe format on cluster domain. The log names the address
-    # that lapses, because that is what someone wondering where their address went will
-    # search for.
-    cluster_domain = ingress_postfix.lstrip(".")
-    logger.warning(
-        "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
-        f"{subdomain}.{base_domain}" if subdomain else base_domain,
-        base_domain,
-        cluster_domain,
-        SAFE_FALLBACK_FORMAT,
-    )
-    return SAFE_FALLBACK_FORMAT, cluster_domain
-
-
-def get_component_ingress_map(
-    component_name: str,
-    deployment_name: str,
-    project_name: str,
-    ingress_postfix: str,
-    subdomain: str | None = None,
-    base_domain: str | None = None,
-    domain_format: str | None = None,
-    *,
-    project_data: dict[str, Any],
-    cluster: str,
-) -> dict[str, str]:
-    """
-    Get the ingress map for a single component.
-
-    Centralizes the hostname/ingress generation logic used by both keycloak_manager
-    and project_manager to avoid duplication.
-
-    When ``domain_format`` is set (e.g. ``"deployment-subdomain"``), the hostname
-    is resolved from the matching template in ``DOMAIN_FORMAT_TEMPLATES``.
-    When ``domain_format`` is ``None``, the legacy dispatch logic is used unchanged.
-
-    Args:
-        component_name: Name of the component
-        deployment_name: Name of the deployment
-        project_name: Name of the project
-        ingress_postfix: Cluster ingress postfix
-        subdomain: Optional subdomain override
-        base_domain: Optional custom base domain (e.g., "rijks.app")
-        domain_format: Optional domain-format template ID from project YAML
-
-    Examples:
-        # A custom domain without a format: subdomain.base_domain.
-        >>> get_component_ingress_map(
-        ...     "frontend", "prod", "myapp", ".kind",
-        ...     subdomain="myapp", base_domain="custom.nl"
-        ... )
-        {'prod-frontend': 'myapp.custom.nl'}
-
-        # The cluster domain: component-deployment-project.cluster.
-        >>> get_component_ingress_map(
-        ...     "frontend", "prod", "myapp", ".kind"
-        ... )
-        {'prod-frontend': 'frontend-prod-myapp.kind'}
-
-        # Explicit domain-format with dots
-        >>> get_component_ingress_map(
-        ...     "frontend", "poc", "myapp", ".kind",
-        ...     subdomain="moza", base_domain="rijksapp.dev",
-        ...     domain_format="deployment.subdomain"
-        ... )
-        {'poc-frontend': 'poc.moza.rijksapp.dev'}
-    """
-    base_name = generate_unique_name(deployment_name, component_name)
-
-    # The approval gate runs BEFORE a shape is chosen, so it covers every shape. It used
-    # to sit inside the branch below, which meant a deployment that names no
-    # domain-format -- a write that only set base-domain and subdomain -- composed its
-    # hostname in the legacy dispatch with nobody having checked whether the domain was
-    # approved. That published an unapproved domain AND showed it as the component's
-    # address, because this function is also what the portal and the API read (RC-104).
-    effective_format, effective_domain = apply_domain_approval_fallback(
-        domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
-    )
-
-    # A named format, or the safe one an unapproved domain fell back to, resolves through
-    # the template.
-    if effective_format and effective_format in DOMAIN_FORMAT_TEMPLATES:
-        domain = resolve_domain_tail(effective_domain, ingress_postfix)
-        hostname = generate_hostname_from_format(
-            domain_format=effective_format,
-            component_name=component_name,
-            deployment_name=deployment_name,
-            project_name=project_name,
-            subdomain=subdomain,
-            domain=domain,
-        )
-        return {base_name: hostname}
-
-    # Legacy dispatch: no domain_format, and the domain it names IS approved.
-
-    # Custom/external domain (base_domain with subdomain)
-    if base_domain and subdomain:
-        hostname = generate_external_hostname(subdomain, base_domain)
-        return {base_name: hostname}
-
-    # Default cluster domain
-    return generate_ingress_map(component_name, deployment_name, project_name, ingress_postfix, subdomain)
-
-
-def get_deployment_hostnames(
-    component_names: list[str],
-    deployment_name: str,
-    project_name: str,
-    ingress_postfix: str,
-    subdomain: str | None = None,
-    base_domain: str | None = None,
-    domain_format: str | None = None,
-    expose_on_bare_domain: str | bool = False,
-    root_component: str | None = None,
-    *,
-    project_data: dict[str, Any],
-    cluster: str,
-) -> list[str]:
-    """
-    Get all hostnames for components in a deployment.
-
-    Centralizes the hostname generation logic used by keycloak_manager.
-
-    Args:
-        component_names: List of component names that need hostnames
-        deployment_name: Name of the deployment
-        project_name: Name of the project
-        ingress_postfix: Cluster ingress postfix
-        subdomain: Optional subdomain override
-        base_domain: Optional custom base domain (e.g., "rijks.app")
-        domain_format: Optional domain-format template ID from project YAML
-        expose_on_bare_domain: Component name that serves the bare domain,
-            or False/empty when disabled
-        root_component: Component that serves the root address
-            (``subdomain.base-domain``), or None when no component does
-    """
-    # Local, like in apply_domain_approval_fallback: services.catalog.publish_on_web.subdomain imports this
-    # module, so a module-scope import would be a cycle.
-    from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
-
-    hostnames: list[str] = []
-
-    for component_name in component_names:
-        ingress_map = get_component_ingress_map(
-            component_name,
-            deployment_name,
-            project_name,
-            ingress_postfix,
-            subdomain,
-            base_domain,
-            domain_format=domain_format,
-            project_data=project_data,
-            cluster=cluster,
-        )
-        hostname = next(iter(ingress_map.values()))
-        if hostname not in hostnames:
-            hostnames.append(hostname)
-
-    # The root hostname is the one address here that is NOT composed by
-    # get_component_ingress_map, so the approval verdict that function applies does not
-    # reach it. Without this the components of an unapproved domain move to the cluster
-    # address while ``subdomain.base-domain`` is still handed out as a hostname.
-    domain_approved = is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
-
-    # The dotted formats with a component prefix carry a root address next to the
-    # per-component ones: ``subdomain.base-domain``, served by the root component. Keyed
-    # on the format plus root-component rather than the retired ``domain-mode``: nice-url
-    # files migrated to ``component.subdomain`` (schema v2.8), and the same pair gates the
-    # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
-    # cannot disagree.
-    if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
-        root_hostname = generate_root_hostname(subdomain, base_domain)
-        if root_hostname not in hostnames:
-            hostnames.append(root_hostname)
-
-    # The apex hangs on the same approval as the root address above. Ungated, it stayed in
-    # the list while every other address of that domain fell back to the cluster one.
-    if domain_approved and expose_on_bare_domain and base_domain:
-        bare_hostname = generate_bare_domain_hostname(base_domain)
-        if bare_hostname not in hostnames:
-            hostnames.append(bare_hostname)
-
-    return hostnames
-
-
 def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypted: bool = True) -> str:
     """
     Generate a consistent filename for Helm values files.
@@ -2230,9 +1918,6 @@ def ensure_fqdn(hostname: str) -> str:
 
     if "." in host:
         return f"{host}{port_suffix}"
-
-    from opi.core.cluster_config import CLUSTER_CONFIG
-    from opi.core.config import settings
 
     cluster_conf = CLUSTER_CONFIG.get(settings.CLUSTER_MANAGER, {})
     namespace = cluster_conf.get("namespace", "rig-system")

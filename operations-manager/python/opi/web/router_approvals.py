@@ -36,8 +36,8 @@ from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
 from opi.http.auth.request_authority import RequestAuthority
 from opi.http.render.lotc_switch import render_fragment
 from opi.http.render.menu import get_menu_items
-from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.http.task_helpers import queue_rollout
+from opi.utils.nldd_iconen import to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.sections import FormSection

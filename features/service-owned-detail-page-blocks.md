@@ -30,7 +30,6 @@ anything to back up.
 | `@on(UIEvent.PROJECT_SECTIONS)`, payload `ProjectPageContext` | a block about the project | `collect_detail_page_sections()` |
 | `@on(UIEvent.DEPLOYMENT_SECTIONS)`, payload `DeploymentPageContext` | a block about ONE deployment | `collect_deployment_page_sections()` |
 | `definition.actions_provider(project_data, deployment_name)` | action buttons on a deployment | `collect_deployment_actions()` |
-| `web_routers()` | the endpoints those blocks need | `collect_service_routers()` |
 
 Only services the project actually uses (selected at project level or referenced by a
 component) are asked for sections, so "does this block apply" needs no condition in the
@@ -78,13 +77,16 @@ handler it inherits and the dispatch concatenates their contributions, so the Po
 services are backupable *and* bring the console/job modals without either mixin knowing
 about the other. A mixin that forgot to chain used to swallow the other one's block.
 
-## Endpoints travel with the block
+## De endpoints van een blok staan in de ingangslaag
 
 The backups block lazy-loads its rows over `hx-get`; the console and the job runner are
-modals with start/status/stop routes. Declaring them through `web_routers()` keeps them
-with the service instead of leaving half the block behind in the general router. Import
-the route module *inside* `web_routers()`: those modules import managers, which the
-catalog itself must not do.
+modals with start/status/stop routes. Those routes are entry points and live in `opi/web/`
+(`router_backups.py`, `router_image_registries.py`, `router_db_console.py`,
+`router_jobs.py`); the service delivers what they show. Until RC-489 a service declared
+them itself through `web_routers()`, but a route needs the auth decorators and the render
+switch out of `opi/http`, which sits above the catalog (chapter 5 of
+`docs/development/coding-rules.md`). A test per block reads the mounted `web_router`, so a
+lazy-loading block still cannot lose the endpoint that fills it.
 
 A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
 `endpoint`; the shared modal shell loads that URL (`openServiceModal` in
@@ -96,7 +98,8 @@ A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` ins
 2. Put `@on(UIEvent.PROJECT_SECTIONS)` or `@on(UIEvent.DEPLOYMENT_SECTIONS)` on a method
    that takes the matching payload, returning `[]` when the block does not apply (role,
    missing data, wrong cluster). The method's name is free -- name it after the block.
-3. Need an endpoint? Put the router in your package and return it from `web_routers()`.
+3. Need an endpoint? Write the data function in your package and the route in
+   `opi/web/router_<blok>.py`, mounted in `opi/web/router.py`.
 4. Write both guards: the section **appears** for a project that uses the service and
    **stays away** from one that does not. A missing block is invisible otherwise; that is
    the regression these tests exist for (`tests/test_service_detail_sections.py`,

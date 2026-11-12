@@ -28,8 +28,8 @@ import re
 from typing import TYPE_CHECKING
 
 import opi
-from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.services.services import ServiceAdapter
+from opi.utils.nldd_iconen import to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.services.services_enums import ServiceType

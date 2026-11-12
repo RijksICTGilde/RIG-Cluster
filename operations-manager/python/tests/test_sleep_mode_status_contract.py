@@ -23,8 +23,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.openapi_choices import CHOICES_KEY
+from opi.api.sleep_mode_router import sleep_mode_router
 from opi.services.catalog.sleep_mode import flow
-from opi.services.catalog.sleep_mode.router import sleep_mode_router
 
 PROJECT = "demo"
 DEPLOYMENT = "PR-1"

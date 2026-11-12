@@ -149,7 +149,7 @@ schrijfkant, en die is gepind.
 | Tagopbouw en eigenaar-afleiding | `opi/utils/naming.py` |
 | Bestemming en validatie van het pushdoel | `opi/connectors/skopeo.py` |
 | Endpoint | `opi/api/image_router.py` |
-| Leescontrole | `opi/manager/project_validation.py` |
+| Leescontrole | `opi/services/project_validation.py` |
 | Tests (twee projecten, twee sleutels) | `tests/test_tenant_isolation_registry.py` |
 | Tests (connector) | `tests/test_skopeo_connector.py` |
 

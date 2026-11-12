@@ -14,9 +14,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from opi.core.config import settings
+from opi.core.config import REPO_BLOB_URL, settings
 from opi.services.zad_map.contract import Color, Column, Edge, Graph, Group, Info, InfoItem, InfoSection, Node
-from opi.web.security_policy import REPO_BLOB_URL
 
 PLATFORM_JSON = Path(__file__).resolve().parent / "platform.json"
 

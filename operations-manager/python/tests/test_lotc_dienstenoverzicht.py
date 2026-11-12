@@ -20,9 +20,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from markupsafe import escape
 from opi.api.invite_routes import invite_router
-from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
+from opi.utils.nldd_iconen import to_nldd_icon
 from opi.web.lotc_router import router as lotc_router
 from starlette.middleware.sessions import SessionMiddleware
 from tests.test_lotc_icon_mapping import _gerenderde_naam

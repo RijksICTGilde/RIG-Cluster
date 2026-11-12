@@ -37,9 +37,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from opi.forms.presets.loader import Preset, load_presets
 from opi.http.render.menu import get_menu_items
-from opi.http.render.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
-from opi.http.render.nldd_iconen import nldd_icon_names
 from opi.http.render.templates_lotc import templates_lotc
+from opi.utils.nldd_iconen import ROOS_TO_NLDD_ICONS, nldd_icon_names, to_nldd_icon
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
@@ -97,7 +96,7 @@ def _nldd_vocabulary() -> set[str]:
     Die lijst en de bundel die de browser laadt lopen uiteen, op 0.8.80 met 327 namen
     tegen 271 in de bundel. De 56 namen ertussen bestonden dus op papier en renderden als
     niets, en deze test keurde ze goed. Hoeveel het per versie scheelt en welke kant het
-    op loopt is een meting, en die staat in ``opi/http/render/nldd_iconen.py``: op 0.8.92 zijn het
+    op loopt is een meting, en die staat in ``opi/utils/nldd_iconen.py``: op 0.8.92 zijn het
     nog 2 namen die op papier bestaan en niets tekenen.
 
     Gemeten in een browser, met een echte <nldd-icon> en <nldd-button> per naam en de
@@ -105,7 +104,7 @@ def _nldd_vocabulary() -> set[str]:
     37 als een lege plek - waaronder de bewerkknop en de verwijderknop. Deze test was al
     die tijd groen.
 
-    De bron is nu opi/http/render/nldd_iconen.py: de namen uit de GELEVERDE bestanden, dezelfde
+    De bron is nu opi/utils/nldd_iconen.py: de namen uit de GELEVERDE bestanden, dezelfde
     plek waar de browser ze vandaan haalt.
     """
     namen = nldd_icon_names()

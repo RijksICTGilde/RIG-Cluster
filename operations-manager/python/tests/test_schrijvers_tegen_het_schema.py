@@ -37,14 +37,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.clone_validation import build_restore_target_deployment
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.catalog.sleep_mode import service as sleep_service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode import token as sleep_token
+from opi.services.clone_validation import build_restore_target_deployment
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_service_configs
 from opi.services.resource_tuning_service import apply_resource_tuning
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.services_enums import ServiceType

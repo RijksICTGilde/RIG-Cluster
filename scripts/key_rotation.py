@@ -69,7 +69,7 @@ from opi.services.project_schema import (  # noqa: E402  (after the sys.path boo
     find_plaintext_secret_violations,
     validate_project_schema,
 )
-from opi.manager.project_validation import validate_project_structure  # noqa: E402
+from opi.services.project_validation import validate_project_structure  # noqa: E402
 from opi.utils.age import (  # noqa: E402
     BASE64_AGE_PREFIX,
     ensure_base64_age_sync,

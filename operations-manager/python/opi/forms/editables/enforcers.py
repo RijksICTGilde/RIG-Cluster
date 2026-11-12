@@ -6,11 +6,13 @@ from opi.core import config as opi_config
 from opi.core.authz.engine import Role
 from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
+    DOMAIN_FORMAT_TEMPLATES,
     DomainSetting,
     custom_domain_certificate_note,
     domain_setting_path,
     get_domain_setting,
 )
+from opi.services.catalog.publish_on_web.hostnames import resolve_domain_tail
 from opi.services.catalog.publish_on_web.subdomain import (
     BARE_DOMAIN_PLATFORM_MESSAGE,
     BARE_DOMAIN_SUBDOMAIN,
@@ -23,9 +25,8 @@ from opi.services.catalog.publish_on_web.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.services.persistence.subdomain_registry import SubdomainConnector
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, resolve_domain_tail
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 
 class FieldError(ValueError):

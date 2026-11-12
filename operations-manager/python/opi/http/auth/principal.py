@@ -24,6 +24,8 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from prometheus_client.core import CounterMetricFamily
+
 from opi.core.actor import project_api_key_actor, service_account_actor, user_actor
 from opi.core.authz.engine import (
     Cause,
@@ -34,12 +36,14 @@ from opi.core.authz.engine import (
     decide,
     record_decision,
 )
+from opi.core.metrics import register_metric_source
 from opi.services.members import MemberKind
 from opi.services.project_members import hash_of, is_expired, member_named
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
+    from prometheus_client.core import Metric
     from starlette.requests import Request
 
     from opi.core.authz.actions import Action
@@ -76,8 +80,24 @@ def count_usage(project: str, kind: PrincipalKind) -> None:
 
 
 def usage_per_project() -> dict[tuple[str, str], int]:
-    """The count so far. Read by the Prometheus collector."""
+    """The count so far."""
     return dict(_usage)
+
+
+def credential_metrics() -> list[Metric]:
+    """Credentials per project, to see whether the project key is still in use.
+
+    The label value ``projectsleutel`` is that old route; a token counts under ``persoon``
+    or ``service-account``.
+    """
+    credentials = CounterMetricFamily(
+        "opi_api_credential_calls",
+        "Geslaagde legitimaties per project en per soort bewijsmiddel",
+        labels=["project", "credential"],
+    )
+    for (project, kind), count in _usage.items():
+        credentials.add_metric([project, kind], count)
+    return [credentials]
 
 
 def reset_usage() -> None:
@@ -205,3 +225,6 @@ def decide_action(
             cause=PRINCIPAL_KIND_NOT_ALLOWED,
         )
     raise AccessDeniedError(f"de rollen van '{principal.name}' openen '{action.value}' niet in dit project")
+
+
+register_metric_source(credential_metrics)

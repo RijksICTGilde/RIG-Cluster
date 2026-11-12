@@ -5,9 +5,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from prometheus_client.core import GaugeMetricFamily, Metric
 from pydantic import BaseModel, Field, model_validator
 
-from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
 from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -22,6 +22,7 @@ from opi.core.authz.actions import Action, action, deployment_from, marking_if_a
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.logging_redact import sanitize_for_log
+from opi.core.metrics import register_metric_source
 from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.endpoint_util import (
     default_marking,
@@ -42,32 +43,34 @@ from opi.http.task_helpers import (
     wait_for_task_answer,
 )
 from opi.manager.clone import CLONE_SOURCE_INCOMPLETE
-from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project.deployment_upsert import (
     INVALID_PROJECT_NAME,
     invalid_deployment_name,
 )
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.manager.project_validation import validate_component_references
 from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
+from opi.services.catalog.base import CHOICES_PROVIDER_KEY
 from opi.services.catalog.image_registries.config_model import (
     REGISTRY_NAME_PATTERN,
     SECRET_NAME_PATTERN,
     UPSTREAM_PATTERN,
 )
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
 from opi.services.catalog.publish_on_web.subdomain import (
     BaseDomainValidationError,
     SubdomainNotAvailableError,
     SubdomainValidationError,
 )
+from opi.services.clone_validation import validate_clone_readiness
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_environment import Omgeving
 from opi.services.project_store import get_project_store
 from opi.services.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
+from opi.services.project_validation import validate_component_references
 from opi.services.step_up import StepUpAction
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal, has_direct_clone_source
-from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
+from opi.utils.naming import sanitize_kubernetes_name
 from opi.utils.project_names import validate_project_name
 from opi.utils.yaml_util import load_yaml_from_string
 
@@ -82,6 +85,19 @@ CLONE_STILL_RUNNING = (
 
 
 subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
+
+
+def rate_limiter_metrics() -> list[Metric]:
+    """The clients the subdomain-check limiter tracks, for the Prometheus scrape."""
+    clients = GaugeMetricFamily(
+        "opi_rate_limiter_tracked_clients",
+        "Number of clients tracked by the rate limiter",
+    )
+    clients.add_metric([], len(subdomain_check_rate_limiter._tokens))
+    return [clients]
+
+
+register_metric_source(rate_limiter_metrics)
 
 
 class ProjectRepository(BaseModel):

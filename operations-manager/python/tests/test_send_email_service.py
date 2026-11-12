@@ -56,7 +56,6 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.mail_manager import MailAccountNameError, MailManager
-from opi.manager.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
 from opi.services.catalog.send_email import (
@@ -68,6 +67,7 @@ from opi.services.catalog.send_email import (
     deployment_messages_per_day,
 )
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
+from opi.services.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.registry import get_service
 from opi.services.secrets import SendEmailSecret
 from opi.services.services_enums import ServiceType
@@ -2680,7 +2680,7 @@ class TestEenPodwisselKostGeenUitrol:
         )
         pogingen = AsyncMock(side_effect=[fout, {"data": {"id": 1, "name": "project-demo"}}])
         monkeypatch.setattr(MailConnector, "_single_request", pogingen)
-        monkeypatch.setattr("opi.utils.connect_retry.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr("opi.core.connect_retry.asyncio.sleep", AsyncMock())
 
         resultaat = await connector.get_principal("project-demo")
 

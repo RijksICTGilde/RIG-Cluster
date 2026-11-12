@@ -156,7 +156,7 @@ token-bereikbare route wijst er precies een aan:
 async def update_image_v2(...): ...
 ```
 
-`check_route_actions` draait bij het opstarten over `app.routes` en WEIGERT te starten
+`check_route_actions` draait in `create_app` over `app.routes` en WEIGERT te starten
 als een BEWAAKTE route geen action noemt of als die action geen regel heeft. Zonder die controle zou zo'n route
 stilzwijgend alles openen wat het token mag.
 

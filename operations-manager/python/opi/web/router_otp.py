@@ -30,7 +30,8 @@ from joserfc.errors import JoseError
 from starlette.responses import Response
 
 from opi.core.authz.actions import Action, action
-from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
 from opi.http.render.lotc_switch import build_lotc_admin, render
 from opi.http.render.menu import get_menu_items
 from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_is_valid

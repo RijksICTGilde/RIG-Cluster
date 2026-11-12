@@ -29,10 +29,10 @@ from opi.api.invite_routes import (
 from opi.api.router import IPRateLimiter
 from opi.core import logging_config
 from opi.core.logging_redact import fingerprint_for_log, redact_invite_key_in_path
-from opi.manager.project_validation import validate_project_structure
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.services.catalog.invite import INVITE_KEY_MIN_LENGTH, InviteService
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 from opi.services.registry import change_validating_services
 from starlette.requests import Request
 

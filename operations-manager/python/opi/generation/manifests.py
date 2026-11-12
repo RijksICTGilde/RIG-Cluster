@@ -2,7 +2,6 @@
 kustomization that lists them, with support for SOPS-encrypted files (``.to-sops.yaml``).
 """
 
-import functools
 import glob
 import logging
 import os
@@ -10,14 +9,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, Template
 from ruamel.yaml.error import YAMLError
 
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
+from opi.utils.manifest_render import compiled_template, render_template_source
 from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 from opi.utils.yaml_util import (
-    dump_yaml_double_quoted_scalar,
     dump_yaml_for_go,
     load_yaml_documents_safe,
     load_yaml_round_trip,
@@ -46,15 +44,6 @@ CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 CMP_ENV_RESERVED_PREFIXES = ("ARGOCD_", "SOPS_", "KUSTOMIZE_", "HELM_", "HELMFILE_", "KUBE", "BASH", "LD_", "GIT_")
 CMP_ENV_RESERVED_NAMES = frozenset({"PATH", "HOME", "IFS", "ENV", "SHELL", "PS4", "PROMPT_COMMAND"})
 
-#: A helmfile deployment's env vars go to git encrypted: OPI writes
-#: ``cmp-env.to-sops.yaml``, SOPS turns that into ``cmp-env.sops.yaml`` and the plugin
-#: decrypts it after fetching the project key.
-CMP_ENV_NAME = "cmp-env"
-
-#: The plaintext file from before the encrypted form. OPI cleans it up where it is still
-#: there, and the git guard refuses a new or changed copy.
-CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
-
 #: The same key shape as component env vars in opi/schemas/project_v2.json.
 CMP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -75,70 +64,6 @@ def cmp_env_rejection(key: str, value: str) -> str | None:
     if any(character in value for character in "\r\n\0"):
         return f"the value of '{key}' contains a newline or NUL byte"
     return None
-
-
-def yaml_scalar(value: object) -> str:
-    """Render ``value`` as a YAML double-quoted scalar that survives a round-trip.
-
-    Tenant values reach a Secret manifest verbatim, so the quoting has to hold for every
-    legal string. Do not replace this with manual ``"{{ value }}"`` quoting (a backslash
-    becomes an invalid YAML escape and SOPS refuses the whole file) nor with ``| tojson``
-    (an astral character becomes a surrogate pair, which SOPS rejects).
-
-    Only a ``str``. A non-string here is a template fault: every optional value sits in an
-    ``{% if %}``, so a ``None`` or a missing variable means that guard is absent. The
-    emitter would otherwise write ``!!null "null"`` or ``!!int "5"`` into a manifest
-    unnoticed.
-    """
-    if not isinstance(value, str):
-        raise TypeError(
-            f"yaml_scalar verwacht een str, kreeg {type(value).__name__}. Een ontbrekende of "
-            "optionele sjabloonvariabele hoort achter een if-blok, niet door dit filter."
-        )
-    return dump_yaml_double_quoted_scalar(value)
-
-
-#: The filters every manifest template may use. A second environment (a test that wants
-#: ``StrictUndefined``) registers them from here instead of retyping the list.
-MANIFEST_FILTERS: dict[str, Any] = {"yaml_scalar": yaml_scalar}
-
-
-@functools.cache
-def _environment() -> Environment:
-    """The shared Jinja2 environment for all manifest templates.
-
-    The FileSystemLoader is there for ``{% include %}`` of sidecar templates.
-    ``autoescape=False`` is what a YAML template needs.
-    """
-    env = Environment(
-        loader=FileSystemLoader(settings.MANIFESTS_PATH),
-        trim_blocks=True,
-        lstrip_blocks=True,
-        # Keeps the trailing newline of an included partial, or the next line sticks to it.
-        keep_trailing_newline=True,
-        autoescape=False,  # noqa: S701  # output is YAML, escaping goes through yaml_scalar
-    )
-    env.filters.update(MANIFEST_FILTERS)
-    return env
-
-
-@functools.lru_cache(maxsize=256)
-def _compiled(source: str) -> Template:
-    """A compiled template, cached on the source text.
-
-    The cache key is the text, not the path: a changed file on disk yields different text
-    and so a fresh compilation.
-    """
-    return _environment().from_string(source)
-
-
-def render_template_source(source: str, variables: dict[str, Any]) -> str:
-    """Render manifest source through the shared environment.
-
-    The only render point for a template that arrives as TEXT instead of as a filename; an
-    ``Environment()`` of its own next to this one is a second place to forget a filter.
-    """
-    return _compiled(source).render(**variables)
 
 
 def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:  # noqa: ANN401  # a parsed manifest document
@@ -219,7 +144,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
     with open(template_path) as f:
         template_content = f.read()
 
-    result = _compiled(template_content).render(**variables)
+    result = compiled_template(template_content).render(**variables)
 
     logger.debug(f"Successfully rendered template: {template_name}")
     return result

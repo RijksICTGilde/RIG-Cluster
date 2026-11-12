@@ -502,7 +502,7 @@ AGE-waarde in de boom, dus ook deze.
 
 Die controle keek alleen naar `project_v2.json`, en een dienstconfig staat daar bewust niet
 in. De helft die een dienst zelf beschrijft wordt daarom gemeten door
-`find_plaintext_service_config_violations` (`opi/manager/project_validation.py`), die
+`find_plaintext_service_config_violations` (`opi/services/project_validation.py`), die
 dezelfde detectie op de configmodellen van de diensten draait. Beide helften worden in
 `ProjectStore._validate` naast elkaar aangeroepen, en die AANHAKING heeft een eigen test die
 via de store gaat (`test_de_store_weigert_het_token_ook_zonder_enforce`), zodat het opvalt

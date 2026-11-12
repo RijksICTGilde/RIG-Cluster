@@ -19,7 +19,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from opi.http.render.nldd_iconen import nldd_icon_names
+from opi.utils.nldd_iconen import nldd_icon_names
 from opi.web.task_progress import render_progress_fragment
 
 #: Wat het OUDE componentensysteem in elke gerenderde component achterliet. Een enkel
@@ -71,7 +71,7 @@ def test_de_iconen_van_de_takenlijst_bestaan_in_de_nldd_woordenschat() -> None:
     Gemeten tegen de BUNDEL die de browser laadt en niet tegen ``icons.json``: die twee
     lopen uiteen, en deze poort stond hier eerder tegen de lijst. Hoeveel het scheelt en
     welke kant het op loopt verschilt per versie; de meting staat in
-    ``opi/http/render/nldd_iconen.py``.
+    ``opi/utils/nldd_iconen.py``.
 
     De namen staan sinds de takenlijst op lijstcomponenten staat als ``icon=`` op een
     ``nldd-icon-cell``; het pictogram zelf zit in de schaduwboom van dat component.

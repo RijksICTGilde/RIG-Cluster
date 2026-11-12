@@ -32,9 +32,9 @@ from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.project import Project
 from opi.services.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.services.project_roles import actor_may_set
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
     from opi.services.catalog.config_settings import IntegerSetting
@@ -360,7 +360,7 @@ class MemoryOptionsProvider:
         options = [{"value": v, "label": lbl} for v, lbl in steps]
 
         if self.current_value and not any(o["value"] == self.current_value for o in options):
-            from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+            from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
             try:
                 current_mi = parse_k8s_memory_to_mi(self.current_value)

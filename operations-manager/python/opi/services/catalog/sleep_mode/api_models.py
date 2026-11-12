@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from opi.api.openapi_choices import CHOICES_KEY
+from opi.services.catalog.base import CHOICES_KEY
 
 #: The real sleep state of a deployment, as reported by both endpoints.
 SleepStateValue = Literal["awake", "sleeping", "waking", "disabled"]

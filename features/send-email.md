@@ -744,7 +744,7 @@ een mislukte uitrol zonder `error_type` en krijgen daarom helemaal geen categori
 gat is breder dan mail en staat als eigen taak op PR #236.
 
 Een podwissel van de relay kost geen uitrol meer: de connector herhaalt een connectfout
-30 seconden lang (`opi/utils/connect_retry.py`, dezelfde lus als de ArgoCD-connector).
+30 seconden lang (`opi/core/connect_retry.py`, dezelfde lus als de ArgoCD-connector).
 
 ### Niemand merkt het als de relay plat ligt
 

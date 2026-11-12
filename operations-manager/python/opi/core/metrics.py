@@ -30,7 +30,7 @@ from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from prometheus_client.core import Metric
 
@@ -117,6 +117,16 @@ def rollout_phase(phase: str) -> Iterator[None]:
         observe_rollout_phase(phase, time.monotonic() - started)
 
 
+#: Producers of extra metric families, filled by the layer that owns the state. Core
+#: reads nothing upward: the owner registers its own producer.
+_metric_sources: list[Callable[[], Iterable[Metric]]] = []
+
+
+def register_metric_source(source: Callable[[], Iterable[Metric]]) -> None:
+    """Add a producer of metric families to the OPI scrape."""
+    _metric_sources.append(source)
+
+
 class OPICollector(Collector):
     """Custom Prometheus collector for OPI internal state.
 
@@ -125,84 +135,6 @@ class OPICollector(Collector):
     """
 
     def collect(self) -> Iterator[Metric]:
-        gauge = GaugeMetricFamily(
-            "opi_projects_cached",
-            "Number of projects in ProjectService in-memory cache",
-        )
-        try:
-            from opi.services.project_service import ProjectService
-
-            if ProjectService._instance is not None:
-                gauge.add_metric([], len(ProjectService._instance._projects))
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect project cache metrics", exc_info=True)
-        yield gauge
-
-        ws_global = GaugeMetricFamily(
-            "opi_websocket_connections_global",
-            "Number of active global WebSocket connections",
-        )
-        ws_users = GaugeMetricFamily(
-            "opi_websocket_connections_users",
-            "Number of distinct users with active WebSocket connections",
-        )
-        try:
-            from opi.api.logs_websocket_router import (
-                _active_connections,
-                _global_connections,
-            )
-
-            ws_global.add_metric([], len(_global_connections))
-            ws_users.add_metric([], len(_active_connections))
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect WebSocket metrics", exc_info=True)
-        yield ws_global
-        yield ws_users
-
-        # Credentials per project, to see whether the project key is still in use. The label
-        # value ``projectsleutel`` is that old route; a token counts under ``persoon`` or
-        # ``service-account``.
-        credentials = CounterMetricFamily(
-            "opi_api_credential_calls",
-            "Geslaagde legitimaties per project en per soort bewijsmiddel",
-            labels=["project", "credential"],
-        )
-        try:
-            from opi.http.auth.principal import usage_per_project
-
-            for (project, kind), count in usage_per_project().items():
-                credentials.add_metric([project, kind], count)
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect credential metrics", exc_info=True)
-        yield credentials
-
-        # record_action raises nothing at its caller, so without this counter a broken audit
-        # trail would be silent. The name follows the house prefix opi_, not the zad_ from the
-        # design.
-        audit_failures = CounterMetricFamily(
-            "opi_audit_write_failures",
-            "Mislukte schrijfacties naar het audittrail sinds de start",
-        )
-        try:
-            from opi.services.audit import write_failures
-
-            audit_failures.add_metric([], write_failures())
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect audit write failures", exc_info=True)
-        yield audit_failures
-
-        rl_clients = GaugeMetricFamily(
-            "opi_rate_limiter_tracked_clients",
-            "Number of clients tracked by the rate limiter",
-        )
-        try:
-            from opi.api.router import subdomain_check_rate_limiter
-
-            rl_clients.add_metric([], len(subdomain_check_rate_limiter._tokens))
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect rate limiter metrics", exc_info=True)
-        yield rl_clients
-
         db_active = GaugeMetricFamily(
             "opi_database_pool_active_connections",
             "Number of active database pool connections",
@@ -358,77 +290,13 @@ class OPICollector(Collector):
             connector_calls.add_metric([name], count)
         yield connector_calls
 
-        # The fleet total is emitted ALWAYS, zero included. It is what the alert reads,
-        # and a metric that only appears once something is broken cannot be told apart
-        # from a metric that is not being produced at all.
-        pull_failures = GaugeMetricFamily(
-            "opi_image_pull_failing_pods",
-            "Application pods on this cluster whose container cannot pull its image",
-        )
-        pull_by_reason = GaugeMetricFamily(
-            "opi_image_pull_failing_pods_by_reason",
-            "The same pods, by namespace and by what the registry answered",
-            # ``project_namespace``, not ``namespace``: the scrape adds a ``namespace``
-            # of its own (the one OPI runs in) and a collision is renamed to
-            # ``exported_namespace`` behind your back.
-            labels=["project_namespace", "reason"],
-        )
-        # When the count last ran, in the shape of opi_peak_memory_timestamp above.
-        # The count alone cannot say whether it means "nothing is failing" or "nobody
-        # looked": the snapshot starts empty, so a cluster where the cluster-wide pod read
-        # is refused reports a clean zero forever. 0 here means no pass has ever succeeded.
-        pull_observed = GaugeMetricFamily(
-            "opi_image_pull_observed_timestamp",
-            "Unix timestamp of the last image-pull observation that reached the cluster",
-        )
-        total = 0
-        observed_at = 0.0
-        by_reason: dict[tuple[str, str], int] = {}
-        try:
-            from opi.services.image_pull_report import (
-                image_pull_failure_count,
-                image_pull_failure_counts,
-                image_pull_observed_timestamp,
-            )
-
-            total = image_pull_failure_count()
-            by_reason = image_pull_failure_counts()
-            observed_at = image_pull_observed_timestamp()
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect image-pull metrics", exc_info=True)
-        pull_failures.add_metric([], total)
-        for (namespace, reason), count in by_reason.items():
-            pull_by_reason.add_metric([namespace, reason], count)
-        pull_observed.add_metric([], observed_at)
-        yield pull_failures
-        yield pull_by_reason
-        yield pull_observed
-
-        # One series per deployment with a schedule, refreshed by the backup scheduler on
-        # every tick. The timestamp is 0 while no scheduled snapshot has ever been seen,
-        # in the shape of opi_image_pull_observed_timestamp above: a gauge that is simply
-        # absent cannot be told apart from a backup that is simply late.
-        backup_last_success = GaugeMetricFamily(
-            "opi_backup_last_scheduled_success_timestamp_seconds",
-            "Unix timestamp of the last successful scheduled backup per deployment (0: never seen one)",
-            labels=["project", "deployment"],
-        )
-        backup_unknown = GaugeMetricFamily(
-            "opi_backup_schedule_unknown",
-            "1 when the last scheduler tick could not ask Kopia about this deployment",
-            labels=["project", "deployment"],
-        )
-        try:
-            from opi.services.backup_schedule_report import backup_schedule_states
-
-            for state in backup_schedule_states():
-                labels = [state.project, state.deployment]
-                backup_last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
-                backup_unknown.add_metric(labels, 1 if state.unknown_streak else 0)
-        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
-            logger.debug("Failed to collect backup schedule metrics", exc_info=True)
-        yield backup_last_success
-        yield backup_unknown
+        for source in _metric_sources:
+            try:
+                families = list(source())
+            except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
+                logger.debug("Failed to collect from %s", getattr(source, "__name__", source), exc_info=True)
+                continue
+            yield from families
 
     def describe(self) -> list[Metric]:
         """Return empty description; metrics are generated dynamically."""

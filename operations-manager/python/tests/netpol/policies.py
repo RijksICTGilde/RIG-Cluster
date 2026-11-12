@@ -23,7 +23,6 @@ from opi.core.cluster_config import (
     get_backup_namespace,
     get_cluster_cidrs,
     get_database_operator_namespace,
-    get_infrastructure_namespace,
     get_ingress_controller_selector,
     get_namespace,
     get_ops_egress,
@@ -35,7 +34,7 @@ from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_network_policy_name
+from opi.utils.naming import generate_network_policy_name, get_infrastructure_namespace
 from ruamel.yaml import YAML
 
 CLUSTER = "odcn-production"

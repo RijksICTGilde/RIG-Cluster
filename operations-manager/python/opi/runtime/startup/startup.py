@@ -34,9 +34,9 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.rules import check_register
 from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespace
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.database_pools import initialize_database_pools
 from opi.core.version import set_running_image
-from opi.http.auth.endpoint_util import check_route_actions
 from opi.manager.bootstrap.keycloak_setup import setup_keycloak
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
@@ -50,7 +50,6 @@ from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS
 from opi.services.session_revocation_service import load_revocations
 from opi.services.user_service import get_user_service
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.git_signing import load_git_signing_identity
 
 logger = logging.getLogger(__name__)
@@ -743,10 +742,9 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # import is a configuration error and stops the startup.
     load_git_signing_identity()
 
-    # A guarded route without an action would quietly open everything the caller was already
-    # allowed, and a role without a single grant opens nothing without anyone noticing. That
-    # stops the startup here, not a 403 that fails to appear.
-    check_route_actions(app.routes)
+    # A role without a single grant opens nothing without anyone noticing. That stops the
+    # startup here, not a 403 that fails to appear. The route table itself is checked in
+    # the composition root, where it is finished.
     check_register()
 
     # Metrics are not critical and the boot never waits for them: the connector starts

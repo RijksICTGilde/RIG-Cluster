@@ -42,11 +42,14 @@ from opi.api.openapi_choices import CHOICES_SOURCE_KEY, annotate_config_choices
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.manager.project.deployment_mutations import DeploymentMutations
-from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebDeploymentConfig
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.catalog.publish_on_web.domain_config import (
+    DOMAIN_FORMAT_TEMPLATES,
+    DomainSetting,
+    domain_setting_path,
+)
 from opi.services.catalog.publish_on_web.editables import DOMAIN_FORMAT_EDITABLE
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.services.project_validation import ProjectIntegrityError, validate_project_structure
 from pydantic import ValidationError
 
 #: Het formaat uit de melding.

@@ -17,8 +17,6 @@ from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_cluster_cidrs,
-    get_database_cluster_service_endpoint,
-    get_infrastructure_namespace,
     get_ingress_controller_selector,
     get_namespace,
     get_ops_egress,
@@ -29,6 +27,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.generation.manifests import render_template
 from opi.manager.argo_manager import APPLICATION_CREATION_TIMEOUT_SECONDS
 from opi.services.catalog.image_registries.resolution import resolve_project_image
@@ -42,12 +41,13 @@ from opi.utils.age import (
     get_project_public_key,
     project_private_key_or_none,
 )
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import (
     _sanitize_for_lowercase,
     generate_infrastructure_manifest_path,
     generate_postgres_superuser_secret_name,
     generate_registry_secret_name,
+    get_database_cluster_service_endpoint,
+    get_infrastructure_namespace,
 )
 from opi.utils.passwords import generate_secure_password
 from opi.utils.sops import encrypt_to_sops_files_or_fail, sops_filenames

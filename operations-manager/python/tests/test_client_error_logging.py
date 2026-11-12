@@ -8,7 +8,7 @@ keer als ERROR in het centrale log en daarmee in de alertering terecht.
 import logging
 from unittest.mock import MagicMock, patch
 
-from opi.manager.project_validation import validate_component_references
+from opi.services.project_validation import validate_component_references
 
 
 def _project() -> dict:
@@ -16,7 +16,7 @@ def _project() -> dict:
 
 
 def test_onbekende_componentverwijzing_logt_op_warning(caplog) -> None:
-    with caplog.at_level(logging.DEBUG, logger="opi.manager.project_validation"):
+    with caplog.at_level(logging.DEBUG, logger="opi.services.project_validation"):
         result = validate_component_references(_project(), [{"reference": "logius-fscbootstrap"}], "deployment")
 
     assert result["success"] is False

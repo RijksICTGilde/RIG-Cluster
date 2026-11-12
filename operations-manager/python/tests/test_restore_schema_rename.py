@@ -46,9 +46,9 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, SnapshotInfo
 from opi.manager.backup.database_backup import DatabaseBackupManager
+from opi.utils.manifest_render import MANIFEST_FILTERS
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 _TEMPLATE = "restore-database-pod.yaml.jinja"

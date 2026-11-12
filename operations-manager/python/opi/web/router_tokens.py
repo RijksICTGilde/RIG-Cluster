@@ -26,7 +26,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.config import settings
-from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso, requires_step_up
 from opi.http.render.lotc_switch import project_tab_url
 from opi.services.api_token_service import (
     DEFAULT_ROLES,

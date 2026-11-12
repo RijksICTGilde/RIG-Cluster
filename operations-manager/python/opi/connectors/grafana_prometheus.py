@@ -13,7 +13,7 @@ import httpx
 
 from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError, parse_query_time
 from opi.core.config import settings
-from opi.utils.connect_retry import backoff_delays
+from opi.core.connect_retry import backoff_delays
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

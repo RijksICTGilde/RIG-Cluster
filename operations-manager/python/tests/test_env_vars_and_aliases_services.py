@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 from opi.forms.wizard.secrets import REDACTED
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.editables import AliasMapValidator
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
 from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import SERVICES, property_owning_services
 from opi.services.services_enums import ServiceKind, ServiceType
 from pydantic import ValidationError

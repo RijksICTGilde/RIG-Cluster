@@ -93,7 +93,7 @@ from opi.connectors.kubectl import (  # noqa: E402
     KubectlExecutionError,
     create_kubectl_connector,
 )
-from opi.core.cluster_config import get_infrastructure_namespace, get_prefixed_namespace  # noqa: E402
+from opi.core.cluster_config import get_prefixed_namespace  # noqa: E402
 from opi.core.config import settings  # noqa: E402
 from opi.services.schema_migration import migrate_to_latest  # noqa: E402
 from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from  # noqa: E402
@@ -101,6 +101,7 @@ from opi.utils.naming import (  # noqa: E402
     generate_deployment_manifest_path,
     generate_infrastructure_manifest_path,
     generate_project_level_manifest_path,
+    get_infrastructure_namespace,
 )
 from opi.utils.rendered_kinds import rendered_kinds, rendered_types  # noqa: E402
 from opi.utils.yaml_util import YAMLError, load_yaml_safe  # noqa: E402

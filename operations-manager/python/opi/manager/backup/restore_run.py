@@ -12,8 +12,9 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
+from opi.core.backup_constants import ResourceType
 from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
-from opi.manager.backup.base import BackupLockBusyError, ResourceType
+from opi.manager.backup.base import BackupLockBusyError
 from opi.manager.backup.pvc_backup import create_backup_manager
 from opi.manager.backup.restore import (
     GENERATION_NOT_RECORDED,
@@ -25,8 +26,8 @@ from opi.manager.backup.restore import (
     set_restored_generation,
 )
 from opi.manager.backup.run import ProjectNotFoundError, resolve_deployment_target
-from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_manager import ProjectManager
+from opi.services.clone_validation import build_restore_target_deployment
 from opi.services.project_file_handler import create_project_file_handler, find_persistent_storage
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import normalize_service_entries

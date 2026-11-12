@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 
 from opi.core.actor import ACTOR_UNKNOWN, get_actor
 from opi.core.config import settings
-from opi.http.auth.auth_decorators import get_current_user
+from opi.core.request_user import get_current_user
 from opi.manager.project.deployment_removal import find_removable_deployment
 from opi.services.project_store import get_project_store
 

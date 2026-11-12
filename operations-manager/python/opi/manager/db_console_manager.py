@@ -50,13 +50,12 @@ from opi.manager.run_support import (
     apply_bundle,
     delete_bundle,
     find_deployment,
-    is_stale_starting,
-    parse_expires,
     resolve_image,
 )
 from opi.services.project_members import human_emails
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
+from opi.services.runs_support import is_stale_starting, parse_expires
 from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
     generate_db_console_client_id,

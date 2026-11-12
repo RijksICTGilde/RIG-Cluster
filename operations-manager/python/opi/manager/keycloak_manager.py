@@ -36,6 +36,7 @@ from opi.services.catalog.keycloak.config_model import (
 )
 from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.hostnames import get_deployment_hostnames
 from opi.services.project import Project
 from opi.services.secrets import KeycloakSecret
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -52,7 +53,6 @@ from opi.utils.naming import (
     generate_project_admin_username,
     generate_project_platform_client_id,
     generate_project_realm_name,
-    get_deployment_hostnames,
     resolve_effective_base_domain,
 )
 from opi.utils.passwords import generate_secure_password

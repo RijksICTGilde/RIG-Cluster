@@ -22,7 +22,6 @@ import pytest
 from opi.forms.editables.validators import StorageSizeValidator
 from opi.forms.visualizers.providers import StorageSizeOptionsProvider
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_validation import STORED_PROJECT_CONTEXT
 from opi.manager.pvc_manager import PVCManager
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SIZE_EDITABLE
 from opi.services.catalog.shared.storage import (
@@ -33,6 +32,7 @@ from opi.services.catalog.shared.storage import (
     check_storage_size,
 )
 from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SIZE_EDITABLE
+from opi.services.project_validation import STORED_PROJECT_CONTEXT
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError

@@ -7,13 +7,12 @@ so a refusal costs no temp disk.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.image_router import push_image
 from opi.core.audit_trail import begin_trail
 from opi.core.config import settings
 from opi.http.auth.endpoint_util import image_push_refusal
@@ -27,7 +26,7 @@ from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.utils.uploads import SLOT_HELD_IN_SCOPE, upload_slot
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -76,8 +75,11 @@ async def _no_body() -> Message:
 class BodyLimitMiddleware:
     """Refuses an upload with 413 as soon as its body passes the limit of its route."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, image_push_endpoint: Callable[..., Any]) -> None:
         self.app = app
+        # The route's own endpoint object, so the pre-check here weighs the action that the
+        # route carries. Passed in by the composition root: an import would point upward.
+        self.image_push_endpoint = image_push_endpoint
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         max_bytes = self._limit(scope)
@@ -132,7 +134,7 @@ class BodyLimitMiddleware:
             refuse_when_flood_limit_reached(request)
             scope[FLOOD_COUNTED_IN_SCOPE] = True
             refuse_when_key_failures_exhausted(presented)
-            refusal = await image_push_refusal(request, presented, project_name, push_image)
+            refusal = await image_push_refusal(request, presented, project_name, self.image_push_endpoint)
         except HTTPException as refused:
             return refused.status_code, str(refused.detail), refused.headers
         if refusal is None:

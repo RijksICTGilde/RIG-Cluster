@@ -11,6 +11,7 @@ All classes previously in backup_manager.py are re-exported here,
 so existing imports continue to work.
 """
 
+from opi.core.backup_constants import ResourceType
 from opi.manager.backup.base import (
     BackupConfig,
     BackupLock,
@@ -18,7 +19,6 @@ from opi.manager.backup.base import (
     BackupResult,
     BackupStatus,
     BaseBackupManager,
-    ResourceType,
     RestoreResult,
     SnapshotInfo,
     get_backup_bucket_name,
