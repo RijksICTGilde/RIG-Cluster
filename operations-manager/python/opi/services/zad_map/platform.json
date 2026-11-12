@@ -221,8 +221,8 @@
      "title": "External Keycloak Provider"
     },
     {
-     "file": "features/keycloak-logout-path.md",
-     "title": "Keycloak logout-pad per component"
+     "file": "features/keycloak-local-only.md",
+     "title": "Keycloak: alleen lokale accounts (local-only)"
     }
    ]
   },

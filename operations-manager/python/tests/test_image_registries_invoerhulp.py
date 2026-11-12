@@ -282,7 +282,9 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
         processor = EditableFormProcessor()
         processor._yaml_data = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
         assert processor._effective_value(REGISTRY_UPSTREAM, "ghcr.io/anders") == "ghcr.io/anders"
-        assert processor._effective_value(REGISTRY_UPSTREAM, "") == "code.overheid.nl/team"
+        assert processor._effective_value(REGISTRY_UPSTREAM, None) == "code.overheid.nl/team"
+        # An emptied field is the user's input, not a gap; the required check catches it.
+        assert processor._effective_value(REGISTRY_UPSTREAM, "") == ""
 
     def test_added_row_gets_the_upstream_not_the_function(self) -> None:
         """The wizard stores its state as JSON; the function itself in the row made "add item" a 500."""

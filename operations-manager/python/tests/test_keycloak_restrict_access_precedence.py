@@ -69,6 +69,15 @@ async def test_saving_a_client_role_file_does_not_add_a_realm_role() -> None:
     assert _restrict_access(result) == {"enabled": True, "role": "demo-toegang"}
 
 
+async def test_emptying_the_realm_role_for_a_client_role_keeps_it_empty() -> None:
+    stored = _project({"enabled": True, "realm-role": "allowed-user"})
+    submitted = _project({"enabled": True, "realm-role": "", "role": "demo-toegang"})
+
+    result = await _save(stored, submitted)
+
+    assert _restrict_access(result) == {"enabled": True, "role": "demo-toegang"}
+
+
 async def test_enabling_without_a_role_still_defaults_to_allowed_user() -> None:
     stored = _project({})
     submitted = copy.deepcopy(stored)
