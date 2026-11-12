@@ -979,9 +979,9 @@ async def collect_dashboard_metrics(
     Verdubbelen zou betekenen dat een verbetering aan de ene kant stilletjes niet aan de
     andere kant landt.
 
-    Zet ook per project ``cpu_cores``, ``cpu_limit_cores``, ``memory_mb`` en
-    ``memory_limit_mb`` in ``user_projects``, want de kaart "Gebruik per project" rekent
-    daarmee.
+    Zet ook per project ``cpu_cores``, ``cpu_request_cores``, ``cpu_limit_cores``,
+    ``memory_mb``, ``memory_request_mb`` en ``memory_limit_mb`` in ``user_projects``, want
+    de kaart "Gebruik per project" rekent daarmee.
 
     Returns:
         De metrics, of Prometheus bereikbaar was, en het aantal pods.
@@ -990,6 +990,16 @@ async def collect_dashboard_metrics(
     prometheus_available = False
     pod_count = 0
     ns_regex = "|".join(all_namespaces)
+
+    def reserved(kind: str, resource: str) -> str:
+        """Requests or limits of pods that hold them now: a finished job reserves nothing."""
+        phase = (
+            f'max by (namespace, pod) (kube_pod_status_phase{{namespace=~"{ns_regex}",phase=~"Running|Pending"}} == 1)'
+        )
+        return (
+            f'kube_pod_container_resource_{kind}{{namespace=~"{ns_regex}",resource="{resource}"}}'
+            f" * on (namespace, pod) group_left () {phase}"
+        )
 
     if all_namespaces:
         try:
@@ -1012,13 +1022,19 @@ async def collect_dashboard_metrics(
                     logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                    )
+                    result = await prom.custom_query(f"sum({reserved('limits', 'cpu')})")
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
                 except Exception as e:
                     logger.warning(f"Dashboard CPU limits query failed: {e}")
+
+                cpu_request_val = 0.0
+                try:
+                    result = await prom.custom_query(f"sum({reserved('requests', 'cpu')})")
+                    if result and result[0].get("value"):
+                        cpu_request_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.warning(f"Dashboard CPU requests query failed: {e}")
 
                 # Memory usage and limits
                 mem_usage_val = 0.0
@@ -1033,15 +1049,13 @@ async def collect_dashboard_metrics(
                     logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.custom_query(f"sum({reserved('limits', 'memory')})")
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
                 except Exception as e:
                     logger.warning(f"Dashboard memory limits query failed: {e}")
 
-                # De REQUEST erbij, en alleen voor geheugen. ODCN factureert geheugen als
+                # De REQUEST erbij. ODCN factureert geheugen als
                 # request + clamp_min(gebruik - request, 0), oftewel per pod het hoogste van
                 # de twee. De meter toonde gebruik tegen limiet, en dat zijn allebei niet het
                 # getal waarop de rekening staat: op 28 augustus 2026 stond het dashboard op
@@ -1049,13 +1063,11 @@ async def collect_dashboard_metrics(
                 # dat verschil van bijna 18 GiB is precies wat er betaald wordt zonder
                 # gebruikt te worden. Zie /admin/usage voor de maandrekening zelf.
                 #
-                # CPU krijgt dit NIET: daar wordt niet op gefactureerd, dus zou het alleen
-                # een getal meer op een regel zijn.
+                # CPU krijgt hem ook: daar wordt niet op gefactureerd, maar de tuner zet de
+                # CPU-request en het tenantquotum telt cpu-requests.
                 mem_request_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_requests{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.custom_query(f"sum({reserved('requests', 'memory')})")
                     if result and result[0].get("value"):
                         mem_request_val = float(result[0]["value"][1])
                 except Exception as e:
@@ -1133,6 +1145,10 @@ async def collect_dashboard_metrics(
                         return 0
                     return min(100, round(used / total * 100))
 
+                def _pct_of_request(used: float, requested: float) -> int:
+                    # Not capped: above 100 means using more than requested, and the gauge shows that.
+                    return round(used / requested * 100) if requested > 0 else 0
+
                 def _format_cores(val: float) -> str:
                     if val < 1:
                         return f"{int(val * 1000)}m"
@@ -1146,10 +1162,11 @@ async def collect_dashboard_metrics(
                     return f"{gib:.1f} GiB"
 
                 metrics = {
-                    "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                    "cpu_percentage": _pct_of_request(cpu_usage_val, cpu_request_val),
                     "cpu_usage_display": _format_cores(cpu_usage_val),
+                    "cpu_request_display": _format_cores(cpu_request_val),
                     "cpu_limit_display": _format_cores(cpu_limit_val),
-                    "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                    "memory_percentage": _pct_of_request(mem_usage_val, mem_request_val),
                     "memory_usage_display": _format_gib(mem_usage_val),
                     "memory_request_display": _format_gib(mem_request_val),
                     "memory_limit_display": _format_gib(mem_limit_val),
@@ -1184,7 +1201,7 @@ async def collect_dashboard_metrics(
                 )
                 cpu_limit_by_ns = await _sum_by_namespace(
                     prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})',
+                    f"sum by (namespace) ({reserved('limits', 'cpu')})",
                 )
                 mem_by_ns = await _sum_by_namespace(
                     prom,
@@ -1192,7 +1209,11 @@ async def collect_dashboard_metrics(
                 )
                 mem_limit_by_ns = await _sum_by_namespace(
                     prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})',
+                    f"sum by (namespace) ({reserved('limits', 'memory')})",
+                )
+                cpu_request_by_ns = await _sum_by_namespace(prom, f"sum by (namespace) ({reserved('requests', 'cpu')})")
+                mem_request_by_ns = await _sum_by_namespace(
+                    prom, f"sum by (namespace) ({reserved('requests', 'memory')})"
                 )
 
                 for project in user_projects:
@@ -1202,6 +1223,8 @@ async def collect_dashboard_metrics(
                     project["cpu_limit_cores"] = sum(cpu_limit_by_ns.get(ns, 0.0) for ns in proj_ns)
                     project["memory_mb"] = sum(mem_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
                     project["memory_limit_mb"] = sum(mem_limit_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
+                    project["cpu_request_cores"] = sum(cpu_request_by_ns.get(ns, 0.0) for ns in proj_ns)
+                    project["memory_request_mb"] = sum(mem_request_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
 
         except Exception as e:
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")

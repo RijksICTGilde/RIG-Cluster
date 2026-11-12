@@ -120,6 +120,7 @@ FRAGMENT_CONTEXT = {
         "memory_percentage": 71,
         "storage_percentage": 88,
         "cpu_usage_display": "0.42",
+        "cpu_request_display": "0.60",
         "cpu_limit_display": "1.00",
         "memory_usage_display": "1.4 GB",
         "memory_request_display": "1.8 GB",
@@ -191,7 +192,7 @@ def test_de_meters_worden_getekend_zoals_op_de_bestaande_pagina(app_server: str,
     # De percentages staan als tekst naast de meter, net als op de bestaande pagina.
     tekst = auth_page.locator(".metrics-grid").inner_text()
     assert "42%" in tekst
-    assert "0.42 / 1.00 cores" in tekst
+    assert "0.42 gebruikt van 0.60 gevraagd, limiet 1.00 cores" in tekst
     assert "Inkomend en uitgaand (KB/s, laatste 30 min)" in tekst
 
 

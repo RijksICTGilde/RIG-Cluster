@@ -23,15 +23,15 @@ from opi.web.router import collect_dashboard_metrics
 class _FakeProm:
     """Een Prometheus die vaste reeksen teruggeeft en zijn queries onthoudt."""
 
-    def __init__(self, series: dict[str, dict[str, float]] | None = None) -> None:
+    def __init__(self, series: dict[tuple[str, ...], dict[str, float]] | None = None) -> None:
         self.is_connected = True
         self.queries: list[str] = []
         self._series = series or {}
 
     async def custom_query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
-        for sleutel, per_namespace in self._series.items():
-            if sleutel in query and "by (namespace)" in query:
+        for parts, per_namespace in self._series.items():
+            if all(part in query for part in parts) and "by (namespace)" in query:
                 return [
                     {"metric": {"namespace": ns}, "value": [0, str(waarde)]} for ns, waarde in per_namespace.items()
                 ]
@@ -45,14 +45,16 @@ class _FakeProm:
 def prom(monkeypatch: pytest.MonkeyPatch) -> _FakeProm:
     prom = _FakeProm(
         {
-            "container_cpu_usage_seconds_total": {"rig-a": 0.03, "rig-a-tst": 0.01, "rig-b": 2.0},
-            'resource="cpu"': {"rig-a": 1.0, "rig-a-tst": 0.5, "rig-b": 4.0},
-            "container_memory_working_set_bytes": {
+            ("container_cpu_usage_seconds_total",): {"rig-a": 0.03, "rig-a-tst": 0.01, "rig-b": 2.0},
+            ("resource_limits", 'resource="cpu"'): {"rig-a": 1.0, "rig-a-tst": 0.5, "rig-b": 4.0},
+            ("resource_requests", 'resource="cpu"'): {"rig-a": 0.25, "rig-a-tst": 0.25, "rig-b": 1.0},
+            ("container_memory_working_set_bytes",): {
                 "rig-a": 64 * 1024 * 1024,
                 "rig-a-tst": 32 * 1024 * 1024,
                 "rig-b": 2048 * 1024 * 1024,
             },
-            'resource="memory"': {"rig-a": 512 * 1024 * 1024, "rig-b": 4096 * 1024 * 1024},
+            ("resource_limits", 'resource="memory"'): {"rig-a": 512 * 1024 * 1024, "rig-b": 4096 * 1024 * 1024},
+            ("resource_requests", 'resource="memory"'): {"rig-a": 128 * 1024 * 1024, "rig-b": 3072 * 1024 * 1024},
         }
     )
 
@@ -113,6 +115,27 @@ async def test_een_project_zonder_namespaces_krijgt_nullen_en_geen_ontbrekende_s
     assert projecten[2]["cpu_cores"] == 0.0
     assert projecten[2]["memory_limit_mb"] == 0.0
     assert projecten[2]["cpu_limit_cores"] == 0.0
+    assert projecten[2]["memory_request_mb"] == 0.0
+    assert projecten[2]["cpu_request_cores"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_the_request_comes_along_per_project(prom: _FakeProm) -> None:
+    projecten = _projecten()
+    await collect_dashboard_metrics(["rig-a", "rig-a-tst", "rig-b"], projecten)
+
+    assert projecten[0]["cpu_request_cores"] == pytest.approx(0.5)
+    assert projecten[1]["memory_request_mb"] == 3072.0
+
+
+@pytest.mark.asyncio
+async def test_requests_and_limits_only_count_pods_that_hold_them(prom: _FakeProm) -> None:
+    """A finished job still has its requests in kube-state-metrics, but reserves nothing."""
+    await collect_dashboard_metrics(["rig-a"], _projecten())
+
+    reserved = [q for q in prom.queries if "kube_pod_container_resource_" in q]
+    assert len(reserved) == 8, reserved
+    assert all('phase=~"Running|Pending"' in q for q in reserved)
 
 
 @pytest.mark.asyncio
@@ -126,8 +149,8 @@ async def test_het_zijn_vier_queries_ongeacht_het_aantal_projecten(prom: _FakePr
     await collect_dashboard_metrics(["rig-a", "rig-a-tst", "rig-b"], veel)
     met_drieentwintig = len([q for q in prom.queries if "by (namespace)" in q])
 
-    assert met_drie == 4
-    assert met_drieentwintig == 4
+    assert met_drie == 6
+    assert met_drieentwintig == 6
 
 
 @pytest.mark.asyncio
