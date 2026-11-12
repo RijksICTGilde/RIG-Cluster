@@ -82,7 +82,7 @@ def open_project_tab(page: Page, tab: str) -> None:
 
     Op ``href*=`` en niet op ``href$=``: Deployments, Metrics en Backups tonen EEN
     deployment tegelijk en dragen die naam in hun pad
-    (``/projects/<naam>/deployments/<deployment>``, zie ``TABS_MET_DEPLOYMENT`` in
+    (``/projects/<naam>/deployments/<deployment>``, zie ``TABS_WITH_DEPLOYMENT`` in
     opi/http/render/lotc_switch.py). Een selector die op het tabblad moet EINDIGEN vindt die drie
     dus niet. Het projectpad ervoor houdt hem alsnog eenduidig.
     """

@@ -203,7 +203,7 @@ def _api_request(*, fresh: bool) -> Any:
 async def test_a_fresh_api_state_needs_no_code() -> None:
     with patch("opi.http.auth.otp_step_up.UserOtpService") as otp:
         result = await verify_api_step_up(
-            _api_request(fresh=True), project_name="demo", actie=StepUpAction.TOKEN_ISSUE, doelwit="x"
+            _api_request(fresh=True), project_name="demo", action=StepUpAction.TOKEN_ISSUE, target="x"
         )
 
     assert result is None
@@ -212,7 +212,7 @@ async def test_a_fresh_api_state_needs_no_code() -> None:
 
 async def test_without_the_api_state_a_code_is_still_asked() -> None:
     result = await verify_api_step_up(
-        _api_request(fresh=False), project_name="demo", actie=StepUpAction.TOKEN_ISSUE, doelwit="x"
+        _api_request(fresh=False), project_name="demo", action=StepUpAction.TOKEN_ISSUE, target="x"
     )
 
     assert result is not None

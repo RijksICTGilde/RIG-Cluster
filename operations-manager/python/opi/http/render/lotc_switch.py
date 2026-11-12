@@ -1,15 +1,7 @@
-"""Hoe een route zijn pagina rendert, en wat de hertekende pagina's aan gegevens vragen.
+"""How a route renders its page, and what the redrawn pages ask for in the way of data.
 
-Hier stond een SCHAKELAAR. Zolang de omzetting per pagina liep, koos ``?layout=`` (of het
-koekje ``zad_layout``) tussen de bestaande pagina en de hertekende, en noemde elke route
-allebei de sjablonen:
-
-    return render(request, roos="services-overview.html.j2", lotc="bg/services.html.j2", ...)
-
-Die keuze is er niet meer. Er wordt overgestapt en niet parallel gedraaid: de roos-weg is
-weg, dus er valt niets meer te kiezen en een route noemt nog EEN sjabloon. Wat blijft is
-het saaie deel dat altijd al nuttig was - de gegevens van een route in de vorm zetten die
-de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
+What is left here is the boring part: putting a route's data into the shape the redrawn
+page reads, plus the light/dark scheme choice at the bottom.
 """
 
 import logging
@@ -35,46 +27,42 @@ logger = logging.getLogger(__name__)
 
 
 def render(request: Request, *, template: str, context: dict[str, Any], status_code: int = 200) -> Response:
-    """Render ``context`` met ``template`` uit ``opi/templates_lotc/``.
+    """Render ``context`` with ``template`` from ``opi/templates_lotc/``.
 
     Args:
-        request: het binnenkomende verzoek.
-        template: de template, in ``opi/templates_lotc/``.
-        context: de gegevens.
-        status_code: de HTTP-status, voor een pagina die een weigering IS (429).
+        request: the incoming request.
+        template: the template, in ``opi/templates_lotc/``.
+        context: the data.
+        status_code: the HTTP status, for a page that IS a refusal (429).
 
-    De import staat binnenin en niet bovenaan om een kringloop te vermijden: de
-    templateomgeving leunt op de formulierlaag, en die wordt door de routes geimporteerd
-    die deze module gebruiken.
+    The import sits inside and not at the top to avoid a cycle: the template environment
+    leans on the forms layer, which is imported by the routes that use this module.
     """
     from opi.http.render.templates_lotc import templates_lotc
 
-    # Voor het accountmenu: een pagina zonder sessie (een foutpagina) heeft geen step-up.
-    verhoogd_tot = step_up_until(request) if "session" in request.scope else None
+    # For the account menu: a page without a session (an error page) has no step-up.
+    raised_until = step_up_until(request) if "session" in request.scope else None
     email = str((getattr(request.state, "user", None) or {}).get("email", ""))
-    kan_verhogen = get_user_service().is_platform_admin(email)
+    may_raise = get_user_service().is_platform_admin(email)
     return templates_lotc.TemplateResponse(
         request,
         template,
-        {"verhoogd_tot": verhoogd_tot, "kan_verhogen": kan_verhogen, **context},
+        {"verhoogd_tot": raised_until, "kan_verhogen": may_raise, **context},
         status_code=status_code,
     )
 
 
 def render_fragment(request: Request, *, template: str, context: dict[str, Any]) -> str:
-    """Render een FRAGMENT als HTML-string.
+    """Render a FRAGMENT as an HTML string.
 
-    De tegenhanger van :func:`render` voor stukken die geen ``TemplateResponse`` worden
-    maar een string die de route zelf in een ``HTMLResponse`` zet - de inhoud van de
-    gedeelde dialoog, bijvoorbeeld.
+    The counterpart of :func:`render` for pieces that do not become a ``TemplateResponse``
+    but a string the route itself wraps in an ``HTMLResponse``.
 
-    Er gaat NOOIT een tweede slag overheen. De sjablonen hier zijn bestanden, dus hun
-    componenttags zijn al bij het compileren vervangen, en de formulier-HTML die erin komt
-    is door de formulierlaag al afgerenderd. Een tweede Jinja-render zou de ingevulde
-    waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een lek geweest.
+    No second pass ever goes over it. A second Jinja render would execute the filled-in
+    values as a template, which has leaked in this codebase before.
 
-    ``request`` levert de CSP-nonce; een TemplateResponse krijgt die uit de
-    context_processor, een losse render niet.
+    ``request`` supplies the CSP nonce; a TemplateResponse gets it from the
+    context_processor, a loose render does not.
     """
     from opi.http.render.templates_lotc import csp_nonce, templates_lotc
 
@@ -85,20 +73,13 @@ def build_lotc_services(
     services_info: list[dict[str, Any]],
     user: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Zet de ECHTE servicegegevens om naar wat de hertekende dienstenpagina verwacht.
-
-    Dit is de kern van "echt omzetten" en niet "een voorbeeld maken": de route bouwt zijn
-    gegevens op zoals altijd, uit de registry, en hier worden ze alleen in de vorm gezet
-    die het nieuwe sjabloon leest. Er komt geen tweede bron bij.
-    """
+    """Turn the real service data into what the redrawn services page expects."""
     from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
 
-    # Elke dienst die de route aanlevert komt op de pagina, ook de dienst met
-    # ``hidden=True``. Die vlag betekent "niet aanbieden in de WIZARD"
-    # (namespace-postgresql-database en namespace-redis worden via de API toegekend); de
-    # bestaande overzichtspagina toont ze wel, want ze leveren omgevingsvariabelen die je
-    # moet kunnen opzoeken. Hier werden ze overgeslagen, en dat kostte twee van de
-    # eenentwintig kaarten - zonder dat iets erover klaagde.
+    # Every service the route supplies lands on the page, including one with
+    # ``hidden=True``: that flag means "do not offer in the WIZARD", and the overview page
+    # does show them because they supply environment variables you have to be able to
+    # look up.
     services: list[dict[str, Any]] = [
         {
             "name": entry["service"].value,
@@ -110,73 +91,49 @@ def build_lotc_services(
             # The deprecation marker from the caller (services_router computes it against
             # the managing cluster); None where the service is current.
             "replaced_by": entry.get("replaced_by"),
-            # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
-            # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
-            # geTELD op een chip ("3 variabelen"), en dat is precies het soort
-            # samenvatting waar niemand iets aan heeft: je komt op deze pagina om te
-            # zien HOE de variabele heet die je in je applicatie moet uitlezen.
             "variables": entry["variables"],
         }
         for entry in services_info
         for definition in (entry["definition"],)
     ]
 
-    # De uitleg van een dienst gaat NIET via de server. De bestaande pagina opent hem in
-    # een dialoog (openServiceHelp() in static/js/wizard.js, dat de tekst bij
-    # /forms/wizard/help/<template> ophaalt), en dat is wat de gebruiker kent. Een
-    # ?help=-parameter die de uitleg inline op de pagina zet was hier zelf bedacht; hij is
-    # weg, want twee wegen naar dezelfde uitleg lopen vroeg of laat uiteen.
-    #
-    # Hier stond ook een filterbalk (Alle / Zelf te kiezen / Altijd aan) en een chip per
-    # kaart met de binding en het aantal variabelen. Allebei zelf bedacht: het origineel
-    # heeft geen filter en geen chips. Weg, om dezelfde reden.
+    # The help text of a service does NOT go through the server: the existing page opens
+    # it in a dialog (openServiceHelp() in static/js/wizard.js, which fetches the text at
+    # /forms/wizard/help/<template>).
     return {
         "navigation": get_navigation(user, current_path="/services"),
         "services": services,
     }
 
 
-def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
-    """De introductiepagina: de diensten die ZAD levert, RECHTSTREEKS uit de catalogus.
+def build_lotc_introduction(user: dict[str, Any] | None) -> dict[str, Any]:
+    """The introduction page: the services ZAD offers, straight from the catalogue.
 
-    Deze pagina is het eerste dat iemand van ZAD ziet, en dus precies het soort pagina dat
-    zichzelf volschrijft met beloftes. De enige verdediging daartegen is de lijst niet
-    OVERTYPEN: hij komt uit ``SERVICE_DEFINITIONS``, dezelfde bron waar de wizard en het
-    dienstenoverzicht uit putten. Een dienst die erbij komt staat er vanzelf op, een die
-    verdwijnt is meteen weg, en er kan geen dienst op staan die niet bestaat.
+    The list is not retyped: it comes from ``SERVICE_DEFINITIONS``, the same source the
+    wizard and the services overview draw on, so no service can appear that does not
+    exist. The description is copied LITERALLY, so the page cannot promise something
+    other than the service itself says.
 
-    De catalogus wordt in TWEE lijsten gesplitst, want dat is precies het verschil dat de
-    pagina vertelt:
+    Split into two lists, because that is the difference the page tells:
 
-    - ``diensten_zelf`` - wat je bij je project kunt AANZETTEN.
-    - ``diensten_achtergrond`` - de systeemdiensten (``kind=SYSTEM``): die draaien altijd
-      en zijn niet kiesbaar. Dit is de harde onderbouwing van "het platform kijkt met je
-      mee": resource-tuning hoogt geheugen op na een OOM, deployment-health beoordeelt wat
-      de waargenomen toestand van een deployment betekent.
+    - ``diensten_zelf``: what you can switch ON for your project.
+    - ``diensten_achtergrond``: the system services (``kind=SYSTEM``), which always run
+      and are not selectable.
 
-    Een dienst die op dit cluster vervangen is (``replaced_on_cluster``, dezelfde vraag als de
-    dienstenkiezer stelt) blijft er ook af: die bestaat nog voor projecten die hem al hebben,
-    maar is geen keuze meer voor wie hier begint.
-
-    Diensten met ``hidden=True`` blijven eraf. Anders dan op het dienstenoverzicht - dat
-    toont ze bewust, want ze leveren omgevingsvariabelen die je moet kunnen opzoeken - valt
-    hier niets op te zoeken: het zijn varianten die OPI zelf toekent, en op een pagina die
-    uitlegt wat je kunt kiezen is een dienst die je niet kunt kiezen ruis.
-
-    De omschrijving wordt LETTERLIJK overgenomen. Hem hier mooier maken zou betekenen dat
-    de pagina iets anders belooft dan de dienst zelf zegt, en dat is precies de fout die
-    deze functie moet voorkomen.
+    A service that is replaced on this cluster (``replaced_on_cluster``, the same question
+    the service picker asks) and a service with ``hidden=True`` are both left out: neither
+    is a choice for whoever starts here.
     """
     from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
     from opi.services.registry import SERVICE_DEFINITIONS, get_service
     from opi.services.services_enums import ServiceKind
 
-    zelf: list[dict[str, str]] = []
-    achtergrond: list[dict[str, str]] = []
+    selectable: list[dict[str, str]] = []
+    background: list[dict[str, str]] = []
     for service_type, definition in SERVICE_DEFINITIONS.items():
         if definition.hidden or get_service(service_type).replaced_on_cluster(settings.CLUSTER_MANAGER):
             continue
-        kaart = {
+        card = {
             "name": service_type.value,
             "label": definition.name,
             "summary": definition.description,
@@ -184,24 +141,22 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
             "color": definition.color,
         }
         if definition.kind is ServiceKind.SYSTEM:
-            achtergrond.append(kaart)
+            background.append(card)
         else:
-            zelf.append(kaart)
+            selectable.append(card)
 
     return {
         "navigation": get_navigation(user, current_path="/introductie"),
-        "diensten_zelf": zelf,
-        "diensten_achtergrond": achtergrond,
+        "diensten_zelf": selectable,
+        "diensten_achtergrond": background,
     }
 
 
-def build_lotc_dashboard(*, user: dict[str, Any] | None, **_ongebruikt: Any) -> dict[str, Any]:
-    """Wat het dashboard extra nodig heeft: alleen de navigatie.
+def build_lotc_dashboard(*, user: dict[str, Any] | None, **_unused: Any) -> dict[str, Any]:
+    """What the dashboard needs on top of its own data: only the navigation.
 
-    De route levert alle gegevens al - kerncijfers, gezondheid, metrics, projecten - en
-    het sjabloon leest precies die sleutels. Ze hier omvormen zou een tweede vorm van
-    dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets anders tonen dan de
-    bestaande zodra er een veld bijkomt.
+    The route supplies everything else and the template reads exactly those keys;
+    reshaping them here would give a second shape of the same data.
     """
     from opi.http.render.navigation_lotc import get_navigation
 
@@ -209,120 +164,102 @@ def build_lotc_dashboard(*, user: dict[str, Any] | None, **_ongebruikt: Any) -> 
 
 
 def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[str, Any]:
-    """Wat een beheerpagina extra nodig heeft: alleen de navigatie.
+    """What an admin page needs on top of its own data: only the navigation.
 
-    Een functie voor alle vier de beheerpagina's (gebruikers, het gebruikersformulier,
-    aanvragen en gebruik & kosten), want ze hebben alle vier hetzelfde nodig. Hun
-    routes leveren de rest al in de vorm die de sjablonen lezen; die hier omvormen zou
-    een tweede vorm van dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets
-    anders tonen dan de bestaande zodra er een veld bijkomt.
-
-    ``current_path`` bepaalt welk item in de zijkolom actief is en verschilt dus wel per
-    pagina.
+    One function for all four admin pages, because they need the same thing.
+    ``current_path`` decides which item in the sidebar is active and does differ per page.
     """
     from opi.http.render.navigation_lotc import get_navigation
 
     return {"navigation": get_navigation(user, current_path=current_path)}
 
 
-#: Het begin der tijden, als sorteerwaarde voor een project waarvan we niet weten
-#: wanneer het bewerkt is. Zo'n project telt dus als het oudste: het zakt naar het eind
-#: van 'nieuwste eerst' en voert 'oudste eerst' aan.
+#: Sort value for a project whose edit time is unknown, which makes it the oldest.
 #:
-#: Dat is geen ongelukkige keuze maar een onbereikbaar geval: elk projectbestand heeft
-#: minstens de commit waarmee het is aangemaakt. Ontbreekt de datum toch, dan is git
-#: helemaal niet te lezen en ontbreekt hij bij ALLE projecten, en dan doet de onderlinge
-#: volgorde er niet toe. Geen aparte behandeling dus.
-_ONBEKEND_BEWERKT = datetime.min.replace(tzinfo=UTC)
+#: Unreachable in practice: every project file has at least the commit that created it. If
+#: the date is missing anyway, git cannot be read at all and it is missing for every
+#: project, so the relative order does not matter.
+_UNKNOWN_EDITED = datetime.min.replace(tzinfo=UTC)
 
 
-def _op_bewerkt(project: dict[str, Any]) -> datetime:
-    return project.get("last_modified_at") or _ONBEKEND_BEWERKT
+def _by_edited(project: dict[str, Any]) -> datetime:
+    return project.get("last_modified_at") or _UNKNOWN_EDITED
 
 
-#: Waarop de projectenlijst gesorteerd kan worden. De sleutel staat in de URL
-#: (``?sort=naam-af``), het label in het menu, de derde waarde is de sorteersleutel en
-#: de vierde of hij omgekeerd wordt. Als lijst en niet als dict, omdat de VOLGORDE de
-#: volgorde in het menu is.
-#:
-#: De richting hoort HIER en niet in filter_lotc_projects: daar stond een losse
-#: ``if gekozen == "naam-af"``, en die had bij elke nieuwe aflopende sortering opnieuw
-#: uitgebreid moeten worden.
-PROJECT_SORTERINGEN: list[tuple[str, str, Any, bool]] = [
+#: What the project list can be sorted on: key in the URL (``?sort=``), label in the menu,
+#: sort key, and whether it is reversed. A list and not a dict, because the ORDER is the
+#: order in the menu.
+PROJECT_SORT_ORDERS: list[tuple[str, str, Any, bool]] = [
     ("naam", "Naam (A-Z)", lambda p: (p["display_name"] or p["name"]).lower(), False),
     ("naam-af", "Naam (Z-A)", lambda p: (p["display_name"] or p["name"]).lower(), True),
-    ("bewerkt", "Laatst bewerkt (nieuwste eerst)", _op_bewerkt, True),
-    ("bewerkt-op", "Laatst bewerkt (oudste eerst)", _op_bewerkt, False),
+    ("bewerkt", "Laatst bewerkt (nieuwste eerst)", _by_edited, True),
+    ("bewerkt-op", "Laatst bewerkt (oudste eerst)", _by_edited, False),
 ]
 
-#: Nederlandse maandafkortingen, met index 0 ongebruikt zodat maandnummer 1 op 'jan' valt.
-_MAANDEN = ("", "jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
+#: Dutch month abbreviations, with index 0 unused so that month number 1 lands on 'jan'.
+_MONTHS = ("", "jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
 
-#: Vanaf hier zegt "hoe lang geleden" niets meer dat de datum niet al zegt.
-_RELATIEF_TOT_DAGEN = 30
+#: Beyond this, "how long ago" says nothing the date does not already say.
+_RELATIVE_UP_TO_DAYS = 30
 
 
-def relatieve_tijd(sinds: timedelta) -> str:
-    """Een tijdsduur als 'zojuist', '5 minuten geleden', '4 uur geleden', '3 dagen geleden'.
+def relative_time(elapsed: timedelta) -> str:
+    """A duration in words, as the project list shows it.
 
-    Afronden naar BENEDEN, want dat is wat een lezer verwacht: iets van 119 minuten oud
-    is 'een uur geleden' en niet 'twee uur geleden'. Een negatieve duur (een tijdstempel
-    uit de toekomst; klokverschil tussen de committer en ons) leest als 'zojuist' in
-    plaats van als een onmogelijk getal.
+    Rounded DOWN, because that is what a reader expects: 119 minutes old reads as one hour
+    and not as two. A negative duration (a timestamp from the future, clock skew between
+    the committer and us) reads as the shortest form instead of an impossible number.
     """
-    seconden = int(sinds.total_seconds())
-    if seconden < 60:
+    seconds = int(elapsed.total_seconds())
+    if seconds < 60:
         return "zojuist"
-    minuten = seconden // 60
-    if minuten < 60:
-        return f"{minuten} minuut geleden" if minuten == 1 else f"{minuten} minuten geleden"
-    uren = minuten // 60
-    if uren < 24:
-        return f"{uren} uur geleden"
-    dagen = uren // 24
-    return "gisteren" if dagen == 1 else f"{dagen} dagen geleden"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} minuut geleden" if minutes == 1 else f"{minutes} minuten geleden"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} uur geleden"
+    days = hours // 24
+    return "gisteren" if days == 1 else f"{days} dagen geleden"
 
 
-def lees_tijdstempel(tijdstempel: str | None) -> datetime | None:
-    """Een ISO 8601-tijdstempel uit git als datetime, of None als hij onbruikbaar is.
+def read_timestamp(timestamp: str | None) -> datetime | None:
+    """An ISO 8601 timestamp from git as a datetime, or None when it is unusable.
 
-    Altijd met tijdzone, zodat er nooit een naive met een aware vergeleken wordt - dat
-    is een TypeError en die zou de hele pagina neerhalen voor een kleinigheid onderaan
-    een rij.
+    Always with a timezone, so that a naive is never compared with an aware one: that is a
+    TypeError, and it would take down the whole page over a detail at the end of a row.
     """
-    if not tijdstempel:
+    if not timestamp:
         return None
     try:
-        gewijzigd = datetime.fromisoformat(tijdstempel)
+        edited = datetime.fromisoformat(timestamp)
     except ValueError:
-        logger.debug("Onleesbaar tijdstempel voor laatst-bewerkt: %r", tijdstempel)
+        logger.debug("Onleesbaar tijdstempel voor laatst-bewerkt: %r", timestamp)
         return None
-    return gewijzigd if gewijzigd.tzinfo else gewijzigd.replace(tzinfo=UTC)
+    return edited if edited.tzinfo else edited.replace(tzinfo=UTC)
 
 
-def laatst_bewerkt(tijdstempel: str | None, *, nu: datetime | None = None) -> dict[str, str] | None:
-    """De 'laatst bewerkt' van een project, klaar om te tonen.
+def last_edited(timestamp: str | None, *, now: datetime | None = None) -> dict[str, str] | None:
+    """A project's 'last edited', ready to show.
 
-    Geeft ``label`` (wat er staat) en ``titel`` (het precieze tijdstip, voor de
-    tooltip), of None als er geen bruikbaar tijdstempel is - dan toont de lijst er
-    niets, in plaats van een streepje dat om uitleg vraagt.
+    Gives ``label`` (what it says) and ``titel`` (the exact moment, for the tooltip), or
+    None when there is no usable timestamp: the list then shows nothing instead of a dash
+    that asks for an explanation.
 
-    Het label draagt de datum EN hoe lang geleden dat was, want die twee beantwoorden
-    verschillende vragen: de datum is precies, het relatieve deel is te begrijpen zonder
-    rekenen. Voorbij een maand verdwijnt het relatieve deel: "412 dagen geleden" zegt
-    niets meer dat "1 jul 2025" niet beter zegt.
+    The label carries the date AND how long ago that was, because those answer different
+    questions. Beyond a month the relative part disappears.
     """
-    gewijzigd = lees_tijdstempel(tijdstempel)
-    if gewijzigd is None:
+    edited = read_timestamp(timestamp)
+    if edited is None:
         return None
 
-    nu = nu or datetime.now(UTC)
-    sinds = nu - gewijzigd
-    lokaal = gewijzigd.astimezone()
-    datum = f"{lokaal.day} {_MAANDEN[lokaal.month]} {lokaal.year}"
+    now = now or datetime.now(UTC)
+    elapsed = now - edited
+    local = edited.astimezone()
+    date_text = f"{local.day} {_MONTHS[local.month]} {local.year}"
 
-    label = datum if sinds > timedelta(days=_RELATIEF_TOT_DAGEN) else f"{datum}, {relatieve_tijd(sinds)}"
-    return {"label": label, "titel": lokaal.strftime("%d-%m-%Y %H:%M")}
+    label = date_text if elapsed > timedelta(days=_RELATIVE_UP_TO_DAYS) else f"{date_text}, {relative_time(elapsed)}"
+    return {"label": label, "titel": local.strftime("%d-%m-%Y %H:%M")}
 
 
 def build_lotc_projects(
@@ -330,42 +267,35 @@ def build_lotc_projects(
     *,
     user: dict[str, Any] | None,
     projects: list[dict[str, Any]],
-    laatst_gewijzigd: dict[str, str] | None = None,
+    last_modified: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """De ECHTE projectenlijst, in de vorm die de hertekende pagina leest.
+    """The real project list, in the shape the redrawn page reads.
 
-    Hier stond een uitgeklede vorm: alleen naam, omschrijving en het aantal deployments.
-    De bestaande pagina toont per project ook de OMGEVING, het TEAM (aantal plus
-    initialen) en de SERVICES, en heeft daaronder vier totalen staan. Die vielen
-    daardoor weg - niet omdat er een besluit over genomen was, maar omdat deze functie
-    ze niet doorgaf. Alles wat de pagina toont komt nu uit deze ene vorm.
-
-    Zoeken en sorteren gebeuren HIER en niet in de browser: dan werkt het ook zonder
-    JavaScript, is een gefilterde lijst deelbaar als URL, en blijft de telling onder de
-    tabel kloppen met wat er staat.
+    Searching and sorting happen HERE and not in the browser: it then works without
+    JavaScript, a filtered list is shareable as a URL, and the count under the table keeps
+    matching what is in it.
     """
     from opi.http.render.navigation_lotc import get_navigation
 
     return {
         "navigation": get_navigation(user, current_path="/projects"),
-        **filter_lotc_projects(request, lotc_project_rows(projects, laatst_gewijzigd)),
+        **filter_lotc_projects(request, lotc_project_rows(projects, last_modified)),
     }
 
 
 def lotc_project_rows(
     projects: list[dict[str, Any]],
-    laatst_gewijzigd: dict[str, str] | None = None,
+    last_modified: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """De projectgegevens in de vorm die de tabel leest.
+    """The project data in the shape the table reads.
 
-    Tellen op de LIJSTEN die de route levert, niet op een ``deployment_count``-sleutel.
-    Die bestaat wel op het dashboard maar niet hier, en het gevolg was een overzicht
-    waarin alles nul was terwijl er projecten met deployments stonden.
+    Counting on the LISTS the route supplies, not on a ``deployment_count`` key: that one
+    exists on the dashboard but not here.
 
-    ``laatst_gewijzigd`` komt uit de ProjectStore (git-historie) en is optioneel: kan de
-    route het niet ophalen, dan blijft ``last_modified`` None en toont de lijst er niets.
+    ``last_modified`` comes from the ProjectStore (git history) and is optional: when the
+    route cannot fetch it, ``last_modified`` stays None and the list shows nothing.
     """
-    gewijzigd = laatst_gewijzigd or {}
+    edited = last_modified or {}
     return [
         {
             "name": project["name"],
@@ -375,74 +305,61 @@ def lotc_project_rows(
             "services": project.get("services") or [],
             "clusters": project.get("clusters") or [],
             "deployment_count": len(project.get("deployments") or []),
-            "last_modified": laatst_bewerkt(gewijzigd.get(project["name"])),
-            # De ruwe datum ernaast, want sorteren op de tekst "3 dagen geleden" doet
-            # niet wat het zegt.
-            "last_modified_at": lees_tijdstempel(gewijzigd.get(project["name"])),
+            "last_modified": last_edited(edited.get(project["name"])),
+            # The raw date alongside it, because sorting on the text "3 dagen geleden"
+            # does not do what it says.
+            "last_modified_at": read_timestamp(edited.get(project["name"])),
         }
         for project in projects
     ]
 
 
 def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pas ``?q=`` en ``?sort=`` toe, en lever alles wat de lijst en zijn balk nodig hebben.
+    """Apply ``?q=`` and ``?sort=``, and supply what the list and its bar need.
 
-    Apart van :func:`build_lotc_projects` omdat de htmx-route die alleen de TABEL
-    teruggeeft precies dit stuk nodig heeft en niet de navigatie eromheen.
+    Apart from :func:`build_lotc_projects` because the htmx route that returns only the
+    TABLE needs exactly this piece and not the navigation around it.
     """
-    zoekterm = (request.query_params.get("q") or "").strip()
-    if zoekterm:
-        naald = zoekterm.lower()
-        gevonden = [
+    search_term = (request.query_params.get("q") or "").strip()
+    if search_term:
+        needle = search_term.lower()
+        found = [
             project
             for project in projects
-            if naald in project["name"].lower()
-            or naald in project["display_name"].lower()
-            or naald in project["description"].lower()
+            if needle in project["name"].lower()
+            or needle in project["display_name"].lower()
+            or needle in project["description"].lower()
         ]
     else:
-        gevonden = list(projects)
+        found = list(projects)
 
-    gekozen = request.query_params.get("sort") or PROJECT_SORTERINGEN[0][0]
-    sleutel, omgekeerd = next(
-        ((s, r) for k, _, s, r in PROJECT_SORTERINGEN if k == gekozen),
-        (PROJECT_SORTERINGEN[0][2], PROJECT_SORTERINGEN[0][3]),
+    chosen = request.query_params.get("sort") or PROJECT_SORT_ORDERS[0][0]
+    key, reversed_order = next(
+        ((s, r) for k, _, s, r in PROJECT_SORT_ORDERS if k == chosen),
+        (PROJECT_SORT_ORDERS[0][2], PROJECT_SORT_ORDERS[0][3]),
     )
-    gevonden.sort(key=sleutel, reverse=omgekeerd)
+    found.sort(key=key, reverse=reversed_order)
 
     return {
-        "projects": gevonden,
-        # De totalen onderaan tellen over ALLE projecten van deze gebruiker, niet over
-        # wat het zoekveld overlaat: "Je projecten" hoort niet te dalen omdat je iets
-        # intypt. Alleen "Totaal" boven de tabel volgt de zoekterm, want die hoort bij
-        # wat je ziet.
+        "projects": found,
+        # The totals at the bottom count over ALL projects of this user, not over what the
+        # search field leaves: "Je projecten" should not drop because you type something.
+        # Only "Totaal" above the table follows the search term.
         "projects_all": projects,
-        "project_query": zoekterm,
-        "project_sort": gekozen,
-        "project_sorteringen": [(sleutel, label) for sleutel, label, _, _ in PROJECT_SORTERINGEN],
+        "project_query": search_term,
+        "project_sort": chosen,
+        "project_sorteringen": [(key, label) for key, label, _, _ in PROJECT_SORT_ORDERS],
     }
 
 
-#: De tabbladen van de projectpagina.
+#: What the deployment table can be sorted on. Same shape as :data:`PROJECT_SORT_ORDERS`,
+#: key in the URL (``?dsort=cluster``), label in the menu, sort key third, and a LIST for
+#: the same reason: the order here is the order in the menu.
 #:
-#: Het eerste tabblad heette "Project" en droeg negen blokken, van de kerncijfers tot de
-#: gevarenzone. Componenten en Services staan nu apart; wat overblijft is de INGANG van
-#: het project (hoe staat het ervoor, wie mag erbij, wat zijn de sleutels, hoe kom je
-#: ervan af), en dat is wat "Overzicht" zegt.
-#:
-#: Helm charts en helmfiles staan bij Componenten en niet bij Overzicht: het zijn net zo
-#: goed draaiende onderdelen die je op projectniveau declareert.
-#: Waarop de deploymenttabel gesorteerd kan worden. Zelfde vorm als
-#: :data:`PROJECT_SORTERINGEN` - sleutel in de URL (``?dsort=cluster``), label in het
-#: menu, sorteersleutel als derde - en om dezelfde reden een LIJST: de volgorde hier is
-#: de volgorde in het menu.
-#:
-#: Er wordt niet op STATUS gesorteerd. Die staat wel in de tabel (hij komt uit de
-#: gebundelde bevraging in ``opi/services/argocd_overview.py``), maar sorteren erop zou
-#: betekenen dat de sortering afhangt van een antwoord van een ander systeem: dezelfde
-#: URL geeft dan morgen een andere volgorde, en een rij verspringt terwijl je kijkt.
-#: Sorteren gebeurt daarom op wat in het projectbestand staat.
-DEPLOYMENT_SORTERINGEN: list[tuple[str, str, Any]] = [
+#: There is no sort on STATUS. It is in the table (from the bundled query in
+#: ``opi/services/argocd_overview.py``), but sorting on it would make the order depend on
+#: another system's answer: the same URL would give a different order tomorrow.
+DEPLOYMENT_SORT_ORDERS: list[tuple[str, str, Any]] = [
     ("naam", "Naam (A-Z)", lambda d: d["name"].lower()),
     ("naam-af", "Naam (Z-A)", lambda d: d["name"].lower()),
     ("cluster", "Cluster", lambda d: ((d.get("cluster") or "").lower(), d["name"].lower())),
@@ -453,60 +370,53 @@ DEPLOYMENT_SORTERINGEN: list[tuple[str, str, Any]] = [
 def filter_lotc_deployments(
     request: Request, deployments: list[dict[str, Any]], deployment_open: str = ""
 ) -> dict[str, Any]:
-    """Pas ``?q=`` en ``?dsort=`` toe op de deployments van een project.
+    """Apply ``?q=`` and ``?dsort=`` to a project's deployments.
 
-    Zelfde opzet als :func:`filter_lotc_projects`, en om dezelfde reden SERVER-SIDE: dan
-    werkt zoeken en sorteren ook zonder JavaScript, is een gefilterde lijst deelbaar als
-    URL, en kan de telling boven de tabel niet uit de pas lopen met de rijen eronder.
+    Same setup as :func:`filter_lotc_projects`, and server-side for the same reason.
 
-    ``dsort`` en niet ``sort``: de projectenlijst gebruikt ``sort`` al, en beide namen
-    kunnen in een en dezelfde URL staan zodra iemand een link deelt. Het ZOEKveld heet
-    wel gewoon ``q`` - die twee lijsten staan nooit op dezelfde pagina.
+    ``dsort`` and not ``sort``: the project list already uses ``sort``, and both names can
+    end up in one and the same URL as soon as someone shares a link. The SEARCH field is
+    plain ``q``, because those two lists never sit on the same page.
 
-    WELKE deployment open staat wordt hier NIET meer bepaald. Dat doet de route, uit het
-    PAD (``/projects/<project>/deployments/<naam>``), met :func:`kies_deployment`; het
-    komt hier binnen als ``deployment_open``. De tabel op Overzicht heeft die keuze zelf
-    niet nodig - daar is elke rij een link naar het tabblad Deployments - maar de kiezer
-    en het paneel lezen hem uit dezelfde context, dus hij gaat mee de pagina in.
+    WHICH deployment is open is not decided here: the route does that, from the PATH, with
+    :func:`choose_deployment`, and it arrives as ``deployment_open``.
     """
-    zoekterm = (request.query_params.get("q") or "").strip()
-    if zoekterm:
-        naald = zoekterm.lower()
-        gevonden = [
+    search_term = (request.query_params.get("q") or "").strip()
+    if search_term:
+        needle = search_term.lower()
+        found = [
             deployment
             for deployment in deployments
-            if naald in deployment["name"].lower() or naald in (deployment.get("cluster") or "").lower()
+            if needle in deployment["name"].lower() or needle in (deployment.get("cluster") or "").lower()
         ]
     else:
-        gevonden = list(deployments)
+        found = list(deployments)
 
-    # Een onbekende ``dsort`` valt terug op de EERSTE sortering, en die naam gaat ook
-    # terug de pagina in. Hij bleef hier eerst staan zoals hij binnenkwam, waardoor het
-    # verborgen veld en hx-push-url een sortering beloofden die niet gebruikt werd: de
-    # URL zei ``dsort=onzin`` terwijl de lijst op naam stond.
-    gevraagd_sort = request.query_params.get("dsort") or ""
-    bekend = {k for k, _, _ in DEPLOYMENT_SORTERINGEN}
-    gekozen = gevraagd_sort if gevraagd_sort in bekend else DEPLOYMENT_SORTERINGEN[0][0]
-    sleutel = next(s for k, _, s in DEPLOYMENT_SORTERINGEN if k == gekozen)
-    gevonden.sort(key=sleutel)
-    if gekozen == "naam-af":
-        gevonden.reverse()
+    # An unknown ``dsort`` falls back on the FIRST order, and that name goes back into the
+    # page: leaving it as it came in made the hidden field and hx-push-url promise an
+    # order that was not used.
+    requested_sort = request.query_params.get("dsort") or ""
+    known = {k for k, _, _ in DEPLOYMENT_SORT_ORDERS}
+    chosen = requested_sort if requested_sort in known else DEPLOYMENT_SORT_ORDERS[0][0]
+    key = next(s for k, _, s in DEPLOYMENT_SORT_ORDERS if k == chosen)
+    found.sort(key=key)
+    if chosen == "naam-af":
+        found.reverse()
 
-    geopend = next((deployment for deployment in deployments if deployment["name"] == deployment_open), None)
+    opened = next((deployment for deployment in deployments if deployment["name"] == deployment_open), None)
 
     return {
-        "deployments_zichtbaar": gevonden,
-        # De telling boven de tabel volgt de zoekterm ("3 van 12"); daarvoor is het
-        # totaal over ALLE deployments nodig, niet over wat het zoekveld overlaat.
+        "deployments_zichtbaar": found,
+        # The count above the table follows the search term ("3 van 12"), which needs the
+        # total over ALL deployments.
         "deployments_alle": deployments,
-        "deployment_query": zoekterm,
-        "deployment_sort": gekozen,
-        "deployment_sorteringen": [(sleutel, label) for sleutel, label, _ in DEPLOYMENT_SORTERINGEN],
+        "deployment_query": search_term,
+        "deployment_sort": chosen,
+        "deployment_sorteringen": [(key, label) for key, label, _ in DEPLOYMENT_SORT_ORDERS],
         "deployment_open": deployment_open,
-        # De deployment zelf, want de tabbladen renderen er nog maar EEN en hoeven er dus
-        # niet meer met een lus doorheen om hem te vinden. Leeg als het project er geen
-        # heeft; dan toont het tabblad de melding "Nog geen deployments".
-        "deployment_geopend": geopend,
+        # The deployment itself, because the tabs render only ONE and need no loop to find
+        # it. Empty when the project has none; the tab then shows "Nog geen deployments".
+        "deployment_geopend": opened,
     }
 
 
@@ -516,25 +426,20 @@ def deployment_status_tags(
     accompanying_badges: list[str],
     argocd: dict[str, Any] | None,
 ) -> list[dict[str, str]]:
-    """De statuslabels van EEN rij in de deploymenttabel: ``[{'label': .., 'type': ..}]``.
+    """The status labels of ONE row in the deployment table: ``[{'label': .., 'type': ..}]``.
 
-    Twee bronnen, en ze horen bij elkaar in een kolom:
+    Two sources that belong together in one column: what the SERVICES report (sleep mode,
+    switched off), and the health and sync from ARGOCD out of the bundled query in
+    ``opi/services/argocd_overview.py``.
 
-      - wat de DIENSTEN melden (slaapstand, uitgeschakeld). Die berekent de pagina toch
-        al, per deployment, zonder een enkel extra verzoek.
-      - de gezondheid en de sync van ARGOCD, uit de gebundelde bevraging
-        (``opi/services/argocd_overview.py``): een verzoek voor het hele project, dus
-        twintig rijen kosten er nog steeds een.
+    The rule by which they come together is that of the status card in the panel
+    (RC-31/RC-35): a service badge takes the place of exactly ONE verdict, the green
+    "Healthy" that yields zero replicas. Any other verdict was really observed by ArgoCD
+    and keeps its badge, otherwise switching a component off hides a real outage.
 
-    De REGEL waarmee ze samenkomen is die van de statuskaart in het paneel (RC-31/RC-35),
-    en staat hier in Python in plaats van in twee sjablonen: een dienstbadge neemt de
-    plaats in van precies EEN verdict, de groene "Healthy" die nul replicas oplevert. Elk
-    ander verdict - Degraded, Progressing, Unknown - heeft ArgoCD echt waargenomen en
-    houdt zijn badge, anders verbergt het uitzetten van een component een echte storing.
-
-    ``argocd`` is ``None`` als ArgoCD niet verbonden is. Dan staan hier alleen de
-    dienstbadges: de pagina zegt er in gewone taal bij dat de status ontbreekt, en daar
-    een verzonnen "Unknown" per rij overheen zetten maakt dat onleesbaar.
+    ``argocd`` is ``None`` when ArgoCD is not connected. Only the service badges then
+    remain: the page says in plain words that the status is missing, and a made-up
+    "Unknown" per row would make that unreadable.
     """
     tags: list[dict[str, str]] = [{"label": badge, "type": "info"} for badge in accompanying_badges]
     tags += [{"label": badge, "type": "info"} for badge in replacing_badges]
@@ -543,8 +448,8 @@ def deployment_status_tags(
         return tags
 
     if not argocd.get("available"):
-        # ArgoCD kent deze applicatie niet. Dat is iets anders dan "ongezond": er is nog
-        # niets uitgerold, of de uitrol is er nog niet doorheen.
+        # ArgoCD does not know this application. That is not the same as "unhealthy":
+        # nothing has been rolled out yet, or the rollout has not got through.
         return [*tags, {"label": "Niet in ArgoCD", "type": "default"}]
 
     health = argocd.get("health", "Unknown")
@@ -558,9 +463,8 @@ def deployment_status_tags(
             }
         )
 
-    # Unknown betekent dat ArgoCD gewenste en werkelijke staat niet kan vergelijken (vaak
-    # een render- of CMP-fout) - rood dus, niet neutraal grijs, anders leest het als "nog
-    # mee bezig".
+    # Unknown means ArgoCD cannot compare desired and actual state (often a render or CMP
+    # error), so red and not neutral grey, which would read as "still working on it".
     tags.append(
         {
             "label": sync,
@@ -581,153 +485,129 @@ def build_deployment_status_column(
     deployment_states: dict[str, Any],
     argocd_statuses: dict[str, dict[str, Any]],
 ) -> dict[str, list[dict[str, str]]]:
-    """De statuskolom van de hele tabel: deploymentnaam -> labels.
+    """The status column of the whole table: deployment name -> labels.
 
-    Een dict en geen berekening in het sjabloon, zodat de regel uit
-    :func:`deployment_status_tags` op EEN plek staat en te toetsen is zonder een pagina
-    te renderen.
+    A dict and not a computation in the template, so that the rule from
+    :func:`deployment_status_tags` sits in ONE place and can be tested without rendering a
+    page.
     """
     return {
-        naam: deployment_status_tags(
+        name: deployment_status_tags(
             replacing_badges=state.replacing_badges if state else [],
             accompanying_badges=state.accompanying_badges if state else [],
-            argocd=argocd_statuses.get(naam) if argocd_statuses else None,
+            argocd=argocd_statuses.get(name) if argocd_statuses else None,
         )
         for deployment in deployments
-        for naam in (deployment["name"],)
-        for state in (deployment_states.get(naam),)
+        for name in (deployment["name"],)
+        for state in (deployment_states.get(name),)
     }
 
 
+#: The tabs of the project page.
 #:
-#: Elk tabblad heeft een EIGEN PAD, geen ``?tab=``-parameter. Een querystring leest als
-#: een filter op een pagina ("laat hiervan alleen dit zien"), en dat is een tabblad niet:
-#: het is een andere pagina over hetzelfde project. Het pad zegt dat, een parameter niet.
+#: Every tab has its OWN PATH, no ``?tab=`` parameter: a tab is another page about the
+#: same project, and a path says that where a query parameter does not. The project name
+#: comes first and the tab behind it: ``/projects/<name>/deployments``. The old shape
+#: (``/projects/deployments/<name>``) redirects, so shared links keep working.
 #:
-#: ``path`` staat naast het label omdat het adres NIET af te leiden is uit de sleutel:
-#: Overzicht heet ``project`` en woont op ``details``.
+#: ``path`` sits next to the label because the address is NOT derivable from the key:
+#: Overzicht is called ``project`` and lives at ``details``.
 #:
-#: De PROJECTNAAM staat voorop en het tabblad erachter: ``/projects/<naam>/deployments``.
-#: Het project is waar je bent, het tabblad is wat je erbinnen bekijkt, en zo leest het
-#: pad ook. De oude vorm (``/projects/deployments/<naam>``) verwijst door, zodat gedeelde
-#: links blijven werken.
-#:
-#: SERVICES EN TOEGANG ZIJN TWEE DINGEN (RC-101). Services gaat over BEHEER: welke
-#: diensten staan aan, wat doen ze, hoe zijn ze gebonden, en waar zet je ze aan of uit.
-#: Toegang gaat over GEBRUIK: de adressen, sleutels en bestanden die de diensten je
-#: aanreiken - het Keycloak-realm met zijn console, gebruikersnaam, wachtwoord en OTP, de
-#: uitnodigingslinks waarmee je iemand anders binnenlaat, en de geuploade bestanden
-#: (certificaten) die een component meekrijgt. Ze stonden tussen de rest van Overzicht,
-#: terwijl je er juist naartoe gaat als je iets nodig hebt.
-#:
-#: "Toegang" en niet "Services gebruik": gebruik leest als verbruik of kosten. Overwogen
-#: en afgevallen: "Servicegegevens" (klopt, maar staat naast "Services" in dezelfde balk
-#: en die twee zijn dan niet uit elkaar te houden) en "Aansluiten" (een werkwoord tussen
-#: zelfstandige naamwoorden, en bijlagen sluit je nergens op aan). Zie
-#: features/services-info-tabblad.md voor de afweging.
+#: Services and Services info are two things (RC-101). Services is about MANAGEMENT: which
+#: services are on, what they do, how they are bound. Services info carries the blocks the
+#: SERVICES themselves supply through detail_page_sections. See
+#: features/services-info-tabblad.md for the trade-off.
 PROJECT_TABS = {
     "project": {"label": "Overzicht", "path": "details", "icon": "house"},
     "team": {"label": "Team", "path": "team", "icon": "person-2"},
     "componenten": {"label": "Componenten", "path": "componenten", "icon": "blocks-9"},
     "services": {"label": "Services", "path": "services", "icon": "puzzle-piece"},
-    # "Services info" en niet "Toegang": dit tabblad draagt de blokken die DIENSTEN zelf
-    # leveren via detail_page_sections, en dat is de haak en niet het onderwerp. "Toegang"
-    # beschreef wat de eerste drie diensten toevallig tonen (een adres, een wachtwoord,
-    # een code), en dat gaat scheef zodra een dienst iets anders levert.
     "services-info": {"label": "Services info", "path": "services-info", "icon": "info-circle"},
     "deployments": {"label": "Deployments", "path": "deployments", "icon": "globe-rack-server"},
     "metrics": {"label": "Metrics", "path": "metrics", "icon": "chart-x-y-axis-line"},
     "backups": {"label": "Backups", "path": "backups", "icon": "backup-in-cloud"},
     "taken": {"label": "Taken", "path": "taken", "icon": "check-list"},
-    # De kaart van dit project: componenten, services, deployments en koppelingen. Het
-    # tabblad draagt alleen het element; de plaat komt van /projects/<naam>/kaart.json.
+    # The map of this project. The tab carries only the element; the picture comes from
+    # /projects/<name>/kaart.json.
     "kaart": {"label": "Kaart", "path": "kaart", "icon": "centralized-network"},
-    # Achter Action.AUDIT_READ, dus niet voor elk lid in de balk; de route bepaalt dat.
+    # Behind Action.AUDIT_READ, so not in the bar for every member; the route decides.
     "audit": {"label": "Audit", "path": "audit", "icon": "clock-arrow-counter-clockwise"},
 }
 
-#: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
-STANDAARD_TAB = next(iter(PROJECT_TABS))
+#: The tab an unknown (or missing) tab ends up on.
+DEFAULT_TAB = next(iter(PROJECT_TABS))
 
-#: De tabbladen die er alleen zijn als ze iets te tonen hebben (RC-101).
+#: The tabs that only exist when they have something to show (RC-101).
 #:
-#: Toegang draagt de blokken die de DIENSTEN zelf leveren, en een project dat geen dienst
-#: met zo'n blok gebruikt heeft er dus niets staan. Een tabblad dat een lege pagina opent
-#: is een belofte die niet waargemaakt wordt; dan hoort hij niet in de balk.
-#:
-#: Welke tabbladen dat zijn staat hier en niet in het sjabloon, zodat de tabbalk en de
-#: route (die op zo'n leeg tabblad doorverwijst naar Overzicht) het over dezelfde regel
-#: hebben.
-TABS_MET_VOORWAARDE = ("services-info",)
+#: Services info carries the blocks the SERVICES supply, so a project that uses no service
+#: with such a block has nothing there. Which tabs those are sits here and not in the
+#: template, so that the tab bar and the route (which redirects away from such an empty
+#: tab) talk about the same rule.
+CONDITIONAL_TABS = ("services-info",)
 
-#: De tabbladen die EEN deployment tegelijk tonen, en die hem daarom in hun PAD dragen:
+#: The tabs that show ONE deployment at a time, and therefore carry it in their PATH:
 #: ``/projects/<project>/deployments/<deployment>``.
 #:
-#: Ze stonden er allebei alle deployments te renderen en verborgen er alles behalve een
-#: met CSS. Dat kost werk voor blokken die niemand ziet, en de keuze ging verloren zodra
-#: je van tabblad wisselde. Nu rendert de server er een, en zegt de URL welke: dat is
-#: deelbaar, de terugknop werkt, en de keuze reist mee naar het andere tabblad omdat de
-#: tabbalk hem in zijn adressen meeneemt.
-TABS_MET_DEPLOYMENT = ("deployments", "metrics", "backups")
+#: The server renders one and the URL says which: that is shareable, the back button
+#: works, and the choice travels along to the other tab because the tab bar carries it in
+#: its addresses.
+TABS_WITH_DEPLOYMENT = ("deployments", "metrics", "backups")
 
 
 def project_tab_url(project_name: str, tab: str, query: str = "", deployment: str = "") -> str:
-    """Het adres van een tabblad van een project.
+    """The address of a project's tab.
 
-    Op een plek berekend, zodat de tabbalk, de kruimels, de kerncijfers en de router het
-    over hetzelfde adres hebben. Een onbekend tabblad valt terug op Overzicht in plaats
-    van een pad te verzinnen dat geen route heeft.
+    Computed in one place, so that the tab bar, the breadcrumbs, the key figures and the
+    router talk about the same address. An unknown tab falls back on Overzicht instead of
+    inventing a path that has no route.
 
-    ``deployment`` komt er als extra segment achter, maar alleen op de tabbladen die er
-    een tegelijk tonen (:data:`TABS_MET_DEPLOYMENT`). Op Overzicht zou dat pad geen route
-    hebben, en dan zou de tabbalk naar een 404 wijzen zodra er een deployment gekozen is.
+    ``deployment`` is appended as an extra segment, but only on the tabs that show one at
+    a time (:data:`TABS_WITH_DEPLOYMENT`). On Overzicht that path would have no route.
     """
-    pad = PROJECT_TABS.get(tab, PROJECT_TABS[STANDAARD_TAB])["path"]
-    adres = f"/projects/{project_name}/{pad}"
-    if deployment and tab in TABS_MET_DEPLOYMENT:
-        adres += f"/{quote(deployment, safe='')}"
-    return adres + (f"?{query}" if query else "")
+    path = PROJECT_TABS.get(tab, PROJECT_TABS[DEFAULT_TAB])["path"]
+    address = f"/projects/{project_name}/{path}"
+    if deployment and tab in TABS_WITH_DEPLOYMENT:
+        address += f"/{quote(deployment, safe='')}"
+    return address + (f"?{query}" if query else "")
 
 
-def kies_deployment(namen: list[str], *voorkeuren: str) -> str:
-    """Welke deployment staat er open: de eerste voorkeur die ECHT bestaat.
+def choose_deployment(names: list[str], *preferences: str) -> str:
+    """Which deployment is open: the first preference that really exists.
 
-    Een naam die niets oplevert - een verwijderde deployment in een gedeelde link - valt
-    terug op de eerste op naam, want zo staan ze in de kiezer. Een project zonder
-    deployments levert een lege naam op; daar valt niets te openen.
+    A name that yields nothing (a deleted deployment in a shared link) falls back on the
+    first by name, because that is how they sit in the picker. A project without
+    deployments yields an empty name.
 
-    Dit is de ENE regel voor "welke staat open". Hij stond eerder half in de server
-    (``?deployment=``) en half in de browser (een onthouden keuze in sessionStorage), en
-    die twee konden elkaar overschrijven.
+    This is the ONE rule for "which one is open". It used to sit half in the server
+    (``?deployment=``) and half in the browser (a remembered choice in sessionStorage),
+    and those two could overwrite each other.
     """
-    for voorkeur in voorkeuren:
-        if voorkeur and voorkeur in namen:
-            return voorkeur
-    return sorted(namen)[0] if namen else ""
+    for preference in preferences:
+        if preference and preference in names:
+            return preference
+    return sorted(names)[0] if names else ""
 
 
-def deployment_pagina_adres(request: Request, project_name: str, deployment_open: str) -> str:
-    """Het adres waar DEZE pagina hoort te staan, met de deployment in het pad.
+def deployment_page_address(request: Request, project_name: str, deployment_open: str) -> str:
+    """The address where THIS page belongs, with the deployment in the path.
 
-    De querystring gaat mee behalve ``deployment=``: die oude vorm (een gedeelde link uit
-    de tijd dat de keuze een parameter was) wordt hiermee een doorverwijzing naar het pad,
-    zodat er een adres per deployment is en niet twee.
+    The querystring travels along except ``deployment=``: that old shape becomes a
+    redirect to the path, so that there is one address per deployment and not two.
     """
     tab = tab_from_path(request.url.path)
-    resterend = [(sleutel, waarde) for sleutel, waarde in request.query_params.multi_items() if sleutel != "deployment"]
-    return project_tab_url(project_name, tab, urlencode(resterend), deployment=deployment_open)
+    remaining = [(key, value) for key, value in request.query_params.multi_items() if key != "deployment"]
+    return project_tab_url(project_name, tab, urlencode(remaining), deployment=deployment_open)
 
 
 def tab_from_path(path: str) -> str:
-    """Welk tabblad hoort bij dit pad? ``/projects/<naam>/deployments`` -> ``deployments``.
+    """Which tab belongs to this path? ``/projects/<name>/deployments`` -> ``deployments``.
 
-    Leest het DERDE segment (het tabblad staat achter de projectnaam) en niet de naam van
-    de route, zodat een pad dat er niet bij hoort op Overzicht uitkomt in plaats van een
-    fout te geven.
+    Reads the THIRD segment (the tab sits behind the project name) and not the route's
+    name, so that a path that does not belong ends up on Overzicht instead of erroring.
     """
-    delen = path.strip("/").split("/")
-    segment = delen[2] if len(delen) > 2 else ""
-    return next((tab for tab, gegevens in PROJECT_TABS.items() if gegevens["path"] == segment), STANDAARD_TAB)
+    segments = path.strip("/").split("/")
+    segment = segments[2] if len(segments) > 2 else ""
+    return next((tab for tab, data in PROJECT_TABS.items() if data["path"] == segment), DEFAULT_TAB)
 
 
 def build_lotc_project_details(
@@ -736,39 +616,32 @@ def build_lotc_project_details(
     user: dict[str, Any] | None,
     project: dict[str, Any],
     deployment_open: str = "",
-    lege_tabs: tuple[str, ...] = (),
+    empty_tabs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """De ECHTE projectgegevens, in de vorm die de pagina met tabs leest.
+    """The real project data, in the shape the tabbed page reads.
 
-    Er wordt niets omgerekend: ``project`` heeft al de vorm die de route opbouwt, en het
-    sjabloon leest precies die sleutels. Wat hier gebeurt is de navigatie en het actieve
-    tabblad bepalen.
+    Nothing is converted: ``project`` already has the shape the route builds and the
+    template reads exactly those keys. What happens here is determining the navigation and
+    the active tab, which comes from the PATH and no longer from ``?tab=``.
 
-    Het actieve tabblad komt uit het PAD (``/projects/<naam>/deployments``) en niet meer
-    uit ``?tab=``. Die oude vorm is weg, ook als doorverwijzing: hij heeft nooit buiten
-    deze applicatie geleefd, en een tweede adres dat niemand gebruikt is onderhoud zonder
-    lezer. Een achtergebleven ``?tab=`` wordt genegeerd.
+    Resource usage is NOT in here. The existing page loads that separately with htmx, so
+    that a slow Prometheus does not hold up the page.
 
-    Het resourcegebruik zit hier NIET in. De bestaande pagina laadt dat apart met htmx,
-    zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
-    kent zijn eigen LOTC-weergave.
-
-    ``lege_tabs`` zijn de voorwaardelijke tabbladen (:data:`TABS_MET_VOORWAARDE`) die voor
-    DIT project niets te tonen hebben; ze blijven uit de balk. De route bepaalt dat, want
-    daar is bekend wat de diensten leveren.
+    ``empty_tabs`` are the conditional tabs (:data:`CONDITIONAL_TABS`) that have nothing to
+    show for THIS project; they stay out of the bar. The route decides that, because that
+    is where it is known what the services supply.
     """
     from opi.http.render.navigation_lotc import get_navigation
 
     active_tab = tab_from_path(request.url.path)
     return {
         "navigation": get_navigation(user, current_path="/projects"),
-        # De gekozen deployment gaat MEE in de tabbladadressen. Zo blijft hij staan als je
-        # van Deployments naar Metingen wisselt: dat is een gewone link naar een adres dat
-        # de naam al draagt, en niet iets dat de browser moet onthouden.
+        # The chosen deployment travels along in the tab addresses, so it stays put when
+        # you switch tabs: a plain link to an address that already carries the name.
         "tabs": {
-            tab: {**gegevens, "url": project_tab_url(project["name"], tab, deployment=deployment_open)}
-            for tab, gegevens in PROJECT_TABS.items()
-            if tab not in lege_tabs
+            tab: {**data, "url": project_tab_url(project["name"], tab, deployment=deployment_open)}
+            for tab, data in PROJECT_TABS.items()
+            if tab not in empty_tabs
         },
         "active_tab": active_tab,
         "project": project,
@@ -776,58 +649,59 @@ def build_lotc_project_details(
     }
 
 
-#: Achtervoegsels van een hostnaam die alleen BINNEN het cluster bestaat. Een link
-#: daarheen opent in geen enkele browser, dus dan toont de pagina de SHA als tekst.
-_INTERNE_HOSTS = (".svc.cluster.local", ".cluster.local")
+#: Suffixes of a hostname that only exists INSIDE the cluster. A link there opens in no
+#: browser, so the page then shows the SHA as text.
+_INTERNAL_HOSTS = (".svc.cluster.local", ".cluster.local")
 
 
-def commit_adres(sha: str) -> str:
-    """Het webadres van een commit in de projecten-repo, of leeg als het er geen is.
+def commit_address(sha: str) -> str:
+    """The web address of a commit in the projects repo, or empty when there is none.
 
-    ``GIT_PROJECTS_WEB_URL`` gaat voor: de kloon-URL is in de sandbox een clusteradres.
-    Zonder die instelling blijft de afleiding uit de kloon-URL, want op GitHub en Forgejo
-    is dat hetzelfde adres met ``/commit/<sha>`` erachter. Een ``git://``- of ``ssh://``-URL
-    heeft geen pagina om naartoe te wijzen.
+    ``GIT_PROJECTS_WEB_URL`` wins: the clone URL is a cluster address in the sandbox.
+    Without that setting the derivation from the clone URL remains, because on GitHub and
+    Forgejo that is the same address with ``/commit/<sha>`` behind it. A ``git://`` or
+    ``ssh://`` URL has no page to point at.
     """
     web = settings.GIT_PROJECTS_WEB_URL.strip()
-    basis = web or settings.GIT_PROJECTS_SERVER_URL
-    if not basis.startswith(("http://", "https://")):
+    base = web or settings.GIT_PROJECTS_SERVER_URL
+    if not base.startswith(("http://", "https://")):
         return ""
-    if not web and (urlparse(basis).hostname or "").endswith(_INTERNE_HOSTS):
+    if not web and (urlparse(base).hostname or "").endswith(_INTERNAL_HOSTS):
         return ""
-    return f"{basis.removesuffix('.git').rstrip('/')}/commit/{quote(sha, safe='')}"
+    return f"{base.removesuffix('.git').rstrip('/')}/commit/{quote(sha, safe='')}"
 
 
 def audit_limit(request: Request) -> int:
-    """Hoeveel auditrijen deze pagina opvraagt: ``?limit=``, met een plafond.
+    """How many audit rows this page asks for: ``?limit=``, with a ceiling.
 
-    Een te grote waarde levert het plafond en geen fout: het is een pagina en niet een
-    contract, en 200 rijen zijn een antwoord op "geef me een miljoen".
+    Too large a value yields the ceiling and not an error: this is a page and not a
+    contract.
     """
-    gevraagd = request.query_params.get("limit")
+    requested = request.query_params.get("limit")
     try:
-        aantal = int(gevraagd) if gevraagd else LIST_DEFAULT_LIMIT
+        count = int(requested) if requested else LIST_DEFAULT_LIMIT
     except ValueError:
         return LIST_DEFAULT_LIMIT
-    return max(1, min(aantal, LIST_MAX_LIMIT))
+    return max(1, min(count, LIST_MAX_LIMIT))
 
 
-#: De zone waarin de audit rekent en toont. Een eigen constante per module, zoals de
-#: schedulers het al doen: er is geen gedeelde zoneconstante in deze codebase.
+#: The zone the audit computes and shows in. A constant per module, as the schedulers
+#: already do: there is no shared zone constant in this codebase.
 AUDIT_TZ = ZoneInfo("Europe/Amsterdam")
 
-#: Hoeveel tekens van de zoekterm de database ziet. Een langere term vindt niets dat een
-#: kortere niet ook vindt, en hoort niet in een ILIKE-patroon of in de adresbalk.
+#: How many characters of the search term the database sees. A longer term finds nothing a
+#: shorter one does not also find, and does not belong in an ILIKE pattern or in the
+#: address bar.
 AUDIT_QUERY_MAX = 200
 
 
 @dataclass(frozen=True, slots=True)
 class AuditFilters:
-    """Wat ``?q=``, ``?from=``, ``?until=``, ``?before=``, ``?after=`` en ``?limit=`` zeggen.
+    """What ``?q=``, ``?from=``, ``?until=``, ``?before=``, ``?after=`` and ``?limit=`` say.
 
-    De ``_text``-velden zijn de waarden zoals ze terug de pagina in gaan: het zoekveld,
-    de datumvelden en elke bladerlink dragen ze ongewijzigd verder. Een onleesbare waarde
-    staat er niet in, zoals :func:`audit_limit` ook geen fout geeft maar terugvalt.
+    The ``_text`` fields are the values as they go back into the page: the search field,
+    the date fields and every paging link carry them on unchanged. An unreadable value is
+    not in there, just as :func:`audit_limit` gives no error but falls back.
     """
 
     query: str = ""
@@ -840,79 +714,78 @@ class AuditFilters:
     limit_text: str = ""
 
     @property
-    def actief(self) -> bool:
-        """Of er iets gefilterd wordt; bladeren is geen filter."""
+    def active(self) -> bool:
+        """Whether anything is being filtered; paging is not a filter."""
         return bool(self.query or self.since or self.until)
 
 
-def _audit_dagbegin(waarde: str, *, volgende_dag: bool = False) -> tuple[datetime, str] | None:
-    """``yyyy-mm-dd`` als het begin van die dag (of de dag erna) in Europe/Amsterdam."""
+def _audit_day_start(value: str, *, next_day: bool = False) -> tuple[datetime, str] | None:
+    """``yyyy-mm-dd`` as the start of that day (or the day after) in Europe/Amsterdam."""
     try:
-        dag = date.fromisoformat(waarde)
-        grens = dag + timedelta(days=1) if volgende_dag else dag
+        day = date.fromisoformat(value)
+        limit = day + timedelta(days=1) if next_day else day
     except ValueError, OverflowError:
-        # OverflowError: ``9999-12-31`` leest wel, maar de dag erna bestaat niet.
+        # OverflowError: ``9999-12-31`` reads fine, but the day after does not exist.
         return None
-    return datetime.combine(grens, time.min, tzinfo=AUDIT_TZ), dag.isoformat()
+    return datetime.combine(limit, time.min, tzinfo=AUDIT_TZ), day.isoformat()
 
 
-def _audit_cursor(waarde: str) -> AuditCursor | None:
-    """``<iso-tijd>_<uuid>`` terug naar een cursor; onleesbaar is geen cursor."""
-    tijd, _, sleutel = waarde.rpartition("_")
-    if not tijd:
+def _audit_cursor(value: str) -> AuditCursor | None:
+    """``<iso-time>_<uuid>`` back into a cursor; unreadable is no cursor."""
+    moment_text, _, key = value.rpartition("_")
+    if not moment_text:
         return None
     try:
-        moment = datetime.fromisoformat(tijd)
-        rij = uuid.UUID(sleutel)
+        moment = datetime.fromisoformat(moment_text)
+        row = uuid.UUID(key)
     except ValueError:
         return None
-    # Een naïef tijdstip komt niet van ons: de cursor wordt uit een timestamptz gemaakt.
-    return None if moment.tzinfo is None else AuditCursor(time=moment, id=rij)
+    # A naive moment does not come from us: the cursor is made out of a timestamptz.
+    return None if moment.tzinfo is None else AuditCursor(time=moment, id=row)
 
 
 def audit_filters(request: Request) -> AuditFilters:
-    """De auditfilters uit de querystring, zonder ooit een fout te geven.
+    """The audit filters from the querystring, without ever erroring.
 
-    Een onleesbare datum of cursor VALT WEG in plaats van een 400 of een 500 op te
-    leveren, dezelfde keuze als bij :func:`audit_limit`: dit is een pagina en geen
-    contract, en een filter dat niet werkt hoort er dan ook niet te staan.
+    An unreadable date or cursor FALLS AWAY instead of yielding a 400 or a 500, the same
+    choice as in :func:`audit_limit`: this is a page and not a contract.
 
-    ``from`` na ``until`` wordt niet omgedraaid: dat levert in de query een leeg antwoord,
-    en dat is precies wat de vraag zegt.
+    ``from`` after ``until`` is not swapped: that yields an empty answer in the query, and
+    that is exactly what the question says.
 
-    ``before`` en ``after`` samen is voor :func:`~opi.services.audit.list_actions` een
-    programmeerfout. Een querystring kan beide dragen, dus ``before`` gaat hier voor en
-    ``after`` valt weg: Ouder is de richting waarin je door een geschiedenis leest.
+    ``before`` and ``after`` together is a programming error for
+    :func:`~opi.services.audit.list_actions`. A querystring can carry both, so ``before``
+    wins here and ``after`` falls away: older is the direction in which you read a history.
     """
     parameters = request.query_params
-    van = _audit_dagbegin(parameters.get("from") or "")
-    tot = _audit_dagbegin(parameters.get("until") or "", volgende_dag=True)
+    since = _audit_day_start(parameters.get("from") or "")
+    until = _audit_day_start(parameters.get("until") or "", next_day=True)
     before = _audit_cursor(parameters.get("before") or "")
     after = None if before else _audit_cursor(parameters.get("after") or "")
     return AuditFilters(
         query=(parameters.get("q") or "").strip()[:AUDIT_QUERY_MAX],
-        since=van[0] if van else None,
-        until=tot[0] if tot else None,
+        since=since[0] if since else None,
+        until=until[0] if until else None,
         before=before,
         after=after,
-        since_text=van[1] if van else "",
-        until_text=tot[1] if tot else "",
+        since_text=since[1] if since else "",
+        until_text=until[1] if until else "",
         limit_text=parameters.get("limit") or "",
     )
 
 
-def audit_cursor_text(rij: Any) -> str:
-    """De cursor van een rij, zoals hij in een bladerlink staat."""
-    return f"{rij.time.isoformat()}_{rij.id}"
+def audit_cursor_text(row: Any) -> str:
+    """A row's cursor, as it appears in a paging link."""
+    return f"{row.time.isoformat()}_{row.id}"
 
 
-def audit_url(basis: str, filters: AuditFilters, *, before: str = "", after: str = "") -> str:
-    """Het auditblad met de actieve filters, en hoogstens één cursor.
+def audit_url(base: str, filters: AuditFilters, *, before: str = "", after: str = "") -> str:
+    """The audit tab with the active filters, and at most one cursor.
 
-    Bladeren houdt de zoekterm, de periode en ``limit`` vast; een nieuwe zoekopdracht of
-    periode komt uit het formulier en draagt dus geen cursor meer.
+    Paging keeps the search term, the period and ``limit``; a new search or period comes
+    from the form and therefore carries no cursor any more.
     """
-    waarden = [
+    values = [
         ("q", filters.query),
         ("from", filters.since_text),
         ("until", filters.until_text),
@@ -920,67 +793,66 @@ def audit_url(basis: str, filters: AuditFilters, *, before: str = "", after: str
         ("before", before),
         ("after", after),
     ]
-    querystring = urlencode([(naam, waarde) for naam, waarde in waarden if waarde])
-    return f"{basis}?{querystring}" if querystring else basis
+    querystring = urlencode([(name, value) for name, value in values if value])
+    return f"{base}?{querystring}" if querystring else base
 
 
-def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
-    """De auditrijen van een project in de vorm die het tabblad leest.
+def build_lotc_audit(rows: list[Any]) -> list[dict[str, Any]]:
+    """A project's audit rows in the shape the tab reads.
 
-    ``origin`` komt er NIET in: die kolom is volgens het gebeurtenissenontwerp voor
-    platformbeheerders, en die lezen hem in de database.
+    ``origin`` is NOT in it: that column is for platform admins per the events design, and
+    they read it in the database.
     """
-    getoond = []
-    for rij in rijen:
-        gegevens = rij.data or {}
-        getoond.append(
+    shown = []
+    for row in rows:
+        data = row.data or {}
+        shown.append(
             {
-                # In Nederlandse tijd, want de periodefilter rekent in die zone: een
-                # handeling om 00:30 hier stond als UTC op de dag ervoor in de tabel.
-                "time": rij.time.astimezone(AUDIT_TZ) if rij.time.tzinfo else rij.time,
-                "actor": rij.actor or "",
-                "actor_kind": rij.actor_kind,
-                "action": gegevens.get("action", ""),
-                "subject": rij.subject or "",
-                "allowed": bool(gegevens.get("allowed")),
-                "cause": gegevens.get("cause") or "",
+                # In Dutch time, because the period filter computes in that zone: an
+                # action at 00:30 here sat in the table as UTC on the day before.
+                "time": row.time.astimezone(AUDIT_TZ) if row.time.tzinfo else row.time,
+                "actor": row.actor or "",
+                "actor_kind": row.actor_kind,
+                "action": data.get("action", ""),
+                "subject": row.subject or "",
+                "allowed": bool(data.get("allowed")),
+                "cause": data.get("cause") or "",
                 "commits": [
-                    {"sha": sha, "short": sha[:8], "url": commit_adres(sha)}
-                    for sha in gegevens.get("commit_shas") or []
+                    {"sha": sha, "short": sha[:8], "url": commit_address(sha)} for sha in data.get("commit_shas") or []
                 ],
             }
         )
-    return getoond
+    return shown
 
 
-async def audit_pagina(request: Request, project_name: str) -> dict[str, Any]:
-    """De auditrijen van dit project plus het zoekveld, de periode en de bladerlinks.
+async def audit_page(request: Request, project_name: str) -> dict[str, Any]:
+    """This project's audit rows plus the search field, the period and the paging links.
 
-    ``project_name`` komt uit het PAD, dezelfde naam waarover de routepoort besliste:
-    ``list_actions`` controleert zelf niets, dus een naam uit de querystring zou de poort
-    en de lezing over twee verschillende projecten laten gaan.
+    ``project_name`` comes from the PATH, the same name the route gate decided about:
+    ``list_actions`` checks nothing itself, so a name from the querystring would let the
+    gate and the read go over two different projects.
     """
     filters = audit_filters(request)
-    grens = audit_limit(request)
-    basis = project_tab_url(project_name, "audit")
+    limit = audit_limit(request)
+    base = project_tab_url(project_name, "audit")
     context: dict[str, Any] = {
         "audit_rijen": [],
         "audit_fout": False,
-        "audit_url": basis,
+        "audit_url": base,
         "audit_query": filters.query,
         "audit_van": filters.since_text,
         "audit_tot": filters.until_text,
         "audit_limit_text": filters.limit_text,
-        "audit_filter_actief": filters.actief,
-        "audit_wis_url": audit_url(basis, AuditFilters(limit_text=filters.limit_text)),
+        "audit_filter_actief": filters.active,
+        "audit_wis_url": audit_url(base, AuditFilters(limit_text=filters.limit_text)),
         "audit_ouder_url": "",
         "audit_nieuwer_url": "",
     }
     try:
-        # Eén rij meer dan de pagina toont: die verklapt of er nog een pagina is.
-        gelezen = await list_actions(
+        # One row more than the page shows: that one reveals whether there is another page.
+        read = await list_actions(
             project_name,
-            limit=grens + 1,
+            limit=limit + 1,
             query=filters.query or None,
             since=filters.since,
             until=filters.until,
@@ -988,37 +860,35 @@ async def audit_pagina(request: Request, project_name: str) -> dict[str, Any]:
             after=filters.after,
         )
     except SQLAlchemyError, OSError:
-        # Zelfde keuze als bij de uitrolmelding op de projectpagina: een database die niet
-        # antwoordt mag de pagina niet meenemen. Wel met een melding op het tabblad, want
-        # "geen rijen" zou hier een onwaar antwoord zijn.
+        # Same choice as with the rollout message on the project page: a database that
+        # does not answer may not take the page with it. With a message on the tab,
+        # because "no rows" would be an untrue answer here.
         logger.exception("De audit van project %s kon niet worden gelezen", project_name)
         context["audit_fout"] = True
         return context
 
-    extra = len(gelezen) > grens
-    # Oplopend gelezen bij ``after``, dus de extra rij is daar de NIEUWERE. Die valt weg,
-    # anders ligt er een gat tussen deze pagina en de pagina die je verliet.
-    gelezen = gelezen[-grens:] if filters.after is not None else gelezen[:grens]
-    context["audit_rijen"] = build_lotc_audit(gelezen)
-    if gelezen:
-        # Ouder bestaat als er nog oudere rijen zijn; na een stap naar nieuwer is dat de
-        # pagina waar je vandaan komt. Nieuwer staat er zodra je niet op de nieuwste
-        # pagina begon, ook als die stap niets meer oplevert.
+    extra = len(read) > limit
+    # Read ascending on ``after``, so the extra row is the NEWER one there. That one falls
+    # away, otherwise there is a gap between this page and the page you left.
+    read = read[-limit:] if filters.after is not None else read[:limit]
+    context["audit_rijen"] = build_lotc_audit(read)
+    if read:
+        # Older exists when there are older rows still; after a step to newer that is the
+        # page you came from. Newer is there as soon as you did not start on the newest
+        # page, even when that step yields nothing more.
         if extra or filters.after is not None:
-            context["audit_ouder_url"] = audit_url(basis, filters, before=audit_cursor_text(gelezen[-1]))
+            context["audit_ouder_url"] = audit_url(base, filters, before=audit_cursor_text(read[-1]))
         if filters.before is not None or filters.after is not None:
-            context["audit_nieuwer_url"] = audit_url(basis, filters, after=audit_cursor_text(gelezen[0]))
+            context["audit_nieuwer_url"] = audit_url(base, filters, after=audit_cursor_text(read[0]))
     return context
 
 
-#: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.
+#: The cookie the scheme choice (light/dark) is kept in.
 #:
-#: Zelfde patroon als de layoutschakelaar hierboven, en om dezelfde reden: de keuze hoort
-#: bij de gebruiker en niet bij een pagina. Server-side onthouden in plaats van in
-#: localStorage scheelt bovendien de flits die je krijgt als JavaScript het thema pas na
-#: de eerste weergave zet.
+#: Remembered server-side instead of in localStorage, which also saves the flash you get
+#: when JavaScript sets the theme only after the first paint.
 SCHEME_COOKIE = "zad_scheme"
 
-#: De drie standen. "" is systeem: dan zet de pagina geen data-scheme en volgt NLDD de
-#: voorkeur van het besturingssysteem.
+#: The three settings. "" is system: the page then sets no data-scheme and NLDD follows
+#: the operating system's preference.
 SCHEMES = ("", "light", "dark")

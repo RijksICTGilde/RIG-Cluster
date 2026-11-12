@@ -82,7 +82,7 @@ async def test_api_pad_zonder_geldige_otp_geeft_het_probleem_en_voert_niets_uit(
 
     assert resultaat is antwoord
     respond.assert_called_once_with(probleem)
-    verify.assert_awaited_once_with(ANY, project_name="demo", actie=ACTIE, doelwit="demo")
+    verify.assert_awaited_once_with(ANY, project_name="demo", action=ACTIE, target="demo")
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ async def test_api_pad_kiest_naam_als_doelwit_boven_het_project() -> None:
     with patch("opi.http.auth.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)) as verify:
         await route(_request("/api/projects/demo/leden/bouwstraat"), project_name="demo", naam="bouwstraat")
 
-    verify.assert_awaited_once_with(ANY, project_name="demo", actie=ACTIE, doelwit="bouwstraat")
+    verify.assert_awaited_once_with(ANY, project_name="demo", action=ACTIE, target="bouwstraat")
 
 
 @pytest.mark.asyncio
@@ -174,8 +174,8 @@ async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_proj
 
     render.assert_awaited_once_with(
         ANY,
-        vervolg="/projects/demo/delete-deployment/prod",
-        handeling=StepUpAction.DEPLOYMENT_DELETE.phrase,
-        vervolg_velden={},
-        methode="POST",
+        follow_url="/projects/demo/delete-deployment/prod",
+        action_text=StepUpAction.DEPLOYMENT_DELETE.phrase,
+        follow_fields={},
+        method="POST",
     )

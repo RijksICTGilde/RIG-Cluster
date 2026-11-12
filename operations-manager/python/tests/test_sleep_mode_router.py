@@ -176,7 +176,7 @@ def test_de_spec_noemt_beide_manieren(path: str, verb: str) -> None:
 
 # --- API router: een ``zad_`` token loopt langs hetzelfde handhavingspunt ------------
 #
-# De slaapstand deed zijn eigen sleutelcontrole en is meeverhuisd naar ``handhaaf``, zodat
+# De slaapstand deed zijn eigen sleutelcontrole en is meeverhuisd naar ``enforce``, zodat
 # een token hier hetzelfde werkt als op de rest van de API. ``test_task_router.py`` heeft
 # dezelfde proef voor taken; dit is de sleep-mode-kant van die verhuizing.
 

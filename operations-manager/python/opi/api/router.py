@@ -26,10 +26,10 @@ from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.endpoint_util import (
     default_marking,
     deployment_in_body,
-    eis_doelwitten_uit_de_upsertbody,
-    eis_handeling,
     image_only_upsert,
     marking_in_body,
+    require_api_action,
+    require_upsert_body_targets,
     validate_api_token,
 )
 from opi.http.auth.step_up_conditions import deployment_environment_change
@@ -242,9 +242,9 @@ async def validate_upsert_deployment_request(
     # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
     # not in the path, so the route gate cannot weigh it.
     if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
-        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
+        require_api_action(request, project_name, Action.ENVIRONMENT_SET)
 
-    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
+    require_upsert_body_targets(request, project_name, deployment_data)
 
 
 class StorageAction(BaseModel):

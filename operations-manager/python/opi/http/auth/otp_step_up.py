@@ -1,20 +1,19 @@
-"""De step-up bij een API-aanroep die productie raakt of het platform beheert (RC-332).
+"""The step-up on an API call that touches production or administers the platform (RC-332).
 
-Sinds RC-377 vraagt ook elke wijzigende beheerroute er een; wat de aanleiding was staat in
-``reason``, niet in ``detail``. Buiten die twee verandert er niets: de projectsleutel en de
-bearer-tokens werken zoals ze werkten. Elke step-up is een verse factor van de AANROEPER zelf:
-een persoonlijk token hoort bij een gebruiker, dus de code wordt getoetst tegen de factor van
-de eigenaar van dat token. Er is geen manier om de code van iemand anders aan een aanroep te hangen.
+Since RC-377 every modifying admin route asks for one too; what the occasion was sits in
+``reason``, not in ``detail``. Every step-up is a fresh factor of the CALLER themselves: a
+personal token belongs to a user, so the code is checked against that token owner's factor.
+There is no way to hang somebody else's code on a call.
 
-Met de projectsleutel kan zo'n handeling niet: die hoort bij geen enkele gebruiker en een
-machine heeft geen tweede factor. Dat is altijd een 403, ook met een code erbij.
+With the project key such an action is impossible: it belongs to no user and a machine has
+no second factor. That is always a 403, even with a code alongside.
 
-Of de aanroeper de handeling MAG blijft hier buiten: dat is de autorisatie van de route
-zelf, en met de eigenaar van het token als aanroeper is die al gesteld voordat dit draait.
-De step-up antwoordt alleen op "is het echt hij, nu".
+Whether the caller MAY do the action stays out of here: that is the route's own
+authorisation, and with the token's owner as the caller it has already been settled before
+this runs. The step-up only answers "is it really them, now".
 
-Hetzelfde venster als in het portaal, sinds RC-431: een call activeert de step-up
-(``opi/api/step_up_router.py``) en elke aanroep daarna draagt hem tot het venster om is.
+The same window as in the portal, since RC-431: a call activates the step-up
+(``opi/api/step_up_router.py``) and every call after it carries it until the window is up.
 """
 
 from __future__ import annotations
@@ -34,23 +33,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Waar een SSO-token zijn step-up activeert. Een persoonlijk token doet dat per project.
+#: Where an SSO token activates its step-up. A personal token does that per project.
 STEP_UP_PATH = "/api/v2/step-up"
 
-#: Waaraan een client (de zad-cli voorop) dit antwoord herkent en om een code vraagt.
+#: What a client (the zad-cli first of all) recognises this answer by, to ask for a code.
 STEP_UP_PROBLEM_TYPE = "urn:zad:step-up-required"
 
-#: Waar een gebruiker zijn tweede factor inricht.
+#: Where a user sets up their second factor.
 OTP_ENROLL_PATH = "/account/otp"
 
 STEP_UP_PROBLEM_MEDIA_TYPE = "application/problem+json"
 
 
 class StepUpCause(StrEnum):
-    """Waarom deze aanroep werd geweigerd, zover een client dat mag weten.
+    """Why this call was refused, as far as a client may know.
 
-    Genoeg om te weten wat te doen, nooit genoeg om een code te raden: ``CODE_INVALID``
-    dekt zowel een verkeerde als een al gebruikte code, en zegt niet welk deel faalde.
+    Enough to know what to do, never enough to guess a code: ``CODE_INVALID`` covers both a
+    wrong and an already used code, and does not say which part failed.
     """
 
     OTP_MISSING = "otp-missing"
@@ -61,10 +60,10 @@ class StepUpCause(StrEnum):
 
 
 class StepUpProblem(BaseModel):
-    """Het 403-antwoord op een handeling die een verse tweede factor vraagt (RFC 7807).
+    """The 403 answer to an action that asks for a fresh second factor (RFC 7807).
 
-    ``action``, ``reason`` en ``remedy`` zijn wat een client leest: welke handeling het
-    was, waarom ze een step-up vraagt, en wat er moet gebeuren.
+    ``action``, ``reason`` and ``remedy`` are what a client reads: which action it was, why
+    it asks for a step-up, and what has to happen.
     """
 
     type: str = Field(default=STEP_UP_PROBLEM_TYPE, description="Altijd 'urn:zad:step-up-required'")
@@ -85,8 +84,8 @@ class StepUpProblem(BaseModel):
 
 
 _DETAIL = {
-    # Niet "raakt productie": sinds RC-377 vraagt ook platformbeheer een step-up. Waarom
-    # DEZE aanroep er een vraagt staat in ``reason``.
+    # Not "touches production": since RC-377 platform administration asks for a step-up as
+    # well. Why THIS call asks for one sits in ``reason``.
     StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse step-up met je 2-factor.",
     StepUpCause.FACTOR_MISSING: "Je hebt nog geen 2-factor ingericht, en deze handeling vraagt er een.",
     StepUpCause.CODE_INVALID: "De code is niet aanvaard.",
@@ -110,8 +109,8 @@ _REMEDY = {
     ),
 }
 
-#: Welke uitkomst van de verificatie bij welke reden hoort.
-_CAUSE_PER_UITKOMST = {
+#: Which outcome of the verification belongs to which cause.
+_CAUSE_PER_OUTCOME = {
     OtpVerification.NOT_REGISTERED: StepUpCause.FACTOR_MISSING,
     OtpVerification.LOCKED: StepUpCause.BLOCKED,
     OtpVerification.INVALID: StepUpCause.CODE_INVALID,
@@ -119,68 +118,68 @@ _CAUSE_PER_UITKOMST = {
 
 
 def _token_owner(request: Request) -> str | None:
-    """Het e-mailadres van de eigenaar van het token, of None bij een projectsleutel.
+    """The email address of the token's owner, or None on a project key.
 
-    Op ``/api/``-paden zetten alleen de bearer-decorators en ``handhaaf`` (voor een
-    persoonlijk token) ``request.state.user``; de sessiemiddleware leegt hem daar juist.
-    Een gevulde waarde is dus een persoon.
+    On ``/api/`` paths only the bearer decorators and ``enforce`` (for a personal token) set
+    ``request.state.user``; the session middleware empties it there. A filled value is
+    therefore a person.
     """
     user = getattr(request.state, "user", None) or {}
     return str(user.get("email") or "").strip().lower() or None
 
 
 async def _cause(email: str | None, code: str) -> tuple[StepUpCause, str | None] | None:
-    """Waarom deze aanroep geweigerd wordt, met het moment waarop het weer mag, of None."""
+    """Why this call is refused, with the moment it is allowed again, or None."""
     if email is None:
         return StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED, None
     if not code:
         return StepUpCause.OTP_MISSING, None
 
     service = UserOtpService()
-    uitkomst = await service.verify(email, code)
-    if uitkomst is OtpVerification.OK:
+    outcome = await service.verify(email, code)
+    if outcome is OtpVerification.OK:
         return None
-    if uitkomst is OtpVerification.LOCKED:
+    if outcome is OtpVerification.LOCKED:
         locked_until = (await service.status(email)).locked_until
         return StepUpCause.BLOCKED, locked_until.isoformat() if locked_until else None
-    return _CAUSE_PER_UITKOMST[uitkomst], None
+    return _CAUSE_PER_OUTCOME[outcome], None
 
 
 async def verify_api_step_up(
     request: Request,
     *,
     project_name: str,
-    actie: StepUpAction,
-    doelwit: str,
+    action: StepUpAction,
+    target: str,
 ) -> StepUpProblem | None:
-    """Toets of deze aanroeper een verse step-up heeft; geef ``None`` als hij door mag.
+    """Check whether this caller has a fresh step-up; give ``None`` when they may pass.
 
-    Bij een weigering is de uitkomst het problem-detail dat de client terugkrijgt, zodat
-    hij weet welke handeling het was, waarom ze een step-up vraagt en wat er moet gebeuren.
+    On a refusal the outcome is the problem detail the client gets back, so that it knows
+    which action it was, why it asks for a step-up and what has to happen.
     """
     email = _token_owner(request)
     if email is not None and getattr(request.state, "step_up_fresh", False) is True:
         logger.info(
             "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
-            actie.phrase,
-            doelwit,
+            action.phrase,
+            target,
             project_name,
             email,
         )
         return None
     cause = StepUpCause.OTP_MISSING if email is not None else StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED
-    return _problem(request, cause, None, project_name=project_name, actie=actie, doelwit=doelwit)
+    return _problem(request, cause, None, project_name=project_name, action=action, target=target)
 
 
 async def verify_step_up_code(request: Request, code: str, *, project_name: str = "") -> StepUpProblem | None:
-    """Toets de code van de step-up-call; geef ``None`` als hij klopt, anders het problem-detail."""
+    """Check the code of the step-up call; give ``None`` when it is right, else the problem detail."""
     email = _token_owner(request)
-    uitkomst = await _cause(email, code.strip())
-    if uitkomst is None:
+    outcome = await _cause(email, code.strip())
+    if outcome is None:
         return None
-    cause, blocked_until = uitkomst
+    cause, blocked_until = outcome
     return _problem(
-        request, cause, blocked_until, project_name=project_name, actie=StepUpAction.ELEVATE, doelwit=email or ""
+        request, cause, blocked_until, project_name=project_name, action=StepUpAction.ELEVATE, target=email or ""
     )
 
 
@@ -190,13 +189,13 @@ def _problem(
     blocked_until: str | None,
     *,
     project_name: str,
-    actie: StepUpAction,
-    doelwit: str,
+    action: StepUpAction,
+    target: str,
 ) -> StepUpProblem:
     logger.warning(
         "Step-up geweigerd om %s: doel '%s', project '%s', door %s, reden %s",
-        actie.phrase,
-        doelwit,
+        action.phrase,
+        target,
         project_name,
         _token_owner(request) or "een sleutel zonder gebruiker",
         cause.value,
@@ -205,17 +204,17 @@ def _problem(
         detail=_DETAIL[cause],
         instance=request.url.path,
         cause=cause,
-        action=actie.value,
-        reason=actie.reason(doelwit, project=project_name),
+        action=action.value,
+        reason=action.reason(target, project=project_name),
         remedy=_REMEDY[cause],
         enroll_url=OTP_ENROLL_PATH if cause is StepUpCause.FACTOR_MISSING else None,
         blocked_until=blocked_until,
     )
 
 
-#: De 403 zoals hij in de OpenAPI staat, hier en niet per route: zo bestaat er één
-#: beschrijving van dit antwoord, voor de routes die hem opleggen (``opi/server.py``) en
-#: voor de step-up-call die hem zelf teruggeeft (``opi/api/step_up_router.py``).
+#: The 403 as it appears in the OpenAPI, here and not per route: there is then one
+#: description of this answer, for the routes that impose it (``opi/server.py``) and for the
+#: step-up call that returns it itself (``opi/api/step_up_router.py``).
 STEP_UP_403_RESPONSE: dict[str, object] = {
     "description": (
         "Deze handeling vraagt een verse 2-factor. Het antwoord heeft type "
@@ -226,10 +225,10 @@ STEP_UP_403_RESPONSE: dict[str, object] = {
 }
 
 
-def step_up_problem_response(probleem: StepUpProblem) -> JSONResponse:
-    """Het problem-detail als 403, met het mediatype dat RFC 7807 voorschrijft."""
+def step_up_problem_response(problem: StepUpProblem) -> JSONResponse:
+    """The problem detail as a 403, with the media type RFC 7807 prescribes."""
     return JSONResponse(
-        content=probleem.model_dump(mode="json"),
+        content=problem.model_dump(mode="json"),
         status_code=403,
         media_type=STEP_UP_PROBLEM_MEDIA_TYPE,
     )

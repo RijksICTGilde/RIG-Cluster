@@ -24,9 +24,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.http.render.lotc_switch import (
+    CONDITIONAL_TABS,
+    DEFAULT_TAB,
     PROJECT_TABS,
-    STANDAARD_TAB,
-    TABS_MET_VOORWAARDE,
     build_lotc_project_details,
     project_tab_url,
     tab_from_path,
@@ -44,12 +44,12 @@ class _Verzoek:
         self.query_params: dict[str, str] = {}
 
 
-def _tabbalk(pad: str, lege_tabs: tuple[str, ...] = ()) -> dict[str, Any]:
+def _tabbalk(pad: str, empty_tabs: tuple[str, ...] = ()) -> dict[str, Any]:
     gegevens = build_lotc_project_details(
         _Verzoek(pad),  # type: ignore[arg-type]
         user=None,
         project={"name": "demo", "deployments": []},
-        lege_tabs=lege_tabs,
+        empty_tabs=empty_tabs,
     )
     return gegevens["tabs"]
 
@@ -68,7 +68,7 @@ def test_services_info_staat_naast_services_en_niet_erin() -> None:
 
 def test_het_lege_tabblad_valt_uit_de_tabbalk() -> None:
     """Een tab die een lege pagina opent is een belofte die niet waargemaakt wordt."""
-    balk = _tabbalk("/projects/demo/details", lege_tabs=("services-info",))
+    balk = _tabbalk("/projects/demo/details", empty_tabs=("services-info",))
 
     assert "services-info" not in balk
     assert "services" in balk, "alleen het lege tabblad hoort weg te vallen"
@@ -84,9 +84,9 @@ def test_zonder_lege_tabbladen_staat_toegang_er_gewoon() -> None:
 def test_alleen_toegang_kan_wegvallen() -> None:
     """De voorwaardelijke tabbladen staan op EEN plek, zodat de route en de tabbalk het
     over dezelfde regel hebben."""
-    assert TABS_MET_VOORWAARDE == ("services-info",)
-    assert all(tab in PROJECT_TABS for tab in TABS_MET_VOORWAARDE)
-    assert STANDAARD_TAB not in TABS_MET_VOORWAARDE, "het terugvaltabblad mag nooit wegvallen"
+    assert CONDITIONAL_TABS == ("services-info",)
+    assert all(tab in PROJECT_TABS for tab in CONDITIONAL_TABS)
+    assert DEFAULT_TAB not in CONDITIONAL_TABS, "het terugvaltabblad mag nooit wegvallen"
 
 
 @pytest.fixture

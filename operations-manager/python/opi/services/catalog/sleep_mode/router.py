@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from opi.core.authz.actions import Action, action
-from opi.http.auth.endpoint_util import handhaaf
+from opi.http.auth.endpoint_util import enforce
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeTimeoutError
@@ -76,7 +76,7 @@ async def _presented_token(
         project = get_project_store().get(project_name)
         if project is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        await handhaaf(request, api_key, endpoint, project)
+        await enforce(request, api_key, endpoint, project)
         return None
     raise HTTPException(status_code=401, detail="X-Wake-Token or X-API-Key header required")
 

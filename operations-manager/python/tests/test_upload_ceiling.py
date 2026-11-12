@@ -811,7 +811,7 @@ def test_een_te_smalle_rol_leest_geen_body(
     response = _push(client)
 
     assert response.status_code == 403
-    # Dezelfde body als handhaaf geeft: de reden als eigen veld naast de tekst.
+    # Dezelfde body als enforce geeft: de reden als eigen veld naast de tekst.
     assert response.json()["detail"]["cause"] == Cause.INSUFFICIENT_ROLE.value
     assert response.json()["detail"]["message"]
     assert teller.ontvangen == 0, "de body is toch gelezen"

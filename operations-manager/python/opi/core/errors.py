@@ -54,10 +54,10 @@ class ErrorCategory(StrEnum):
     # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
     # destination the caller supplied.
     InvalidInput = "InvalidInput"
-    # Het platform zelf struikelde: een database die niet antwoordt, een connector die
-    # afbreekt, een sjabloon dat niet rendert. Bewust apart van ``Unknown``, want dat zegt
-    # "niet toe te wijzen" terwijl dit juist wel is toegewezen -- aan ons. Voor de aanroeper
-    # is dat het verschil tussen "corrigeer je verzoek" en "wacht even en probeer opnieuw".
+    # The platform itself stumbled: a database that does not answer, a connector that breaks
+    # off, a template that does not render. Deliberately apart from ``Unknown``, which says
+    # "cannot be attributed" where this one is attributed, to us. For the caller that is the
+    # difference between "correct your request" and "wait a moment and try again".
     InternalError = "InternalError"
     OutOfMemory = "OutOfMemory"
     HealthCheck = "HealthCheck"

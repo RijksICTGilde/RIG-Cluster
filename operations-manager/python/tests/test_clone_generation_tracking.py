@@ -140,7 +140,7 @@ class TestMinioCloneGenerationTracking:
         """First MinIO clone (generation=None) must record generation 0, not 1.
 
         If recorded as 1, the next upsert generates bucket name 'proj-deploy-v1'
-        instead of the actual 'proj-deploy' - the app gets AccessDenied.
+        instead of the actual 'proj-deploy' - the app gets AccessDeniedError.
         """
         minio_manager = MinioManager(mock_project_manager)
         project_data = project_data_with_minio_clone
@@ -241,7 +241,7 @@ class TestMinioCloneGenerationTracking:
 
         assert second_upsert_bucket == first_clone_bucket, (
             f"Second upsert would use bucket '{second_upsert_bucket}' but first clone "
-            f"created '{first_clone_bucket}'. The app would get AccessDenied on MinIO."
+            f"created '{first_clone_bucket}'. The app would get AccessDeniedError on MinIO."
         )
 
 

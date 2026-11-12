@@ -117,7 +117,7 @@ De twee federatieroutes geven **404** als de federatie op deze instantie uit sta
 - `opi/services/user_service.py`: `is_platform_admin`, gevuld uit `ADMIN_EMAILS`
 - `opi/api/route_recognition.py`: de markering `platformbeheerder-token`
 - `opi/services/step_up.py` en `opi/http/auth/otp_step_up.py`: de step-up en het problem-detail (RC-332)
-- `opi/http/auth/step_up_conditions.py`: `vraagt_altijd_step_up`, de conditie van de beheerroutes (sinds RC-387 ook van de ledenroutes, vandaar de naam)
+- `opi/http/auth/step_up_conditions.py`: `always_requires_step_up`, de conditie van de beheerroutes (sinds RC-387 ook van de ledenroutes, vandaar de naam)
 - `tests/test_platformbeheer_via_de_api.py`: de guard op de routes en op de oude sleutel
 - `tests/test_platformbeheer_step_up.py`: per route de 403 zonder step-up, de geslaagde aanroep met step-up, en de projectsleutel die er niet aan toekomt
 - `tests/test_step_up_routes.py`: de lijst van routes die een step-up dragen, en hun OpenAPI

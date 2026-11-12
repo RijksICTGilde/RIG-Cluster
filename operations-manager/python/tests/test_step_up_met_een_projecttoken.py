@@ -8,7 +8,7 @@ toetsen dan daar: niet of ``verify_api_step_up`` klopt (dat staat in
 de code wordt getoetst, met een token dat als token binnenkomt.
 
 Vijf uitkomsten, over de echte ``delete_project``, dus door ``validate_api_token``,
-``handhaaf`` en ``requires_step_up`` heen:
+``enforce`` en ``requires_step_up`` heen:
 
 1. token van een mens, productie, zonder code  -> 403 ``otp-missing``
 2. token van een mens, productie, geldige code -> door, en de code is tegen HEM getoetst
@@ -73,7 +73,7 @@ def _project(*, met_oude_sleutel: bool = False) -> ProjectSummary:
 
 
 def _verzoek(headers: dict[str, str]) -> Request:
-    """Een echt ``Request``, want ``handhaaf`` schrijft de eigenaar op ``state`` en dat is
+    """Een echt ``Request``, want ``enforce`` schrijft de eigenaar op ``state`` en dat is
     precies wat hier gemeten wordt."""
     return Request(
         {

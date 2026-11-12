@@ -31,7 +31,7 @@ from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespac
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.version import set_running_image
-from opi.http.auth.endpoint_util import controleer_handelingen
+from opi.http.auth.endpoint_util import check_route_actions
 from opi.manager.bootstrap.keycloak_setup import setup_keycloak
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
@@ -733,7 +733,7 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # A guarded route without an action would quietly open everything the caller was already
     # allowed, and a role without a single grant opens nothing without anyone noticing. That
     # stops the startup here, not a 403 that fails to appear.
-    controleer_handelingen(app.routes)
+    check_route_actions(app.routes)
     check_register()
 
     # Metrics are not critical and the boot never waits for them: the connector starts

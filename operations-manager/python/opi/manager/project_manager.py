@@ -181,10 +181,10 @@ def _count_deployment_changes(label: str, paths: dict[str, Any], yaml_doc: dict[
 
 
 def _remote_identity(repo_config: dict[str, str]) -> tuple[str, str, str]:
-    """De remote waar een repo-config naar wijst: URL zonder credentials, branch en pad.
+    """The remote a repo config points at: URL without credentials, branch and path.
 
-    Het pad hoort erbij omdat de connector het gebruikt om bestandspaden op te lossen; twee
-    configs met een ander pad mogen dus geen werkboom delen.
+    The path belongs to it because the connector uses it to resolve file paths; two configs
+    with a different path may therefore not share a working tree.
     """
     return (
         repo_lock_key(repo_config.get("url", "")),
@@ -202,14 +202,14 @@ class ProjectManager:
     # resolve it, and so the attribute has one documented home.
     __contents_as_read: dict[str, Any] | None = None
 
-    #: Of het PROJECTNIVEAU deze ronde veranderde, en in welke repo het staat. True zolang
-    #: het tegendeel niet gemeten is: de grendel in wait_for_project_level_application mag
-    #: alleen op bewijs worden overgeslagen. Op klasseniveau, om dezelfde reden als
-    #: hierboven: een aanroeper die __init__ overslaat moet ze toch kunnen lezen.
+    #: Whether the PROJECT LEVEL changed this round, and which repo it sits in. True until
+    #: the opposite is measured: the guard in wait_for_project_level_application may only be
+    #: skipped on evidence. At class level for the same reason as above: a caller that
+    #: bypasses __init__ must still be able to read them.
     _project_level_manifests_changed: bool = True
     _project_level_repo: str | None = None
-    #: De map in die repo waar de project-level manifests staan, zodat te bewijzen is dat
-    #: ArgoCD precies die bestanden al heeft toegepast.
+    #: The directory in that repo where the project-level manifests sit, so that it can be
+    #: proven that ArgoCD has applied exactly those files.
     _project_level_path: str | None = None
 
     def __init__(
@@ -233,10 +233,10 @@ class ProjectManager:
         self.__argo_workspace: GitRepoWorkspace | None = None
         # each deployment has a repository, referenced by name
         self.__deployment_workspaces: dict[str, GitRepoWorkspace] = {}
-        # Dezelfde werkmappen, geindexeerd op remote, zodat twee repo-configs met dezelfde
-        # remote er een delen. Zie get_deployment_workspace.
+        # The same workspaces, indexed on remote, so that two repo configs with the same
+        # remote share one. See get_deployment_workspace.
         self.__deployment_workspaces_by_remote: dict[tuple[str, str, str], GitRepoWorkspace] = {}
-        # Wegwerpmappen die niet bij een werkmap horen; zie materialize_cluster_tree.
+        # Scratch directories that belong to no workspace; see materialize_cluster_tree.
         self.__scratch_dirs: list[str] = []
         # Progress manager for tracking operation status
         self.__progress_manager = None
@@ -327,7 +327,7 @@ class ProjectManager:
         if self._database_manager is not None:
             # If we have a cached manager but it was created with placeholder credentials,
             # and now we need real credentials, reinitialize it
-            if not skip_credential_check and self._database_manager._admin_password == "placeholder":  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
+            if not skip_credential_check and self._database_manager._admin_password == "placeholder":  # noqa: S105  # a placeholder until the real credentials are there, not a secret
                 logger.info(
                     "DatabaseManager was initialized with placeholder credentials, reinitializing with real credentials"
                 )
@@ -359,7 +359,7 @@ class ProjectManager:
                 # During infrastructure creation, credentials don't exist yet
                 # Use placeholder values - they'll be replaced after infrastructure is ready
                 admin_username = "postgres"
-                admin_password = "placeholder"  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
+                admin_password = "placeholder"  # noqa: S105  # a placeholder until the real credentials are there, not a secret
                 logger.info(
                     f"Initializing DatabaseManager for configuration only (credentials not validated): {db_host}"
                 )
@@ -432,25 +432,19 @@ class ProjectManager:
 
         deployments = project_data.get("deployments", [])
 
-        # Filter by CLUSTER_MANAGER if requested
         if cluster_filter:
             deployments = [d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER]
 
-        # Filter by deployment name(s) if requested. ``is not None`` (not truthiness)
-        # so an empty target list correctly resolves to zero deployments.
+        # ``is not None`` and not truthiness, so an empty target list resolves to zero
+        # deployments.
         targets = resolve_deployment_filter(deployment_name, deployment_names)
         if targets is not None:
             target_set = set(targets)
             deployments = [d for d in deployments if d.get("name") in target_set]
 
-        # A deployment that clones from another must be processed after its source, and
-        # nothing enforced that: the loop walked file order, which happened to work only
-        # because the files grew that way. Ordering here rather than at the call site
-        # because this is the one door every caller comes through.
-        #
-        # Applied after the filters on purpose: ordering the ones you are going to use is
-        # the point, and a source filtered away (another cluster, a single-deployment
-        # request) cannot be waited for anyway.
+        # A deployment that clones from another is processed after its source. Ordered here
+        # because this is the one door every caller comes through, and after the filters
+        # because a source that is filtered away cannot be waited for anyway.
         return order_deployments_by_clone_dependency(deployments)
 
     async def get_deployment_by_name(self, deployment_name: str) -> dict[str, Any] | None:
@@ -503,7 +497,7 @@ class ProjectManager:
         return self._component_failures
 
     def get_terminated_sync_operations(self) -> list[str]:
-        """De deployments waarvan deze run een lopende sync-operation heeft beëindigd."""
+        """The deployments whose running sync operation this run broke off."""
         return self._terminated_sync_operations
 
     async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None:
@@ -555,12 +549,9 @@ class ProjectManager:
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
         if self.__git_connector_for_project_files is None:
-            # Use the ProjectStore's warm, long-lived working copy instead of cloning
-            # the projects repo per request. It is cloned once per process with full
-            # history (blobless), so the file-scoped diff that detects removed
-            # components/deployments still works, but an edit no longer pays for a
-            # clone. The store owns this connector: we must never close it (close()
-            # rmtree's the working directory), hence owns=False below.
+            # The ProjectStore's warm, long-lived working copy, instead of cloning the
+            # projects repo per request. The store owns this connector, so it must never be
+            # closed here: close() rmtree's the working directory.
             self.__git_connector_for_project_files = await get_project_store().get_connector()
             self.__owns_git_connector_for_project_files = False
         return self.__git_connector_for_project_files
@@ -711,7 +702,7 @@ class ProjectManager:
         )
 
     async def get_argo_workspace(self) -> GitRepoWorkspace:
-        """De werkmap op de argo-applications repo voor dit project, een per taak."""
+        """The workspace on the argo-applications repo for this project, one per task."""
         if self.__argo_workspace is None:
             self.__argo_workspace = argo_workspace(await self.get_name(), settings.CLUSTER_MANAGER)
         return self.__argo_workspace
@@ -808,11 +799,11 @@ class ProjectManager:
         self._end_step(step_id)
 
     async def get_deployment_workspace(self, name: str, repo_config: dict[str, str]) -> GitRepoWorkspace:
-        """De werkmap op de deployments-repo van deze config, een per remote binnen deze taak.
+        """The workspace on this config's deployments repo, one per remote within this task.
 
-        Twee namen kunnen dezelfde remote zijn: "infrastructure" is dezelfde repo, branch
-        en pad als de deployments-repo (``repositories[0]``). Dat is dan ook dezelfde scope
-        en dezelfde tempmap, zodat de generatie van beide in een commit kan landen.
+        Two names can be the same remote: "infrastructure" is the same repo, branch and path
+        as the deployments repo (``repositories[0]``). That is then also the same scope and
+        the same temp directory, so that the generation of both can land in one commit.
         """
         if name in self.__deployment_workspaces:
             return self.__deployment_workspaces[name]
@@ -839,10 +830,10 @@ class ProjectManager:
         return self.__deployment_workspaces.get(name)
 
     async def materialize_cluster_tree(self, repo_config: dict[str, str]) -> str | None:
-        """De ``{cluster}/``-boom van de deployments-repo in een wegwerpmap, alleen om te lezen.
+        """The ``{cluster}/`` tree of the deployments repo in a scratch directory, to read only.
 
-        Voor de lezers over ALLE projecten (``rendered_kinds``). De map wordt met de rest
-        van de werkmappen opgeruimd.
+        For the readers across ALL projects (``rendered_kinds``). The directory is cleaned up
+        with the rest of the workspaces.
         """
         repo_path = (repo_config.get("path") or "").strip("/")
         try:
@@ -1171,8 +1162,8 @@ class ProjectManager:
         try:
             validate_project_schema(current_yaml)
 
-            # Een projectbestand dat hier voor het eerst opduikt is een create, ook
-            # als het rechtstreeks naar zad-projects is gecommit.
+            # A project file that turns up here for the first time is a create, even when
+            # it was committed straight to zad-projects.
             if analysis["previous_yaml"] is None and is_reserved_project_name(str(current_yaml.get("name", ""))):
                 raise ProjectIntegrityError(
                     RESERVED_PROJECT_NAME_MESSAGE.format(name=current_yaml.get("name", "(onbekend)"))
@@ -1339,7 +1330,7 @@ class ProjectManager:
             deployment_name: Optional single deployment to process
             force_clone: Force clone even if target resources exist (runtime parameter)
             reset_running_sync: Break off a sync that is still running, however young.
-                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
+                Comes from a refresh; see ``_clear_blocking_sync_operations``.
             deployment_names: Optional explicit set of deployments to process (takes
                 precedence over ``deployment_name``). Use this to scope a redeploy to
                 the deployment(s) actually affected by a change (e.g. domain approval),
@@ -1350,8 +1341,8 @@ class ProjectManager:
                 Application CR is not yet present), so this flag no longer controls
                 it. Redeploys of existing apps skip the expensive umbrella refresh
                 regardless of this value.
-            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
-                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
+            rotate_credentials: Services whose secret is replaced this round instead of
+                reused (see ``opi.services.credential_rotation``)
             wait_for_healthy: Wait for each application to become Synced + Healthy.
                 Pass False when the deployment this run produces cannot become Healthy
                 by design (sleep-mode's waking state), so the wait would only ever end
@@ -1598,9 +1589,9 @@ class ProjectManager:
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``; empty list = none)
             reset_running_sync: Break off a sync that is still running, however young.
-                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
-            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
-                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
+                Comes from a refresh; see ``_clear_blocking_sync_operations``.
+            rotate_credentials: Services whose secret is replaced this round instead of
+                reused (see ``opi.services.credential_rotation``)
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -1612,8 +1603,8 @@ class ProjectManager:
         self._terminated_sync_operations = []
 
         targets = resolve_deployment_filter(deployment_name, deployment_names)
-        # De scope zoals de AANROEPER hem gaf. De grendel hieronder mag een projectbrede
-        # ronde versmallen, maar dat maakt hem niet tot een gerichte ronde.
+        # The scope as the CALLER gave it. The guard below may narrow a project-wide round,
+        # but that does not make it a targeted round.
         project_wide = targets is None
 
         try:
@@ -1622,8 +1613,8 @@ class ProjectManager:
             project_data = await self.get_contents()
             project_name = await self.get_name()
 
-            # Slaa deployments met een open delete-taak over (RC-254).
-            # Hun Application is minuten eerder uit git dan de deployment zelf.
+            # Skip deployments with an open delete task (RC-254): their Application is out
+            # of git minutes before the deployment itself is.
             being_deleted = await deployments_being_deleted(project_name)
             if being_deleted:
                 in_scope = (
@@ -1657,7 +1648,7 @@ class ProjectManager:
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
-                # Zonder rij blijft een uitgestelde wijziging aan zo'n project eeuwig wachten.
+                # Without a row, a deferred change to such a project waits forever.
                 await self._record_reconciliation(project_name, [], project_wide, read_started)
                 self._processing_error = None
                 self._component_failures = None
@@ -1919,10 +1910,9 @@ class ProjectManager:
             value out of it and discards the rest.
         :return: Contents of the project file
         """
-        # Read through the store, not off the working copy. Same committed state and
-        # the same schema migration, but ProjectManager no longer needs a working
-        # directory of its own -- which is what let callers read and write around the
-        # store in the first place.
+        # Read through the store, not off the working copy: the same committed state and the
+        # same schema migration, without ProjectManager needing a working directory of its
+        # own.
         self.__has_contents = True
         if self._project_file_relative_path is None:
             raise ValueError("Project file relative path is not set")
@@ -1930,23 +1920,11 @@ class ProjectManager:
         if data is None:
             raise ValueError(f"Project file not found: {self._project_file_relative_path}")
 
-        # Remember what was read so save_and_commit_project() can hand it to the store
-        # as the compare-and-swap base. Nearly every write goes read-here/write-later
-        # through this one class, so recording it here covers those call sites without
-        # touching any of them. A copy, because callers mutate the dict they get back.
-        #
-        # record_base=False exists because this method is not called only by the caller
-        # that saves. Projection helpers (get_name, get_deployments, ...) read the file
-        # too, and they run BETWEEN a caller's read and its save -- in almost every
-        # write method, on the very next line:
-        #
-        #     project_data = await self.get_contents()   # the dict we will save
-        #     project_name = await self.get_name()       # reads the file again
-        #
-        # Were that second read to record as well, the base would end up NEWER than the
-        # state project_data was built on. The store would then re-apply our change
-        # against the newer base and *revert* the concurrent write instead of merging
-        # with it -- and the result validates fine, so nothing downstream catches it.
+        # Remembered as the compare-and-swap base for save_and_commit_project, as a copy
+        # because callers mutate what they get back. record_base=False is for the projection
+        # helpers, which read BETWEEN a caller's read and its save: were those to record too,
+        # the base would be NEWER than project_data and the store would revert the concurrent
+        # write instead of merging, with a result that validates fine.
         if record_base:
             self.__contents_as_read = copy.deepcopy(data)
         return data
@@ -2250,10 +2228,9 @@ class ProjectManager:
         # Match get_deployments' cluster filter so we pick the same deployment it would.
         deployment = Project(project_data).find("deployments", name=deployment_name, cluster=settings.CLUSTER_MANAGER)
         if not deployment:
-            # TaskInputError en geen ValueError: dit is geen storing maar een verzoek dat
-            # niet kan, en de worker maakt er daardoor een blijvende mislukking van MET een
-            # reden die de aanroeper kan lezen. Hetzelfde woord dat de andere paden hier al
-            # gebruiken (add_component_to_deployment geeft 'deployment_not_found' terug).
+            # TaskInputError and not ValueError: this is no outage but a request that cannot
+            # be met, so the worker makes a lasting failure of it WITH a reason the caller can
+            # read. The same word the other paths here already use.
             raise TaskInputError(
                 f"Deployment '{deployment_name}' not found in project '{project_name}'",
                 error_type="deployment_not_found",
@@ -2447,9 +2424,9 @@ class ProjectManager:
         """
         Clone a database from a remote source via Chisel tunnel.
 
-        This method is for manual API operations, not project-file-based cloning.
-        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
-        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
+        This method is for manual API operations, not project-file-based cloning. The shared
+        clone function sets up the tunnel, so that the guard checks the chisel server URL
+        instead of the local tunnel endpoint.
         """
 
         logger.info(
@@ -2528,9 +2505,9 @@ class ProjectManager:
         """
         Clone a MinIO bucket from a remote source via Chisel tunnel.
 
-        This method is for manual API operations, not project-file-based cloning.
-        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
-        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
+        This method is for manual API operations, not project-file-based cloning. The shared
+        clone function sets up the tunnel, so that the guard checks the chisel server URL
+        instead of the local tunnel endpoint.
         """
         logger.info(
             f"Manual MinIO clone via tunnel: {project_name}/{deployment_name} "

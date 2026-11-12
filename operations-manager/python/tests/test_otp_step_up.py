@@ -35,7 +35,7 @@ def _request(*, owner: str | None = None, fresh: bool = False) -> SimpleNamespac
 
 
 async def _verify(request: SimpleNamespace) -> StepUpProblem | None:
-    return await verify_api_step_up(request, project_name=PROJECT, actie=ACTIE, doelwit="prod")
+    return await verify_api_step_up(request, project_name=PROJECT, action=ACTIE, target="prod")
 
 
 def _otp_service(uitkomst: OtpVerification, *, status: OtpStatus | None = None) -> MagicMock:

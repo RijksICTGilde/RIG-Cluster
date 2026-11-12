@@ -1,17 +1,14 @@
-"""Het handhavingspunt van het portaal: één dependency die ``decide()`` aanroept.
+"""The portal's enforcement point: one dependency that calls ``decide()``.
 
-Hij vervangt ``require_project_edit_access``, ``require_project_operate_access``,
-``_require_project_member_access`` en de losse rolcontroles in ``opi/web/router.py``. De
-action komt van de route zelf (``@action``), de resource uit één lezing van het
-projectbestand.
+The action comes from the route itself (``@action``), the resource from one read of the
+project file.
 
-Wat niet op een project werkt (de portaalpagina's, het platformbeheer) loopt hier niet
-langs: die regels dragen een andere :class:`~opi.core.authz.engine.Audience`, en hun
-handhaving blijft de sessiemiddleware respectievelijk ``require_platform_admin``.
+What does not work on a project (the portal pages, the platform administration) does not
+pass here: those rules carry another :class:`~opi.core.authz.engine.Audience`, and their
+enforcement stays the session middleware and ``require_platform_admin`` respectively.
 
-Bij ELKE beslissing, ook een weigering, komen de vier attributen uit ontwerp 8.3 op
-``request.state``. Taak 3 leest ze; daarom staan ze er ook als het verzoek eindigt in
-een 403.
+On EVERY decision, a refusal included, the four attributes from design 8.3 land on
+``request.state``, so they are there even when the request ends in a 403.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from jinja2 import pass_context
-from starlette.requests import Request  # noqa: TC002 -- FastAPI leest de dependency op runtime
+from starlette.requests import Request  # noqa: TC002 -- FastAPI reads the dependency at runtime
 
 from opi.core.actor import user_actor
 from opi.core.audit_trail import capture_fields
@@ -51,28 +48,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De 403 van een te smalle rol. Eén tekst, want :func:`authorize` en
-#: :func:`require_action` weigeren om dezelfde reden.
-TE_SMALLE_ROL = "Onvoldoende rechten voor deze handeling op dit project"
+#: The 403 of a role that is too narrow. One text, because :func:`authorize` and
+#: :func:`require_action` refuse for the same reason.
+ROLE_TOO_NARROW = "Onvoldoende rechten voor deze handeling op dit project"
 
 
 def portal_principal(request: Request, project: ProjectSummary) -> Principal:
-    """De aanroeper als principal op DIT project.
+    """The caller as a principal on THIS project.
 
-    Een platformbeheerder met verhoogde rechten krijgt op elk project dezelfde rollen als
-    hij nu overal ``admin`` krijgt (B6); hij hoeft geen lid te zijn.
+    A platform admin with elevated rights gets the same roles on every project as they now
+    get ``admin`` everywhere (B6); they need not be a member.
     """
     email = str((get_current_user(request) or {}).get("email", "")).lower()
     if is_elevated_admin(get_user_service(), email):
-        rollen = PLATFORM_ADMIN_ROLES
+        roles = PLATFORM_ADMIN_ROLES
     else:
-        lid = member_named(project, email)
-        rollen = member_roles(lid) if lid is not None else frozenset()
+        member = member_named(project, email)
+        roles = member_roles(member) if member is not None else frozenset()
     return Principal(
         kind=PrincipalKind.HUMAN,
         name=email,
         project=project.name,
-        roles=rollen,
+        roles=roles,
         actor=user_actor(email),
     )
 
@@ -86,16 +83,16 @@ def authorize(
     component: str | None = None,
     project: ProjectSummary | None = None,
 ) -> tuple[ProjectSummary, str]:
-    """Laat deze action op dit project toe, of weiger hem. Geeft (project, e-mailadres).
+    """Allow this action on this project, or refuse it. Gives (project, email address).
 
-    Een ontbrekende step-up is hier GEEN weigering: ``@requires_step_up`` heeft daar zijn
-    eigen antwoord voor (de dialoog), en dat antwoord gaat verloren als deze poort er een
-    kale 403 van maakt.
+    A missing step-up is NOT a refusal here: ``@requires_step_up`` has its own answer for
+    that (the dialog), and that answer is lost if this gate turns it into a bare 403.
 
-    ``project`` weegt tegen een projectstaat die de store niet heeft, zie :func:`_weigh`.
+    ``project`` weighs against a project state the store does not hold, see :func:`_weigh`.
 
     Raises:
-        HTTPException: 404 als het project niet bestaat, 403 als de rollen te weinig openen.
+        HTTPException: 404 when the project does not exist, 403 when the roles open too
+            little.
     """
     if project is None:
         project = get_project_store().get(project_name)
@@ -110,11 +107,11 @@ def authorize(
         deployment=deployment,
         component=component,
     )
-    vers = has_fresh_step_up(request)
-    beslissing = decide(principal, action, resource, step_up_fresh=vers)
-    record_decision(request, action=action, resource=resource, decision=beslissing, step_up_fresh=vers)
+    fresh = has_fresh_step_up(request)
+    decision = decide(principal, action, resource, step_up_fresh=fresh)
+    record_decision(request, action=action, resource=resource, decision=decision, step_up_fresh=fresh)
 
-    if beslissing.allowed or beslissing.cause is Cause.STEP_UP_REQUIRED or beslissing.step_up_would_help:
+    if decision.allowed or decision.cause is Cause.STEP_UP_REQUIRED or decision.step_up_would_help:
         return project, principal.name
 
     logger.info(
@@ -122,26 +119,26 @@ def authorize(
         action.value,
         resource.path,
         principal.name,
-        beslissing.cause.value if beslissing.cause else "onbekend",
+        decision.cause.value if decision.cause else "onbekend",
     )
     if not principal.roles:
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+    raise HTTPException(status_code=403, detail=ROLE_TOO_NARROW)
 
 
 def authorized_project(request: Request) -> ProjectSummary:
-    """Het project dat de poort voor DIT verzoek al toeliet.
+    """The project the gate already allowed for THIS request.
 
-    Zo leest een handler het projectbestand uit de beslissing die er al is, in plaats van
-    ``authorize`` nog een keer aan te roepen: dat zou een tweede beslissing over dezelfde
-    vraag zijn, en de audit legt er een tweede rij voor vast.
+    A handler then reads the project file out of the decision that is already there instead
+    of calling ``authorize`` again: that would be a second decision about the same question,
+    and the audit records a second row for it.
 
-    Alleen :func:`enforce_route_action` zet dit, zodat een tweede ``authorize`` voor een
-    ANDERE action in de body het project van de route niet kan overschrijven.
+    Only :func:`enforce_route_action` sets this, so that a second ``authorize`` for ANOTHER
+    action in the body cannot overwrite the route's project.
 
     Raises:
-        HTTPException: 500 als de poort niet gedraaid heeft, want dan is de route
-            verkeerd opgehangen en is doorgaan zonder beslissing geen optie.
+        HTTPException: 500 when the gate has not run, because the route is then hung wrong
+            and going on without a decision is no option.
     """
     project = getattr(request.state, "authz_project", None)
     if project is None:
@@ -190,13 +187,13 @@ def may(
     deployment: str | None = None,
     component: str | None = None,
 ) -> bool:
-    """Of de ROLLEN deze action openen, los van een verse step-up.
+    """Whether the ROLES open this action, apart from a fresh step-up.
 
-    Voor een knop. De grens is :func:`authorize`; een knop die zich toont terwijl de
-    step-up nog moet komen is juist de bedoeling, want de dialoog volgt bij het klikken.
+    For a button. The gate is :func:`authorize`; a button that shows itself while the
+    step-up is still to come is the intention, because the dialog follows on the click.
     """
-    weging = _weigh(request, action=action, project_name=project_name, deployment=deployment, component=component)
-    return weging is not None and weging[1].allowed
+    weighing = _weigh(request, action=action, project_name=project_name, deployment=deployment, component=component)
+    return weighing is not None and weighing[1].allowed
 
 
 def _deployment_names(project: ProjectSummary | None) -> list[str]:
@@ -205,32 +202,32 @@ def _deployment_names(project: ProjectSummary | None) -> list[str]:
 
 
 def may_on_any_deployment(request: Request, *, action: Action, project_name: str) -> bool:
-    """Of deze action op MINSTENS EEN deployment van dit project open is.
+    """Whether this action is open on AT LEAST ONE deployment of this project.
 
-    De bodem voor een stroom die zijn deployment pas in een latere stap kiest. Zonder
-    deployment weegt een action tegen de hoogste markering van het project, en dan kan een
-    developer in een project met productie niet eens meer de restore-wizard openen terwijl
-    hij tussen twee niet-productie-deployments wel mag terugzetten (RC-417).
+    The floor for a flow that only picks its deployment in a later step. Without a
+    deployment an action weighs against the project's highest marking, and then a developer
+    in a project with production could not even open the restore wizard while they may
+    restore between two non-production deployments (RC-417).
     """
-    namen = _deployment_names(get_project_store().get(project_name))
-    if not namen:
-        # Zonder deployments is er geen doelwit om op te wegen, en dan geldt de weging op
-        # het project, net als bij elke andere action zonder deployment.
+    names = _deployment_names(get_project_store().get(project_name))
+    if not names:
+        # Without deployments there is no target to weigh on, and then the weighing on the
+        # project applies, as with every other action without a deployment.
         return may(request, action=action, project_name=project_name)
-    return any(may(request, action=action, project_name=project_name, deployment=naam) for naam in namen)
+    return any(may(request, action=action, project_name=project_name, deployment=name) for name in names)
 
 
 def require_on_any_deployment(request: Request, needed: Action, project_name: str) -> None:
-    """403 als *needed* op geen enkele deployment van dit project open is.
+    """403 when *needed* is open on no deployment of this project at all.
 
-    De echte beslissing wordt gewogen en vastgelegd op de bron en het doel die de stroom
-    uiteindelijk aanwijst. Alleen de WEIGERING hoort hier al in de audit, en die laat
-    :func:`require_action` vastleggen op het project als geheel.
+    The real decision is weighed and recorded on the source and the target the flow
+    eventually points at. Only the REFUSAL belongs in the audit here, and
+    :func:`require_action` records that on the project as a whole.
     """
     if may_on_any_deployment(request, action=needed, project_name=project_name):
         return
     require_action(request, needed, project_name)
-    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+    raise HTTPException(status_code=403, detail=ROLE_TOO_NARROW)
 
 
 def require_action(
@@ -241,25 +238,24 @@ def require_action(
     deployment: str | None = None,
     project: ProjectSummary | None = None,
 ) -> None:
-    """403 als de rollen *needed* niet openen; alleen de WEIGERING wordt vastgelegd.
+    """403 when the roles do not open *needed*; only the REFUSAL is recorded.
 
-    Voor een aanroep die zelf niets doet: een GET die een formulier herrendert, of een
-    stap van een modal-wizard. De audit hoort geen rij te krijgen over een back-up of een
-    herstel dat niet gebeurde, maar een geweigerde poging hoort er wel in te staan
-    (``features/audit.md``).
+    For a call that does nothing itself: a GET that re-renders a form, or a step of a modal
+    wizard. The audit should not get a row about a backup or a restore that did not happen,
+    but a refused attempt does belong in it (``features/audit.md``).
     """
-    weging = _weigh(request, action=needed, project_name=project_name, deployment=deployment, project=project)
-    if weging is not None:
-        resource, beslissing = weging
-        if beslissing.allowed:
+    weighing = _weigh(request, action=needed, project_name=project_name, deployment=deployment, project=project)
+    if weighing is not None:
+        resource, decision = weighing
+        if decision.allowed:
             return
-        # De weging liet een verse step-up aan, maar de rij draagt de sessie zoals ze is:
-        # een weigering hier is er altijd een op de ROL, en een rij die een tweede factor
-        # meldt die er niet was leest een onderzoek verkeerd voor.
+        # The weighing assumed a fresh step-up, but the row carries the session as it is: a
+        # refusal here is always one on the ROLE, and a row reporting a second factor that
+        # was not there misleads an investigation.
         record_decision(
-            request, action=needed, resource=resource, decision=beslissing, step_up_fresh=has_fresh_step_up(request)
+            request, action=needed, resource=resource, decision=decision, step_up_fresh=has_fresh_step_up(request)
         )
-    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+    raise HTTPException(status_code=403, detail=ROLE_TOO_NARROW)
 
 
 def require_clone_source_access(
@@ -270,18 +266,17 @@ def require_clone_source_access(
     *,
     extra_sources: Sequence[str] = (),
 ) -> None:
-    """Weeg ``deployment.clone-from`` op de BRON van elke clone-from die deze opslag zet.
+    """Weigh ``deployment.clone-from`` on the SOURCE of every clone-from this save sets.
 
-    Eén poort voor beide schrijfwegen uit het portaal: een deployment toevoegen met een
-    clone-from, en een restore naar een nieuwe deployment. Klonen vanaf productie is ops,
-    waar het ook naartoe gaat.
+    One gate for both write paths out of the portal: adding a deployment with a clone-from,
+    and a restore into a new deployment. Cloning from production is ops, wherever it goes.
 
-    ``extra_sources`` zijn bronnen die de NA-staat niet noemt: de restore neemt de config
-    van een deployment over terwijl alleen de BACKUP-bron in ``clone-from`` landt, dus de
-    config-bron is uit het projectbestand niet terug te vinden (RC-417 securityreview).
+    ``extra_sources`` are sources the AFTER state does not name: the restore takes over the
+    config of a deployment while only the BACKUP source lands in ``clone-from``, so the
+    config source cannot be found back from the project file (RC-417 security review).
 
     Raises:
-        HTTPException: 403 als de rollen de bron niet openen.
+        HTTPException: 403 when the roles do not open the source.
     """
     sources = new_or_changed_clone_sources(before, after)
     sources.extend(source for source in extra_sources if source and source not in sources)
@@ -289,49 +284,49 @@ def require_clone_source_access(
         authorize(request, action=Action.DEPLOYMENT_CLONE_FROM, project_name=project_name, deployment=source)
 
 
-def _doelwit(request: Request, uit_de_query: frozenset[str], naam: str) -> str | None:
-    """De deployment of het component waar deze route op werkt, uit pad of query.
+def _target(request: Request, from_query: frozenset[str], name: str) -> str | None:
+    """The deployment or the component this route works on, from the path or the query.
 
-    De query telt alleen mee als de route zich met ``@targets_in_query`` verklaart. Zonder
-    die verklaring kon een aanroeper een deployment bij plakken die de handler negeert, en
-    dan weegt de poort een andere resource dan de handler gebruikt.
+    The query only counts when the route declares itself with ``@targets_in_query``.
+    Without that declaration a caller could paste on a deployment the handler ignores, and
+    the gate would weigh another resource than the handler uses.
     """
-    waarde = request.path_params.get(naam)
-    if not waarde and naam in uit_de_query:
-        waarde = request.query_params.get(naam)
-    return str(waarde) if waarde else None
+    value = request.path_params.get(name)
+    if not value and name in from_query:
+        value = request.query_params.get(name)
+    return str(value) if value else None
 
 
 async def enforce_route_action(request: Request) -> None:
-    """Handhaaf de action van DEZE route, voordat de handler draait.
+    """Enforce THIS route's action, before the handler runs.
 
-    Als router-dependency geregistreerd, zodat er geen route is die de poort vergeet.
-    Alleen projectrechten lopen hier langs: een route zonder action, een route zonder
-    ``project_name`` in het pad, of een regel met een ander publiek gaat door.
+    Registered as a router dependency, so that there is no route that forgets the gate.
+    Only project rights pass here: a route without an action, a route without
+    ``project_name`` in the path, or a rule with another audience goes through.
     """
     route = request.scope.get("route")
     endpoint = getattr(route, "endpoint", None)
-    gevraagd = action_of(endpoint) if endpoint is not None else None
-    if gevraagd is None or rule_for(gevraagd).audience is not Audience.PROJECT:
+    requested = action_of(endpoint) if endpoint is not None else None
+    if requested is None or rule_for(requested).audience is not Audience.PROJECT:
         return
 
     project_name = request.path_params.get("project_name")
     if not project_name:
         return
 
-    uit_de_query = query_targets_of(endpoint)
+    from_query = query_targets_of(endpoint)
     project, _ = authorize(
         request,
-        action=gevraagd,
+        action=requested,
         project_name=str(project_name),
-        deployment=_doelwit(request, uit_de_query, "deployment_name"),
-        component=_doelwit(request, uit_de_query, "component_name"),
+        deployment=_target(request, from_query, "deployment_name"),
+        component=_target(request, from_query, "component_name"),
     )
     request.state.authz_project = project
 
-    # Voor de audit, en pas NA het toelaten, zoals ``handhaaf`` het op de API doet: de
-    # hook draait na het antwoord en kan het formulier dan niet meer lezen, maar een
-    # aanroeper die niets mag hoort geen body te laten ontleden.
+    # For the audit, and only AFTER allowing it, as ``enforce`` does it on the API: the hook
+    # runs after the answer and can no longer read the form then, but a caller who may do
+    # nothing should not get a body parsed.
     await capture_fields(request, endpoint)
 
 
@@ -343,27 +338,27 @@ def template_can(
     deployment: str | None = None,
     component: str | None = None,
 ) -> bool:
-    """De helper ``can(...)`` voor de sjablonen.
+    """The helper ``can(...)`` for the templates.
 
-    Een knop toont zich als de ROLLEN volstaan; de step-up volgt bij het klikken. Zo
-    staat er geen rolnaam meer in een sjabloon, en loopt de knop langs dezelfde regels
-    als de poort erachter.
+    A button shows itself when the ROLES suffice; the step-up follows on the click. No role
+    name is left in a template, and the button runs along the same rules as the gate behind
+    it.
 
-    Als Jinja-global met de context erbij en niet als context_processor: een sjabloon dat
-    los gerenderd wordt (een fragment, een test) heeft dan dezelfde helper, in plaats van
-    een ``'can' is undefined`` die pas op de pagina opvalt. Zonder verzoek in de context
-    mag niets, want er is niemand om iets toe te staan.
+    As a Jinja global with the context alongside and not as a context_processor: a template
+    rendered on its own (a fragment, a test) then has the same helper, instead of a
+    ``'can' is undefined`` that only shows up on the page. Without a request in the context
+    nothing is allowed, because there is nobody to allow anything to.
     """
     request = context.get("request")
     if request is None:
         return False
-    naam = project or getattr(request, "path_params", {}).get("project_name")
-    if not naam:
+    name = project or getattr(request, "path_params", {}).get("project_name")
+    if not name:
         return False
     return may(
         request,
         action=Action(action),
-        project_name=str(naam),
+        project_name=str(name),
         deployment=deployment,
         component=component,
     )

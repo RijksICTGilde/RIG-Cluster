@@ -33,7 +33,7 @@ from opi.core.authz.engine import (
 )
 from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.authz import enforce_route_action
-from opi.http.auth.endpoint_util import handhaaf
+from opi.http.auth.endpoint_util import enforce
 from opi.middleware.audit import AuditMiddleware, _writers
 from opi.server import app
 from opi.services.members import MemberKind
@@ -489,7 +489,7 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
         patch("opi.http.auth.principal.get_user_service", return_value=gebruikers),
         pytest.raises(HTTPException) as fout,
     ):
-        await handhaaf(verzoek, token, route, project)
+        await enforce(verzoek, token, route, project)
 
     assert fout.value.status_code == 403
     assert get_actor().identity == "kijker@rijksoverheid.nl"

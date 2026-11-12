@@ -1,41 +1,22 @@
-"""Welke iconen het NLDD-thema echt LEVERT.
+"""Which icons the NLDD theme really SUPPLIES.
 
-Waarom dit bestand bestaat, en waarom het niet gewoon ``icons.json`` leest: die lijst is
-de bedoelde woordenschat, en de bundel die de browser laadt is wat er werkelijk getekend
-wordt. Die twee lopen uiteen, en een naam die alleen op papier bestaat rendert als niets,
-zonder foutmelding.
+Not read from ``icons.json``: that list is the intended vocabulary, and the bundle the
+browser loads is what actually gets drawn. Those two diverge, and a name that exists only
+on paper renders as nothing, without an error.
 
-Hoe groot dat gat is verschilt per versie, dus het getal hieronder is een meting en geen
-eigenschap. Op NLDD 0.8.92 (pin 172300a) telt ``icons.json`` onder de set ``nldd`` 677
-namen en levert dit bestand er 686; het gat is 2 namen die wel in de lijst staan en niets
-tekenen: ``stack-code`` en ``rectangle-stack-chevron-left-forward-slash-chevron-right``.
+Which names are missing changes PER VERSION, and in both directions, so a name chosen
+because it was once measured is not enough: measure it again on a bump. The names are
+therefore read from the SUPPLIED files, the same place the browser reads them, and never
+copied out by hand.
 
-En het loopt per versie de andere kant op. Op 0.8.80 waren ``media-pause`` en
-``square-arrow-down`` juist de namen die leeg renderden en zat ``square-and-arrow-down``
-wel in de bundel; op 0.8.92 is dat omgedraaid en tekenen die eerste twee gewoon. Een naam
-kiezen omdat hij ooit gemeten is, is dus niet genoeg: meet hem opnieuw bij een bump, want
-het blijft een leeg ``<svg>`` zonder een enkele tekening erin.
+Two kinds of name count: the icons themselves, which sit in the bundle as
+``["name", "<svg ...>"]``, and the friendly names NLDD forwards itself (``search`` ->
+``magnifier``), which render fine and so belong to the vocabulary.
 
-Dat verschil is niet theoretisch. De iconentoets las jarenlang ``icons.json``, was groen,
-en ondertussen stonden er lege plekken in de interface. Een poort die de verkeerde bron
-leest is erger dan geen poort: hij geeft je het gevoel dat het gedekt is.
-
-De namen worden daarom uit de GELEVERDE bestanden gehaald - de plek waar de browser ze
-ook vandaan haalt - en niet met de hand overgeschreven. Een handgeschreven kopie
-veroudert stilzwijgend bij een versiebump, en juist daartegen is dit bedoeld.
-
-Twee soorten namen tellen mee:
-
-- de iconen zelf, die in de bundel als ``["naam", "<svg ...>"]`` staan: 358 op 0.8.92;
-- de vriendelijke namen die NLDD zelf doorverwijst (``search`` -> ``magnifier``,
-  ``delete`` -> ``trash``, ``info`` -> ``info-circle``): 328 op 0.8.92. Die renderen
-  gewoon, dus ze horen bij de woordenschat.
-
-De alias-regex is daarbij ruim: uit de geminificeerde bundel pikt hij ook elf sleutels op
-die geen iconnaam zijn (``type``, ``linux``, ``radiogroup`` en acht andere). Dat maakt de
-set iets te groot en nooit te klein, en te groot is hier de veilige kant: deze set
-WAARSCHUWT, en de echte poort is ``tests/test_lotc_icon_mapping.py``, die op de
-gerenderde markup meet.
+The alias regex is deliberately wide: from the minified bundle it also picks up a handful
+of keys that are not icon names. That makes the set slightly too large and never too
+small, and too large is the safe side here: this set WARNS, and the real gate is
+``tests/test_lotc_icon_mapping.py``, which measures on the rendered markup.
 """
 
 from __future__ import annotations
@@ -46,15 +27,15 @@ from pathlib import Path
 
 from lord_of_the_components.assets import manifest_urls
 
-#: Een icoon in de bundel: ["naam", "<svg ...".
-_ICOON = re.compile(r'\["([a-z0-9][a-z0-9-]{1,50})",[\'"]<svg')
+#: An icon in the bundle: ["name", "<svg ...".
+_ICON = re.compile(r'\["([a-z0-9][a-z0-9-]{1,50})",[\'"]<svg')
 
-#: Een doorverwijzing in de bundel: naam:"bestaand-icoon" of "naam":"bestaand-icoon".
+#: A forward in the bundle: name:"existing-icon" or "name":"existing-icon".
 _ALIAS = re.compile(r'(?:"([a-z0-9-]+)"|([a-z][a-z0-9]*)):"([a-z0-9-]+)"')
 
 
-def _dist_map() -> Path | None:
-    """De dist-map van lotc_nldd, waar hij ook geinstalleerd is."""
+def _dist_directory() -> Path | None:
+    """The dist directory of lotc_nldd, wherever it is installed."""
     try:
         import lotc_nldd
     except ImportError:
@@ -63,42 +44,43 @@ def _dist_map() -> Path | None:
     if lotc_nldd.__file__ is None:
         return None
 
-    # Uit het manifest en niet als vast pad: de bundel staat in een leverdirectory met de
-    # LOTC-versie in de naam (v<datum>-<tijd>-NLDD<versie>/nldd/dist). Een vast pad wees
-    # na die wijziging naar een lege plek, en dan liet de iconentoets alles stil door.
-    pakket = Path(lotc_nldd.__file__).parent
-    _, js_urls = manifest_urls(pakket / "assets.json", "")
-    bundel = next((url for url in js_urls if url.endswith("/nldd/dist/nldd.js")), None)
-    if bundel is None:
+    # From the manifest and not as a fixed path: the bundle sits in a delivery directory
+    # with the LOTC version in its name (v<date>-<time>-NLDD<version>/nldd/dist). A fixed
+    # path pointed at an empty spot after that change, and the icon gate then passed
+    # everything silently.
+    package = Path(lotc_nldd.__file__).parent
+    _, js_urls = manifest_urls(package / "assets.json", "")
+    bundle = next((url for url in js_urls if url.endswith("/nldd/dist/nldd.js")), None)
+    if bundle is None:
         return None
-    map_ = (pakket / "static" / "lotc" / bundel.lstrip("/")).parent
-    return map_ if map_.is_dir() else None
+    directory = (package / "static" / "lotc" / bundle.lstrip("/")).parent
+    return directory if directory.is_dir() else None
 
 
 @cache
 def nldd_icon_names() -> frozenset[str]:
-    """Elke iconnaam die de geleverde NLDD-bundel echt tekent.
+    """Every icon name the supplied NLDD bundle really draws.
 
-    Leeg als het thema niet geinstalleerd is. Dat is met opzet: de aanroepers gebruiken
-    deze set om te WAARSCHUWEN, en een omgeving zonder thema hoort niet bij elk icoon te
-    gaan klagen. De test die hem als poort gebruikt slaat zichzelf dan over.
+    Empty when the theme is not installed. That is deliberate: the callers use this set to
+    WARN, and an environment without the theme should not complain about every icon. The
+    test that uses it as a gate then skips itself.
     """
-    map_ = _dist_map()
-    if map_ is None:
+    directory = _dist_directory()
+    if directory is None:
         return frozenset()
 
-    iconen: set[str] = set()
-    bronnen: list[str] = []
-    for bestand in sorted(map_.glob("*.js")):
-        inhoud = bestand.read_text(encoding="utf-8", errors="ignore")
-        bronnen.append(inhoud)
-        iconen |= {m.group(1) for m in _ICOON.finditer(inhoud)}
+    icons: set[str] = set()
+    sources: list[str] = []
+    for file in sorted(directory.glob("*.js")):
+        content = file.read_text(encoding="utf-8", errors="ignore")
+        sources.append(content)
+        icons |= {m.group(1) for m in _ICON.finditer(content)}
 
-    aliassen: set[str] = set()
-    for inhoud in bronnen:
-        for m in _ALIAS.finditer(inhoud):
-            naam = m.group(1) or m.group(2)
-            if m.group(3) in iconen:
-                aliassen.add(naam)
+    aliases: set[str] = set()
+    for content in sources:
+        for m in _ALIAS.finditer(content):
+            name = m.group(1) or m.group(2)
+            if m.group(3) in icons:
+                aliases.add(name)
 
-    return frozenset(iconen | aliassen)
+    return frozenset(icons | aliases)

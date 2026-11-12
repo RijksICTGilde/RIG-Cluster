@@ -17,8 +17,8 @@ import pytest
 from fastapi import HTTPException
 from opi.core.actor import ACTOR_UNKNOWN, get_actor
 from opi.core.authz.actions import Action, action
-from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, handhaaf
-from opi.http.auth.principal import PRINCIPAL_KIND_NOT_ALLOWED, PrincipalKind, gebruik_per_project, reset_gebruik
+from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, enforce
+from opi.http.auth.principal import PRINCIPAL_KIND_NOT_ALLOWED, PrincipalKind, reset_usage, usage_per_project
 from opi.services.members import MemberKind
 from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -55,9 +55,9 @@ def _project(*, met_oude_sleutel: bool = False, beheerder: str = BEHEERDER) -> P
 
 @pytest.fixture(autouse=True)
 def _schone_meting():
-    reset_gebruik()
+    reset_usage()
     yield
-    reset_gebruik()
+    reset_usage()
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def platformgebruiker():
 
 
 def _verzoek() -> Request:
-    """Een echt ``Request``: ``handhaaf`` legt de eigenaar van het token op ``state`` en
+    """Een echt ``Request``: ``enforce`` legt de eigenaar van het token op ``state`` en
     telt een mislukte poging af in de rate limiter, en beide raken het verzoek."""
     return Request(
         {
@@ -92,19 +92,19 @@ def _route(welke: Action):
 
 async def test_de_oude_sleutel_zet_de_actor_en_telt_als_oud() -> None:
     """De telling is wat het afbouwpad meetbaar maakt: dit was de OUDE weg."""
-    await handhaaf(_verzoek(), "de-oude-sleutel", _route(Action.PROJECT_READ), _project(met_oude_sleutel=True))
+    await enforce(_verzoek(), "de-oude-sleutel", _route(Action.PROJECT_READ), _project(met_oude_sleutel=True))
 
     assert str(get_actor()) == "project-api-key:bouwput"
-    assert gebruik_per_project() == {("bouwput", PrincipalKind.PROJECT_KEY.value): 1}
+    assert usage_per_project() == {("bouwput", PrincipalKind.PROJECT_KEY.value): 1}
 
 
 async def test_een_verkeerde_sleutel_is_401_en_zet_geen_actor() -> None:
     with pytest.raises(HTTPException) as fout:
-        await handhaaf(_verzoek(), "niet-de-sleutel", _route(Action.PROJECT_READ), _project(met_oude_sleutel=True))
+        await enforce(_verzoek(), "niet-de-sleutel", _route(Action.PROJECT_READ), _project(met_oude_sleutel=True))
 
     assert fout.value.status_code == 401
     assert get_actor() == ACTOR_UNKNOWN
-    assert gebruik_per_project() == {}
+    assert usage_per_project() == {}
 
 
 async def test_een_route_zonder_handeling_laat_niets_door() -> None:
@@ -114,30 +114,30 @@ async def test_een_route_zonder_handeling_laat_niets_door() -> None:
     async def endpoint(project_name: str) -> None: ...
 
     with pytest.raises(RuntimeError, match="draagt geen handeling"):
-        await handhaaf(_verzoek(), "de-oude-sleutel", endpoint, _project(met_oude_sleutel=True))
+        await enforce(_verzoek(), "de-oude-sleutel", endpoint, _project(met_oude_sleutel=True))
 
 
 async def test_een_servicaccounttoken_zet_zijn_eigen_actor() -> None:
-    await handhaaf(_verzoek(), TOKEN_BOUWSTRAAT, _route(Action.TASK_READ), _project())
+    await enforce(_verzoek(), TOKEN_BOUWSTRAAT, _route(Action.TASK_READ), _project())
 
     assert str(get_actor()) == "service-account:bouwput/bouwstraat"
-    assert gebruik_per_project() == {("bouwput", PrincipalKind.SERVICE_ACCOUNT.value): 1}
+    assert usage_per_project() == {("bouwput", PrincipalKind.SERVICE_ACCOUNT.value): 1}
 
 
 async def test_een_token_van_een_mens_zet_zijn_e_mailadres_als_actor(platformgebruiker) -> None:
-    await handhaaf(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_READ), _project())
+    await enforce(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_READ), _project())
 
     assert str(get_actor()) == BEHEERDER
-    assert gebruik_per_project() == {("bouwput", PrincipalKind.HUMAN.value): 1}
+    assert usage_per_project() == {("bouwput", PrincipalKind.HUMAN.value): 1}
 
 
 async def test_een_onbekend_token_is_401_en_zet_geen_actor() -> None:
     with pytest.raises(HTTPException) as fout:
-        await handhaaf(_verzoek(), "zad_nooit-uitgegeven", _route(Action.PROJECT_READ), _project())
+        await enforce(_verzoek(), "zad_nooit-uitgegeven", _route(Action.PROJECT_READ), _project())
 
     assert fout.value.status_code == 401
     assert get_actor() == ACTOR_UNKNOWN
-    assert gebruik_per_project() == {}
+    assert usage_per_project() == {}
 
 
 async def test_een_token_van_iemand_zonder_platformtoegang_is_401() -> None:
@@ -147,11 +147,11 @@ async def test_een_token_van_iemand_zonder_platformtoegang_is_401() -> None:
     project = _project(beheerder="vertrokken@rijksoverheid.nl")
 
     with pytest.raises(HTTPException) as fout:
-        await handhaaf(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_DELETE), project)
+        await enforce(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_DELETE), project)
 
     assert fout.value.status_code == 401
     assert get_actor() == ACTOR_UNKNOWN
-    assert gebruik_per_project() == {}
+    assert usage_per_project() == {}
 
 
 async def test_een_service_account_op_een_mensenhandeling_ketst_af_op_de_soort() -> None:
@@ -159,11 +159,11 @@ async def test_een_service_account_op_een_mensenhandeling_ketst_af_op_de_soort()
 
     Sinds RC-392 vraagt ``token.manage`` een verse step-up in plaats van onvoorwaardelijk
     een mens, dus het ANTWOORD komt van ``@requires_step_up`` (een problem-detail met de
-    weg eruit) en niet meer als kale 403 uit ``handhaaf``. Wat hier vast moet staan is dat
+    weg eruit) en niet meer als kale 403 uit ``enforce``. Wat hier vast moet staan is dat
     de beslissing zelf de soort aanwijst; het antwoord dekt ``tests/test_token_step_up.py``.
     """
     verzoek = _verzoek()
-    await handhaaf(verzoek, TOKEN_BOUWSTRAAT, _route(Action.TOKEN_MANAGE), _project())
+    await enforce(verzoek, TOKEN_BOUWSTRAAT, _route(Action.TOKEN_MANAGE), _project())
 
     beslissing = verzoek.state.authz_decision
     assert beslissing.allowed is False
@@ -181,7 +181,7 @@ async def test_een_token_van_een_ander_project_is_401() -> None:
     )
 
     with pytest.raises(HTTPException) as fout:
-        await handhaaf(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_READ), ander)
+        await enforce(_verzoek(), TOKEN_MENS, _route(Action.PROJECT_READ), ander)
 
     assert fout.value.status_code == 401
     assert fout.value.detail == "Invalid API key"

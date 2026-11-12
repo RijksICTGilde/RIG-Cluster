@@ -110,7 +110,7 @@ from opi.http.auth.endpoint_util import (
     marking_in_body,
     validate_api_token,
 )
-from opi.http.auth.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
+from opi.http.auth.step_up_conditions import always_requires_step_up, deployment_environment_change
 from opi.http.auth.user_token_auth import validate_platform_admin_token, validate_user_token
 from opi.http.task_helpers import build_accepted_response, create_async_task, require_removable_deployment
 from opi.services.approvals import collect_deployment_approval_notices
@@ -1407,7 +1407,7 @@ async def refresh_project_v2(
 )
 @action_marker(Action.PLATFORM_PROJECT_KEY)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.PROJECT_KEY_REPLACE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.PROJECT_KEY_REPLACE)
 async def rotate_project_key_v2(
     request: Request,
     project_name: str,

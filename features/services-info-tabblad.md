@@ -86,7 +86,7 @@ waargemaakt wordt.
 
 Wie er via een gedeelde link toch op uitkomt, wordt naar Overzicht verwezen (302) in
 plaats van op een lege pagina te belanden. De regel staat op een plek
-(`TABS_MET_VOORWAARDE` in `opi/http/render/lotc_switch.py`), zodat de tabbalk en de route hetzelfde
+(`CONDITIONAL_TABS` in `opi/http/render/lotc_switch.py`), zodat de tabbalk en de route hetzelfde
 zeggen.
 
 ## Generiek, geen dienstnamen in het sjabloon

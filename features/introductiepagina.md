@@ -21,7 +21,7 @@ kunt delen en dat ook werkt voor iemand die al is ingelogd.
 ## De harde eis: alleen wat waar is
 
 Zo'n pagina schrijft zichzelf vol met beloftes, en een belofte die niet klopt is erger dan
-geen pagina. Daarom staat de dienstenlijst er **niet als tekst**: `build_lotc_introductie`
+geen pagina. Daarom staat de dienstenlijst er **niet als tekst**: `build_lotc_introduction`
 (`opi/http/render/lotc_switch.py`) leest `SERVICE_DEFINITIONS` uit, en naam, technische naam,
 omschrijving en icoon zijn letterlijk die van de dienst zelf.
 
@@ -60,7 +60,7 @@ belanden.
 | bestand | rol |
 |---|---|
 | `opi/web/router.py` | `root()` en `introductie()` |
-| `opi/http/render/lotc_switch.py` | `build_lotc_introductie()`: de catalogus in de vorm die de pagina leest |
+| `opi/http/render/lotc_switch.py` | `build_lotc_introduction()`: de catalogus in de vorm die de pagina leest |
 | `opi/templates_lotc/bg/introductie.html.j2` | de indeling: welke panelen, in welke volgorde |
 | `opi/templates_lotc/bg/_introductie-blokken.html.j2` | wat er in die panelen staat |
 | `opi/web/lotc_fixtures.py` | de proefopstelling, met de echte catalogus |

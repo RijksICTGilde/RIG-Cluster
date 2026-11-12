@@ -154,7 +154,7 @@ class TestFormatDuration:
             (40, "40 seconden"),
             (59, "59 seconden"),
             (60, "1 minuut"),
-            # Naar BENEDEN, zoals ``relatieve_tijd`` in ``opi/http/render/lotc_switch.py``. Naar boven
+            # Naar BENEDEN, zoals ``relative_time`` in ``opi/http/render/lotc_switch.py``. Naar boven
             # zou de melding langer maken dan de sync werkelijk liep.
             (119, "1 minuut"),
             (120, "2 minuten"),

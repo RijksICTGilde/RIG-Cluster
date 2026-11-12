@@ -106,7 +106,7 @@ er iets mee kan.
 
   Een eigen conditie blijft voor de twee gevallen waar geen projectbeslissing is om uit
   te lezen: de platformroutes (`platform.*`, een eigen `Audience` zonder grants) en de
-  API-tokenroutes, die achter een SSO-bearer hangen in plaats van achter `handhaaf` en
+  API-tokenroutes, die achter een SSO-bearer hangen in plaats van achter `enforce` en
   hun rolregel in `api_token_service` afdwingen. Daarnaast wat een scope niet kan zien:
   of een aanroep de OTAP-markering ZET of VERLAAGT staat in de body van de
   deployment-upsert, niet in het pad.
@@ -172,7 +172,7 @@ productieregel met één klik.
 ## Wat de body nog meer aanwijst
 
 Een body kan een ANDER doelwit noemen dan het pad of `@deployment_from`. Dan toetst de
-route die tweede handeling zelf, met `eis_handeling(request, project, action,
+route die tweede handeling zelf, met `require_api_action(request, project, action,
 deployment=...)` (`opi/http/auth/endpoint_util.py`), op de principal die de poort al herkende.
 Op `:upsert-deployment` zijn dat er vijf:
 

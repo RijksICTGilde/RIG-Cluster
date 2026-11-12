@@ -2,7 +2,7 @@
 
 Everything hangs under ``/api/v2/projects/{p}/leden``, because a token belongs to a member and
 a member to a project. There is no path for "my tokens across all projects": such a list would
-name projects to someone who may just have been taken out of them.
+name projects to someone who may just have been removed from them.
 
 A caller legitimates with an SSO bearer token and NOT with a project key or an API token:
 issuing a token asks for an authenticated person, so the caller cannot pick who they are. The
@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from opi.api.params import ProjectNamePath
 from opi.core.authz.actions import Action, action
 from opi.http.auth.auth_decorators import get_current_user, requires_step_up
-from opi.http.auth.step_up_conditions import vraagt_altijd_step_up
+from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.auth.user_token_auth import validate_user_token
 from opi.services.api_token_service import (
     DEFAULT_ROLES,
@@ -131,7 +131,7 @@ def _as_json(members: list[dict]) -> list[dict]:
 @token_router.post("/projects/{project_name}/leden", status_code=201, summary="Voeg een service account toe")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.SERVICE_ACCOUNT_ADD)
+@requires_step_up(always_requires_step_up, action=StepUpAction.SERVICE_ACCOUNT_ADD)
 async def voeg_lid_toe(
     request: Request, project_name: ProjectNamePath, aanvraag: ServiceAccountAanvraag = Body(...)
 ) -> JSONResponse:
@@ -151,7 +151,7 @@ async def voeg_lid_toe(
 @token_router.delete("/projects/{project_name}/leden/{naam}", summary="Verwijder een service account")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.SERVICE_ACCOUNT_REMOVE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.SERVICE_ACCOUNT_REMOVE)
 async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: str) -> JSONResponse:
     """Take a service account out of the members. Its tokens go in the same commit."""
     email = _require_membership(project_name, _email(request))
@@ -165,7 +165,7 @@ async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: s
 @token_router.put("/projects/{project_name}/leden/{naam}/rol", summary="Wijzig de rollen van een lid")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.ROLE_CHANGE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.ROLE_CHANGE)
 async def zet_rol(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: RolAanvraag = Body(...)
 ) -> JSONResponse:
@@ -181,7 +181,7 @@ async def zet_rol(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens", status_code=201, summary="Geef een token uit")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_ISSUE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.TOKEN_ISSUE)
 async def maak_token(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -204,7 +204,7 @@ async def maak_token(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer", summary="Roteer een token")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_ROTATE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.TOKEN_ROTATE)
 async def roteer(
     request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -222,7 +222,7 @@ async def roteer(
 @token_router.delete("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}", summary="Trek een token in")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_REVOKE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.TOKEN_REVOKE)
 async def trek_in(request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str) -> JSONResponse:
     """Revoke a token. That is a commit, so it stands in the history of the project."""
     email = _require_membership(project_name, _email(request))

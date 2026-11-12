@@ -78,14 +78,14 @@ def guard_target(doelwit: str) -> None:
         raise GuardError(f"doelwit {host!r} is geen loopback-adres")
 
 
-def valid_exceptions(soort: str, today: date, path: Path = EXCEPTIONS_FILE) -> set[str]:
+def valid_exceptions(scanner: str, today: date, path: Path = EXCEPTIONS_FILE) -> set[str]:
     """The ids that stay silent for this scanner, without the expired and incomplete entries.
 
     The scanner name is also the section in the list, so it keeps the name the CLI takes.
     """
     content = load_yaml_safe(path.read_text(encoding="utf-8")) or {}
     valid = set()
-    for entry in content.get(soort) or []:
+    for entry in content.get(scanner) or []:
         expires_at = entry.get("expired_at")
         if not isinstance(expires_at, date) or not str(entry.get("statement") or "").strip():
             continue

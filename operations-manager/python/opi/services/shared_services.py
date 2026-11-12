@@ -1,6 +1,6 @@
 """How full and how busy the SHARED services are: the PVCs and the databases.
 
-The measuring layer under /admin/diensten. It does three things and no more:
+The measuring layer under ``/admin/diensten``. It does three things and no more:
 
 1. it keeps the thresholds in one place (``THRESHOLDS``), so alerting can use the same
    limits and no second truth arises;
@@ -511,7 +511,7 @@ async def fetch_resources() -> Block:
         for namespace in namespaces
     ]
 
-    # The total row stands apart in extra_rijen, so the template can put it at the bottom
+    # The total row stands apart in ``extra_rijen``, so the template can put it at the bottom
     # without having to recognise it among the ordinary rows.
     def _total(field_name: str) -> float | None:
         values = [getattr(row, field_name) for row in rijen if getattr(row, field_name) is not None]

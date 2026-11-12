@@ -18,17 +18,17 @@ from opi.core.errors import current_reference, log_render_failure, reference_for
 from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.http.auth.authz import enforce_route_action, may
 from opi.http.render.lotc_switch import (
-    STANDAARD_TAB,
-    TABS_MET_DEPLOYMENT,
-    TABS_MET_VOORWAARDE,
-    audit_pagina,
+    CONDITIONAL_TABS,
+    DEFAULT_TAB,
+    TABS_WITH_DEPLOYMENT,
+    audit_page,
     build_deployment_status_column,
     build_lotc_dashboard,
-    build_lotc_introductie,
+    build_lotc_introduction,
     build_lotc_project_details,
     build_lotc_projects,
-    deployment_pagina_adres,
-    kies_deployment,
+    choose_deployment,
+    deployment_page_address,
     project_tab_url,
     render,
     render_fragment,
@@ -237,7 +237,7 @@ async def introductie(request: Request):
         context={
             "request": request,
             "menu_items": get_menu_items(user),
-            **build_lotc_introductie(user),
+            **build_lotc_introduction(user),
         },
     )
 
@@ -1418,13 +1418,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # Right after loading the project: everything below is decryption work a redirect does
         # not need.
         deployment_open = ""
-        if tab_from_path(request.url.path) in TABS_MET_DEPLOYMENT:
-            deployment_open = kies_deployment(
+        if tab_from_path(request.url.path) in TABS_WITH_DEPLOYMENT:
+            deployment_open = choose_deployment(
                 [deployment["name"] for deployment in project_data.get("deployments") or []],
                 deployment_name,
                 request.query_params.get("deployment") or "",
             )
-            belongs_at = deployment_pagina_adres(request, project_name, deployment_open)
+            belongs_at = deployment_page_address(request, project_name, deployment_open)
             current = request.url.path + (f"?{request.url.query}" if request.url.query else "")
             if belongs_at != current:
                 return RedirectResponse(url=belongs_at, status_code=302)
@@ -1692,7 +1692,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         #
         # Only for the tab that shows the table: the other tabs do not have the column.
         argocd_statuses: dict[str, dict[str, Any]] = {}
-        if argocd_available and tab_from_path(request.url.path) == STANDAARD_TAB:
+        if argocd_available and tab_from_path(request.url.path) == DEFAULT_TAB:
             argocd_statuses = await get_project_argocd_statuses(
                 project_name, [name for name in deployment_states if name]
             )
@@ -1761,23 +1761,23 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # use the services, which is what you come back for.
         #
         # When no service delivers anything there is no tab, because an empty page behind a tab
-        # is a promise that is not kept. The tab falls out of the bar ("lege_tabs" below),
+        # is a promise that is not kept. The tab falls out of the bar ("empty_tabs" below),
         # and whoever still arrives there over a shared link goes to the overview.
-        lege_tabs = () if service_detail_sections else TABS_MET_VOORWAARDE
+        empty_tabs = () if service_detail_sections else CONDITIONAL_TABS
         # The audit tab is only there for whoever may read it. That is a right and not an empty
-        # tab, so it does not follow from TABS_MET_VOORWAARDE; the route behind it refuses with
+        # tab, so it does not follow from CONDITIONAL_TABS; the route behind it refuses with
         # a 403, and a tab that ends in one does not belong in the bar.
         if not may(request, action=Action.AUDIT_READ, project_name=project_name):
-            lege_tabs = (*lege_tabs, "audit")
-        if tab_from_path(request.url.path) in lege_tabs:
-            return RedirectResponse(url=project_tab_url(project_name, STANDAARD_TAB), status_code=302)
+            empty_tabs = (*empty_tabs, "audit")
+        if tab_from_path(request.url.path) in empty_tabs:
+            return RedirectResponse(url=project_tab_url(project_name, DEFAULT_TAB), status_code=302)
 
         # The audit rows of this project, only on the tab that shows them. The project comes
         # from the PATH: the same name @action(AUDIT_READ) weighed, never one from the query
         # string or the body.
         audit_context: dict[str, Any] = {}
         if tab_from_path(request.url.path) == "audit":
-            audit_context = await audit_pagina(request, project_name)
+            audit_context = await audit_page(request, project_name)
 
         # Changes saved with rollout=false that nobody has rolled out yet, shown above the
         # tabs, because a project file that silently runs ahead of the cluster is worse than a
@@ -1844,7 +1844,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     user=user,
                     project=project_details,
                     deployment_open=deployment_open,
-                    lege_tabs=lege_tabs,
+                    empty_tabs=empty_tabs,
                 ),
             },
         )
@@ -2571,7 +2571,7 @@ async def projects_overview(request: Request):
         # comes out empty rather than complete.
         user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
-        laatst_gewijzigd = await get_project_store().last_modified_all()
+        last_modified = await get_project_store().last_modified_all()
 
         return render(
             request,
@@ -2581,7 +2581,7 @@ async def projects_overview(request: Request):
                 "menu_items": get_menu_items(user),
                 "projects": user_projects,
                 "user": user,
-                **build_lotc_projects(request, user=user, projects=user_projects, laatst_gewijzigd=laatst_gewijzigd),
+                **build_lotc_projects(request, user=user, projects=user_projects, last_modified=last_modified),
             },
         )
 

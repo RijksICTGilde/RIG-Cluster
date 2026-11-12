@@ -396,4 +396,4 @@ async def test_de_dialoog_draagt_de_velden_van_het_formulier_mee() -> None:
     assert antwoord.headers["HX-Retarget"] == MODAL_TARGET
     mock.assert_not_awaited()
     assert dialoog.await_args is not None
-    assert dialoog.await_args.kwargs["vervolg_velden"] == {"tokennaam": "cli", "dagen": "30"}
+    assert dialoog.await_args.kwargs["follow_fields"] == {"tokennaam": "cli", "dagen": "30"}

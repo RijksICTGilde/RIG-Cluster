@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
-from opi.http.auth.authz import TE_SMALLE_ROL, require_action
+from opi.http.auth.authz import ROLE_TOO_NARROW, require_action
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 
@@ -79,7 +79,7 @@ def test_a_role_too_narrow_gives_403_with_the_fixed_text() -> None:
         require_action(_request(KIJKER), Action.RESTORE_RUN, PROJECT_NAME)
 
     assert info.value.status_code == 403
-    assert info.value.detail == TE_SMALLE_ROL
+    assert info.value.detail == ROLE_TOO_NARROW
 
 
 def test_a_refusal_is_recorded_so_the_audit_sees_the_attempt() -> None:

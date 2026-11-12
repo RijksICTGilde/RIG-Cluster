@@ -238,9 +238,9 @@ def page_data(slug: str) -> dict[str, Any]:
         # NO example services: the introduction page shows the REAL catalog, which comes from
         # the code and needs no cluster. Without the ``navigation`` that comes out of it too:
         # ``_context()`` in lotc_router sets that itself, and ``**extra`` would write over it.
-        from opi.http.render.lotc_switch import build_lotc_introductie
+        from opi.http.render.lotc_switch import build_lotc_introduction
 
-        catalog = build_lotc_introductie(None)
+        catalog = build_lotc_introduction(None)
         return {key: value for key, value in catalog.items() if key != "navigation"}
 
     if slug == "dashboard":

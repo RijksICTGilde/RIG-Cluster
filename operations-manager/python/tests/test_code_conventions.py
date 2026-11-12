@@ -104,6 +104,16 @@ def test_dutch_prose_around_a_quoted_fragment_still_counts() -> None:
     assert measures("value = 1  # De waarde van `x` wordt niet gelezen.\n") == {DUTCH_COMMENTS: 1}
 
 
+def test_a_sphinx_double_backtick_code_reference_does_not_count() -> None:
+    """A Dutch-looking test name inside a double-backtick span used to read as Dutch prose."""
+    source = '"""See also ``test_de_drie_plekken_noemen_hetzelfde_afzenderadres``."""\n'
+    assert measures(source) == {}
+
+
+def test_dutch_prose_around_a_double_backtick_fragment_still_counts() -> None:
+    assert measures("value = 1  # De functie ``x`` wordt niet gelezen.\n") == {DUTCH_COMMENTS: 1}
+
+
 def test_a_dutch_comment_counts() -> None:
     assert measures("value = 1  # dit is de waarde die eruit komt\n") == {DUTCH_COMMENTS: 1}
 

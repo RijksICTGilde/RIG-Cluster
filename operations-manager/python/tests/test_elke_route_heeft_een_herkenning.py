@@ -103,7 +103,7 @@ HANDGESCHREVEN_CONTROLES: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ),
     ("GET", "/api/tasks"): (
         "herkenning alleen via de X-API-Key-header, gehandhaafd met de handeling van de route (task_router.py)",
-        ("handhaaf(",),
+        ("enforce(",),
     ),
     ("GET", "/api/tasks/{task_id}"): (
         "herkenning alleen via de X-API-Key-header, gehandhaafd via _validate_task_access (task_router.py)",

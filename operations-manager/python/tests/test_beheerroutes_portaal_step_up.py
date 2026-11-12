@@ -147,7 +147,7 @@ async def test_de_dialoog_herhaalt_de_ingevulde_velden(route: str) -> None:
         antwoord = await _roep(route, _verzoek(verse_step_up=False, htmx=True), _beheerdienst(), _otp_dienst())
 
     assert antwoord.status_code == 200
-    velden = dialoog.await_args.kwargs["vervolg_velden"]
+    velden = dialoog.await_args.kwargs["follow_fields"]
     assert set(velden) == set(_FORM_FIELDS)
     assert velden["email"] == ANDER
 

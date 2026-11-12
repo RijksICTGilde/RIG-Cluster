@@ -41,9 +41,9 @@ logger = logging.getLogger(__name__)
 
 
 def csp_nonce(request: Request) -> str:
-    """De CSP-nonce van dit verzoek (standaardwaarde: leeg).
+    """The CSP nonce of this request, empty by default.
 
-    (Test-request zonder state? Dat is okay; het Report-Only-beleid meet zonder nonce.)
+    A test request without state is fine; the Report-Only policy measures without a nonce.
     """
     return getattr(getattr(request, "state", None), "csp_nonce", "")
 

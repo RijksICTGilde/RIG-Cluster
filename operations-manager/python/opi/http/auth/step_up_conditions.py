@@ -1,8 +1,8 @@
-"""De condities waarmee een route zich aanmeldt voor een step-up (RC-332).
+"""The conditions with which a route signs up for a step-up (RC-332).
 
-Een route noemt er een; de regel zelf staat in
-:func:`opi.services.step_up.requires_production_step_up`. Apart van ``opi.services.step_up``
-omdat dit de projectstore leest, en die leunt via de formulierlaag terug op ``core``.
+A route names one; the rule itself sits in
+:func:`opi.services.step_up.requires_production_step_up`. Apart from ``opi.services.step_up``
+because this reads the project store, which leans back on ``core`` through the forms layer.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ if TYPE_CHECKING:
 
 
 def _project_data(request: Request, project_name: str) -> dict[str, Any]:
-    """Het projectbestand, of leeg voor een gebruiker die er niet bij mag.
+    """The project file, or empty for a user who may not get at it.
 
-    Leeg leest als "vraagt geen step-up", zodat de route zelf zijn eigen 403 of 404 geeft.
-    Anders zou de dialoog aan iedereen verklappen dat dit project productie raakt. Op een
-    ``/api/``-pad vult alleen ``handhaaf`` dit veld, met de eigenaar van een persoonlijk
-    token, en dat lid is daar al tegen dit project gelegd (RC-322).
+    Empty reads as "asks for no step-up", so that the route gives its own 403 or 404.
+    Otherwise the dialog would give away to everyone that this project touches production. On
+    an ``/api/`` path only ``enforce`` fills this field, with the owner of a personal token,
+    and that member has already been laid against this project there (RC-322).
     """
     email = str((get_current_user(request) or {}).get("email", ""))
     if email and not is_user_authorized_for_project(project_name, email):
@@ -34,13 +34,13 @@ def _project_data(request: Request, project_name: str) -> dict[str, Any]:
     return (project.data if project is not None else None) or {}
 
 
-def vraagt_altijd_step_up(request: Request, **_: Any) -> bool:
-    """Altijd waar: deze handeling vraagt een step-up los van de omgeving.
+def always_requires_step_up(request: Request, **_: Any) -> bool:
+    """Always true: this action asks for a step-up regardless of the environment.
 
-    Een wijzigende beheerroute raakt het hele cluster (RC-377), en een token of een
-    lidmaatschap geeft blijvend toegang tot een project, ook buiten productie (RC-387).
-    Geen omgeving om te wegen, maar wel de conditie van ``requires_step_up``, zodat deze
-    handelingen dezelfde step-up dragen als de rest.
+    A modifying admin route touches the whole cluster (RC-377), and a token or a membership
+    gives lasting access to a project, outside production too (RC-387). No environment to
+    weigh, but still the condition of ``requires_step_up``, so that these actions carry the
+    same step-up as the rest.
     """
     return True
 
@@ -48,18 +48,18 @@ def vraagt_altijd_step_up(request: Request, **_: Any) -> bool:
 def deployment_environment_change(
     request: Request, *, project_name: str = "", deployment_data: Any = None, **_: Any
 ) -> bool:
-    """De aanroep ZET of VERLAAGT de OTAP-markering van deze deployment.
+    """The call SETS or LOWERS the OTAP marking of this deployment.
 
-    Een aanroep zonder markering laat de bestaande staan. Welke wijzigingen meetellen
-    staat in :func:`opi.services.step_up.production_marking_change`; een deployment die nog niet
-    bestaat gaat daar als nieuw naar binnen, zonder voor-staat.
+    A call without a marking leaves the existing one. Which changes count sits in
+    :func:`opi.services.step_up.production_marking_change`; a deployment that does not exist
+    yet goes in there as new, without a before state.
     """
-    gevraagd = getattr(deployment_data, "environment", None)
-    if gevraagd is None:
+    requested = getattr(deployment_data, "environment", None)
+    if requested is None:
         return False
     project_data = _project_data(request, project_name)
-    naam = str(getattr(deployment_data, "deploymentName", ""))
-    bestaand = deployment_by_name(project_data, naam)
-    before = {naam: effective_environment(bestaand)} if bestaand is not None else {}
-    after = {naam: Omgeving(gevraagd)}
+    name = str(getattr(deployment_data, "deploymentName", ""))
+    existing = deployment_by_name(project_data, name)
+    before = {name: effective_environment(existing)} if existing is not None else {}
+    after = {name: Omgeving(requested)}
     return requires_production_step_up(StepUpKind.ENVIRONMENT, project_data, change=(before, after))

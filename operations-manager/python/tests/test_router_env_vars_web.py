@@ -120,7 +120,7 @@ async def test_opening_without_step_up_returns_the_dialog_and_no_value() -> None
 
     assert antwoord.headers["HX-Retarget"] == MODAL_TARGET
     assert dialoog.await_args is not None
-    assert dialoog.await_args.kwargs["methode"] == "GET"
+    assert dialoog.await_args.kwargs["method"] == "GET"
     # De weigering bevat nooit een waarde: de dialoog kreeg geen projectdata te zien.
     assert dialoog.await_args.kwargs.get("vervolg_velden") in (None, {})
 

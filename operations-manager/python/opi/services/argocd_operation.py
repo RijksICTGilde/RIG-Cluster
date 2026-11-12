@@ -195,7 +195,7 @@ async def terminate_stuck_operation(
 def format_duration(seconds: int | None) -> str:
     """A runtime as '45 seconden', '19 minuten', '2 uur', or 'onbekend lang'.
 
-    Rounded DOWN, like ``relatieve_tijd`` in ``opi/http/render/lotc_switch.py``: 119 minutes
+    Rounded DOWN, like ``relative_time`` in ``opi/http/render/lotc_switch.py``: 119 minutes
     reads as '1 uur' and not as '2 uur'. A duration and not a clock, because ArgoCD reports in
     UTC and OPI's own lines in CEST. A negative duration comes from that same difference and
     reads as '0 seconden' instead of an impossible number.

@@ -39,7 +39,7 @@ def get_current_user(request) -> dict[str, Any] | None:
     """The authenticated user on this request, or None.
 
     Three routes fill ``request.state.user``: the authorization middleware out of a
-    session, the bearer decorators out of a verified SSO token, and ``handhaaf`` out of a
+    session, the bearer decorators out of a verified SSO token, and ``enforce`` out of a
     personal API token (RC-322). A filled value therefore says WHO the caller is and NOT
     that they went through a browser flow: hang no check on it that assumes a session or a
     second factor. A step-up belongs on ``@requires_step_up``, which reads the window of
@@ -149,7 +149,7 @@ def requires_step_up(
             if request.url.path.startswith("/api/"):
                 from opi.http.auth.otp_step_up import step_up_problem_response, verify_api_step_up
 
-                problem = await verify_api_step_up(request, project_name=project_name, actie=action, doelwit=target)
+                problem = await verify_api_step_up(request, project_name=project_name, action=action, target=target)
                 if problem is not None:
                     return step_up_problem_response(problem)
                 return await func(*args, **kwargs)
@@ -193,7 +193,7 @@ async def _step_up_refusal(
 
     if request.headers.get("HX-Request"):
         html = await render_step_up_dialog(
-            request, vervolg=request.url.path, handeling=action_phrase, vervolg_velden=fields, methode=method
+            request, follow_url=request.url.path, action_text=action_phrase, follow_fields=fields, method=method
         )
         return step_up_dialog_response(html)
     raise HTTPException(status_code=403, detail=text)
@@ -203,7 +203,7 @@ def _register_requires_step_up(request: Request) -> bool:
     """Whether the decision of THIS request asks for a fresh second factor.
 
     The gate has already called ``decide()`` and put the outcome on the request
-    (``record_decision``): ``enforce_route_action`` in the portal, ``handhaaf`` on the API.
+    (``record_decision``): ``enforce_route_action`` in the portal, ``enforce`` on the API.
     Deciding again would be a second read of the project file, and therefore a second
     answer to the same question.
 

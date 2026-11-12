@@ -105,7 +105,7 @@ def _projectstore(api_key: str = "goede-sleutel") -> MagicMock:
     return store
 
 
-# De handeling hoort erbij zoals op elke echte route: ``handhaaf`` weigert een
+# De handeling hoort erbij zoals op elke echte route: ``enforce`` weigert een
 # token-bereikbare route zonder markering met een RuntimeError.
 @action(Action.PROJECT_READ)
 @validate_api_token

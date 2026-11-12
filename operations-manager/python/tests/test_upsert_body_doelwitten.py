@@ -25,7 +25,7 @@ from fastapi import HTTPException
 from opi.api.router import UpsertDeploymentRequest
 from opi.api.v2.router import upsert_deployment_v2
 from opi.core.authz.actions import Action, action, deployment_from, deployment_of, marking_if_absent
-from opi.http.auth.endpoint_util import default_marking, deployment_in_body, handhaaf
+from opi.http.auth.endpoint_util import default_marking, deployment_in_body, enforce
 from opi.services.members import MemberKind
 from opi.services.project_members import hash_of
 from opi.services.project_roles import build_resource, resource_path
@@ -144,7 +144,7 @@ async def _laat_toe(token: str, deployment_naam: str) -> Request:
     store = MagicMock()
     store.get.return_value = project
     with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
-        await handhaaf(
+        await enforce(
             verzoek,
             token,
             _route,
@@ -374,8 +374,8 @@ async def test_developer_ci_deletes_any_deployment_that_is_not_production(deploy
     store.get.return_value = project
     with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         if allowed:
-            await handhaaf(request, TOKEN_CI, _delete_route, project)
+            await enforce(request, TOKEN_CI, _delete_route, project)
         else:
             with pytest.raises(HTTPException) as refused:
-                await handhaaf(request, TOKEN_CI, _delete_route, project)
+                await enforce(request, TOKEN_CI, _delete_route, project)
             assert refused.value.status_code == 403

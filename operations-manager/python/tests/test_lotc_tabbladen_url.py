@@ -19,9 +19,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.http.render.lotc_switch import (
+    DEFAULT_TAB,
     PROJECT_TABS,
-    STANDAARD_TAB,
-    TABS_MET_DEPLOYMENT,
+    TABS_WITH_DEPLOYMENT,
     project_tab_url,
     tab_from_path,
 )
@@ -59,7 +59,7 @@ def test_de_query_reist_mee() -> None:
 
 def test_een_onbekend_tabblad_valt_terug_op_overzicht() -> None:
     """Uit een oude of geknutselde link; dan hoort er een pagina te staan."""
-    assert project_tab_url("demo", "bestaat-niet") == project_tab_url("demo", STANDAARD_TAB)
+    assert project_tab_url("demo", "bestaat-niet") == project_tab_url("demo", DEFAULT_TAB)
 
 
 def test_het_pad_zegt_welk_tabblad_actief_is() -> None:
@@ -69,9 +69,9 @@ def test_het_pad_zegt_welk_tabblad_actief_is() -> None:
 
 
 def test_een_vreemd_pad_valt_terug_op_overzicht() -> None:
-    assert tab_from_path("/projects") == STANDAARD_TAB
-    assert tab_from_path("/projects/demo") == STANDAARD_TAB
-    assert tab_from_path("/") == STANDAARD_TAB
+    assert tab_from_path("/projects") == DEFAULT_TAB
+    assert tab_from_path("/projects/demo") == DEFAULT_TAB
+    assert tab_from_path("/") == DEFAULT_TAB
 
 
 def test_elk_tabbladadres_komt_bij_de_projectpagina_uit() -> None:
@@ -112,7 +112,7 @@ def test_de_andere_tabbladen_krijgen_de_deployment_niet() -> None:
     """Overzicht toont ze allemaal in een tabel; ``/projects/demo/details/productie`` heeft
     geen route, dus de tabbalk zou naar een 404 wijzen."""
     for tab in PROJECT_TABS:
-        if tab in TABS_MET_DEPLOYMENT:
+        if tab in TABS_WITH_DEPLOYMENT:
             continue
         assert project_tab_url("demo", tab, deployment="productie") == project_tab_url("demo", tab)
 
@@ -130,7 +130,7 @@ def test_de_query_reist_mee_naast_de_deployment() -> None:
 
 def test_elk_deploymentadres_heeft_een_route() -> None:
     """Een kiezer die naar een niet-bestaand pad wijst is een dode knop."""
-    for tab in TABS_MET_DEPLOYMENT:
+    for tab in TABS_WITH_DEPLOYMENT:
         # De naam wordt in het pad ge-escaped (dat is de bedoeling: een deploymentnaam is
         # gebruikersinvoer), dus het routepad wordt hier opgebouwd en niet gequote.
         pad = project_tab_url("{project_name}", tab) + "/{deployment_name}"
@@ -140,7 +140,7 @@ def test_elk_deploymentadres_heeft_een_route() -> None:
 def test_een_deploymentadres_komt_bij_de_projectpagina_uit() -> None:
     """Zelfde reden als hierboven: de paden staan letterlijk geregistreerd, dus een route
     die ertussen komt te staan valt hier door de mand."""
-    for tab in TABS_MET_DEPLOYMENT:
+    for tab in TABS_WITH_DEPLOYMENT:
         pad = project_tab_url("demo", tab, deployment="productie")
         scope = {"type": "http", "method": "GET", "path": pad, "headers": [], "root_path": ""}
         gevonden = next(

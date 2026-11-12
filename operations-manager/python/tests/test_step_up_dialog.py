@@ -40,7 +40,7 @@ async def test_render_step_up_dialog_vraagt_de_status_op_voor_het_lagere_e_maila
         patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
         html = await render_step_up_dialog(
-            _request(), vervolg="/projects/delete/demo", handeling="dit project te verwijderen", code_fout="oeps"
+            _request(), follow_url="/projects/delete/demo", action_text="dit project te verwijderen", code_error="oeps"
         )
 
     mocked.assert_awaited_once_with("eigenaar@example.org")
@@ -60,7 +60,7 @@ async def test_render_step_up_dialog_zonder_factor_meldt_niet_geregistreerd() ->
         patch("opi.services.user_otp_service.UserOtpService.status", new=AsyncMock(return_value=status)),
         patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
-        await render_step_up_dialog(_request(), vervolg="/x", handeling="iets")
+        await render_step_up_dialog(_request(), follow_url="/x", action_text="iets")
 
     assert render.call_args.kwargs["context"]["geregistreerd"] is False
     assert render.call_args.kwargs["context"]["code_fout"] == ""
@@ -68,7 +68,7 @@ async def test_render_step_up_dialog_zonder_factor_meldt_niet_geregistreerd() ->
 
 def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
     with patch("opi.http.render.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
-        html = render_step_up_repeat(_request(), vervolg="/projects/delete/demo")
+        html = render_step_up_repeat(_request(), follow_url="/projects/delete/demo")
 
     assert html == "<herhaal/>"
     assert render.call_args.kwargs["template"] == "bg/_step-up-herhalen.html.j2"
@@ -79,7 +79,7 @@ def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
 def test_render_step_up_repeat_geeft_het_wizard_token_mee() -> None:
     """De herhaling post bodyloos, dus het token moet als body-waarde mee."""
     with patch("opi.http.render.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
-        render_step_up_repeat(_request(), vervolg="/projects/demo/x/confirm", vervolg_token="wt-123")
+        render_step_up_repeat(_request(), follow_url="/projects/demo/x/confirm", follow_token="wt-123")
 
     assert render.call_args.kwargs["context"]["vals"] == '{"_wizard_token": "wt-123"}'
 
@@ -91,7 +91,7 @@ async def test_render_step_up_dialog_geeft_het_wizard_token_mee() -> None:
         patch("opi.services.user_otp_service.UserOtpService.status", new=AsyncMock(return_value=status)),
         patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
-        await render_step_up_dialog(_request(), vervolg="/x", handeling="iets", vervolg_token="wt-123")
+        await render_step_up_dialog(_request(), follow_url="/x", action_text="iets", follow_token="wt-123")
 
     assert render.call_args.kwargs["context"]["vervolg_token"] == "wt-123"
 

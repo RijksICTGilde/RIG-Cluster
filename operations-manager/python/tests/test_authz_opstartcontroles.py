@@ -16,7 +16,7 @@ import pytest
 from opi.core.authz.actions import ACTION_ATTR, Action
 from opi.core.authz.engine import ANY, Audience, Grant, Requirement, Role, Rule, RuleError, all_rules, rule
 from opi.core.authz.rules import check_register
-from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
+from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, check_route_actions
 from opi.server import app
 
 
@@ -35,14 +35,14 @@ async def _nieuwe_route(project_name: str) -> None: ...
 
 def test_de_echte_routetabel_komt_door_de_controle() -> None:
     """Elke bewaakte route van deze applicatie noemt een action met een regel."""
-    controleer_handelingen(app.routes)
+    check_route_actions(app.routes)
 
 
 def test_een_route_zonder_action_stopt_de_start() -> None:
     setattr(_nieuwe_route, REQUIRES_PROJECT_NAME, True)
     try:
         with pytest.raises(RuntimeError, match="noemen geen action"):
-            controleer_handelingen([_Route(_nieuwe_route)])
+            check_route_actions([_Route(_nieuwe_route)])
     finally:
         delattr(_nieuwe_route, REQUIRES_PROJECT_NAME)
 
@@ -59,7 +59,7 @@ def test_een_action_zonder_regel_stopt_de_start() -> None:
         patch("opi.http.auth.endpoint_util.rule_for", side_effect=RuleError("geen regel")),
         pytest.raises(RuntimeError, match="zonder regel"),
     ):
-        controleer_handelingen([_Route(route)])
+        check_route_actions([_Route(route)])
 
 
 def test_het_echte_register_komt_door_de_controle() -> None:

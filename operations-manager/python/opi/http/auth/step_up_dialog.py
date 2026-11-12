@@ -1,8 +1,8 @@
-"""De dialoog waarmee het portaal om een verse step-up vraagt (RC-332).
+"""The dialog with which the portal asks for a fresh step-up (RC-332).
 
-Hij komt in dezelfde dialoog te staan als de bevestiging die hem opriep: het antwoord
-draagt ``HX-Retarget`` naar de schil van de gedeelde modal, zodat het niet uitmaakt welk
-doel de handeling zelf had.
+It lands in the same dialog as the confirmation that called it up: the answer carries
+``HX-Retarget`` to the shell of the shared modal, so it does not matter what target the
+action itself had.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De inhoud van de gedeelde dialoog uit ``bg/_modals.html.j2``.
+#: The contents of the shared dialog from ``bg/_modals.html.j2``.
 MODAL_TARGET = "#edit-section-inner"
 
 
@@ -32,49 +32,48 @@ def _fragment(request: Request, template: str, context: dict) -> str:
     return render_fragment(request, template=template, context={"request": request, **context})
 
 
-def _vals(vervolg_token: str | None, vervolg_velden: dict[str, str] | None) -> str:
-    """De body die de herhaling meestuurt, als ``hx-vals``-JSON."""
-    velden = dict(vervolg_velden or {})
-    if vervolg_token:
-        velden["_wizard_token"] = vervolg_token
-    return json.dumps(velden, sort_keys=True)
+def _vals(follow_token: str | None, follow_fields: dict[str, str] | None) -> str:
+    """The body the repeat sends along, as ``hx-vals`` JSON."""
+    fields = dict(follow_fields or {})
+    if follow_token:
+        fields["_wizard_token"] = follow_token
+    return json.dumps(fields, sort_keys=True)
 
 
-def lees_vervolg_velden(ruw: str) -> dict[str, str]:
-    """De velden die de dialoog meedroeg, terug uit het formulier.
+def read_follow_fields(raw: str) -> dict[str, str]:
+    """The fields the dialog carried along, back out of the form.
 
-    Onleesbaar leest als geen velden: de waarde komt uit de browser, en de ontvangende
-    route valideert zijn eigen velden toch zelf.
+    Unreadable reads as no fields: the value comes from the browser, and the receiving route
+    validates its own fields itself anyway.
     """
     try:
-        gelezen = json.loads(ruw or "{}")
+        parsed = json.loads(raw or "{}")
     except json.JSONDecodeError:
         logger.warning("Onleesbare vervolgvelden in de step-up, genegeerd")
         return {}
-    if not isinstance(gelezen, dict):
+    if not isinstance(parsed, dict):
         return {}
-    return {str(sleutel): str(waarde) for sleutel, waarde in gelezen.items()}
+    return {str(key): str(value) for key, value in parsed.items()}
 
 
 async def render_step_up_dialog(
     request: Request,
     *,
-    vervolg: str,
-    handeling: str,
-    code_fout: str = "",
-    vervolg_token: str | None = None,
-    vervolg_velden: dict[str, str] | None = None,
-    methode: str = "POST",
+    follow_url: str,
+    action_text: str,
+    code_error: str = "",
+    follow_token: str | None = None,
+    follow_fields: dict[str, str] | None = None,
+    method: str = "POST",
 ) -> str:
-    """De dialoog met het OTP-veld, of de uitleg dat er nog geen factor is.
+    """The dialog with the OTP field, or the explanation that there is no factor yet.
 
-    ``vervolg_token`` is het wizard-token dat de herhaling in de BODY moet meesturen,
-    naast de query. ``vervolg_velden`` zijn de formuliervelden van de handeling zelf, die
-    de dialoog verving. Zie :func:`render_step_up_repeat`.
+    ``follow_token`` is the wizard token the repeat has to send in the BODY, beside the
+    query. ``follow_fields`` are the form fields of the action itself, which the dialog
+    replaced. See :func:`render_step_up_repeat`.
 
-    ``methode`` is de methode van de handeling (GET of POST): de herhaling na een
-    geslaagde code moet dezelfde methode gebruiken, en een leesvenster is een GET
-    (RC-388).
+    ``method`` is the action's method (GET or POST): the repeat after a successful code has
+    to use the same method, and a read window is a GET (RC-388).
     """
     email = str((get_current_user(request) or {}).get("email", "")).lower()
     status = await UserOtpService().status(email)
@@ -82,13 +81,13 @@ async def render_step_up_dialog(
         request,
         "bg/_step-up.html.j2",
         {
-            "vervolg": vervolg,
-            "handeling": handeling,
-            "code_fout": code_fout,
+            "vervolg": follow_url,
+            "handeling": action_text,
+            "code_fout": code_error,
             "geregistreerd": status.registered,
-            "vervolg_token": vervolg_token or "",
-            "vervolg_velden": json.dumps(vervolg_velden or {}, sort_keys=True),
-            "vervolg_methode": methode,
+            "vervolg_token": follow_token or "",
+            "vervolg_velden": json.dumps(follow_fields or {}, sort_keys=True),
+            "vervolg_methode": method,
             "venster_minuten": int(STEP_UP_WINDOW.total_seconds() // 60),
         },
     )
@@ -97,26 +96,26 @@ async def render_step_up_dialog(
 def render_step_up_repeat(
     request: Request,
     *,
-    vervolg: str,
-    vervolg_token: str | None = None,
-    vervolg_velden: dict[str, str] | None = None,
-    methode: str = "POST",
+    follow_url: str,
+    follow_token: str | None = None,
+    follow_fields: dict[str, str] | None = None,
+    method: str = "POST",
 ) -> str:
-    """Het fragment dat de handeling alsnog uitvoert, nu de step-up er is.
+    """The fragment that performs the action after all, now that the step-up is there.
 
-    Een wizard-token gaat ook als body-waarde mee, net als de bevestigknop in
-    ``bg/_modal-wizard-review.html.j2``: htmx laat een query string op een POST niet
-    overal staan, en de ontvangende route leest het token uit beide. De velden van de
-    handeling zelf gaan langs dezelfde weg mee. ``methode`` is die van de oorspronkelijke
-    handeling: een leesvenster gaat met een GET opnieuw (RC-388).
+    A wizard token also goes along as a body value, like the confirm button in
+    ``bg/_modal-wizard-review.html.j2``: htmx does not keep a query string on a POST
+    everywhere, and the receiving route reads the token out of both. The fields of the
+    action itself travel the same way. ``method`` is that of the original action: a read
+    window goes again with a GET (RC-388).
     """
     return _fragment(
         request,
         "bg/_step-up-herhalen.html.j2",
-        {"vervolg": vervolg, "vals": _vals(vervolg_token, vervolg_velden), "methode": methode},
+        {"vervolg": follow_url, "vals": _vals(follow_token, follow_fields), "methode": method},
     )
 
 
 def step_up_dialog_response(html: str) -> HTMLResponse:
-    """Het htmx-antwoord dat de dialoog in de gedeelde modal zet."""
+    """The htmx answer that puts the dialog in the shared modal."""
     return HTMLResponse(content=html, headers={"HX-Retarget": MODAL_TARGET, "HX-Reswap": "innerHTML"})

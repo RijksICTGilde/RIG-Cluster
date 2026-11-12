@@ -38,7 +38,7 @@ Een project heeft zelf geen markering (zie [otap-markering.md](otap-markering.md
 
 Die regels staan op een plek, in `requires_production_step_up`
 (`opi/services/step_up.py`); een route verklaart met `@requires_step_up(...)` dat ze eronder
-valt, met een conditie die het doelwit weegt of met `vraagt_altijd_step_up`
+valt, met een conditie die het doelwit weegt of met `always_requires_step_up`
 (`opi/http/auth/step_up_conditions.py`) als de handeling er altijd een vraagt. Welke routes
 dat zijn houdt `tests/test_step_up_routes.py` vast.
 

@@ -28,7 +28,7 @@ from opi.forms.wizard.members import members_for_form, restore_hidden_members
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
 from opi.forms.wizard.write_set import apply_write_paths
-from opi.http.auth.principal import NotRecognised, recognise_principal
+from opi.http.auth.principal import NotRecognisedError, recognise_principal
 from opi.services.project_members import hash_of
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
@@ -195,7 +195,7 @@ async def test_het_token_van_het_weggehaalde_lid_legitimeert_niemand(flow_id: st
     assert project is not None
     get_user_service().add_allowed_emails(["baas@rijksoverheid.nl"])
 
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal(DEV_TOKEN, project)
 
     assert (await recognise_principal(BAAS_TOKEN, project)).name == "baas@rijksoverheid.nl"

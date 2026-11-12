@@ -1,4 +1,4 @@
-"""Read a project's members, telling a human apart from a service account.
+"""Read a project's members, and tell a human apart from a service account.
 
 ``users`` in a project file carries two kinds of member. Everything that happens to a HUMAN
 (a Keycloak user, an invite, mail, OTP, the login list) must see only the humans, and

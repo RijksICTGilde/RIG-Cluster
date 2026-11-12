@@ -1529,7 +1529,7 @@ async def _process_and_save_modal_edit(
         if wizard_token:
             vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
         dialog = await render_step_up_dialog(
-            request, vervolg=vervolg, handeling=refusal.handeling, vervolg_token=wizard_token
+            request, follow_url=vervolg, action_text=refusal.handeling, follow_token=wizard_token
         )
         return step_up_dialog_response(dialog)
     except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
@@ -1631,7 +1631,7 @@ async def _authorize_restore(
     vervolg = f"/projects/{project_name}/modal-wizard/modal-restore/confirm"
     if wizard_token:
         vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
-    dialog = await render_step_up_dialog(request, vervolg=vervolg, handeling=handeling, vervolg_token=wizard_token)
+    dialog = await render_step_up_dialog(request, follow_url=vervolg, action_text=handeling, follow_token=wizard_token)
     return step_up_dialog_response(dialog)
 
 

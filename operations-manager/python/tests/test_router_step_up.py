@@ -63,10 +63,10 @@ async def test_geldige_code_zet_de_step_up_en_herhaalt_de_handeling(caplog: pyte
     assert STEP_UP_SESSION_KEY in request.session
     herhaal.assert_called_once_with(
         request,
-        vervolg="/projects/demo/modal-wizard/modal-edit-identity/confirm",
-        vervolg_token="wt-123",
-        vervolg_velden={},
-        methode="POST",
+        follow_url="/projects/demo/modal-wizard/modal-edit-identity/confirm",
+        follow_token="wt-123",
+        follow_fields={},
+        method="POST",
     )
     assert response.body == b"<herhaal/>"
     meldingen = [record.getMessage() for record in caplog.records]
@@ -92,7 +92,7 @@ async def test_de_herhaling_neemt_de_methode_van_de_handeling_over() -> None:
     ):
         await step_up(request)
 
-    assert herhaal.call_args.kwargs["methode"] == "GET"
+    assert herhaal.call_args.kwargs["method"] == "GET"
 
 
 @pytest.mark.asyncio
@@ -113,7 +113,7 @@ async def test_een_onbekende_methode_valt_terug_op_post() -> None:
     ):
         await step_up(request)
 
-    assert herhaal.call_args.kwargs["methode"] == "POST"
+    assert herhaal.call_args.kwargs["method"] == "POST"
 
 
 @pytest.mark.asyncio
@@ -137,7 +137,7 @@ async def test_foute_code_behoudt_de_methode_voor_de_herhaling() -> None:
         await step_up(request)
 
     assert STEP_UP_SESSION_KEY not in request.session
-    assert dialoog.call_args.kwargs["methode"] == "GET"
+    assert dialoog.call_args.kwargs["method"] == "GET"
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_foute_code_zet_niets_en_toont_de_foutmelding() -> None:
 
     assert STEP_UP_SESSION_KEY not in request.session
     dialoog.assert_awaited_once()
-    assert dialoog.call_args.kwargs["code_fout"] == "Die code klopt niet. Vul de code in die je app nu toont."
+    assert dialoog.call_args.kwargs["code_error"] == "Die code klopt niet. Vul de code in die je app nu toont."
     assert response.body == b"<dialoog/>"
 
 
@@ -169,7 +169,7 @@ async def test_geblokkeerd_toont_de_blokkadetekst_en_zet_niets() -> None:
         await step_up(request)
 
     assert STEP_UP_SESSION_KEY not in request.session
-    assert "geblokkeerd" in dialoog.call_args.kwargs["code_fout"]
+    assert "geblokkeerd" in dialoog.call_args.kwargs["code_error"]
 
 
 @pytest.mark.asyncio
@@ -208,4 +208,4 @@ async def test_handeling_uit_het_formulier_forgeert_geen_logregel(caplog: pytest
     melding = next(r.getMessage() for r in caplog.records if "Step-up geweigerd" in r.getMessage())
     assert "\n" not in melding
     assert "Step-up geslaagd" not in melding
-    assert "\n" not in dialoog.call_args.kwargs["handeling"]
+    assert "\n" not in dialoog.call_args.kwargs["action_text"]

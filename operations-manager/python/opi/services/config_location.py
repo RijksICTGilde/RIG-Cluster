@@ -9,7 +9,7 @@ Two questions look alike and are not the same:
 
 They differ in practice: keycloak is ticked per component (each component decides whether
 it sits behind login) while its configuration is one realm for the whole project, so its
-config lives at ``ConfigLayer.PROJECT``. Anything telling a user "where do I configure
+config lives at ``ConfigLayer.PROJECT``. Anything that tells a user "where do I configure
 this" must read the layers, never the selection.
 
 ``project_step_config_hint`` explains, per service, why a ticked service shows no settings

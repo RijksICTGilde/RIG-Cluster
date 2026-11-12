@@ -143,9 +143,9 @@ async def test_modal_edit_laat_de_herhaling_naar_de_confirm_route_wijzen() -> No
 
     dialoog.assert_awaited_once_with(
         ANY,
-        vervolg=f"/projects/demo/modal-wizard/modal-edit-identity/confirm?_wizard_token={TOKEN}",
-        handeling=StepUpAction.MARKING_SET.phrase,
-        vervolg_token=TOKEN,
+        follow_url=f"/projects/demo/modal-wizard/modal-edit-identity/confirm?_wizard_token={TOKEN}",
+        action_text=StepUpAction.MARKING_SET.phrase,
+        follow_token=TOKEN,
     )
 
 
@@ -214,7 +214,7 @@ async def test_modal_edit_zonder_step_up_weigert_ook_een_component_uit_productie
         await _modal_edit(na_wijziging=zonder_component, verse_step_up=False, manager=manager, dialoog=dialoog)
 
     manager.save_and_commit_project.assert_not_awaited()
-    assert dialoog.await_args.kwargs["handeling"] == "het component 'c1' te verwijderen"
+    assert dialoog.await_args.kwargs["action_text"] == "het component 'c1' te verwijderen"
     assert any("te verwijderen" in record.getMessage() for record in caplog.records)
 
 

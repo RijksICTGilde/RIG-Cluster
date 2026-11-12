@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from opi.api.task_models import TaskResponse, task_response_from_dict
 from opi.core.authz.actions import Action, action
-from opi.http.auth.endpoint_util import handhaaf
+from opi.http.auth.endpoint_util import enforce
 from opi.http.auth.user_token_auth import (
     UserTokenError,
     authorize_claims,
@@ -123,7 +123,7 @@ async def _validate_task_access(request: Request, task: dict, endpoint: Callable
     try:
         if project is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        await handhaaf(request, api_key, endpoint, project)
+        await enforce(request, api_key, endpoint, project)
     except HTTPException as exc:
         if exc.status_code == 403:
             raise
@@ -246,7 +246,7 @@ async def list_tasks(
     project = get_project_store().get(project_name)
     if project is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    await handhaaf(request, api_key, list_tasks, project)
+    await enforce(request, api_key, list_tasks, project)
 
     task_service = _get_task_service(request)
 

@@ -17,7 +17,7 @@ from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.http.auth.auth_decorators import require_platform_admin, requires_sso, requires_step_up
-from opi.http.auth.step_up_conditions import vraagt_altijd_step_up
+from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.render.menu import get_menu_items
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.step_up import StepUpAction
@@ -171,7 +171,7 @@ async def create_user_form(request: Request) -> Response:
 @user_admin_router.post("/create", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_CREATE, fields=_FORM_FIELDS)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_CREATE, fields=_FORM_FIELDS)
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
     user = require_platform_admin(request)
@@ -243,7 +243,7 @@ async def edit_user_form(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/edit", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_EDIT, fields=_FORM_FIELDS)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_EDIT, fields=_FORM_FIELDS)
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
     user = require_platform_admin(request)
@@ -308,7 +308,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/revoke-sessions", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_SESSIONS_REVOKE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_SESSIONS_REVOKE)
 async def revoke_user_sessions(request: Request, user_id: str) -> Response:
     """End every running portal session of this user."""
     admin = require_platform_admin(request)
@@ -332,7 +332,7 @@ async def revoke_user_sessions(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/delete", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_DELETE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_DELETE)
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
     require_platform_admin(request)
@@ -354,7 +354,7 @@ async def delete_user(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/otp-reset", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_OTP_RESET)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_OTP_RESET)
 async def reset_user_otp(request: Request, user_id: str) -> Response:
     """Clear the second factor of ANOTHER user, for someone who can no longer get a code.
 

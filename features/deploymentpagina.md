@@ -141,9 +141,9 @@ De naam staat nu in het **pad**, en de server rendert die ene:
 | `/projects/<p>/deployments?deployment=<naam>` | de vorige vorm; verwijst door naar het pad, zodat een gedeelde link blijft werken |
 | een project zonder deployments | het kale tabbladadres, met de melding "Nog geen deployments" |
 
-Welke deployment open staat wordt op **een** plek bepaald: `kies_deployment()` in
+Welke deployment open staat wordt op **een** plek bepaald: `choose_deployment()` in
 `opi/http/render/lotc_switch.py`, met het pad voor de oude parameter. De route roept hem aan
-voordat er iets ontsleuteld wordt, en `deployment_pagina_adres()` zegt waar de pagina hoort
+voordat er iets ontsleuteld wordt, en `deployment_page_address()` zegt waar de pagina hoort
 te staan.
 
 **De keuze reist mee tussen de tabbladen.** De tabbalk bouwt zijn adressen met

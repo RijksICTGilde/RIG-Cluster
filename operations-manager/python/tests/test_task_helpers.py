@@ -58,7 +58,7 @@ class TestTaskActor:
     """De taak en de git-trailer noemen dezelfde aanroeper als de log (RC-322).
 
     Een sessie-e-mailadres gaat voor; zonder sessie leest ``task_actor`` de contextvar van
-    ``opi.core.actor`` die de ingang (``handhaaf``) al zette, zodat een service account, een
+    ``opi.core.actor`` die de ingang (``enforce``) al zette, zodat een service account, een
     persoonlijk token en de oude projectsleutel hun eigen vorm meekrijgen in plaats van allemaal
     het vlakke "API".
     """

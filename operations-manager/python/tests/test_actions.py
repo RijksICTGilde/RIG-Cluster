@@ -22,7 +22,7 @@ import pytest
 from opi.core.authz.actions import ACTION_ATTR, Action, action, action_of
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, RuleError, all_rules, decide, rule_for
 from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
-from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
+from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, check_route_actions
 from opi.http.auth.user_token_auth import REQUIRES_USER_TOKEN
 from opi.server import app
 from opi.services.project_roles import roles_from_value
@@ -477,7 +477,7 @@ def test_de_handgeschreven_controles_noemen_een_handeling() -> None:
 
 
 def test_de_opstartcontrole_laat_de_echte_routetabel_door() -> None:
-    controleer_handelingen(app.routes)
+    check_route_actions(app.routes)
 
 
 def test_de_opstartcontrole_faalt_op_een_route_zonder_handeling() -> None:
@@ -493,7 +493,7 @@ def test_de_opstartcontrole_faalt_op_een_route_zonder_handeling() -> None:
         methods: ClassVar[set[str]] = {"POST"}
 
     with pytest.raises(RuntimeError, match="noemen geen action"):
-        controleer_handelingen([_Route()])
+        check_route_actions([_Route()])
 
 
 def test_elke_route_vraagt_een_handeling_die_een_rol_kan_openen() -> None:

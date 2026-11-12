@@ -153,7 +153,8 @@ def platform_graph() -> Graph:
 
     for layer, (title, note) in LAYERS.items():
         group_id = f"L:{layer}"
-        # GitOps leaves its contents to ELK, because an edge runs between two of its cards.
+        # GitOps leaves its contents to the layout engine, because an edge runs between two of its
+        # cards.
         graph.groups.append(
             Group(id=group_id, title=title, subtitle=note, column="c1", pack="elk" if layer == "gitops" else "grid")
         )

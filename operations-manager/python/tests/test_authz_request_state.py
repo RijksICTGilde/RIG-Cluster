@@ -15,8 +15,8 @@ from fastapi import HTTPException
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause, Decision, Resource, record_decision
 from opi.http.auth.authz import authorize
-from opi.http.auth.endpoint_util import handhaaf
-from opi.http.auth.principal import AccessDenied
+from opi.http.auth.endpoint_util import enforce
+from opi.http.auth.principal import AccessDeniedError
 from opi.services.members import MemberKind
 from opi.services.project_members import expiry_date, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -116,7 +116,7 @@ async def _schrijfroute(project_name: str) -> None: ...
 async def test_een_toegestane_api_aanroep_zet_de_vier_attributen() -> None:
     request = _verzoek(BEHEERDER)
     with patch("opi.http.auth.principal.get_user_service", return_value=_gebruikersdienst()):
-        await handhaaf(request, TOKEN, _leesroute, _project())
+        await enforce(request, TOKEN, _leesroute, _project())
 
     _controleer(request, action_verwacht=Action.PROJECT_READ, toegestaan=True)
 
@@ -130,9 +130,9 @@ async def test_een_geweigerde_api_aanroep_zet_ze_ook() -> None:
     request = _verzoek(BEHEERDER)
     with (
         patch("opi.http.auth.principal.get_user_service", return_value=_gebruikersdienst()),
-        pytest.raises((HTTPException, AccessDenied)),
+        pytest.raises((HTTPException, AccessDeniedError)),
     ):
-        await handhaaf(request, TOKEN, _schrijfroute, project)
+        await enforce(request, TOKEN, _schrijfroute, project)
 
     beslissing = _controleer(request, action_verwacht=Action.DEPLOYMENT_WRITE, toegestaan=False)
     assert beslissing.cause is Cause.INSUFFICIENT_ROLE

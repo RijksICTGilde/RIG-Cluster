@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The roles a member can hold, as keys. Taken from the register, so a role added there
+#: The roles a member can hold, as keys. Read from the register, so a role added there
 #: cannot be forgotten here.
 ROLES: tuple[str, ...] = tuple(role.value for role in Role)
 

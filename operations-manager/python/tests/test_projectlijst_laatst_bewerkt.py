@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.http.render.lotc_switch import filter_lotc_projects, laatst_bewerkt, lotc_project_rows, relatieve_tijd
+from opi.http.render.lotc_switch import filter_lotc_projects, last_edited, lotc_project_rows, relative_time
 
 NU = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 
@@ -53,12 +53,12 @@ _TIJDEN = {
     ],
 )
 def test_relatieve_tijd_leest_als_nederlands(verstreken: timedelta, verwacht: str) -> None:
-    assert relatieve_tijd(verstreken) == verwacht
+    assert relative_time(verstreken) == verwacht
 
 
 def test_label_draagt_datum_en_relatieve_tijd() -> None:
     """Beide, want ze beantwoorden verschillende vragen: precies versus begrijpelijk."""
-    resultaat = laatst_bewerkt("2026-08-16T08:00:00+00:00", nu=NU)
+    resultaat = last_edited("2026-08-16T08:00:00+00:00", now=NU)
 
     assert resultaat is not None
     assert "16 aug 2026" in resultaat["label"]
@@ -67,7 +67,7 @@ def test_label_draagt_datum_en_relatieve_tijd() -> None:
 
 def test_relatieve_deel_valt_weg_voorbij_een_maand() -> None:
     """'412 dagen geleden' zegt niets dat de datum niet beter zegt."""
-    resultaat = laatst_bewerkt("2025-07-01T08:00:00+00:00", nu=NU)
+    resultaat = last_edited("2025-07-01T08:00:00+00:00", now=NU)
 
     assert resultaat is not None
     assert resultaat["label"] == "1 jul 2025"
@@ -75,7 +75,7 @@ def test_relatieve_deel_valt_weg_voorbij_een_maand() -> None:
 
 @pytest.mark.parametrize("tijdstempel", [None, "", "gisterenmiddag", "2026-13-45T99:99:99"])
 def test_onbruikbaar_tijdstempel_geeft_niets_en_geen_fout(tijdstempel: str | None) -> None:
-    assert laatst_bewerkt(tijdstempel, nu=NU) is None
+    assert last_edited(tijdstempel, now=NU) is None
 
 
 def test_rij_zonder_tijdstempel_toont_geen_bewerkdatum() -> None:

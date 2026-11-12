@@ -66,8 +66,9 @@ _NON_LETTERS = re.compile(r"[^A-Za-z]+")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 #: Quoted spans are left out of prose: an English docstring may quote a Dutch UI string or an
 #: example database name. Single quotes are deliberately not here, because an apostrophe would
-#: pair up with the next one and swallow the prose between them.
-_QUOTED = re.compile(r'"[^"\n]*"|`[^`\n]*`')
+#: pair up with the next one and swallow the prose between them. A run of backticks matches a
+#: run, so the Sphinx form ``code`` is a span like `code` is.
+_QUOTED = re.compile(r'"[^"\n]*"|`+[^`\n]*`+')
 
 
 @dataclass(frozen=True)

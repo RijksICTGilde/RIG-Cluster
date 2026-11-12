@@ -437,7 +437,7 @@ class SubdomainConnector:
         """
         try:
             async with session_scope() as session:
-                taken = (
+                in_use = (
                     await session.execute(
                         select(SubdomainRegistry.id).where(
                             SubdomainRegistry.subdomain == new_subdomain,
@@ -445,7 +445,7 @@ class SubdomainConnector:
                         )
                     )
                 ).first()
-                if taken is not None:
+                if in_use is not None:
                     raise SubdomainNotAvailableError(
                         f"Subdomein '{new_subdomain}.{new_base_domain}' is niet beschikbaar"
                     )

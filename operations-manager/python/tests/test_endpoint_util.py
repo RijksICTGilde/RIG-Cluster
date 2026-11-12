@@ -285,7 +285,7 @@ class TestImagePushRefusal:
     @pytest.mark.asyncio
     async def test_een_onbekend_token_geeft_401(self) -> None:
         """Een token dat dit project niet draagt (bijvoorbeeld van een ander project) is
-        hier niet te onderscheiden van een geraden token: beide geven ``NotRecognised``,
+        hier niet te onderscheiden van een geraden token: beide geven ``NotRecognisedError``,
         want de zoektocht gebeurt binnen het project uit de URL en dat project draagt
         deze hash niet."""
         project = self._project("eigen-project", "zad_vaneigen", ["ops"])

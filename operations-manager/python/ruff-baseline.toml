@@ -93,7 +93,7 @@
 "opi/http/auth/authz.py" = ["ANN401", "PLR0913"]
 "opi/http/auth/endpoint_util.py" = ["ANN401", "PLR0913"]
 "opi/http/auth/otp_step_up.py" = ["PLR0913"]
-"opi/http/auth/principal.py" = ["ANN401", "N818", "PLR0913"]
+"opi/http/auth/principal.py" = ["ANN401", "PLR0913"]
 "opi/http/auth/step_up_conditions.py" = ["ANN401"]
 "opi/http/auth/step_up_dialog.py" = ["PLR0913"]
 "opi/http/auth/user_token_auth.py" = ["ANN401"]

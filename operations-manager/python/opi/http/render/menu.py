@@ -41,20 +41,19 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services overzicht", "link": "/services", "icon": "server"},
-        # In het hoofdmenu: wie ingelogd is komt nooit meer langs "/" (dat gaat dan naar
-        # het dashboard), en dit is de weg naar de uitleg over het platform. Bovenaan de
-        # groep, want het is waar een nieuwkomer begint.
+        # In the main menu: whoever is logged in never passes "/" again (that goes to the
+        # dashboard), and this is the way to the explanation about the platform.
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
         {"label": "Getting started", "link": "/getting-started", "icon": "uitvoering"},
-        # De kaart van het platform: wat er draait en waar ZAD mee praat.
+        # The map of the platform: what runs and what ZAD talks to.
         {"label": "Platform", "link": "/platform", "icon": "wolk"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
-        # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
-        # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
+        # Under the API docs and not with Introductie: reference material for whoever
+        # points their own domain here, the same kind of reader as the API documentation.
         {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
-        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
+        # For everyone: whoever gets or hands out a role reads here what it opens.
         {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         # In the sidebar and not in a page footer: the NLDD application pattern has no footer.
         {"label": "Beveiligingsbeleid", "link": "/security", "icon": "schild-met-vinkje-erop"},
@@ -72,8 +71,8 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         menu_items.append({"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"})
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
-        # "Aanvragen" en niet "Domeinen": achter deze link staat elke goedkeuring die een
-        # dienst declareert, en dat is er sinds send-email meer dan een.
+        # "Aanvragen" and not "Domeinen": behind this link sits every approval a service
+        # declares, and since send-email that is more than one.
         menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
         menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
 

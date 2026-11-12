@@ -1187,7 +1187,7 @@ class ServiceAdapter:
             unmet = unmet_service_requirements(project_data, definition.requires if definition else [])
 
             # Two different reasons, and mixing them up points the reader the wrong way. May
-            # the service not enrol itself, then a DECISION has to be taken and the endpoint
+            # the service not enrol itself, then a DECISION has to be made and the endpoint
             # that records it follows. May it enrol itself but are services it leans on
             # missing, then there is nothing to decide and something else has to exist first,
             # and naming this service's endpoint would only mislead.

@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from opi.core.authz.actions import Action, action
 from opi.core.logging_redact import sanitize_for_log
 from opi.http.auth.auth_decorators import ELEVATE_PATH, elevate_url, get_current_user, requires_sso
-from opi.http.auth.step_up_dialog import lees_vervolg_velden, render_step_up_dialog, render_step_up_repeat
+from opi.http.auth.step_up_dialog import read_follow_fields, render_step_up_dialog, render_step_up_repeat
 from opi.http.render.lotc_switch import render_fragment
 from opi.services.audit import record_step_up_attempt
 from opi.services.step_up import STEP_UP_WINDOW, clear_step_up, record_step_up, step_up_until
@@ -35,7 +35,7 @@ def _code_error(outcome: OtpVerification) -> str:
     return "Die code klopt niet. Vul de code in die je app nu toont."
 
 
-async def _elevate_content(request: Request, terug: str, code_fout: str = "") -> HTMLResponse:
+async def _elevate_content(request: Request, terug: str, code_error: str = "") -> HTMLResponse:
     """The content of the popup behind the menu item."""
     email = str((get_current_user(request) or {}).get("email", "")).lower()
     status = await UserOtpService().status(email)
@@ -47,7 +47,7 @@ async def _elevate_content(request: Request, terug: str, code_fout: str = "") ->
                 "request": request,
                 "geregistreerd": status.registered,
                 "terug": terug,
-                "code_fout": code_fout,
+                "code_fout": code_error,
                 "venster_minuten": int(STEP_UP_WINDOW.total_seconds() // 60),
                 "actief_tot": step_up_until(request),
             },
@@ -79,7 +79,7 @@ async def elevate(request: Request) -> Response:
     if outcome is not OtpVerification.OK:
         logger.warning("Verhoogde rechten geweigerd voor %s: uitkomst %s", email, outcome)
         await record_step_up_attempt(email, allowed=False, cause=outcome.value, origin=client_ip(request))
-        return await _elevate_content(request, terug, code_fout=_code_error(outcome))
+        return await _elevate_content(request, terug, code_error=_code_error(outcome))
 
     record_step_up(request)
     logger.info("Verhoogde rechten geactiveerd door %s", email)
@@ -112,7 +112,7 @@ async def step_up(request: Request) -> HTMLResponse:
     # make a log line of its own and could forge someone else's successful step-up.
     handeling = sanitize_for_log(str(form.get("handeling", "deze handeling uit te voeren")))
     vervolg_token = str(form.get("vervolg_token", "")) or None
-    vervolg_velden = lees_vervolg_velden(str(form.get("vervolg_velden", "")))
+    follow_fields = read_follow_fields(str(form.get("vervolg_velden", "")))
     # The repeat knows GET and POST only; anything else reads as the plain POST.
     vervolg_methode = "GET" if str(form.get("vervolg_methode", "")).upper() == "GET" else "POST"
     code = str(form.get("otp", "")).strip()
@@ -126,12 +126,12 @@ async def step_up(request: Request) -> HTMLResponse:
         return HTMLResponse(
             content=await render_step_up_dialog(
                 request,
-                vervolg=vervolg,
-                handeling=handeling,
-                code_fout=_code_error(outcome),
-                vervolg_token=vervolg_token,
-                vervolg_velden=vervolg_velden,
-                methode=vervolg_methode,
+                follow_url=vervolg,
+                action_text=handeling,
+                code_error=_code_error(outcome),
+                follow_token=vervolg_token,
+                follow_fields=follow_fields,
+                method=vervolg_methode,
             )
         )
 
@@ -141,9 +141,9 @@ async def step_up(request: Request) -> HTMLResponse:
     return HTMLResponse(
         content=render_step_up_repeat(
             request,
-            vervolg=vervolg,
-            vervolg_token=vervolg_token,
-            vervolg_velden=vervolg_velden,
-            methode=vervolg_methode,
+            follow_url=vervolg,
+            follow_token=vervolg_token,
+            follow_fields=follow_fields,
+            method=vervolg_methode,
         )
     )

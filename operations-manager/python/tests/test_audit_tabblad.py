@@ -30,7 +30,7 @@ from opi.http.render.lotc_switch import (
     audit_cursor_text,
     audit_filters,
     audit_limit,
-    audit_pagina,
+    audit_page,
     audit_url,
     build_lotc_audit,
     project_tab_url,
@@ -253,7 +253,7 @@ def test_de_auditrijen_worden_alleen_op_het_tabblad_audit_opgehaald() -> None:
     from opi.web import router
 
     bron = inspect.getsource(router.render_project_page)
-    aanroep = bron.index("audit_pagina(")
+    aanroep = bron.index("audit_page(")
     voorwaarde = bron.rindex('tab_from_path(request.url.path) == "audit"', 0, aanroep)
     assert voorwaarde > 0, "de audittrail wordt niet achter het tabblad gehouden"
 
@@ -265,7 +265,7 @@ def test_het_audittabblad_valt_uit_de_balk_zonder_leesrecht() -> None:
     from opi.web import router
 
     bron = inspect.getsource(router.render_project_page)
-    toevoeging = bron.index('lege_tabs = (*lege_tabs, "audit")')
+    toevoeging = bron.index('empty_tabs = (*empty_tabs, "audit")')
     voorwaarde = bron.rindex("if not may(request, action=Action.AUDIT_READ", 0, toevoeging)
     assert voorwaarde > 0, "de audittab valt niet uit de balk op basis van AUDIT_READ"
 
@@ -396,7 +396,7 @@ def test_the_time_in_the_table_is_dutch_time() -> None:
 
 # --- wat het tabblad oplevert, tegen een echte database ---------------------
 #
-# Via audit_pagina en niet door render_project_page aan te roepen: een render van die
+# Via audit_page en niet door render_project_page aan te roepen: een render van die
 # pagina vraagt het halve projectmodel mee, zoals tests/test_argo_connect_retry.py en
 # tests/test_lotc_backups_tabblad.py voor dezelfde functie al vaststellen.
 
@@ -428,7 +428,7 @@ async def test_the_tab_shows_only_the_rows_the_query_asks_for(orm_db: None) -> N
     await _schrijf(time=binnen, actor="pietersen@rijksoverheid.nl", data={"action": "component.write"})
     await _schrijf(time=datetime(2026, 6, 1, 10, 0, tzinfo=UTC), actor="jansen@rijksoverheid.nl")
 
-    context = await audit_pagina(
+    context = await audit_page(
         _request(BEHEERDER, "demo", {"q": "jansen", "from": "2026-07-01", "until": "2026-07-03"}), "demo"
     )
 
@@ -441,7 +441,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
     for minuut in range(3):
         await _schrijf(time=datetime(2026, 7, 2, 10, minuut, tzinfo=UTC), data={"action": f"actie{minuut}"})
 
-    eerste = await audit_pagina(_request(BEHEERDER, "demo", {"q": "actie", "limit": "2"}), "demo")
+    eerste = await audit_page(_request(BEHEERDER, "demo", {"q": "actie", "limit": "2"}), "demo")
 
     assert [rij["action"] for rij in eerste["audit_rijen"]] == ["actie2", "actie1"]
     assert "q=actie" in eerste["audit_ouder_url"]
@@ -451,7 +451,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
     assert eerste["audit_nieuwer_url"] == ""
 
     cursor = eerste["audit_ouder_url"].split("before=")[1]
-    tweede = await audit_pagina(
+    tweede = await audit_page(
         _request(BEHEERDER, "demo", {"q": "actie", "limit": "2", "before": unquote(cursor)}), "demo"
     )
 
@@ -463,7 +463,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
 async def test_an_empty_outcome_offers_a_way_back(orm_db: None) -> None:
     await _schrijf()
 
-    context = await audit_pagina(_request(BEHEERDER, "demo", {"q": "bestaat-niet"}), "demo")
+    context = await audit_page(_request(BEHEERDER, "demo", {"q": "bestaat-niet"}), "demo")
 
     assert context["audit_rijen"] == []
     assert context["audit_filter_actief"] is True

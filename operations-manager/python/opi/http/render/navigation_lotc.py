@@ -1,20 +1,12 @@
-"""De navigatiestructuur van de LOTC-bouwlijn, naar het voorbeeld van bg.rijks.app.
+"""The navigation structure of the LOTC build line, after the example of bg.rijks.app.
 
-Dit bestand is met opzet het enige plek waar de INDELING van de navigatie staat.
-De omzetting naar LOTC verandert namelijk niet alleen hoe componenten heten, maar
-ook hoe de navigatie is opgebouwd:
+This file is deliberately the only place where the LAYOUT of the navigation sits: a utility
+bar in the header (account, search) plus a sidebar with grouped main navigation. Whoever
+wants to change the layout changes GROUPS and touches no template.
 
-    nu (roos)          een platte balk van elf items, alles op een niveau
-    bg.rijks.app       een hulpbalk in de header (account, zoeken) plus een
-                       zijkolom met gegroepeerde hoofdnavigatie
-
-Dat is een ontwerpkeuze, geen vertaling, en hij zal nog schuiven. Daarom staat hij
-hier los van de templates: wie de indeling wil veranderen, verandert GROUPS en raakt
-geen enkel template aan.
-
-De bron van de items blijft opi/http/render/menu.py. Dat is bewust: daar zitten de links en
-de rolafhankelijkheid (welke items een beheerder wel ziet en een gebruiker niet), en
-die logica mag niet verdubbelen. Dit bestand herschikt alleen wat daar uit komt.
+The source of the items stays opi/http/render/menu.py, which holds the links and the
+role dependency; that logic may not be duplicated. This file only rearranges what comes
+out of it.
 """
 
 import logging
@@ -25,15 +17,13 @@ from opi.http.render.nldd_iconen import nldd_icon_names
 
 logger = logging.getLogger(__name__)
 
-# Onze iconen dragen Nederlandse ROOS-namen; NLDD heeft een eigen, Engelse
-# woordenschat van ongeveer vijftig iconen. LOTC vertaalt een handvol namen zelf
-# (home -> house, info -> info-circle) en geeft de rest ongewijzigd door, waarna
-# NLDD ze niet herkent en er niets verschijnt.
+# Our icons carry Dutch ROOS names; NLDD has its own English vocabulary. LOTC translates a
+# handful itself (home -> house) and passes the rest through unchanged, after which NLDD
+# does not recognise them and nothing appears.
 #
-# Deze tabel dekt het gat. Alleen namen die AAN DE NLDD-KANT BESTAAN staan rechts;
-# een gok zou hetzelfde lege icoon opleveren als geen vertaling, maar dan onzichtbaar
-# in plaats van meetbaar. Wat hier ontbreekt is een echt gat en wordt als zodanig
-# gerapporteerd door tests/test_lotc_icon_mapping.py.
+# Only names that EXIST ON THE NLDD SIDE belong on the right: a guess would render the same
+# empty icon as no translation, but invisibly instead of measurably. What is missing here is
+# a real gap and is reported as such by tests/test_lotc_icon_mapping.py.
 ROOS_TO_NLDD_ICONS = {
     "applicatie": "rectangle-stack",
     "beveiligingsscan": "shield-check-mark",
@@ -43,17 +33,15 @@ ROOS_TO_NLDD_ICONS = {
     "kalender": "calendar",
     "computercode": "chevron-left-forward-slash-chevron-right",
     "database": "database",
-    # De delta's zijn driehoekjes; caret is de NLDD-driehoek.
+    # The deltas are little triangles; caret is the NLDD triangle.
     "delta-naar-links": "caret-left",
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
-    # square-arrow-down, niet square-and-arrow-down. Met NLDD 0.8.80 was dat omgekeerd;
-    # op 0.8.92 bestaat square-and-arrow-down niet meer. Welke van de twee namen de
-    # bundel TEKENT wisselt per versie, en de andere rendeert een leeg svg-element.
-    # Gemeten in de bundel, niet uit de iconenlijst gelezen.
+    # square-arrow-down, not square-and-arrow-down: which of the two names the bundle DRAWS
+    # changes per version, and the other renders an empty svg element. Measured in the
+    # bundle, not read from the icon list.
     "downloaden": "square-arrow-down",
-    # Uitloggen. Stond hier niet, dus het menu-item droeg een lege plek; zichtbaar werd
-    # dat pas toen de icoontoets ook het MENU ging meten (RC-67).
+    # Logging out.
     "uitgang": "arrow-right-out-bucket",
     "document-blanco": "file-text",
     "externe-link": "link",
@@ -61,26 +49,21 @@ ROOS_TO_NLDD_ICONS = {
     "grafiek": "chart-x-y-axis-line",
     "informatie-op-internet": "globe",
     "instellingen": "gear",
-    # netwerk heeft geen eigen icoon; link is het dichtstbijzijnde dat het idee van
-    # verbinding draagt.
+    # netwerk has no icon of its own; link is the closest that carries the idea of a
+    # connection.
     "netwerk": "link",
     "klok": "timer",
     "kruis": "dismiss",
-    # De preset "Lokale ontwikkeling" (configs/presets/keycloak-config.yaml) droeg
-    # "laptop"; NLDD heeft geen laptop, wel een werkplek met een scherm.
+    # NLDD has no laptop, but it does have a desk with a screen.
     "laptop": "desk-with-screen",
-    # folder-stack MAG HIER NIET STAAN, hoe goed hij ook past. Die naam bestaat in de
-    # NLDD-bundel, maar LOTC heeft er in icons.json een alias van gemaakt die hem naar
-    # ``folder-on-folder`` herschrijft, en DIE zit niet in de bundel. Het icoon rendeerde
-    # dus leeg terwijl elke poort groen stond: de poort mat de naam die wij MEEGEVEN en
-    # niet de naam die er na de aliaslaag van LOTC uit komt. De toets meet nu het
-    # gerenderde ``name=`` (tests/test_lotc_icon_mapping.py).
+    # folder-stack MAY NOT APPEAR HERE, however well it fits: LOTC rewrites that name in
+    # icons.json to ``folder-on-folder``, which is not in the bundle, so the icon renders
+    # empty. The gate measures the rendered ``name=`` (tests/test_lotc_icon_mapping.py).
     "map": "folder",
-    # De raket stond op de wizardstap "Deployments" en rendeerde leeg. NLDD heeft geen
-    # raket; cylinder-split is het icoon dat een deployment hier overal draagt (zie
-    # "server" hieronder), dus de stap krijgt hetzelfde beeld als waar hij over gaat.
+    # NLDD has no rocket; cylinder-split is the icon a deployment carries everywhere here
+    # (see "server" below), so the wizard step gets the same image as its subject.
     "raket": "cylinder-split",
-    # "Job uitvoeren" (postgres_pages.py): iets in gang zetten.
+    # "Job uitvoeren" (postgres_pages.py): setting something in motion.
     "uitvoering": "play",
     "wolk": "cloud",
     "pijl-naar-rechts": "chevron-right",
@@ -90,10 +73,8 @@ ROOS_TO_NLDD_ICONS = {
     "schild-met-vinkje-erop": "shield-check-mark",
     "server": "cylinder-split",
     "sleutel": "lock-closed",
-    # NLDD heeft geen stethoscoop. Het hart is hier geen versiering maar dezelfde
-    # betekenis: deze twee diensten (health-check, deployment-health) gaan over de
-    # gezondheid van een deployment. Zonder afbeelding bleef de kaart leeg, en dat is
-    # zichtbaar minder dan wat het origineel toont.
+    # NLDD has no stethoscope. The heart carries the same meaning here: health-check and
+    # deployment-health are both about the health of a deployment.
     "stethoscoop": "heart",
     "terug": "arrow-u-turn-backward",
     "user": "person",
@@ -105,20 +86,17 @@ ROOS_TO_NLDD_ICONS = {
     "wereldbol": "globe",
     "zandloper": "timer",
     "zoek": "search",
-    # Geen letterlijke tegenhanger in NLDD, wel een die hetzelfde ZEGT:
-    # de slaapstand van een deployment (een maan), en de hulppagina over resources
-    # (een meter). Ze stonden hiervoor in KNOWN_GAPS en renderden dus als niets.
+    # No literal counterpart in NLDD, but one that SAYS the same: sleep mode (a moon) and
+    # the help page about resources (a meter).
     "uit-aanknop": "moon",
     "weegschaal": "score-meter",
 }
 
-# De indeling van de zijkolom: een kopje met de links die eronder horen. Links die
-# hier niet genoemd worden, komen ongegroepeerd bovenaan - zo valt een nieuw menu-item
-# niet stilzwijgend weg maar staat het meteen ergens.
+# The layout of the sidebar: a heading with the links that belong under it. Links not named
+# here land ungrouped at the top, so a new menu item never silently falls away.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Bouwen & draaien", ["/forms/wizard/restart", "/services"]),
-    # /introductie als eerste van Platform: het is de uitleg OVER het platform, en zonder
-    # groep viel hij bovenaan bij Dashboard en Mijn projecten, waar hij niet hoort.
+    # /introductie first under Platform: it is the explanation ABOUT the platform.
     (
         "Platform",
         [
@@ -133,10 +111,8 @@ GROUPS: list[tuple[str, list[str]]] = [
             "/security",
         ],
     ),
-    # /metrics-explorer stond onder "Bouwen & draaien" en hoort hier: het is een
-    # beheerpagina over het hele platform, niet iets dat je gebruikt om je eigen project
-    # te bouwen. Het menu-item zelf is al alleen voor een platformbeheerder zichtbaar
-    # (menu.py, achter is_admin), dus deze groep zegt hetzelfde als wie hem ziet.
+    # /metrics-explorer belongs here: an admin page about the whole platform. The menu item
+    # itself is already visible only to a platform admin (menu.py, behind is_admin).
     (
         "Beheer",
         ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals", "/admin/diensten"],
@@ -145,46 +121,39 @@ GROUPS: list[tuple[str, list[str]]] = [
 
 
 def to_nldd_icon(roos_icon: str) -> str:
-    """Vertaal een ROOS-iconnaam naar de NLDD-woordenschat.
+    """Translate a ROOS icon name into the NLDD vocabulary.
 
-    Onbekende namen gaan ongewijzigd door - LOTC kent er zelf een aantal, en een naam die
-    NLDD wel kent moet hier gewoon doorheen kunnen - maar ze gaan niet langer STIL door.
+    Unknown names pass through unchanged, because LOTC knows a number of them itself and a
+    name NLDD does know has to be able to get through, but they no longer pass SILENTLY: an
+    icon that never arrives still holds its space in the button and nobody hears about it.
 
-    Dat stille doorlaten was de fout. De redenering erachter klopte half: een verkeerd
-    icoon tonen is inderdaad erger dan een lege plek. Maar niets zeggen is de slechtste
-    van de drie, want dan houdt de knop ruimte vrij voor een icoon dat nooit komt en hoort
-    niemand er iets over. Zo stonden er maandenlang 37 lege plekken in de interface,
-    waaronder de bewerk- en verwijderknop, tot iemand toevallig goed keek.
-
-    De harde poort staat in tests/test_lotc_icon_mapping.py: die loopt elke iconnaam in
-    elk sjabloon en in elke dienstdefinitie langs en faalt op een naam die de geleverde
-    NLDD-bundel niet kent. Daar hoort hij, want daar breekt hij niets in productie en
-    valt het op voordat het uitgerold is. Deze logregel is de vangnet eronder, voor namen
-    die pas tijdens het draaien ontstaan (een dienst die zijn icoon uit gegevens haalt).
+    The hard gate is tests/test_lotc_icon_mapping.py, which walks every icon name in every
+    template and every service definition. This log line is the safety net under it, for
+    names that only come into being at runtime (a service that takes its icon from data).
     """
-    vertaald = ROOS_TO_NLDD_ICONS.get(roos_icon, roos_icon)
-    bekend = nldd_icon_names()
-    if roos_icon and bekend and vertaald not in bekend:
+    translated = ROOS_TO_NLDD_ICONS.get(roos_icon, roos_icon)
+    known = nldd_icon_names()
+    if roos_icon and known and translated not in known:
         logger.warning(
             "Iconnaam %r levert geen icoon op (na vertaling: %r). Hij rendeert als een lege "
             "plek zonder foutmelding. Kies een naam die NLDD levert of leg de afbeelding in "
             "ROOS_TO_NLDD_ICONS.",
             roos_icon,
-            vertaald,
+            translated,
         )
-    return vertaald
+    return translated
 
 
 def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[str, Any]:
-    """Deel de menu-items op in een hulpbalk en een gegroepeerde zijkolom.
+    """Split the menu items into a utility bar and a grouped sidebar.
 
     Args:
-        user: de gebruiker uit de sessie, zoals opi/http/render/menu.py hem verwacht.
-        current_path: het pad van de huidige pagina, voor de actieve staat.
+        user: the user from the session, as opi/http/render/menu.py expects it.
+        current_path: the path of the current page, for the active state.
 
     Returns:
-        ``utility``: de items die in de header horen (account, in- en uitloggen).
-        ``sidebar``: een lijst van (kopje-of-None, items) in weergavevolgorde.
+        ``utility``: the items that belong in the header (account, logging in and out).
+        ``sidebar``: a list of (heading-or-None, items) in display order.
     """
     items: list[dict[str, Any]] = [
         {
@@ -195,8 +164,8 @@ def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[
         for item in get_menu_items(user)
     ]
 
-    # bg zet accountzaken rechtsboven in de header. Onze menu-items dragen daar al
-    # een markering voor ("align": "right"), dus die hoeft niet opnieuw bedacht.
+    # bg puts account matters top right in the header, and our menu items already carry a
+    # marker for that ("align": "right").
     utility = [item for item in items if item.get("align") == "right"]
     main = [item for item in items if item.get("align") != "right"]
 

@@ -166,9 +166,9 @@ class OPICollector(Collector):
             labels=["project", "credential"],
         )
         try:
-            from opi.http.auth.principal import gebruik_per_project
+            from opi.http.auth.principal import usage_per_project
 
-            for (project, kind), count in gebruik_per_project().items():
+            for (project, kind), count in usage_per_project().items():
                 credentials.add_metric([project, kind], count)
         except Exception:
             logger.debug("Failed to collect credential metrics", exc_info=True)

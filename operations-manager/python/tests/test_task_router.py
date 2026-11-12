@@ -490,7 +490,7 @@ class TestGetTaskWithBearerToken:
 
 class TestGetTaskWithApiToken:
     """Een ``zad_`` token loopt sinds dit plan langs hetzelfde handhavingspunt als de
-    projectsleutel (``opi.http.auth.endpoint_util.handhaaf``), dus taken zijn er ook mee te
+    projectsleutel (``opi.http.auth.endpoint_util.enforce``), dus taken zijn er ook mee te
     pollen. Het aangrenzende geval: een token dat WEL herkend wordt maar de handeling
     niet mag, geeft 403 en valt niet terug op de maker-bearer, ook niet als die er ook
     bij staat -- anders zou een herkend maar te krap token zich via de bearer alsnog

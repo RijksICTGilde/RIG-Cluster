@@ -578,8 +578,9 @@ SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\Z")
 #: stored subdomains must be lowercase, or the manifest hostname differs.
 SUBDOMAIN_FORMAT_MESSAGE = "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten"
 
-#: De melding bij de vormtoets van configmodel, die punten toelaat: of ze op een bepaald
-#: domein mogen, beslist de regel per domein (``supports-dots``) en niet de vorm (RC-362).
+#: The message of configmodel's form check, which allows dots: whether they are allowed on
+#: a given domain is decided by the per-domain rule (``supports-dots``), not by the form
+#: (RC-362).
 DOTTED_SUBDOMAIN_FORMAT_MESSAGE = (
     "Subdomein mag alleen kleine letters (a-z), cijfers (0-9), koppeltekens (-) en punten (.) bevatten, "
     f"met per punt-gescheiden deel maximaal {SUBDOMAIN_MAX_LENGTH} tekens"
@@ -590,12 +591,12 @@ DOTTED_SUBDOMAIN_FORMAT_MESSAGE = (
 #: validate_base_domain's concern.
 DOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+\Z")
 
-#: De melding bij een domein dat niet aan DOMAIN_PATTERN voldoet, zodat formulier, API en
-#: git dezelfde zin geven.
+#: The message for a domain that does not match DOMAIN_PATTERN, so that the form, the API
+#: and git give the same sentence.
 DOMAIN_FORMAT_MESSAGE = "Ongeldig domeinformaat. Gebruik een geldig domeinnaam zoals 'voorbeeld.nl'"
 
 # The wording stays generic and never says "reserved": a message that sets a reserved name
-# apart from a taken one makes the list probeable from outside.
+# apart from one already in use makes the list probeable from outside.
 RESERVED_MESSAGE_NL = "Subdomein '{subdomain}' is niet beschikbaar"
 RESERVED_MESSAGE_EN = "Subdomain '{subdomain}' is not available"
 
@@ -847,7 +848,7 @@ class SubdomainError(Exception):
 
 
 class SubdomainNotAvailableError(SubdomainError):
-    """Exception raised when a subdomain is already taken."""
+    """Exception raised when a subdomain is already in use."""
 
 
 class SubdomainValidationError(SubdomainError):
@@ -941,8 +942,8 @@ def validate_subdomain_for_domain(
     if allow_dots is None:
         allow_dots = get_domain_supports_dots(cluster, base_domain)
 
-    # Met punten heeft elk punt-gescheiden deel de vorm van een subdomein; de
-    # reserveringslijst hieronder geldt voor de naam als geheel.
+    # With dots, every dot-separated part has the form of a subdomain; the reservation list
+    # below applies to the name as a whole.
     for part in subdomain.split(".") if allow_dots else [subdomain]:
         is_valid, error_message = validate_subdomain(part, language)
         if not is_valid:

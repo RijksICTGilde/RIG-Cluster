@@ -191,7 +191,7 @@ class Settings(BaseSettings):
 
     # Failed authentication attempts per minute on the key paths, counted separately per
     # client and per offered key. Above the bound a 429 follows. See
-    # features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md for which of the two
+    # ``features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md`` for which of the two
     # refuses BEFORE the key comparison and why the other one sits after it.
     AUTH_FAILURE_LIMIT_PER_MINUTE: int = 10
 
@@ -207,7 +207,7 @@ class Settings(BaseSettings):
     # header at all and counts on the TCP peer address: the right value for a setup without a
     # proxy in front of it (docker-compose, pytest, uv run). Every setup with an ingress in
     # front sets it to 1 in its own configmap, because that one proxy is the only entrance
-    # there. See features/futures/client-ip-vertrouwen-achter-de-router.md.
+    # there. See ``features/futures/client-ip-vertrouwen-achter-de-router.md``.
     TRUSTED_PROXY_HOPS: int = 0
 
     # The per-run minted token the attack proof recognises this instance as a target by
@@ -317,7 +317,7 @@ class Settings(BaseSettings):
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
     # The project KEK: the key only the project keys are wrapped with. It deliberately sits
-    # in the OPI pod only, see docs/development/sops-sleutel-in-het-cluster.md.
+    # in the OPI pod only, see ``docs/development/sops-sleutel-in-het-cluster.md``.
     PROJECT_KEK_FILE: str | None = None  # Path to the mounted KEK in the pod
     PROJECT_KEK_PUBLIC_KEY: str | None = None
     PROJECT_KEK_PRIVATE_KEY: str | None = None
@@ -350,7 +350,7 @@ class Settings(BaseSettings):
     SECRET_TEMP_DIR: str = "/tmp"  # noqa: S105  # a path to a directory, not a secret
 
     # GPG private key (ASCII-armored, without a passphrase) for commits in the GitOps repos.
-    # See features/opi-ondertekent-zijn-commits.md.
+    # See ``features/opi-ondertekent-zijn-commits.md``.
     GIT_SIGNING_KEY_FILE: str | None = None
 
     # Container registry configuration (for image upload proxy)
@@ -406,7 +406,7 @@ class Settings(BaseSettings):
     # Retention of the login and admin events of the MASTER realm, in days. In Keycloak 0
     # means: never clean up. Configurable because BIO2 8.15.04 asks for a risk-based term
     # that cannot be decided from the code (open decision 7 in
-    # features/futures/gebeurtenissen-plan-van-aanpak.md, recommendation: over 90 days).
+    # ``features/futures/gebeurtenissen-plan-van-aanpak.md``, recommendation: over 90 days).
     KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS: int = 90
 
     # Default shared realm configuration

@@ -237,13 +237,13 @@ def authorize_claims(claims: dict[str, Any]) -> dict[str, Any]:
 #: and got a 401 it could not explain (RC-113, bevinding 1). Reading the marker rather than
 #: listing paths keeps that from happening again: the next route that takes this decorator
 #: is documented correctly without anyone remembering to update a list.
-REQUIRES_USER_TOKEN = "zad_requires_user_token"  # noqa: S105  # naam van de OpenAPI-marker, geen secret
+REQUIRES_USER_TOKEN = "zad_requires_user_token"  # noqa: S105  # the name of the OpenAPI marker, not a secret
 
 
 #: Marker attribute set on a route that wants a bearer token of a platform admin.
 #: Read by ``opi/api/route_recognition.py`` and by the OpenAPI document, like
 #: ``REQUIRES_USER_TOKEN``.
-REQUIRES_PLATFORM_ADMIN_TOKEN = "zad_requires_platform_admin_token"  # noqa: S105  # naam van de marker, geen secret
+REQUIRES_PLATFORM_ADMIN_TOKEN = "zad_requires_platform_admin_token"  # noqa: S105  # the name of the marker, not a secret
 
 
 async def _authenticate_bearer(request: Request, route_name: str) -> dict[str, Any]:
@@ -306,11 +306,11 @@ def validate_platform_admin_token(func: Callable[..., Any]) -> Callable[..., Any
             raise HTTPException(status_code=403, detail="Alleen platformbeheerders hebben toegang")
         # A changing route declares its own step-up, with its own action in the refusal.
         if getattr(func, REQUIRES_STEP_UP, None) is None:
-            probleem = await verify_api_step_up(
-                request, project_name="", actie=StepUpAction.ELEVATE, doelwit=user["email"]
+            problem = await verify_api_step_up(
+                request, project_name="", action=StepUpAction.ELEVATE, target=user["email"]
             )
-            if probleem is not None:
-                return step_up_problem_response(probleem)
+            if problem is not None:
+                return step_up_problem_response(problem)
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_PLATFORM_ADMIN_TOKEN, True)

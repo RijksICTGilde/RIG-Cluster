@@ -859,7 +859,7 @@
 
            Er staat hier geen lege toestand: heeft geen enkele dienst iets, dan is er geen
            tabblad. De route verwijst dat adres door naar Overzicht en de tabbalk laat hem
-           weg (TABS_MET_VOORWAARDE). #}
+           weg (CONDITIONAL_TABS). #}
         {% for section in service_detail_sections | default([]) %}
             {% include section.template %}
         {% endfor %}

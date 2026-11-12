@@ -11,7 +11,7 @@ from starlette.requests import Request  # noqa: TC002 -- FastAPI reads the annot
 
 from opi.core.authz.actions import Action
 from opi.http.auth.authz import require_action
-from opi.http.auth.endpoint_util import eis_handeling
+from opi.http.auth.endpoint_util import require_api_action
 
 
 def require_restore_source_access(request: Request, project_name: str, source_deployment: str) -> None:
@@ -28,6 +28,6 @@ def require_restore_source_access(request: Request, project_name: str, source_de
     if getattr(request.state, "authz_principal", None) is not None:
         # An API credential: the entrance recognised it, so the second weighing uses that
         # same principal instead of recognising it again.
-        eis_handeling(request, project_name, Action.RESTORE_RUN, deployment=source_deployment)
+        require_api_action(request, project_name, Action.RESTORE_RUN, deployment=source_deployment)
     else:
         require_action(request, Action.RESTORE_RUN, project_name, deployment=source_deployment)

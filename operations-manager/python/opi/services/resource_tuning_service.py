@@ -447,7 +447,7 @@ async def _analyze_component_resources(
     # is measured. Such an override starves the component, and both mechanisms that
     # would otherwise correct it are blocked by exactly that starvation: the
     # availability guard below skips a component that is not Available, and the
-    # measurement is taken from a pod that never got to run. Restoring the declared
+    # measurement comes from a pod that never got to run. Restoring the declared
     # value needs neither, so it happens first. Raises only the deficient side; the
     # root is a lower bound here, never a ceiling.
     root_limit_mb = _k8s_memory_to_mb(root_resources["limits_memory"])
