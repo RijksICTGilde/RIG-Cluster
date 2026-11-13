@@ -2038,14 +2038,16 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
 def test_the_two_values_a_review_found_outside_the_worklist_are_in_it() -> None:
     """De overgeblevene passeerde 'plekken bij elkaar'-controle (config.py leverde de default
     van gisteren; die is inmiddels weg uit de code)."""
+    # By field name, not by line: the line is a pointer for whoever reads the report, and
+    # pinning it breaks the test on every edit above the field.
     found = {
-        str(field_.path.relative_to(tool.REPO)): (field_.name, field_.line_number)
+        str(field_.path.relative_to(tool.REPO)): field_.name
         for path in tool.loose_paths()
         for field_ in loose_values(path)
     }
 
     assert "operations-manager/python/opi/core/config.py" not in found
-    assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 72)
+    assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == "password"
 
 
 def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> None:
