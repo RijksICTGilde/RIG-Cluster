@@ -237,7 +237,9 @@ class EditableFormProcessor:
         stored. Validating it without storing it saves a record whose page renders blank, which
         is what the required flag is there to prevent.
         """
-        if value is not None and value != "":
+        # Only a field the submission does not carry is a gap. An empty string is a field
+        # the user emptied: filling it would make clearing an optional field impossible.
+        if value is not None:
             return value
         default = vis.editable.default
         if default is None:

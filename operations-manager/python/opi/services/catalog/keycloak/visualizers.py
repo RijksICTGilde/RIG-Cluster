@@ -72,7 +72,8 @@ KEYCLOAK_RESTRICT_ACCESS_ROLE = EditableVisualizer(
     label="Realm rol",
     help_text=(
         "De naam van de Keycloak realm-rol die toegang verleent. "
-        "Elke gebruiker met deze rol mag de applicatie gebruiken. "
+        "Elke gebruiker met deze rol mag de applicatie gebruiken, tenzij hieronder een "
+        "clientrol staat: die gaat voor. "
         "De rol wordt door de projectbeheerder aan gebruikers toegekend; "
         "de exacte naam maakt niet uit. Bij twijfel: gebruik de standaardwaarde."
     ),
@@ -83,9 +84,10 @@ KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Client rol",
     help_text=(
-        "Optioneel, naast de realm-rol hierboven. Een clientrol hoort bij een enkele "
-        "Keycloak-client in plaats van bij de hele realm. Laat leeg tenzij de applicatie "
-        "haar rollen per client toekent."
+        "Optioneel. Een clientrol hoort bij een enkele Keycloak-client in plaats van bij de "
+        "hele realm. Vul je hem in, dan geldt hij in plaats van de realm-rol hierboven: "
+        "alleen gebruikers met deze clientrol komen erin. Een uitnodiging kent alleen "
+        "realm-rollen toe. Laat leeg tenzij de applicatie haar rollen per client toekent."
     ),
 )
 

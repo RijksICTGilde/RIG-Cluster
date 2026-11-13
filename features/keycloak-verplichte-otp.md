@@ -38,9 +38,8 @@ services:
 
 ## Hoe de flow eruitziet
 
-`sso-support-otp.yaml` erft alles van `sso-support.yaml` en verschilt op twee punten: het
-realm hangt `CONFIGURE_TOTP` aan een nieuw account, en de browser flow is niet
-Keycloaks `browser` maar een eigen flow met de OTP-stap op REQUIRED:
+`sso-support-otp.yaml` erft alles van `sso-support.yaml` en verschilt op één punt: de
+browser flow is niet Keycloaks `browser` maar een eigen flow met de OTP-stap op REQUIRED:
 
 ```
 Browser with required OTP
@@ -90,8 +89,9 @@ flows voordat hij clients maakt, dus de flow bestaat op dat moment al.
 Bij elke verwerking van een project met `template: sso-support-otp` krijgt elk bestaand
 lokaal account in dat realm de required action `CONFIGURE_TOTP`. Overgeslagen worden:
 gebruikers met een koppeling naar een identity provider (die komen via SSO Rijk binnen),
-gebruikers die al een OTP-credential hebben, en service accounts. Idempotent: een tweede
-ronde schrijft niets.
+gebruikers die al een OTP-credential hebben, en service accounts. Draagt een gebruiker met
+zo'n koppeling toch `CONFIGURE_TOTP`, dan haalt dezelfde ronde hem weg. Idempotent: een
+tweede ronde schrijft niets.
 
 Terug naar `sso-support` kan ook. De OTP-stap wordt dan weer voorwaardelijk, en elke
 blauwdruk zegt expliciet of `CONFIGURE_TOTP` aan een nieuw account wordt gehangen
@@ -103,9 +103,12 @@ op een bestaande gebruiker: wie er een heeft, geeft hem na de wissel nog steeds,
 voorwaardelijke stap vraagt hem dan. Dat is Keycloaks eigen gedrag en wordt niet
 weggehaald.
 
-Strikt noodzakelijk is de required action niet: een REQUIRED OTP-stap zonder credential laat
-Keycloak zelf `CONFIGURE_TOTP` afdwingen bij de volgende login. De actie zetten maakt het
-zichtbaar in de beheerconsole en dekt ook de wegen waar de stap niet langskomt.
+Een nieuw account krijgt `CONFIGURE_TOTP` niet als default action
+(`requiredActionDefaults` staat in alle drie de blauwdrukken op `false`). Keycloak hangt een
+default action namelijk ook aan een gebruiker die via SSO Rijk binnenkomt (first broker
+login), en die werd zo om een authenticator-app gevraagd. Een nieuw lokaal account stelt zijn
+app toch in: een REQUIRED OTP-stap zonder credential laat Keycloak zelf `CONFIGURE_TOTP`
+afdwingen.
 
 ## De master-realm
 

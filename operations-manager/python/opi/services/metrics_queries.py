@@ -109,13 +109,23 @@ def _usage_expressions(selector: str) -> dict[str, str]:
     """The expression per total, before an aggregation wraps it."""
     return {
         "cpu_cores": f'rate(container_cpu_usage_seconds_total{{{selector},container!=""}}[5m])',
-        "cpu_limit_cores": f'kube_pod_container_resource_limits{{{selector},resource="cpu"}}',
+        "cpu_limit_cores": _reserved(selector, "limits", "cpu"),
+        "cpu_request_cores": _reserved(selector, "requests", "cpu"),
         "memory_bytes": f'container_memory_working_set_bytes{{{selector},container!=""}}',
-        "memory_limit_bytes": f'kube_pod_container_resource_limits{{{selector},resource="memory"}}',
-        "memory_request_bytes": f'kube_pod_container_resource_requests{{{selector},resource="memory"}}',
+        "memory_limit_bytes": _reserved(selector, "limits", "memory"),
+        "memory_request_bytes": _reserved(selector, "requests", "memory"),
         "storage_used_bytes": f"kubelet_volume_stats_used_bytes{{{selector}}}",
         "storage_capacity_bytes": f"kubelet_volume_stats_capacity_bytes{{{selector}}}",
     }
+
+
+def _reserved(selector: str, kind: str, resource: str) -> str:
+    """Requests or limits of pods that hold them now: a finished job reserves nothing."""
+    phase = f'max by (namespace, pod) (kube_pod_status_phase{{{selector},phase=~"Running|Pending"}} == 1)'
+    return (
+        f'kube_pod_container_resource_{kind}{{{selector},resource="{resource}"}}'
+        f" * on (namespace, pod) group_left () {phase}"
+    )
 
 
 def deployment_pod_prefixes(deployment_name: str, components: list[str]) -> dict[str, str]:

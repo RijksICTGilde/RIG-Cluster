@@ -128,6 +128,7 @@ async def trigger_reprocessing(
     argocd_resources_changed: bool = True,
     task_progress_manager: PersistentTaskProgressManager | None = None,
     wait_for_healthy: bool = True,
+    deployment_names: list[str] | None = None,
 ) -> bool:
     """
     Trigger project reprocessing via the standard pipeline.
@@ -144,6 +145,11 @@ async def trigger_reprocessing(
         wait_for_healthy: Whether to wait for ArgoCD to report Synced + Healthy.
             False for a deployment that cannot become Healthy by design, see
             ``process_project_from_git``.
+        deployment_names: Optional explicit set of deployments to reprocess (takes
+            precedence over ``deployment_name``). Pass it when one run changes
+            several deployments -- sleep-mode's sweep -- so the render, sync and
+            healthy-wait stay scoped to what the run actually touched: an unhealthy
+            deployment outside the set must not make this run fail.
 
     Returns:
         True if reprocessing succeeded
@@ -154,6 +160,7 @@ async def trigger_reprocessing(
             f"projects/{filename}",
             task_progress_manager=task_progress_manager,
             deployment_name=deployment_name,
+            deployment_names=deployment_names,
             argocd_resources_changed=argocd_resources_changed,
             wait_for_healthy=wait_for_healthy,
         )

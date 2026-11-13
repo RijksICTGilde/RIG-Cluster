@@ -253,9 +253,12 @@ class TestNamespaceQueries:
         queries = namespace_usage_queries(["rig-demo", "rig-demo-infrastructure"])
         selector = 'namespace=~"rig-demo|rig-demo-infrastructure"'
 
+        phase = f'max by (namespace, pod) (kube_pod_status_phase{{{selector},phase=~"Running|Pending"}} == 1)'
+
         assert queries["cpu_cores"] == f'sum(rate(container_cpu_usage_seconds_total{{{selector},container!=""}}[5m]))'
-        assert (
-            queries["memory_limit_bytes"] == f'sum(kube_pod_container_resource_limits{{{selector},resource="memory"}})'
+        assert queries["memory_limit_bytes"] == (
+            f'sum(kube_pod_container_resource_limits{{{selector},resource="memory"}}'
+            f" * on (namespace, pod) group_left () {phase})"
         )
         assert queries["storage_used_bytes"] == f"sum(kubelet_volume_stats_used_bytes{{{selector}}})"
         assert queries["pod_count"] == f"count(kube_pod_info{{{selector}}})"

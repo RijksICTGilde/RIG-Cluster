@@ -372,8 +372,8 @@ class KeycloakConnector:
     async def set_required_action_default(self, realm_name: str, alias: str, default: bool) -> None:
         """Set whether a required action is attached to a NEW user.
 
-        That is how a new local account in a realm with mandatory OTP sets up an
-        authenticator app at its first login.
+        Keycloak draws no distinction here between a local account and a user who comes in
+        through SSO (first broker login): both get the action.
         """
         await self._update_required_action(realm_name, alias, {"defaultAction": default})
 
@@ -1404,6 +1404,20 @@ class KeycloakConnector:
         except KeycloakError:
             self.admin.change_current_realm("master")
             return []
+
+    async def delete_identity_provider(self, realm_name: str, provider_alias: str) -> bool:
+        """Delete an identity provider if it exists; returns whether one was deleted."""
+        try:
+            self.admin.change_current_realm(realm_name)
+            try:
+                self.admin.get_idp(idp_alias=provider_alias)
+            except KeycloakGetError:
+                return False
+            self.admin.delete_idp(idp_alias=provider_alias)
+            logger.info(f"Deleted identity provider '{provider_alias}' from realm '{realm_name}'")
+            return True
+        finally:
+            self.admin.change_current_realm("master")
 
     async def get_identity_provider_mappers(self, realm_name: str, provider_alias: str) -> list[dict[str, Any]]:
         try:
@@ -2668,6 +2682,9 @@ class KeycloakConnector:
         """Set CONFIGURE_TOTP on human users without OTP. Idempotent.
 
         Skips service accounts, users with existing OTP credentials, and federated users.
+        A federated user that still carries the action loses it: Keycloak hangs a realm's
+        default actions on brokered users too, so the old default of ``sso-support-otp``
+        left SSO users asked for an authenticator app.
         ``skip_usernames`` spares accounts whose non-browser logins must keep working: an
         open required action makes the password grant unusable ("Account is not fully set up").
         Returns the usernames that received the action.
@@ -2680,10 +2697,14 @@ class KeycloakConnector:
                 if username.startswith(_SERVICE_ACCOUNT_PREFIX) or username in skip_usernames:
                     continue
                 acties = list(user.get("requiredActions") or [])
-                if CONFIGURE_TOTP in acties:
-                    continue
                 user_id = user["id"]
                 if self.admin.get_user_social_logins(user_id=user_id):
+                    if CONFIGURE_TOTP in acties:
+                        acties.remove(CONFIGURE_TOTP)
+                        self.admin.update_user(user_id=user_id, payload={"requiredActions": acties})
+                        logger.info(f"Removed CONFIGURE_TOTP from federated user '{username}' in realm '{realm_name}'")
+                    continue
+                if CONFIGURE_TOTP in acties:
                     continue
                 credentials = self.admin.get_credentials(user_id=user_id)
                 if any(c.get("type") in _OTP_CREDENTIAL_TYPES for c in credentials):

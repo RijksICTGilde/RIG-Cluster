@@ -37,7 +37,7 @@
             <nldd-container gap="24">
                 <#-- Zie template.ftl: de gesaniteerde melding hoort in de inhoud. -->
                 <nldd-banner variant="critical">
-                    <nldd-rich-text>${kcSanitize(message.summary)?no_esc}</nldd-rich-text>
+                    <nldd-rich-text><p>${kcSanitize(message.summary)?no_esc}</p></nldd-rich-text>
                 </nldd-banner>
                 <@nldd.backToApplication/>
             </nldd-container>

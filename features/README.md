@@ -166,6 +166,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Keycloak 26.8.1: het runbook voor de versiesprong](keycloak-26-upgrade.md)
 - [Keycloak Always-Clear-Session Logout](keycloak-always-clear-session-logout.md)
 - [Keycloak auto-link of pre-created users to their SSO identity](keycloak-auto-link.md)
+- [Keycloak: alleen lokale accounts (local-only)](keycloak-local-only.md)
 - [Keycloak Domain Migration](keycloak-domain-migration.md)
 - [Keycloak logout-pad per component](keycloak-logout-path.md)
 - [Het Keycloak-thema in NLDD](keycloak-nldd-thema.md)

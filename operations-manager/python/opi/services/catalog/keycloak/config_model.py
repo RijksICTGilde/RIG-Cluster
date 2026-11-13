@@ -169,8 +169,9 @@ class KeycloakConfig(BaseModel):
         default=SSO_ONLY_TEMPLATE,
         description=(
             "Realm template the realm is created from: 'sso-only' is single sign-on without extras, "
-            "'sso-support' adds a login screen where a local account can sign in, and 'sso-support-otp' "
-            "also requires an OTP from such a local account."
+            "'sso-support' adds a login screen where a local account can sign in, 'sso-support-otp' "
+            "also requires an OTP from such a local account, and 'local-only' has no single sign-on: "
+            "only local accounts, supplied by the project or created through an invite."
         ),
     )
     realms: list[KeycloakRealm] = Field(

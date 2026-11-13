@@ -576,6 +576,24 @@ class TestIdentityProviders:
         aliases = [provider["alias"] for provider in await connector.get_identity_providers(made_realm)]
         assert aliases == ["sso-rijk"]
 
+    async def test_delete_identity_provider_removes_it_and_is_a_noop_when_absent(
+        self, connector: KeycloakConnector, keycloak_url: str, made_realm: str
+    ) -> None:
+        """A switch to local-only deletes the IdP, and a realm that never had one is fine."""
+        assert await connector.delete_identity_provider(made_realm, "sso-rijk") is False
+
+        await connector.add_identity_provider(
+            realm_name=made_realm,
+            provider_alias="sso-rijk",
+            display_name="SSO Rijk",
+            client_id="broker-client",
+            client_secret="broker-secret",
+            discovery_url=self._discovery_url(keycloak_url),
+        )
+
+        assert await connector.delete_identity_provider(made_realm, "sso-rijk") is True
+        assert await connector.get_identity_providers(made_realm) == []
+
     async def test_identity_provider_mappers_use_our_own_xpath_mapper(
         self, connector: KeycloakConnector, api: AdminApi, made_realm: str
     ) -> None:

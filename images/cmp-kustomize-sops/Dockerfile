@@ -29,9 +29,9 @@ ARG SOPS_VERSION=v3.13.3
 ARG SOPS_SHA256_AMD64=e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
 ARG SOPS_SHA256_ARM64=53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
 # renovate: datasource=github-releases depName=mikefarah/yq
-ARG YQ_VERSION=v4.54.1
-ARG YQ_SHA256_AMD64=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
-ARG YQ_SHA256_ARM64=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b
+ARG YQ_VERSION=v4.54.3
+ARG YQ_SHA256_AMD64=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
+ARG YQ_SHA256_ARM64=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67
 # renovate: datasource=github-releases depName=helm/helm
 ARG HELM_VERSION=v3.21.4
 ARG HELM_SHA256_AMD64=61f88ab166748cb19604d7884cb100ae9ccb13804ddeb98e08af167eacbb6a14
@@ -175,11 +175,13 @@ FROM quay.io/argoproj/argocd:v3.5.6
 USER root
 
 # Install additional runtime dependencies and pick up Ubuntu security patches
-# newer than the ArgoCD base image
+# newer than the ArgoCD base image. Pebble comes with the Ubuntu base, nothing here runs it,
+# and it carries Go CVEs of its own.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     jq \
     file \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/bin/pebble
 
 # Copy all tools from downloader stage
 COPY --from=tools-downloader /tools/kubectl /usr/local/bin/kubectl

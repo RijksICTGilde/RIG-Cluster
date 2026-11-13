@@ -12,6 +12,8 @@ The operations manager uses declarative YAML templates to configure Keycloak rea
   - `sso-support.yaml` - SSO + local account authentication (login form with SSO button)
   - `sso-support-otp.yaml` - as `sso-support`, but a local account also gives an OTP
     (see [keycloak-verplichte-otp.md](keycloak-verplichte-otp.md))
+  - `local-only.yaml` - local accounts only, no SSO Rijk
+    (see [keycloak-local-only.md](keycloak-local-only.md))
 
 ## Idempotency
 

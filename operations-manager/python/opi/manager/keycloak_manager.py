@@ -34,7 +34,7 @@ from opi.services.catalog.keycloak.config_model import (
     KeycloakClientEntry,
     RestrictAccessConfig,
 )
-from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
+from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE, allows_sso
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.hostnames import get_deployment_hostnames
 from opi.services.project import Project
@@ -633,9 +633,10 @@ class KeycloakManager:
 
             merged_config["restrict_access"] = {
                 "enabled": checked.enabled,
-                # The realm role takes precedence; the client role may then be None.
                 "role": checked.role,
-                "realm_role": checked.realm_role,
+                # The client role is the optional, explicit choice and replaces the realm role,
+                # which the form fills with ``allowed-user`` by default.
+                "realm_role": None if checked.role else checked.realm_role,
                 "error_message": checked.error_message,
             }
             if merged_config["restrict_access"]["realm_role"]:
@@ -1175,8 +1176,8 @@ class KeycloakManager:
             client_id: Client ID (not UUID)
             restrict_access: Access restriction configuration with:
                 - enabled: bool
-                - role: str (client role name) - used if realm_role not specified
-                - realm_role: str (realm role name) - takes precedence over role
+                - role: str (client role name) - takes precedence over realm_role
+                - realm_role: str (realm role name) - None when role is set
                 - error_message: str (theme message key)
             template: The project's realm blueprint. It decides whether the gate redirects to
                 SSO Rijk or shows Keycloak's login screen: the gate REPLACES the realm's
@@ -1400,7 +1401,7 @@ class KeycloakManager:
         await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
 
         # Switching to sso-support-otp: set CONFIGURE_TOTP on existing accounts without OTP.
-        # SSO users and service accounts are unaffected.
+        # Service accounts are unaffected, and SSO users lose a CONFIGURE_TOTP they carry.
         if template_name == SSO_SUPPORT_OTP_TEMPLATE:
             await keycloak.ensure_configure_totp_required(realm_name)
 
@@ -1502,6 +1503,12 @@ class KeycloakManager:
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_identity_providers(yaml_path, context)
+
+        # Reconciling is additive, so a realm that switches to a template without SSO keeps
+        # its IdP and platform client unless they are removed here.
+        if not allows_sso(template_name):
+            await keycloak.delete_identity_provider(realm_name, PLATFORM_IDP_ALIAS)
+            await keycloak.delete_client_by_client_id(settings.KEYCLOAK_DEFAULT_REALM, platform_client_id)
 
     async def _ensure_realm_self_service(
         self,

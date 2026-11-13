@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.config import settings
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
 from opi.core.request_user import get_current_user
@@ -72,6 +73,7 @@ from opi.services.zad_map.project import usage_targets
 from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
 from opi.utils.csrf import ensure_csrf_token
+from opi.utils.naming import extract_domain_from_url
 from opi.utils.totp import totp_now
 from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
@@ -258,7 +260,12 @@ async def getting_started(request: Request) -> Response:
     access yet.
     """
     return _signpost(
-        request, "getting-started.html.j2", "bg/getting-started.html.j2", "/getting-started", rollen=columns()
+        request,
+        "getting-started.html.j2",
+        "bg/getting-started.html.j2",
+        "/getting-started",
+        rollen=columns(),
+        api_url=f"https://{extract_domain_from_url(settings.OWN_DOMAIN)}",
     )
 
 
@@ -922,8 +929,9 @@ async def collect_dashboard_metrics(
     Shared by the dashboard route and by the fragment the page loads separately, so an
     improvement cannot land on one side only.
 
-    Also sets ``cpu_cores``, ``cpu_limit_cores``, ``memory_mb`` and ``memory_limit_mb`` per
-    project in ``user_projects``, which the per-project usage card needs.
+    Also sets ``cpu_cores``, ``cpu_request_cores``, ``cpu_limit_cores``, ``memory_mb``,
+    ``memory_request_mb`` and ``memory_limit_mb`` per project in ``user_projects``, which
+    the per-project usage card needs.
 
     Returns the metrics, whether Prometheus was reachable, and the number of pods.
     """
@@ -961,6 +969,14 @@ async def collect_dashboard_metrics(
                 except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard CPU limits query failed: {e}")
 
+                cpu_request_val = 0.0
+                try:
+                    result = await prom.query(queries["cpu_request_cores"])
+                    if result and result[0].get("value"):
+                        cpu_request_val = float(result[0]["value"][1])
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
+                    logger.warning(f"Dashboard CPU requests query failed: {e}")
+
                 mem_usage_val = 0.0
                 mem_limit_val = 0.0
                 try:
@@ -977,10 +993,10 @@ async def collect_dashboard_metrics(
                 except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory limits query failed: {e}")
 
-                # The REQUEST as well, and for memory only: ODCN bills memory as
-                # request + clamp_min(usage - request, 0), so per pod the higher of the two,
-                # and neither usage nor limit is the number on the bill. CPU does NOT get this,
-                # because it is not billed.
+                # The REQUEST as well: ODCN bills memory as request + clamp_min(usage - request, 0),
+                # so per pod the higher of the two, and neither usage nor limit is the number on
+                # the bill. CPU gets one too: it is not billed, but the tuner sets the CPU request
+                # and the tenant quota counts cpu requests.
                 mem_request_val = 0.0
                 try:
                     result = await prom.query(queries["memory_request_bytes"])
@@ -1057,6 +1073,10 @@ async def collect_dashboard_metrics(
                         return 0
                     return min(100, round(used / total * 100))
 
+                def _pct_of_request(used: float, requested: float) -> int:
+                    # Not capped: above 100 means using more than requested, and the gauge shows that.
+                    return round(used / requested * 100) if requested > 0 else 0
+
                 def _format_cores(val: float) -> str:
                     if val < 1:
                         return f"{int(val * 1000)}m"
@@ -1070,10 +1090,11 @@ async def collect_dashboard_metrics(
                     return f"{gib:.1f} GiB"
 
                 metrics = {
-                    "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                    "cpu_percentage": _pct_of_request(cpu_usage_val, cpu_request_val),
                     "cpu_usage_display": _format_cores(cpu_usage_val),
+                    "cpu_request_display": _format_cores(cpu_request_val),
                     "cpu_limit_display": _format_cores(cpu_limit_val),
-                    "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                    "memory_percentage": _pct_of_request(mem_usage_val, mem_request_val),
                     "memory_usage_display": _format_gib(mem_usage_val),
                     "memory_request_display": _format_gib(mem_request_val),
                     "memory_limit_display": _format_gib(mem_limit_val),
@@ -1089,13 +1110,15 @@ async def collect_dashboard_metrics(
                 # bar, which needs an upper bound. The same four queries as that card, so a
                 # project shows the same figure in both places.
                 #
-                # ``by (namespace)`` and not four queries PER project: this costs four queries
+                # ``by (namespace)`` and not a query PER project: this costs six queries
                 # whatever the number of projects.
                 per_namespace = usage_per_namespace_queries(all_namespaces)
                 cpu_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_cores"])
                 cpu_limit_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_limit_cores"])
+                cpu_request_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_request_cores"])
                 mem_by_ns = await _sum_by_namespace(prom, per_namespace["memory_bytes"])
                 mem_limit_by_ns = await _sum_by_namespace(prom, per_namespace["memory_limit_bytes"])
+                mem_request_by_ns = await _sum_by_namespace(prom, per_namespace["memory_request_bytes"])
 
                 for project in user_projects:
                     proj_ns = project.get("namespaces", [])
@@ -1104,6 +1127,8 @@ async def collect_dashboard_metrics(
                     project["cpu_limit_cores"] = sum(cpu_limit_by_ns.get(ns, 0.0) for ns in proj_ns)
                     project["memory_mb"] = sum(mem_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
                     project["memory_limit_mb"] = sum(mem_limit_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
+                    project["cpu_request_cores"] = sum(cpu_request_by_ns.get(ns, 0.0) for ns in proj_ns)
+                    project["memory_request_mb"] = sum(mem_request_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
 
         except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")

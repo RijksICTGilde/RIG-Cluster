@@ -6,6 +6,7 @@ import pytest
 from opi.services.resource_tuning_service import (
     TuneResult,
     get_project_data,
+    trigger_reprocessing,
     tune_deployment_resources,
 )
 
@@ -45,6 +46,25 @@ class TestGetProjectData:
         data, filename = get_project_data("my-project")
         assert data["name"] == "my-project"
         assert filename == "my-project.yaml"
+
+
+class TestTriggerReprocessing:
+    """deployment_names is a pass-through to process_project_from_git, which already scopes
+    render/sync/healthy-wait by it; the sweep (scheduler.py) relies on it reaching there."""
+
+    @patch("opi.services.resource_tuning_service.create_project_manager")
+    @pytest.mark.asyncio
+    async def test_deployment_names_reaches_process_project_from_git(self, mock_create_pm):
+        manager = AsyncMock()
+        manager.process_project_from_git.return_value = True
+        mock_create_pm.return_value = manager
+
+        result = await trigger_reprocessing("my-project", "my-project.yaml", deployment_names=["dev", "pr-690"])
+
+        assert result is True
+        manager.process_project_from_git.assert_awaited_once()
+        assert manager.process_project_from_git.await_args.kwargs["deployment_names"] == ["dev", "pr-690"]
+        manager.close.assert_awaited_once()
 
 
 class TestTuneDeploymentResources:

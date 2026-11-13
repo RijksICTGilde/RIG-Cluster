@@ -15,7 +15,7 @@ resources:
 # bouw-eerst en geen tag.
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
-    newTag: "2026.11.05.1202-b39d5977"
+    newTag: "2026.11.11.0743-c4f5fb50"
 
 patches:
   - target:

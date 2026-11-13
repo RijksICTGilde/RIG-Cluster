@@ -10,7 +10,9 @@ same `app: <unique_name>` label and `component: application` (the Service select
 plus `zad-role: waker` so the two Deployments are distinguishable. While the app has
 zero pods the waker is the only endpoint; once the app is back, the waker's readiness
 probe flips to `503` and Kubernetes removes it from the EndpointSlice — the app takes
-over with no gap.
+over with no gap. When the app goes back to sleep the probe flips back to `200`: the
+same pod may well serve the next sleep cycle, because an unchanged waker Deployment is
+not replaced between sleeps.
 
 ## Base image
 
@@ -41,7 +43,7 @@ Supplied by the waker ConfigMap (`<unique_name>-waker-config`) and Secret
 | Route | Behaviour |
 | --- | --- |
 | `GET /__zad/healthz` | Always `200` (liveness/startup) |
-| `GET /__zad/ready` | `200` while the app is not back, `503` once it is (so the waker leaves the EndpointSlice) |
+| `GET /__zad/ready` | `200` while the app is not back, `503` once it is (so the waker leaves the EndpointSlice). Returns to `200` when the app sleeps again |
 | `GET /__zad/status` | JSON `{state, title, description, mode, elapsed}` |
 | `POST /__zad/wake` | Start the wake (idempotent, single-flight). `403` in `manual` mode |
 | `GET /robots.txt` | `User-agent: * / Disallow: /` |
@@ -53,7 +55,9 @@ Supplied by the waker ConfigMap (`<unique_name>-waker-config`) and Secret
 - **confirm** — the page shows a button; nothing happens until the visitor clicks it. Crawlers and link previews cannot wake the app.
 - **manual** — the page only informs the visitor that an admin must start the app; `POST /__zad/wake` is `403`. The waker still polls and steps out of traffic when an admin wakes the app via the UI/API.
 
-Single-flight: a hundred simultaneous visitors cause exactly one wake call to ZAD, so one commit. On failure the wake is retried up to three times with backoff, then the page shows an error.
+Single-flight: a hundred simultaneous visitors cause exactly one wake call to ZAD per
+sleep cycle, so one commit. On failure the wake is retried up to three times with
+backoff, then the page shows an error; a failed wake does not re-arm by itself.
 
 ## Design
 

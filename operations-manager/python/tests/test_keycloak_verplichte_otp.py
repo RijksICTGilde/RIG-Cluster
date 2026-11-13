@@ -32,7 +32,6 @@ from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.invite_manager import InviteManager
 from opi.manager.keycloak_manager import BROWSER_FLOW_BY_TEMPLATE, KeycloakManager
 from opi.services.catalog.keycloak.templates import (
-    LOCAL_ACCOUNT_TEMPLATES,
     SSO_ONLY_TEMPLATE,
     SSO_SUPPORT_OTP_TEMPLATE,
     SSO_SUPPORT_TEMPLATE,
@@ -81,10 +80,14 @@ def test_de_blauwdruk_noemt_dezelfde_flow_als_de_connector_bouwt() -> None:
     assert eigen["authenticationFlows"][0]["requireOtp"] is True
 
 
-def test_een_nieuw_lokaal_account_stelt_zijn_app_bij_de_eerste_login_in() -> None:
+def test_the_otp_template_does_not_hang_configure_totp_on_new_users() -> None:
+    """Keycloak hangs a default action on brokered users too, so SSO users got asked for an app.
+
+    A new local account still configures its app: the REQUIRED OTP step sets the action itself.
+    """
     eigen = YAML().load((BLAUWDRUK_MAP / f"{SSO_SUPPORT_OTP_TEMPLATE}.yaml").read_text())
 
-    assert eigen["realms"][0]["requiredActionDefaults"] == {CONFIGURE_TOTP: True}
+    assert eigen["realms"][0]["requiredActionDefaults"] == {CONFIGURE_TOTP: False}
 
 
 @pytest.mark.parametrize("naam", [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE])
@@ -386,6 +389,17 @@ async def test_alleen_het_lokale_account_krijgt_de_required_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_federated_user_loses_a_pending_configure_totp() -> None:
+    connector, admin = _users_connector(
+        [{"id": "u1", "username": "via-sso", "requiredActions": ["VERIFY_EMAIL", CONFIGURE_TOTP]}]
+    )
+    admin.social["u1"] = [{"identityProvider": "rig-platform-oidc"}]
+
+    assert await connector.ensure_configure_totp_required("proj-odcn-production") == []
+    assert _acties(admin, "via-sso") == ["VERIFY_EMAIL"]
+
+
+@pytest.mark.asyncio
 async def test_wie_al_een_otp_heeft_wordt_niet_gevraagd_hem_opnieuw_in_te_stellen() -> None:
     connector, admin = _users_connector([{"id": "u1", "username": "heeft-otp"}])
     admin.credentials["u1"] = [{"type": "password"}, {"type": "otp"}]
@@ -546,7 +560,7 @@ def test_de_blauwdrukken_met_een_lokaal_account() -> None:
 def test_de_uitnodiging_biedt_een_lokaal_account_onder_de_nieuwe_template() -> None:
     from opi.forms.visualizers.providers import InviteAuthMethodOptionsProvider
 
-    for template in LOCAL_ACCOUNT_TEMPLATES:
+    for template in (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE):
         provider = InviteAuthMethodOptionsProvider(
             {"services": [{"name": "keycloak", "config": {"template": template}}]}
         )
@@ -558,7 +572,7 @@ def test_het_keuzeveld_toont_de_derde_template() -> None:
 
     opties = {o["value"]: o for o in KeycloakTemplateOptionsProvider().get_options()}
 
-    assert list(opties) == [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE]
+    assert list(opties)[:3] == [SSO_ONLY_TEMPLATE, SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE]
     assert "OTP" in opties[SSO_SUPPORT_OTP_TEMPLATE]["label"]
     assert "authenticator-app" in opties[SSO_SUPPORT_OTP_TEMPLATE]["description"]
 

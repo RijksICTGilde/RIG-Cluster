@@ -388,3 +388,88 @@ async def test_de_sweeper_vraagt_de_gereedheid_via_flow(monkeypatch: pytest.Monk
     gevraagd.assert_awaited_once()
     assert sleep_state.read(data, DEPLOYMENT).state == "awake"
     assert len(omgeving.commits) == 1
+
+
+# --- 8. The sweep reprocesses only what it touched ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_reprocesses_only_the_deployment_it_touched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sweep already knows which deployments it touched (``applied``) and passes those
+    to the reprocess. Unscoped, every sweep waits on the Synced+Healthy of ALL the project's
+    apps: that is how every nightly sweep of pocpl-0g8 failed on the 300s timeout of an
+    untouched deployment (production, 10-11-2026).
+    """
+    from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
+
+    waking = {"state": "waking", "expires-at": (datetime.now(UTC) + timedelta(minutes=9)).isoformat()}
+    data = _project_data(None)
+    data["deployments"] = [
+        {
+            "name": DEPLOYMENT,
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": waking,
+        },
+        {
+            "name": "pr-690",
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": {"state": "awake"},
+        },
+    ]
+    omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
+    monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
+
+    changed = await SleepModeScheduler(CLUSTER)._apply(
+        PROJECT, f"{PROJECT}.yaml", [(DEPLOYMENT, CHECK_AWAKE)], datetime.now(UTC)
+    )
+
+    assert changed is True
+    call = omgeving.reprocess.await_args
+    assert call.kwargs["deployment_names"] == [DEPLOYMENT], "pr-690 does not belong in this sweep"
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_that_touches_two_deployments_scopes_two_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sweep's pacing advantage (one commit per project) stays: one run, every name."""
+    from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
+
+    waking = {"state": "waking", "expires-at": (datetime.now(UTC) + timedelta(minutes=9)).isoformat()}
+    data = _project_data(None)
+    data["deployments"] = [
+        {
+            "name": DEPLOYMENT,
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": waking,
+        },
+        {
+            "name": "pr-690",
+            "cluster": CLUSTER,
+            "namespace": PROJECT,
+            "components": [{"reference": "frontend"}],
+            "sleep": {"state": "waking", "expires-at": waking["expires-at"]},
+        },
+    ]
+    omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
+    monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
+
+    changed = await SleepModeScheduler(CLUSTER)._apply(
+        PROJECT,
+        f"{PROJECT}.yaml",
+        [(DEPLOYMENT, CHECK_AWAKE), ("pr-690", CHECK_AWAKE)],
+        datetime.now(UTC),
+    )
+
+    assert changed is True
+    assert len(omgeving.commits) == 1, "still one commit per project"
+    call = omgeving.reprocess.await_args
+    assert call.kwargs["deployment_names"] == [DEPLOYMENT, "pr-690"]

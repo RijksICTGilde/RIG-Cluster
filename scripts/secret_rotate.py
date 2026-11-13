@@ -2642,12 +2642,19 @@ def file_step(component: Component, cluster: Cluster) -> Step:
     )
 
 
+def env_pairs(component: Component) -> list[tuple[str, str]]:
+    """(veld, env-naam) per kopie in het ZAD-envbestand, zad_env plus zad_env_copies.
+
+    Een component zonder zad_env heeft daar geen kopie, en dus geen paren.
+    """
+    one_to_one = list(zip(component.rotate_fields, component.zad_env, strict=True)) if component.zad_env else []
+    return one_to_one + [(component.rotate_fields[0], name) for name in component.zad_env_copies]
+
+
 def env_step(component: Component, cluster: Cluster) -> Step:
     """De kopie in het ZAD-envbestand meenemen, als dit veld daar een dubbele heeft."""
     path = env_file_for(cluster.name)
-    pairs = list(zip(component.rotate_fields, component.zad_env, strict=True)) + [
-        (component.rotate_fields[0], name) for name in component.zad_env_copies
-    ]
+    pairs = env_pairs(component)
 
     def _write(ctx: Ctx) -> str:
         if not path.exists():
@@ -3294,7 +3301,7 @@ def gather_ctx(
         # veldnaam, zodat stappen overal hetzelfde adresseren: current['root-password'] is
         # dan de huidige BACKUP_S3_SECRET_KEY.
         current = dict(values)
-        for field, env_name in zip(component.rotate_fields, component.zad_env, strict=False):
+        for field, env_name in env_pairs(component):
             if field in values:
                 continue
             if env_name in values:

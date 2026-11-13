@@ -4,8 +4,10 @@ import re
 from typing import TYPE_CHECKING
 
 from opi.core.authz.matrix import columns
+from opi.core.config import settings
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.registry import SERVICE_DEFINITIONS
+from opi.utils.naming import extract_domain_from_url
 from opi.web.router import getting_started
 
 if TYPE_CHECKING:
@@ -54,3 +56,7 @@ def test_named_service_exists_in_the_catalog(test_client: TestClient) -> None:
 
     assert "Publiceren op het web" in labels
     assert "Publiceren op het web" in test_client.get("/getting-started").text
+
+
+def test_page_shows_the_api_url(test_client: TestClient) -> None:
+    assert f"https://{extract_domain_from_url(settings.OWN_DOMAIN)}" in test_client.get("/getting-started").text
