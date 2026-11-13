@@ -57,7 +57,7 @@ from opi.services.schema_migration import (  # noqa: E402
     PROJECT_API_EXPIRES,
     PROJECT_API_ROLES,
 )
-from opi.services.services import service_entry_data, service_entry_name  # noqa: E402
+from opi.services.services import service_entry_config, service_entry_data, service_entry_name  # noqa: E402
 from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
     carries_encrypted_value,
     decrypt_age_content_sync,
@@ -174,6 +174,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             component.pop("registry", None)
             component.pop("imagePullPolicy", None)
         _point_command_at_probe(component, f"{name}/{component.get('name', '?')}")
+        _point_health_check_at_probe(component, f"{name}/{component.get('name', '?')}")
         _apply_probe_resources(component, f"{name}/{component.get('name', '?')}")
 
     for dep in project.get("deployments", []):
@@ -186,6 +187,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             comp.pop("registry", None)
             comp.pop("imagePullPolicy", None)
             _point_command_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
+            _point_health_check_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             _apply_probe_resources(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             logger.info(
                 f"  [{name}] deployment '{dep.get('name', '?')}' component '{comp.get('reference', '?')}': "
@@ -244,6 +246,35 @@ def _point_command_at_probe(component: dict, where: str) -> None:
         return
     component["command"] = list(PROBE_ENTRYPOINT)
     logger.info(f"  [{where}]: command -> {PROBE_ENTRYPOINT} (de probe heeft geen shell)")
+
+
+#: The one health path the probe image serves (images/e2e-allservices).
+PROBE_HEALTH_PATH = "/healthz"
+
+
+def _point_health_check_at_probe(component: dict, where: str) -> None:
+    """Point the health-check service's probe paths at the one path the probe serves.
+
+    A production project sets its own paths (``dh-d6d`` asks ``/readyz``); the probe answers
+    those with a 404, the pod never turns ready, and the refresh times out waiting for the
+    sync. The service binding stays, so the test still covers it; only the paths change.
+    """
+    services = component.get("services")
+    if isinstance(services, dict):
+        configs = [
+            entry.get("config") for key, entry in services.items() if key == "health-check" and isinstance(entry, dict)
+        ]
+    elif isinstance(services, list):
+        configs = [service_entry_config(entry) for entry in services if service_entry_name(entry) == "health-check"]
+    else:
+        return
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        for key in ("liveness-path", "readiness-path"):
+            if key in config and config[key] != PROBE_HEALTH_PATH:
+                config[key] = PROBE_HEALTH_PATH
+                logger.info(f"  [{where}]: health-check {key} -> {PROBE_HEALTH_PATH}")
 
 
 def migrate_project(
