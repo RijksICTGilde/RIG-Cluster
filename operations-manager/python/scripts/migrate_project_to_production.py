@@ -42,17 +42,24 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-from opi.services.services import service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceType
-from opi.utils.age import (
+
+# Make ``opi`` importable no matter the working directory, as in migrate_project_to_sandbox.py:
+# Python puts scripts/ on sys.path, not the package root.
+_OPI_ROOT = Path(__file__).resolve().parents[1]
+if str(_OPI_ROOT) not in sys.path:
+    sys.path.insert(0, str(_OPI_ROOT))
+
+from opi.services.services import service_entry_config, service_entry_name  # noqa: E402
+from opi.services.services_enums import ServiceType  # noqa: E402
+from opi.utils.age import (  # noqa: E402
     decrypt_age_content_sync,
     encrypt_age_content_sync,
     project_key_candidates_for,
     unwrap_project_key_sync,
     wrap_project_key_sync,
 )
-from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
-from ruamel.yaml.scalarstring import LiteralScalarString
+from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
+from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
