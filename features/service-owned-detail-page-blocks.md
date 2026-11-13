@@ -77,16 +77,17 @@ handler it inherits and the dispatch concatenates their contributions, so the Po
 services are backupable *and* bring the console/job modals without either mixin knowing
 about the other. A mixin that forgot to chain used to swallow the other one's block.
 
-## De endpoints van een blok staan in de ingangslaag
+## De endpoints van een blok staan bij het blok
 
 The backups block lazy-loads its rows over `hx-get`; the console and the job runner are
-modals with start/status/stop routes. Those routes are entry points and live in `opi/web/`
-(`router_backups.py`, `router_image_registries.py`, `router_db_console.py`,
-`router_jobs.py`); the service delivers what they show. Until RC-489 a service declared
-them itself through `web_routers()`, but a route needs the auth decorators and the render
-switch out of `opi/http`, which sits above the catalog (chapter 5 of
-`docs/development/coding-rules.md`). A test per block reads the mounted `web_router`, so a
-lazy-loading block still cannot lose the endpoint that fills it.
+modals with start/status/stop routes. Those routes live with the service that owns the block
+(`catalog/shared/backups.py`, `catalog/image_registries/web.py`,
+`catalog/shared/db_console.py`, `catalog/shared/jobs.py`), and the service hands them to the
+web app through `web_routers()`. A service keeps together what belongs to it, entry points
+included: that those routes point up out of the catalog (`opi/http` for the auth decorators
+and the render switch, the manager for the work) is the documented exception to the layers,
+chapter 5 of `docs/development/coding-rules.md`. A test per block reads the mounted
+`web_router`, so a lazy-loading block cannot lose the endpoint that fills it.
 
 A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
 `endpoint`; the shared modal shell loads that URL (`openServiceModal` in

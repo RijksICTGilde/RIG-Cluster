@@ -62,7 +62,7 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_members import human_members
 from opi.services.project_store import get_project_store
-from opi.services.registry import find_deployment_action
+from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.services.step_up import StepUpAction, is_elevated_admin
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
@@ -84,12 +84,8 @@ from ..utils.age import decrypt_age_content, is_age_encrypted
 from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
-from .router_backups import backups_router
-from .router_db_console import db_console_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
-from .router_image_registries import image_registries_router
-from .router_jobs import jobs_router
 from .router_otp import otp_router
 from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
@@ -137,10 +133,11 @@ web_router.include_router(otp_router)
 web_router.include_router(step_up_router)
 web_router.include_router(token_web_router)
 web_router.include_router(env_vars_web_router)
-web_router.include_router(backups_router)
-web_router.include_router(image_registries_router)
-web_router.include_router(db_console_router)
-web_router.include_router(jobs_router)
+
+# The routers the services themselves deliver: a service that owns a page block owns the
+# endpoints that fill it, instead of leaving half the block behind in this router.
+for _service_router in collect_service_routers():
+    web_router.include_router(_service_router)
 
 
 async def decrypt_helm_values(items: list[dict[str, Any]], name_key: str, where: str, private_key: str) -> None:

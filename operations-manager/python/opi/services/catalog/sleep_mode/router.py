@@ -1,8 +1,5 @@
 """The sleep-mode API router: waking a deployment, and asking whether it is back.
 
-The route is an entry point and lives here; everything it decides it decides in
-``opi/services/catalog/sleep_mode/flow.py``.
-
 Two ways in, because there are two callers with genuinely different rights:
 
 * ``X-Wake-Token`` -- the per-deployment token the waker pod carries. It is verified

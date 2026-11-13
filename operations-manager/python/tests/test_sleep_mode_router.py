@@ -22,9 +22,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from opi.api.sleep_mode_router import sleep_mode_router
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeResult
+from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.members import MemberKind
 from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -92,7 +92,7 @@ def _store_with_api_key(api_key: str) -> MagicMock:
 def test_wake_met_de_projectsleutel_wekt(client: TestClient) -> None:
     result = WakeResult(changed=True, state="waking")
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_with_api_key("geheim")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_with_api_key("geheim")),
         patch.object(flow, "wake", AsyncMock(return_value=result)) as wake_mock,
     ):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": "geheim"})
@@ -105,7 +105,7 @@ def test_wake_met_de_projectsleutel_wekt(client: TestClient) -> None:
 
 def test_status_met_de_projectsleutel_antwoordt(client: TestClient) -> None:
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_with_api_key("geheim")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_with_api_key("geheim")),
         patch.object(flow, "status", AsyncMock(return_value={"state": "ready"})),
     ):
         resp = client.get(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/status", headers={"X-API-Key": "geheim"})
@@ -119,7 +119,7 @@ def test_de_sleutel_van_een_ander_project_wordt_geweigerd(client: TestClient, ve
     """De sleutel hoort bij het project in de URL, of hij hoort hier niet."""
     with (
         patch(
-            "opi.api.sleep_mode_router.get_project_store",
+            "opi.services.catalog.sleep_mode.router.get_project_store",
             return_value=_store_with_api_key("sleutel-van-demo"),
         ),
         patch.object(flow, "wake", AsyncMock()) as wake_mock,
@@ -142,7 +142,7 @@ def test_een_onbekend_project_geeft_dezelfde_401(client: TestClient) -> None:
     store = MagicMock()
     store.get.return_value = None
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=store),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=store),
         patch.object(flow, "wake", AsyncMock()) as wake_mock,
     ):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": "geheim"})
@@ -208,7 +208,7 @@ def _store_met_token(rol: str) -> MagicMock:
 def test_een_token_van_een_beheerder_kan_wekken(client: TestClient) -> None:
     result = WakeResult(changed=True, state="waking")
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_met_token("admin")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("admin")),
         patch.object(flow, "wake", AsyncMock(return_value=result)),
     ):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})
@@ -219,7 +219,7 @@ def test_een_token_van_een_beheerder_kan_wekken(client: TestClient) -> None:
 def test_een_token_van_een_developer_kan_de_status_lezen(client: TestClient) -> None:
     """``sleep.read`` is een leeshandeling: een developer komt er wel doorheen."""
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_met_token("developer")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("developer")),
         patch.object(flow, "status", AsyncMock(return_value={"state": "ready"})),
     ):
         resp = client.get(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/status", headers={"X-API-Key": TOKEN_WAARDE})
@@ -236,7 +236,7 @@ def test_een_token_van_een_developer_kan_wekken_buiten_productie(client: TestCli
     """
     result = WakeResult(changed=True, state="waking")
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_met_token("developer")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("developer")),
         patch.object(flow, "wake", AsyncMock(return_value=result)),
     ):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})
@@ -247,7 +247,7 @@ def test_een_token_van_een_developer_kan_wekken_buiten_productie(client: TestCli
 def test_een_token_van_een_viewer_kan_niet_wekken(client: TestClient) -> None:
     """Een viewer leest; wekken is een wijziging."""
     with (
-        patch("opi.api.sleep_mode_router.get_project_store", return_value=_store_met_token("viewer")),
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("viewer")),
         patch.object(flow, "wake", AsyncMock()) as wake_mock,
     ):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})

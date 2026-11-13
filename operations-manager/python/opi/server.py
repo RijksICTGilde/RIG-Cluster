@@ -25,7 +25,6 @@ from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
-from opi.api.sleep_mode_router import sleep_mode_router
 from opi.api.step_up_router import step_up_api_router
 from opi.api.task_router import task_router
 from opi.api.token_router import token_router
@@ -66,6 +65,7 @@ from opi.runtime.startup.startup import run_startup_tasks, warm_connector_single
 # reached once the backup scheduler starts, while /metrics carries its families from the
 # first scrape on.
 from opi.services import backup_schedule_report  # noqa: F401
+from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import dev_router, web_router
 

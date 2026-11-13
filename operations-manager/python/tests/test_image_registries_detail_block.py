@@ -15,12 +15,11 @@ from fastapi.responses import HTMLResponse
 from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
+from opi.services.catalog.image_registries import web as route_module
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
-from opi.services.catalog.image_registries.web import _expires_soon, _organization_status
+from opi.services.catalog.image_registries.web import _expires_soon, _organization_status, registry_status_fragment
 from opi.services.services_enums import UIEvent
-from opi.web import router_image_registries as route_module
-from opi.web.router_image_registries import registry_status_fragment
 
 REGISTRY = {
     "name": "code-overheid",

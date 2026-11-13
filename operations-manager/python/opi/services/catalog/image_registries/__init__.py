@@ -254,6 +254,13 @@ class ImageRegistriesService(Service):
             )
         ]
 
+    def web_routers(self) -> list[Any]:
+        # Lazy: the router reads the project store, which reads this module through
+        # ``project_validation`` and ``opi.forms``.
+        from opi.services.catalog.image_registries.web import image_registries_router
+
+        return [*super().web_routers(), image_registries_router]
+
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
         """The three ownership rules around the proxy organizations (see ``ownership.py``),
         plus the way back (``references.py``).

@@ -428,7 +428,7 @@ def test_een_job_starten_hangt_aan_job_run(rollen: list[str], mag: bool) -> None
     """
     from opi.core.authz.actions import Action, action_of
     from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
-    from opi.web.router_jobs import job_start, job_stop
+    from opi.services.catalog.shared.jobs import job_start, job_stop
 
     assert action_of(job_start) is Action.JOB_RUN
     assert action_of(job_stop) is Action.JOB_RUN
@@ -445,15 +445,15 @@ def test_een_job_starten_hangt_aan_job_run(rollen: list[str], mag: bool) -> None
 
 @pytest.mark.asyncio
 async def test_job_start_allows_developer(project_with_roles) -> None:
-    from opi.web.router_jobs import job_start
+    from opi.services.catalog.shared.jobs import job_start
 
     manager = MagicMock()
     manager.begin = AsyncMock(return_value=SimpleNamespace(session_id="run1"))
 
     with (
-        patch("opi.web.router_jobs.get_job_manager", return_value=manager),
-        patch("opi.web.router_jobs.spawn", lambda coro: coro.close()),
-        patch("opi.web.router_jobs._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.services.catalog.shared.jobs.get_job_manager", return_value=manager),
+        patch("opi.services.catalog.shared.jobs.spawn", lambda coro: coro.close()),
+        patch("opi.services.catalog.shared.jobs._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await job_start(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1", "image": "img", "command": "echo hi"}),
@@ -472,14 +472,14 @@ async def test_job_start_allows_developer(project_with_roles) -> None:
 
 @pytest.mark.asyncio
 async def test_job_stop_allows_developer(project_with_roles) -> None:
-    from opi.web.router_jobs import job_stop
+    from opi.services.catalog.shared.jobs import job_stop
 
     manager = MagicMock()
     manager.teardown_session = AsyncMock(return_value="dep1")
 
     with (
-        patch("opi.web.router_jobs.get_job_manager", return_value=manager),
-        patch("opi.web.router_jobs._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.services.catalog.shared.jobs.get_job_manager", return_value=manager),
+        patch("opi.services.catalog.shared.jobs._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await job_stop(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1"}),
@@ -565,3 +565,18 @@ class TestDeJobImageIsGeenVrijeKeuze:
     async def test_een_gedeelde_proxy_en_een_gewone_image_mogen(self) -> None:
         assert await self._begin("rcr.rijksapps.nl/ghcr-rig/library/alpine:3") is None
         assert await self._begin("ghcr.io/eigen/app:1") is None
+
+
+def test_the_block_routes_are_mounted_on_the_web_router() -> None:
+    """The service offers them through ``web_routers()``; forget that and the modal asks
+    for a path that does not exist."""
+    from opi.web.router import web_router
+
+    paths = {getattr(route, "path", "") for route in web_router.routes}
+    for path in (
+        "/projects/{project_name}/jobs",
+        "/projects/{project_name}/jobs/{deployment_name}/modal",
+        "/projects/{project_name}/jobs/{deployment_name}/status",
+        "/projects/{project_name}/jobs/{session_id}/stop",
+    ):
+        assert path in paths, f"{path} is not mounted"

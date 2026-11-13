@@ -89,8 +89,8 @@ TLS uses the cluster's default/wildcard ingress certificate (the ingress emits
 
 - `opi/manager/db_console_manager.py` - provisioning + teardown orchestration.
 - `opi/runtime/periodic/db_console_reaper.py` - TTL reaper + orphan-client GC (lifespan).
-- `opi/web/router_db_console.py` - member-gated start/status/stop routes; the modal
-  template sits with the PostgreSQL services in `opi/services/catalog/shared/`.
+- `opi/services/catalog/shared/db_console.py` - member-gated start/status/stop routes,
+  mounted through `DatabasePagesMixin.web_routers()`; the modal template sits next to it.
 - `manifests/db-console-pod.yaml.jinja`, `db-console-secret.yaml.jinja`,
   `db-console-emails-configmap.yaml.jinja` - the bundle.
 - `manifests/sidecar-authorization-wall.yaml.jinja` - now switches to

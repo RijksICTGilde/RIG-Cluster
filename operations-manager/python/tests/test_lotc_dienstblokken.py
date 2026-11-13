@@ -299,8 +299,8 @@ def test_de_dialoogroutes_gaan_langs_de_gedeelde_render() -> None:
     Gemeten op de BRON van de routemodule en niet op een gerenderd antwoord, want de route
     erachter heeft een cluster nodig.
     """
-    routes = Path(__file__).resolve().parents[1] / "opi" / "web"
-    for module in ("router_jobs", "router_db_console"):
+    routes = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog" / "shared"
+    for module in ("jobs", "db_console"):
         bron = (routes / f"{module}.py").read_text()
         assert "templates_lotc" not in bron, (
             f"{module}.py rendert rechtstreeks; ga via opi.http.render.lotc_switch.render()"

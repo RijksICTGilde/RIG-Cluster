@@ -367,7 +367,7 @@ def test_de_databaseconsole_hangt_aan_database_console(rollen: list[str], mag: b
     """
     from opi.core.authz.actions import Action, action_of
     from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
-    from opi.web.router_db_console import db_console_start, db_console_stop
+    from opi.services.catalog.shared.db_console import db_console_start, db_console_stop
 
     assert action_of(db_console_start) is Action.DATABASE_CONSOLE
     assert action_of(db_console_stop) is Action.DATABASE_CONSOLE
@@ -384,15 +384,15 @@ def test_de_databaseconsole_hangt_aan_database_console(rollen: list[str], mag: b
 
 @pytest.mark.asyncio
 async def test_db_console_start_allows_developer(project_with_roles) -> None:
-    from opi.web.router_db_console import db_console_start
+    from opi.services.catalog.shared.db_console import db_console_start
 
     manager = MagicMock()
     manager.begin = AsyncMock(return_value=SimpleNamespace(session_id="run1"))
 
     with (
-        patch("opi.web.router_db_console.get_db_console_manager", return_value=manager),
-        patch("opi.web.router_db_console.spawn", lambda coro: coro.close()),
-        patch("opi.web.router_db_console._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
+        patch("opi.services.catalog.shared.db_console.spawn", lambda coro: coro.close()),
+        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await db_console_start(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1", "tool": "pgweb"}),
@@ -407,14 +407,14 @@ async def test_db_console_start_allows_developer(project_with_roles) -> None:
 
 @pytest.mark.asyncio
 async def test_db_console_stop_allows_developer(project_with_roles) -> None:
-    from opi.web.router_db_console import db_console_stop
+    from opi.services.catalog.shared.db_console import db_console_stop
 
     manager = MagicMock()
     manager.teardown_session = AsyncMock(return_value="dep1")
 
     with (
-        patch("opi.web.router_db_console.get_db_console_manager", return_value=manager),
-        patch("opi.web.router_db_console._render", new=AsyncMock(return_value="rendered")),
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
+        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
     ):
         result = await db_console_stop(
             request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1"}),
@@ -545,3 +545,18 @@ async def test_pending_state_maps_registry(monkeypatch):
     assert state == "none"
     assert err is not None
     assert "time-out" in err
+
+
+def test_the_block_routes_are_mounted_on_the_web_router() -> None:
+    """The service offers them through ``web_routers()``; forget that and the modal asks
+    for a path that does not exist."""
+    from opi.web.router import web_router
+
+    paths = {getattr(route, "path", "") for route in web_router.routes}
+    for path in (
+        "/projects/{project_name}/db-console",
+        "/projects/{project_name}/db-console/{deployment_name}/modal",
+        "/projects/{project_name}/db-console/{deployment_name}/status",
+        "/projects/{project_name}/db-console/{session_id}/stop",
+    ):
+        assert path in paths, f"{path} is not mounted"

@@ -9,9 +9,10 @@ project member; starting and stopping ask for an operational role, because a job
 with the deployment's database credentials. Live status comes from the cluster, history from
 the runs registry.
 
-The modal template sits with the PostgreSQL services that own the block
-(``opi/services/catalog/shared/``); these routes fill it. They are entry points, so they
-live here and not in the catalog: everything they decide, they decide in the manager.
+The modal template sits next to this module and the routes are mounted through
+``Service.web_routers``, so the block and the endpoints driving it travel together. This module
+is imported lazily from ``web_routers`` (never at catalog import time), so the catalog itself
+stays free of manager imports.
 """
 
 from __future__ import annotations

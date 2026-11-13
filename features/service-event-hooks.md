@@ -144,7 +144,7 @@ scanplekken en de eenmalige haken.
 | `config_approvals`, `approval_specs`, `get_approval` | **blijft**: een declaratie van wat goedkeuring nodig heeft, gelezen door de approval-code -- geen moment, geen payload |
 | `provision`, `handle_service_removal` | **blijft** een actie, maar géén `ActionEvent`: ze maken echte resources aan en op en vallen dus buiten het contract "muteer `project_data`, commit niet". Ze eronder schuiven zou juist die regel verwateren |
 | `contribute_manifest_context`, `build_secret_files`, `contribute_deployment_manifests`, `manifest_activation_types`, `contributes_to_manifests` | **blijft**: manifestgeneratie is een derde soort (produceren, niet tonen en niet muteren). `contribute_deployment_manifests` was eenmalig bewoond; een derde familie voor één bewoner is de fout die dit plan juist opruimt |
-| `web_routers` | **weg sinds RC-489**: een route heeft de auth-decorators en de renderschakelaar uit `opi/http` nodig, en de catalogus staat daaronder. De routes van een blok staan nu in `opi/web/` |
+| `web_routers` | **blijft**: een declaratie van wat een service aan ingangen meebrengt, gelezen bij het samenstellen van de app -- geen moment, geen payload. Dat die routes omhoog wijzen uit de catalogus is de uitzondering op de lagen (hoofdstuk 5 van `docs/development/coding-rules.md`) |
 | `applies_to`, `listens_to` | **blijft**: filters die generieke code op de scan legt |
 
 Twee dingen zijn hier bewust nog niet aangeraakt: de actieknoppen

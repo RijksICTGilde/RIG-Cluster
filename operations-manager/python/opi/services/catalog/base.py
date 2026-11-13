@@ -1184,6 +1184,13 @@ class Service(ABC):
             return self.service_type.value
         return {"name": self.service_type.value, "config": config}
 
+    def web_routers(self) -> list[Any]:
+        """The ``APIRouter``s for this service's blocks (fragments, modals).
+
+        Return the SAME router object from every owner; the collector mounts it once.
+        """
+        return []
+
     def config_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).
 

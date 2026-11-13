@@ -1,9 +1,8 @@
-"""What this service's detail block shows about the registry proxies in the cluster.
+"""The endpoint that fills this service's detail block with cluster status.
 
 Whether the proxy is ready lives in the ``Organization`` in the cluster and not in the project
 file, and a rendering block may not call a connector; hence an htmx lazy load, the same shape
-as the backups. The route that serves that load is in the entry layer
-(``opi/web/router_image_registries.py``); this module answers what it has to show.
+as the backups.
 """
 
 from __future__ import annotations
@@ -13,11 +12,19 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
+
 from opi.connectors.kubectl import KubectlConnector
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_image_registries_config, get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.render.lotc_switch import render
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY, project_registries
+from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
@@ -25,24 +32,33 @@ logger = logging.getLogger(__name__)
 SECTION_TEMPLATE = "image_registries/section-detail.html.j2"
 STATUS_TEMPLATE = "image_registries/status-fragment.html.j2"
 
+image_registries_router = APIRouter()
 
-async def registry_status_context(project_name: str) -> dict[str, Any]:
+
+@image_registries_router.get("/projects/details/{project_name}/image-registries/status", response_class=HTMLResponse)
+@action(Action.SERVICE_READ)
+@requires_sso
+async def registry_status_fragment(request: Request, project_name: str) -> HTMLResponse:
     """The state of this project's proxy organizations, read from the cluster.
 
     Only meaningful on a cluster with the Quay operator; elsewhere there is no organization and
     the fragment says there is nothing to wait for.
     """
+    user = get_current_user(request) or {}
+    if not is_user_authorized_for_project(project_name, user.get("email", "").lower()):
+        raise HTTPException(status_code=403, detail="Niet bevoegd")
+
     cluster = settings.CLUSTER_MANAGER
     cluster_config = get_image_registries_config(cluster)
     if cluster_config.get("backend") != BACKEND_QUAY_PROXY:
-        return {"applicable": False, "statuses": []}
+        return render(request, template=STATUS_TEMPLATE, context={"applicable": False, "statuses": []})
 
     # ``get()`` and not ``get_decrypted()``: this fragment reads only ``name`` and ``upstream``.
     project = get_project_store().get(project_name)
     project_data = project.data if project else None
     registries = project_registries(project_data or {})
     if not registries:
-        return {"applicable": True, "statuses": []}
+        return render(request, template=STATUS_TEMPLATE, context={"applicable": True, "statuses": []})
 
     namespace = get_prefixed_namespace(cluster, project_name)
     customer_name = cluster_config.get("customer_name", "")
@@ -60,7 +76,7 @@ async def registry_status_context(project_name: str) -> dict[str, Any]:
         for registry in registries
         if registry.get("upstream")
     ]
-    return {"applicable": True, "statuses": statuses}
+    return render(request, template=STATUS_TEMPLATE, context={"applicable": True, "statuses": statuses})
 
 
 async def _organization_status(

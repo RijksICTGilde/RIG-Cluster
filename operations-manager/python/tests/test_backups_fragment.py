@@ -1,12 +1,14 @@
-"""Unit tests for the backups fragment, moved to ``opi.web.router_backups`` (RC-489).
+"""Unit tests for the backups fragment in ``opi.services.catalog.shared.backups``.
 
-``backups_fragment`` and its helper ``_snapshots_by_deployment`` had no test that
-actually executed them: the move introduced a real ``NameError`` (the helper was defined
-without its leading underscore while the call site used it), and it went undetected by
+``backups_fragment`` and its helper ``_snapshots_by_deployment`` had no test that actually
+executed them: a move of this code introduced a real ``NameError`` that went undetected by
 the suite until a manual read. ``test_detail_page_backup_laziness.py`` only inspects the
-source as text, so a renamed or broken call passes it unnoticed. These tests call the
-route the way ``test_image_registries_detail_block.py`` calls its own fragment, which
-exercises the real control flow.
+source as text, so a renamed or broken call passes it unnoticed. These tests call the route
+the way ``test_image_registries_detail_block.py`` calls its own fragment, which exercises
+the real control flow.
+
+The handler imports what it needs inside itself (the catalog may not pull a manager in at
+import time), so each name is patched on the module it comes FROM.
 """
 
 from __future__ import annotations
@@ -17,9 +19,13 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
+from opi.core import cluster_config, config
+from opi.http.auth import authz
+from opi.http.render import lotc_switch
+from opi.manager import backup as backup_manager_module
 from opi.manager.backup.base import SnapshotInfo
-from opi.web import router_backups as route_module
-from opi.web.router_backups import backups_fragment
+from opi.services import project_authorization, project_store
+from opi.services.catalog.shared.backups import backups_fragment
 
 PROJECT = "demo"
 
@@ -47,12 +53,12 @@ def _patch(
     project = SimpleNamespace(data=project_data)
     store = SimpleNamespace(get=lambda name: project if name == PROJECT else None)
 
-    monkeypatch.setattr(route_module, "get_project_store", lambda: store)
-    monkeypatch.setattr(route_module, "is_user_authorized_for_project", lambda project_name, email: True)
-    monkeypatch.setattr(route_module, "get_prefixed_namespace", lambda cluster, namespace: namespace)
-    monkeypatch.setattr(route_module, "may_on_any_deployment", lambda request, *, action, project_name: True)
-    monkeypatch.setattr(route_module.settings, "CLUSTER_MANAGER", "local")
-    monkeypatch.setattr(route_module, "BackupManager", lambda: SimpleNamespace(list_snapshots=list_snapshots))
+    monkeypatch.setattr(project_store, "get_project_store", lambda: store)
+    monkeypatch.setattr(project_authorization, "is_user_authorized_for_project", lambda project_name, email: True)
+    monkeypatch.setattr(cluster_config, "get_prefixed_namespace", lambda cluster, namespace: namespace)
+    monkeypatch.setattr(authz, "may_on_any_deployment", lambda request, *, action, project_name: True)
+    monkeypatch.setattr(config.settings, "CLUSTER_MANAGER", "local")
+    monkeypatch.setattr(backup_manager_module, "BackupManager", lambda: SimpleNamespace(list_snapshots=list_snapshots))
 
     rendered: list[dict[str, Any]] = []
 
@@ -60,7 +66,7 @@ def _patch(
         rendered.append(context)
         return HTMLResponse("")
 
-    monkeypatch.setattr(route_module, "render", _render)
+    monkeypatch.setattr(lotc_switch, "render", _render)
     return rendered
 
 
@@ -132,7 +138,7 @@ async def test_an_unauthorized_caller_gets_403_and_no_snapshots_are_fetched(monk
         raise AssertionError("an unauthorized request must not fetch any snapshots")
 
     rendered = _patch(monkeypatch, project_data=_project_data([]), list_snapshots=list_snapshots)
-    monkeypatch.setattr(route_module, "is_user_authorized_for_project", lambda project_name, email: False)
+    monkeypatch.setattr(project_authorization, "is_user_authorized_for_project", lambda project_name, email: False)
 
     with pytest.raises(HTTPException) as caught:
         await backups_fragment(_request(), PROJECT)
@@ -144,10 +150,19 @@ async def test_an_unauthorized_caller_gets_403_and_no_snapshots_are_fetched(monk
 @pytest.mark.asyncio
 async def test_an_unknown_project_gets_404(monkeypatch: pytest.MonkeyPatch) -> None:
     store = SimpleNamespace(get=lambda name: None)
-    monkeypatch.setattr(route_module, "get_project_store", lambda: store)
-    monkeypatch.setattr(route_module, "is_user_authorized_for_project", lambda project_name, email: True)
+    monkeypatch.setattr(project_store, "get_project_store", lambda: store)
+    monkeypatch.setattr(project_authorization, "is_user_authorized_for_project", lambda project_name, email: True)
 
     with pytest.raises(HTTPException) as caught:
         await backups_fragment(_request(), "unknown")
 
     assert caught.value.status_code == 404
+
+
+def test_the_block_endpoint_is_mounted_on_the_web_router() -> None:
+    """Every backupable service offers the same router through ``web_routers()``; without
+    that wiring the block loads a path that does not exist."""
+    from opi.web.router import web_router
+
+    paths = {getattr(route, "path", "") for route in web_router.routes}
+    assert "/projects/details/{project_name}/backups" in paths

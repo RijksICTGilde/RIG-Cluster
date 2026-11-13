@@ -817,6 +817,7 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
 | `@on(UIEvent.PROJECT_SECTIONS)` on a method taking `ProjectPageContext` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
 | `@on(UIEvent.DEPLOYMENT_SECTIONS)` on a method taking `DeploymentPageContext` | the same, for ONE deployment | `registry.collect_deployment_page_sections()` |
 | `definition.actions_provider(project_data, deployment_name)` | `DeploymentAction`s (buttons) | `registry.collect_deployment_actions()` |
+| `web_routers()` | the `APIRouter`s that serve this service's own fragments/modals | `registry.collect_service_routers()` |
 
 - `ctx.project_data` is the **decrypted** project dict, so a service can surface managed
   credentials; `ctx.user_role` lets the service gate on the viewer (return `[]` to omit).
@@ -840,29 +841,37 @@ that the view probed, because a service must not call a connector itself.
 
 Backups belong to every service with a `backup_label`; the two modals belong to both
 PostgreSQL services. Such a block is delivered by each owner (through a shared mixin in
-`catalog/shared/`), and the collectors keep one copy: sections dedupe on template name and
-actions on (label, endpoint). Page mixins do NOT have to cooperate through `super()` (RC-39):
+`catalog/shared/`), and the collectors keep one copy: sections dedupe on template name,
+actions on (label, endpoint), routers on object identity -- so return the SAME router
+object from every owner. Page mixins do NOT have to cooperate through `super()` (RC-39):
 a service carries every handler it inherits, and the dispatch concatenates what they
 return. A mixin that forgot to chain used to swallow the other one's block silently.
 
-### Endpoints van een blok staan in de ingangslaag
+### Endpoints belong with the block
+
+**Een service houdt bij elkaar wat bij hem hoort, ook als dat over lagen heen gaat.** Een
+catalogusservice is een eigen pakketje: wie hem leest of wijzigt vindt alles van die service
+in zijn map, inclusief zijn routes, taakhandlers en scheduler. Dat die ingangen boven de
+manager staan en `opi/http` gebruiken, is een bekende uitzondering op de lagen (hoofdstuk 5
+van `coding-rules.md`): het lagencontract is een hulpmiddel voor samenhang, geen doel, en
+waar het ermee botst wint samenhang.
 
 A block that lazy-loads (backups) or is a modal (the database console, the job runner)
-needs routes. Those routes are **entry points**, so they live in `opi/web/` next to the
-other routers, and the service delivers what they have to show: a function on the service
-side, a route on the web side.
+needs routes. Declare them on the service via `web_routers()` and they are mounted onto
+the web app, so the block and the endpoints that fill it travel together. Import the
+route module **inside** `web_routers()`: those modules import managers, which the catalog
+itself must not do.
 
-| Blok | Route | Wat de dienst levert |
+| Blok | Route | Waar hij hangt |
 |---|---|---|
-| backups | `opi/web/router_backups.py` | `_snapshot_to_dict` en het sjabloon van het blok |
-| image-registries | `opi/web/router_image_registries.py` | `registry_status_context()` |
-| db-console, job runner | `opi/web/router_db_console.py`, `opi/web/router_jobs.py` | het modal-sjabloon; de hele beslissing zit in de manager |
+| backups | `catalog/shared/backups.py` | `BackupsPageMixin.web_routers()` |
+| image-registries | `catalog/image_registries/web.py` | `ImageRegistriesService.web_routers()` |
+| db-console, job runner | `catalog/shared/db_console.py`, `catalog/shared/jobs.py` | `DatabasePagesMixin.web_routers()` |
 
-Until RC-489 a service declared its own routes through `web_routers()`. That hook is gone:
-a route needs the auth decorators and the render switch out of `opi/http`, and the catalog
-sits below that (the layer contract in chapter 5 of `coding-rules.md`). What the hook was
-really protecting -- that a lazy-loading block cannot lose the endpoint that fills it -- is
-kept by a test per block that reads the mounted `web_router`.
+`backups.py` is de ene uitzondering op de lazy import: het draagt ook `BackupsPageMixin`,
+dat de catalogus bij het importeren al nodig heeft, dus daar staan de zware imports IN de
+handler. Naast de hook staat per blok een toets die het pad op de gemonteerde `web_router`
+opzoekt: een blok mag de route die hem vult niet kwijtraken.
 
 A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
 `endpoint`; the shared modal shell loads that URL (`openServiceModal`). One or the other,
@@ -884,6 +893,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `api_actions()` | extra API actions the service declares (fields, verbs, example) beyond the generic config endpoints |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
+| `web_routers()` | the endpoints those blocks need (fragments, modals) |
 | `api_singular_lists` | config lists this service shows the API as ONE entry (a temporary facade; today only `invite.active`, see `features/service-config-api.md`) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |

@@ -8,9 +8,11 @@ polls live state: the pod as soon as it exists, otherwise the runs registry
 member; starting and stopping ask for an operational role, because the console gives
 interactive access to the database.
 
-The modal template sits with the PostgreSQL services that own the block
-(``opi/services/catalog/shared/``); these routes fill it. They are entry points, so they
-live here and not in the catalog: everything they decide, they decide in the manager.
+The modal template sits next to this module and the routes are mounted through
+``Service.web_routers``, so the block and the endpoints driving it travel together instead of
+the block living in the general page and the routes in the general router. This module is
+imported lazily from ``web_routers`` (never at catalog import time), so the catalog itself
+stays free of manager imports.
 """
 
 from __future__ import annotations

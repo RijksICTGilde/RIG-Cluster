@@ -59,8 +59,10 @@ from pathlib import Path
 
 import pytest
 
-#: De mappen die een antwoord aan een aanroeper opstellen.
-GEMETEN_MAPPEN = ("opi/web", "opi/api", "opi/http")
+#: De mappen die een antwoord aan een aanroeper opstellen. The catalog is in here because a
+#: service carries its own routes (``docs/development/services.md``): without it a handler
+#: leaves this guard the moment it moves to its service.
+GEMETEN_MAPPEN = ("opi/web", "opi/api", "opi/http", "opi/services/catalog")
 
 #: Vangsten waarvan de inhoud onbekend is.
 BREDE_VANGSTEN = frozenset({"Exception", "BaseException"})

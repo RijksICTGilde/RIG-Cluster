@@ -14,7 +14,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-WEB = Path(__file__).resolve().parents[1] / "opi" / "web"
+_OPI = Path(__file__).resolve().parents[1] / "opi"
+
+#: The directories holding route handlers. The catalog is in here because a service carries
+#: its own routes (``docs/development/services.md``): without it a handler leaves this guard
+#: the moment it moves to its service.
+ROUTEMAPPEN = (_OPI / "web", _OPI / "services" / "catalog")
 
 
 def _route_action(functie: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
@@ -51,7 +56,7 @@ def _authorize_actions(functie: ast.FunctionDef | ast.AsyncFunctionDef) -> list[
 
 def test_geen_handler_herhaalt_de_action_van_zijn_eigen_route() -> None:
     dubbel: list[str] = []
-    for bestand in sorted(WEB.rglob("*.py")):
+    for bestand in sorted(pad for map_ in ROUTEMAPPEN for pad in map_.rglob("*.py")):
         boom = ast.parse(bestand.read_text(encoding="utf-8"))
         for knoop in ast.walk(boom):
             if not isinstance(knoop, ast.FunctionDef | ast.AsyncFunctionDef):
