@@ -1124,18 +1124,24 @@ def _restore_detail(item: dict[str, Any]) -> PVCRestoreDetail:
     )
 
 
-async def _refuse_unreachable_target(endpoint: str | None) -> None:
-    """Refuse a destination the caller named that lies in private or unresolvable space.
+async def _unreachable_target_response(endpoint: str | None) -> JSONResponse | None:
+    """The refusal for a destination the caller named in private or unresolvable space.
 
     The same rule as for a clone source: data leaving the cluster goes to a public address
-    only. The project's OWN service is not checked, because the platform named it.
-
-    Raises:
-        HTTPException: 422 when the destination may not be reached.
+    only. The project's OWN service is not checked, because the platform named it. The
+    answer is the one a restore gives when the named destination turns out unusable (400,
+    ``InvalidTarget``), so a client handles both the same way.
     """
     refusal = await external_target_refusal(endpoint)
-    if refusal:
-        raise HTTPException(status_code=422, detail=refusal)
+    if not refusal:
+        return None
+    content = {
+        "status": "failed",
+        "message": refusal,
+        "detail": refusal,
+        "error_category": ErrorCategory.InvalidTarget.value,
+    }
+    return JSONResponse(content=content, status_code=400)
 
 
 def _explicit_database_target(body: DatabaseRestoreRequest) -> DatabaseTarget | None:
@@ -1309,7 +1315,8 @@ async def restore_database(
     # project's own database.
     body = body or DatabaseRestoreRequest()
     explicit_target = _explicit_database_target(body)
-    await _refuse_unreachable_target(explicit_target.host if explicit_target else None)
+    if refusal := await _unreachable_target_response(explicit_target.host if explicit_target else None):
+        return refusal
     target = explicit_target or await _own_database_target(project_name, namespace, reference_name)
 
     try:
@@ -1449,7 +1456,8 @@ async def restore_bucket(
     # No body at all means the same as a body without target fields.
     body = body or BucketRestoreRequest()
     explicit_target = _explicit_bucket_target(body)
-    await _refuse_unreachable_target(explicit_target.endpoint if explicit_target else None)
+    if refusal := await _unreachable_target_response(explicit_target.endpoint if explicit_target else None):
+        return refusal
     target = explicit_target or await _own_bucket_target(project_name, namespace, reference_name)
 
     try:

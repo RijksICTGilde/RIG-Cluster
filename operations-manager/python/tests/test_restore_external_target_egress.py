@@ -6,8 +6,9 @@ data to that destination. A target in private or cluster-internal address space,
 that does not resolve, let a caller look past the edge of the cluster and put the backup
 there.
 
-What is pinned here: a destination the CALLER named is refused with 422, and the project's
-own service is left alone, because the platform chose that one itself.
+What is pinned here: a destination the CALLER named is refused with 400 and
+``error_category: InvalidTarget``, the answer of a named destination that turns out unusable,
+and the project's own service is left alone, because the platform chose that one itself.
 """
 
 from __future__ import annotations
@@ -166,15 +167,17 @@ class TestACallerNamedTargetIsWeighed:
     def test_a_private_database_target_is_refused(self, client: TestClient, restore_environment: Any) -> None:
         response = _post_database(client, PRIVATE_DATABASE)
 
-        assert response.status_code == 422, response.text
+        assert response.status_code == 400, response.text
         assert response.json()["detail"] == REFUSED_EXTERNAL_TARGET_REASON
+        assert response.json()["error_category"] == "InvalidTarget"
         restore_environment["database"].restore_database.assert_not_awaited()
 
     def test_a_private_bucket_target_is_refused(self, client: TestClient, restore_environment: Any) -> None:
         response = _post_bucket(client, PRIVATE_BUCKET)
 
-        assert response.status_code == 422, response.text
+        assert response.status_code == 400, response.text
         assert response.json()["detail"] == REFUSED_EXTERNAL_TARGET_REASON
+        assert response.json()["error_category"] == "InvalidTarget"
         restore_environment["bucket"].restore_bucket.assert_not_awaited()
 
     def test_a_public_database_target_is_allowed(self, client: TestClient, restore_environment: Any) -> None:
