@@ -733,6 +733,10 @@ class FormRenderer:
                 if not evaluate_show_when(dep_value, element.show_when):
                     return ""
             children_html = [self._render_layout_element(child, fields, yaml_data) for child in element.children]
+            # Every field hidden (hidden_without_options, a show_when): no legend and no
+            # description around nothing.
+            if not any(html.strip() for html in children_html):
+                return ""
             return self.adapter.render_fieldset(element, children_html)
 
         if isinstance(element, Div):
