@@ -804,6 +804,7 @@ _INTENDED_REMOVALS = (
     "/repositories",  # replaced by the sandbox Forgejo
     "/deployments[]/issuer",
     "/deployments[]/configuration",
+    "/config/api-key",  # replaced by a fresh 'project-api' token, see AGE_FIELD_HANDLING
 )
 
 #: Additionally dropped when the project is staged as a FRESH one rather than an existing
