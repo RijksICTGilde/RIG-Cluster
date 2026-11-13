@@ -1,7 +1,8 @@
 {% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
 {% set initial_format = field.attributes.get('kv_format', 'env') %}
 {% set editor_id = 'kv-editor-' ~ field.path %}
-<div class="kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}"{% if completions_json %} data-completions="{{ completions_json|e }}"{% endif %}>
+{% set masked = field.attributes.get('kv_mask_values') %}
+<div class="kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}"{% if masked %} data-mask-values="true"{% endif %}{% if completions_json %} data-completions="{{ completions_json|e }}"{% endif %}>
     {# De hulpknop naast het label. Een sectie had er al een (zie
        bg/_modal-wizard-step.html.j2), een VELD niet, terwijl juist dit veld uitleg nodig
        heeft: bij de aliassen wist niemand welke variabelen er te gebruiken zijn. Zelfde
@@ -25,6 +26,14 @@
         <button type="button" class="kv-toggle__btn{% if initial_format == 'yaml' %} kv-toggle__btn--active{% endif %}" data-format="yaml"
                 onclick="kvToggleFormat('{{ editor_id|e }}', 'yaml')">YAML</button>
     </div>
+    {# The same veil as the env-vars window (bg/_env-vars-venster.html.j2): dots except on
+       the cursor line, and stopPropagation so only looking does not mark the form changed. #}
+    {% if masked %}
+        <div class="kv-mask-toggle">
+            <nldd-toggle-button type="button" size="sm" text="Toon waarden"
+                                onchange="event.stopPropagation(); toggleKvMask('{{ editor_id|e }}', this)"></nldd-toggle-button>
+        </div>
+    {% endif %}
     <textarea
         id="{{ field.path|e }}"
         name="{{ field.path|e }}"

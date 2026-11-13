@@ -49,6 +49,7 @@ NON_HTML_ATTRIBUTES = frozenset(
         "converter",
         "validator",
         "kv_format",
+        "kv_mask_values",
         "icon",
         "icon_color",
     }
