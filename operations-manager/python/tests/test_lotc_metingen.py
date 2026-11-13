@@ -430,9 +430,9 @@ def test_per_project_staan_geheugen_en_cpu_in_de_vorm_van_de_projectkaart() -> N
 
     assert "Geheugen 2.0 GiB gebruikt / 1.5 GiB gevraagd / 4.0 GiB limiet (133%)" in tekst, tekst
     assert "CPU 10m gebruikt / 500m gevraagd / 2.0 cores limiet (2%)" in tekst, tekst
-    # 512 MiB is boven 0,1 GiB en wordt dus als GiB geschreven - dezelfde grens als op de
-    # projectkaart, want het is dezelfde macro.
-    assert "Geheugen 64 MiB gebruikt / 0.1 GiB gevraagd / 0.5 GiB limiet (50%)" in tekst, tekst
+    # Below 1 GiB in MiB, so a 128 MiB request does not read as "0.1 GiB"; the same rule as
+    # on the project card, because it is the same macro.
+    assert "Geheugen 64 MiB gebruikt / 128 MiB gevraagd / 512 MiB limiet (50%)" in tekst, tekst
     assert "CPU 30m gebruikt / 100m gevraagd / 1.0 cores limiet (30%)" in tekst, tekst
 
 

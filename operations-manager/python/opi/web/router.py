@@ -1082,9 +1082,10 @@ async def collect_dashboard_metrics(
                         return f"{int(val * 1000)}m"
                     return f"{val:.1f}"
 
+                # The same rule as the gib() macro in bg/_resource-formats.html.j2.
                 def _format_gib(val_bytes: float) -> str:
                     gib = val_bytes / (1024**3)
-                    if gib < 0.1:
+                    if gib < 1:
                         mib = val_bytes / (1024**2)
                         return f"{mib:.0f} MiB"
                     return f"{gib:.1f} GiB"

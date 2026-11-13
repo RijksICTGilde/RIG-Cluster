@@ -11,9 +11,10 @@
   van deze schrijfwijze is. Een eigen bestand heeft geen van beide problemen.
 
   cores(v): onder een core in millicores (30m), daarboven in cores met een decimaal (22.5).
-  gib(v):   v is in BYTES. Onder 0,1 GiB in MiB, daarboven in GiB met een decimaal.
+  gib(v):   v is in BYTES. Onder 1 GiB in MiB, daarboven in GiB met een decimaal: een
+             request van 128 MiB als "0.1 GiB" verbergt het getal waar het percentage op rust.
 
   Zonder deze twee staat er op elke regel een rij nullen (0.0300000001 cores).
 #}
 {% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
-{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
+{% macro gib(v) %}{% if (v / 1073741824) < 1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
