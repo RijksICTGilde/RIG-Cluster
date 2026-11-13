@@ -5445,7 +5445,20 @@ tasks:
           IMPORTED=$(ls "$OUTPUT_DIR" | sed 's/.yaml$//' | tr '\n' ', ' | sed 's/,$//')
           git -c user.name="sandbox-import" -c user.email="import@sandbox" \
             commit -m "Import production projects: $IMPORTED"
-          git push origin main
+          # OPI commits to the same repo on its own (a refresh migrates the schema), so a
+          # push can be rejected as non-fast-forward. Rebase onto what it wrote and try
+          # again; give up loudly, because a silent failure looks like a finished import.
+          PUSHED=false
+          for attempt in 1 2 3; do
+            if git push -q origin main; then PUSHED=true; break; fi
+            echo "Push rejected (attempt $attempt), rebasing onto origin/main..."
+            git -c user.name="sandbox-import" -c user.email="import@sandbox" pull -q --rebase origin main || break
+          done
+          if [ "$PUSHED" != true ]; then
+            echo "Push to Forgejo failed: the import did NOT reach the sandbox." >&2
+            rm -rf "$OUTPUT_DIR" "$CLONE_DIR"
+            exit 1
+          fi
           echo "Pushed to Forgejo: $IMPORTED"
         }
         cd -
