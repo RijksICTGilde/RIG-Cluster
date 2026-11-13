@@ -8,6 +8,7 @@ setting up shared SOPS keys, and other initialization tasks.
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -62,6 +63,10 @@ CONTAINER_NAME = "operations-manager"
 CMP_KEY_READER_ROUND_TIMEOUT_SECONDS = 600
 
 
+#: operations-manager/python/alembic.ini; this module is opi/runtime/startup/startup.py.
+ALEMBIC_INI = Path(__file__).resolve().parents[3] / "alembic.ini"
+
+
 def _run_alembic_migrations() -> None:
     """Run Alembic migrations to bring the database schema to head.
 
@@ -69,13 +74,10 @@ def _run_alembic_migrations() -> None:
     Alembic's baseline migration uses IF NOT EXISTS so it is safe
     for databases that already have the tables.
     """
-    import pathlib
-
     from alembic import command
     from alembic.config import Config
 
-    ini_path = pathlib.Path(__file__).resolve().parents[2] / "alembic.ini"
-    alembic_cfg = Config(str(ini_path))
+    alembic_cfg = Config(str(ALEMBIC_INI))
     command.upgrade(alembic_cfg, "head")
 
 
@@ -472,7 +474,7 @@ async def _setup_database(readiness: ReadinessState) -> bool:
             logger.info("Alembic migration sanity check completed")
         except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
             # Log but don't fail - entrypoint already ran migrations before this code executed
-            logger.debug(f"Alembic sanity check skipped or encountered non-fatal issue: {e}")
+            logger.warning(f"Alembic sanity check failed: {e}")
 
         readiness.database.mark_ready()
         return True
