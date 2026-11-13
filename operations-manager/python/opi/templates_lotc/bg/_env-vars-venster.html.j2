@@ -38,11 +38,12 @@
                 {# De id is niet decoratief: zonder id bergt initKvEditors de editor op
                    onder de lege sleutel en ruimt zijn eigen opruimronde hem meteen weer
                    op (document.getElementById('') bestaat nooit). #}
-                <div class="kv-editor" id="kv-editor-env-vars" data-format="env" data-mask-values="true">
+                <div class="kv-editor" id="kv-editor-env-vars" data-format="env" data-mask-values="open">
                     <span class="utrecht-form-label kv-editor__label">Omgevingsvariabelen</span>
-                    {# Standaard dicht: bij elke opnieuw open wordt de editor opgebouwd
-                       uit data-mask-values. De nldd-toggle-button draagt aria-pressed en
-                       schakelt via change, niet click.
+                    {# Standaard open, zoals in de wizard: wie hier is heeft net een verse
+                       step-up gedaan en wil de waarden zien. "Verberg waarden" legt het veil
+                       erover, voor meekijken of schermdelen. De nldd-toggle-button draagt
+                       aria-pressed en schakelt via change, niet click; aan is zichtbaar.
 
                        "Regel toevoegen" is er voor een volle editor: daar is onder de tekst
                        geen ruimte meer om op een nieuwe regel te landen.
@@ -50,8 +51,8 @@
                        stopPropagation voorkomt dat alleen het kijken of een lege regel de
                        modal markeert als gewijzigd. #}
                     <div class="kv-mask-toggle">
-                        <nldd-toggle-button id="kv-mask-toggle-env-vars" type="button" size="sm"
-                                            text="Toon waarden"
+                        <nldd-toggle-button id="kv-mask-toggle-env-vars" type="button" size="sm" selected
+                                            text="Verberg waarden"
                                             onchange="event.stopPropagation(); toggleKvMask('kv-editor-env-vars', this)"></nldd-toggle-button>
                         {% if can_write %}
                             <nldd-button type="button" size="sm" appearance="neutral-tinted" start-icon="plus"

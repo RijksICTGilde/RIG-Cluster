@@ -70,6 +70,13 @@ def _open_window_with_code(auth_page: Page, app_server: str) -> Locator:
     return editor
 
 
+def _open_veiled_window_with_code(auth_page: Page, app_server: str) -> Locator:
+    """As ``_open_window_with_code``, with the veil laid over the values."""
+    editor = _open_window_with_code(auth_page, app_server)
+    auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars").click()
+    return editor
+
+
 def test_opening_asks_for_a_code_first_and_shows_no_value(app_server: str, auth_page: Page, otp_factor: object) -> None:
     """Zonder verse step-up komt de OTP-dialoog in de modal, met de GET-herhaling erin."""
     _open_window(auth_page, app_server)
@@ -94,58 +101,57 @@ def test_opening_asks_for_a_code_first_and_shows_no_value(app_server: str, auth_
 def test_after_the_code_the_window_shows_the_real_values(app_server: str, auth_page: Page, otp_factor: object) -> None:
     """De dialoog herhaalt de handeling als GET, en het venster is de enige plek met de waarden.
 
-    Sinds RC-416 ligt er een veil over de waarden, dus de editor toont ze pas na "Toon
-    waarden". Wat hier gemeten wordt is dat de HERHALING de echte regels binnenhaalt.
+    Wat hier gemeten wordt is dat de HERHALING de echte regels binnenhaalt; ze staan open,
+    zoals in de wizard.
     """
     editor = _open_window_with_code(auth_page, app_server)
-    auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars").click()
 
     text = editor.inner_text()
     assert "LOG_LEVEL=debug" in text
     assert "FEATURE_FLAG=on" in text
 
 
-def test_the_values_are_masked_until_you_ask_for_them(app_server: str, auth_page: Page, otp_factor: object) -> None:
-    """Het veil (RC-416): stippen in plaats van waarden, en de knop schakelt beide kanten op."""
+def test_the_values_are_open_and_the_button_veils_them(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Open by default, like the wizard; the button lays the veil over them and lifts it again."""
     editor = _open_window_with_code(auth_page, app_server)
+
+    open_text = editor.inner_text()
+    assert "LOG_LEVEL=debug" in open_text, open_text
+    assert "FEATURE_FLAG=on" in open_text, open_text
+    assert DOTS not in open_text
+
+    # De knop is een nldd-toggle-button: het etiket en aria-pressed staan op de knop in
+    # zijn shadow DOM, de aan-stand als 'selected' op het component zelf. Aan is zichtbaar.
+    knop = auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars")
+    binnen = knop.locator("button")
+    assert binnen.inner_text() == "Verberg waarden"
+    assert binnen.get_attribute("aria-pressed") == "true"
+    knop.click()
 
     gemaskeerd = editor.inner_text()
     assert f"LOG_LEVEL={DOTS}" in gemaskeerd, gemaskeerd
     assert f"FEATURE_FLAG={DOTS}" in gemaskeerd, gemaskeerd
     assert "debug" not in gemaskeerd
     assert "=on" not in gemaskeerd
+    assert binnen.inner_text() == "Toon waarden"
+    assert binnen.get_attribute("aria-pressed") == "false"
 
     # Een screenreader krijgt de rol voorgelezen, niet de stippen en niet de waarde.
     maskers = editor.locator(".cm-kv-mask")
     assert maskers.count() == 2
     assert maskers.first.get_attribute("aria-label") == "verborgen waarde"
 
-    # De knop is een nldd-toggle-button: het etiket en aria-pressed staan op de knop in
-    # zijn shadow DOM, de aan-stand als 'selected' op het component zelf.
-    knop = auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars")
-    binnen = knop.locator("button")
-    assert binnen.inner_text() == "Toon waarden"
-    assert binnen.get_attribute("aria-pressed") == "false"
-    knop.click()
-
-    getoond = editor.inner_text()
-    assert "LOG_LEVEL=debug" in getoond
-    assert "FEATURE_FLAG=on" in getoond
-    assert DOTS not in getoond
-    assert binnen.inner_text() == "Verberg waarden"
-    assert binnen.get_attribute("aria-pressed") == "true"
-
     knop.click()
     opnieuw = editor.inner_text()
-    assert f"LOG_LEVEL={DOTS}" in opnieuw, opnieuw
-    assert "debug" not in opnieuw
+    assert "LOG_LEVEL=debug" in opnieuw, opnieuw
+    assert DOTS not in opnieuw
 
 
 def test_only_looking_does_not_mark_the_modal_as_changed(app_server: str, auth_page: Page, otp_factor: object) -> None:
     """Het veil omzetten bewerkt niets, dus de modal blijft schoon (RC-416, rework).
 
     De change van de nldd-toggle-button bubbelt naar de luisteraar op document in
-    edit_modal.js. Zonder stopPropagation vroeg sluiten na alleen "Toon waarden" om
+    edit_modal.js. Zonder stopPropagation vroeg sluiten na alleen "Verberg waarden" om
     bevestiging van niet-opgeslagen werk dat er niet was.
     """
     # Eerst de step-up doorlopen; het invullen van de code maakt de modal wel vuil.
@@ -159,13 +165,13 @@ def test_only_looking_does_not_mark_the_modal_as_changed(app_server: str, auth_p
     assert auth_page.evaluate("window.isEditDirty") is False
 
     auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars").click()
-    assert auth_page.locator("#edit-section-inner .cm-kv-mask").count() == 0
+    assert auth_page.locator("#edit-section-inner .cm-kv-mask").count() == 2
     assert auth_page.evaluate("window.isEditDirty") is False
 
 
 def test_the_cursor_line_shows_its_own_value(app_server: str, auth_page: Page, otp_factor: object) -> None:
     """Een waarde bewerken zonder de rest te zien: alleen de regel met de cursor gaat open."""
-    editor = _open_window_with_code(auth_page, app_server)
+    editor = _open_veiled_window_with_code(auth_page, app_server)
 
     editor.locator(".cm-line").nth(1).click()
     text = editor.inner_text()
@@ -178,7 +184,7 @@ def test_editing_one_masked_line_keeps_the_other_values(app_server: str, auth_pa
 
     Het meetpunt is de verborgen textarea, want dat is wat het formulier verstuurt.
     """
-    editor = _open_window_with_code(auth_page, app_server)
+    editor = _open_veiled_window_with_code(auth_page, app_server)
 
     regel = editor.locator(".cm-line").first
     regel.click()
@@ -199,7 +205,7 @@ def test_the_dots_stay_legible_in_both_schemes(
     """De stippen krijgen een themategen, dus ze mogen in geen van beide weergaven wegvallen."""
     auth_page.emulate_media(color_scheme=weergave)
     try:
-        editor = _open_window_with_code(auth_page, app_server)
+        editor = _open_veiled_window_with_code(auth_page, app_server)
         masker = editor.locator(".cm-kv-mask").first
         masker.wait_for(state="visible", timeout=10000)
         kleuren = masker.evaluate(
@@ -215,7 +221,7 @@ def test_the_dots_stay_legible_in_both_schemes(
 
 def test_comment_and_empty_lines_are_never_masked(app_server: str, auth_page: Page, otp_factor: object) -> None:
     """Commentaarregels en lege regels blijven leesbaar, ook als ze een `=` bevatten."""
-    editor = _open_window_with_code(auth_page, app_server)
+    editor = _open_veiled_window_with_code(auth_page, app_server)
 
     editor.click()
     auth_page.keyboard.press("ControlOrMeta+a")

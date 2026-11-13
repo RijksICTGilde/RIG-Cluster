@@ -11,7 +11,8 @@
  *   - YAML mode: parses with js-yaml and shows parse errors at position
  *
  * Editors met data-mask-values="true" tonen elke waarde als een rij stippen tot
- * toggleKvMask() het veil opheft; zie "masker" hieronder.
+ * toggleKvMask() het veil opheft; met data-mask-values="open" staan de waarden eerst open
+ * en legt dezelfde knop het veil erover. Zie "masker" hieronder.
  *
  * Depends on window.CM (set by codemirror-bundle.js).
  */
@@ -392,6 +393,7 @@
         var langCompartment = new Compartment();
         var lintCompartment = new Compartment();
         var maskCompartment = new Compartment();
+        var maskable = editorDiv.dataset.maskValues === "true" || editorDiv.dataset.maskValues === "open";
         var masked = editorDiv.dataset.maskValues === "true";
 
         var completions = parseCompletions(editorDiv);
@@ -417,7 +419,7 @@
             zadTheme,
             syntaxHighlighting(zadHighlight)
         );
-        if (masked) extensions.push(emptyLastLineRoom);
+        if (maskable) extensions.push(emptyLastLineRoom);
 
         var view = new EditorView({
             doc: textarea.value,
