@@ -452,29 +452,22 @@ async def check_minio_availability() -> bool:
 
 
 async def _setup_database(readiness: ReadinessState) -> bool:
-    """Initialize database pools. Returns True on success.
+    """Initialize the database pools and migrate the schema to head. Returns True on success.
 
-    Note: Database migrations are now primarily handled by the Docker entrypoint
-    (docker-entrypoint.sh) which runs 'alembic upgrade head' before starting the app.
-    This function provides a backup/sanity check to verify the schema is ready.
+    The image entrypoint already runs ``alembic upgrade head``, but a start without it (a
+    local run, task test-startup) depends on this step, so a failed migration leaves the
+    database not ready and the retry loop tries again. The migration runs on every call,
+    also when the pools already exist: alembic is idempotent, and skipping it on a retry
+    would report a database ready whose schema never got migrated.
     """
     try:
         from opi.core.database_pools import is_database_available
 
-        if is_database_available():
-            readiness.database.mark_ready()
-            return True
+        if not is_database_available():
+            await initialize_database_pools()
 
-        await initialize_database_pools()
-
-        # Run Alembic migrations as a backup check (primary responsibility now in entrypoint)
-        try:
-            logger.info("Running Alembic migrations as sanity check (primary migrations handled by entrypoint)")
-            _run_alembic_migrations()
-            logger.info("Alembic migration sanity check completed")
-        except Exception as e:  # noqa: BLE001  # a boot phase records its own failure in the readiness state
-            # Log but don't fail - entrypoint already ran migrations before this code executed
-            logger.warning(f"Alembic sanity check failed: {e}")
+        logger.info("Running Alembic migrations")
+        _run_alembic_migrations()
 
         readiness.database.mark_ready()
         return True
