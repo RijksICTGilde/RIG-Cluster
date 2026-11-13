@@ -70,12 +70,12 @@ Andere KV-velden krijgen geen `kv_completions` en dus geen aanvullingen.
 
 ### Het veil over de waarden (`data-mask-values`)
 
-Het venster met omgevingsvariabelen (`opi/templates_lotc/bg/_env-vars-venster.html.j2`) toont na de step-up de waarden open, net als de wizard. Met "Verberg waarden" tekent de editor ze als een rij stippen, voor meekijken of schermdelen.
+Het venster met omgevingsvariabelen (`opi/templates_lotc/bg/_env-vars-venster.html.j2`) toonde na de step-up alle waarden in platte tekst. De editor tekent ze nu als een rij stippen, en toont ze pas als je erom vraagt.
 
-- Aanzetten doe je met `data-mask-values` op de `.kv-editor`-wikkel: `"true"` begint met het veil erover, `"open"` begint met de waarden zichtbaar en biedt dezelfde knop. Alleen het env-vars-venster draagt het, met `"open"`. Het aliassenveld niet: daar staan `$PLATFORM_VARIABELE`-namen, geen geheimen.
+- Aanzetten doe je met `data-mask-values="true"` op de `.kv-editor`-wikkel. Alleen het env-vars-venster draagt het. Het aliassenveld niet: daar staan `$PLATFORM_VARIABELE`-namen, geen geheimen.
 - `codemirror-kv.js` zet een `ViewPlugin` met `Decoration.replace` over het deel na de `=` (ENV) of na de `:` (YAML). De rij stippen heeft vaste lengte, zodat ook de lengte van een geheim niets verraadt. Commentaarregels (`#`) en lege regels blijven ongemoeid.
 - De regel waar de cursor staat toont zijn waarde, zodat je er een kunt bewerken. Dit werkt alleen zolang de editor focus heeft.
-- De knop "Toon waarden" / "Verberg waarden" schakelt het masker om via een `Compartment`, net als de ENV/YAML-wissel. Het is een `<nldd-toggle-button>`, net als de pauzeknop in de logviewer, en draagt `aria-pressed` voor de screenreader. De stand is niet onthouden: elke keer opnieuw openen bouwt de editor op uit `data-mask-values`.
+- De knop "Toon waarden" / "Verberg waarden" schakelt het masker om via een `Compartment`, net als de ENV/YAML-wissel. Het is een `<nldd-toggle-button>`, net als de pauzeknop in de logviewer, en draagt `aria-pressed` voor de screenreader. De stand is niet onthouden: elke keer opnieuw openen bouwt de editor op en sluit het veil.
 - Een gemaskeerde waarde krijgt voor een screenreader `role="img"` met `aria-label="verborgen waarde"`, dus niet de stippen en niet de waarde.
 - De stippen krijgen hun kleur van `--semantics-content-secondary-color` in `zadTheme`, zodat ze in beide weergaven leesbaar blijven.
 
