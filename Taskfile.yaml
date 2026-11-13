@@ -4475,8 +4475,10 @@ tasks:
             exit 1
           fi
           # Een redirect maakt het bestand met de umask, dus leesbaar voor groep en
-          # anderen; de lezers hier weigeren dat.
-          (umask 077 && echo "$AGE_SECRET_KEY" > "$KEY_FILE")
+          # anderen; de lezers hier weigeren dat. Eerst leeg en alleen voor jou leesbaar,
+          # dan pas de sleutel erin (geen umask in de shell van Task).
+          : > "$KEY_FILE" && chmod 600 "$KEY_FILE"
+          echo "$AGE_SECRET_KEY" > "$KEY_FILE"
           echo "Developer key saved to $KEY_FILE"
         fi
 
@@ -5006,8 +5008,10 @@ tasks:
           # Zonder passphrase: OPI importeert de sleutel zelf en kan er geen invoeren.
           gpg --batch --quiet --passphrase '' \
             --quick-generate-key "Operations Manager <operations-manager@example.com>" ed25519 sign never
-          # umask om de redirect: zonder dat staat de privesleutel kort op 644.
-          (umask 077; gpg --batch --quiet --armor --export-secret-keys > "$KEY_FILE")
+          # Eerst leeg en alleen voor jou leesbaar, dan pas de privesleutel erin: anders
+          # staat hij kort op 644 (geen umask in de shell van Task).
+          : > "$KEY_FILE" && chmod 600 "$KEY_FILE"
+          gpg --batch --quiet --armor --export-secret-keys > "$KEY_FILE"
         else
           echo "Sandbox GPG signing key already exists: $KEY_FILE"
         fi
