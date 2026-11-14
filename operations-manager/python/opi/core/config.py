@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings
 # Initialize logging early to ensure it's available during config loading
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.secret_key import generate_secret_key, validate_secret_key
+from opi.core.zadctl_version import parse_setting
 from opi.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -257,6 +258,11 @@ class Settings(BaseSettings):
     # access tokens must carry for this API to accept them.
     CLI_CLIENT_ID: str = "zad-cli"
     CLI_TOKEN_AUDIENCE: str = "zad-api"  # noqa: S105  # audience van het CLI-token, geen secret
+
+    # Welke zadctl-versies deze API bedient, als X.Y.Z; leeg is uit. Lager dan het minimum
+    # krijgt 426, lager dan de aanbevolen versie een waarschuwing. Zie opi/core/zadctl_version.py.
+    ZADCTL_MIN_VERSION: str = ""
+    ZADCTL_RECOMMENDED_VERSION: str = ""
 
     # Hoe lang een API-token hoogstens geldig mag zijn, in dagen. Platformbeleid en geen
     # keuze van wie het token aanmaakt: zonder maximum kiest iedereen het maximum.
@@ -795,6 +801,13 @@ class Settings(BaseSettings):
     def _enforce_secure_secret_key(self) -> Settings:
         """Fail closed when an explicitly-set SECRET_KEY is too short."""
         validate_secret_key(self.SECRET_KEY)
+        return self
+
+    @model_validator(mode="after")
+    def _zadctl_versies_zijn_semver(self) -> Settings:
+        """Een tikfout in een versiegrens faalt bij de opstart, niet pas bij het eerste verzoek."""
+        parse_setting("ZADCTL_MIN_VERSION", self.ZADCTL_MIN_VERSION)
+        parse_setting("ZADCTL_RECOMMENDED_VERSION", self.ZADCTL_RECOMMENDED_VERSION)
         return self
 
     @model_validator(mode="after")

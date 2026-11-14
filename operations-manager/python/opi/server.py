@@ -59,6 +59,7 @@ from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
+from opi.middleware.zadctl_version import ZadctlVersionMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.utils.logging_redact import redact_invite_key_in_path
@@ -634,6 +635,24 @@ def create_app() -> FastAPI:
             "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}},
         }
 
+        zadctl_426 = {
+            "description": (
+                "Deze zadctl-versie werkt niet meer met deze API (alleen bij 'User-Agent: zadctl/X.Y.Z'). "
+                "'minimum' is de laagste versie die werkt, 'upgrade' waar die te halen is. "
+                "Een versie onder de aanbevolen versie krijgt geen 426 maar de header 'X-ZADCTL-Recommended'."
+            ),
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            key: {"type": "string"} for key in ("detail", "client", "version", "minimum", "upgrade")
+                        },
+                    }
+                }
+            },
+        }
+
         for path, methods in openapi_schema["paths"].items():
             if not path.startswith("/api/"):
                 continue
@@ -643,6 +662,7 @@ def create_app() -> FastAPI:
                 scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
+                method["responses"]["426"] = zadctl_426
                 if (path, verb) in step_up_operations:
                     method["responses"]["403"] = STEP_UP_403_RESPONSE
 
@@ -810,6 +830,13 @@ def create_app() -> FastAPI:
     )
     # Binnen de veiligheidsheaders (ook een 429 draagt ze) en buiten sessie, onderhoud en
     # autorisatie: een stortvloed wordt geweigerd voordat hij die stappen kost.
+    # Binnen de rate limit en buiten sessie en autorisatie: een te oude zadctl hoeft zijn
+    # sleutel niet te laten valideren om te horen dat hij moet upgraden.
+    app.add_middleware(
+        ZadctlVersionMiddleware,
+        minimum=settings.ZADCTL_MIN_VERSION,
+        recommended=settings.ZADCTL_RECOMMENDED_VERSION,
+    )
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         SecurityHeadersMiddleware,

@@ -111,3 +111,9 @@ data:
     # Back-uppods op :latest en niet op de gepinde digest uit de code: task
     # build-backup-image bouwt deze image lokaal en laadt hem onder die tag in kind.
     BACKUP_IMAGE=ghcr.io/minbzk/base-images/rig-backup:latest
+
+    # Welke zadctl-versies deze API bedient (X.Y.Z, leeg is uit). Hoog het minimum op bij een
+    # API-wijziging waar oudere zadctl-versies aantoonbaar stuk op gaan; die krijgen dan 426.
+    # Zie features/zadctl-versiecheck.md.
+    ZADCTL_MIN_VERSION=
+    ZADCTL_RECOMMENDED_VERSION=
