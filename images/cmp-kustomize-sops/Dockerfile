@@ -15,11 +15,12 @@ WORKDIR /tools
 # toetst. Bij een nieuwe versie horen nieuwe sommen; de hele weg staat in images/README.md.
 #
 # kubectl volgde eerder stable.txt, dus elke bouw een andere versie. Nu dezelfde minor als
-# de OPI-image (operations-manager/Dockerfile) en als het sandbox-cluster: v1.32.
+# de OPI-image (operations-manager/Dockerfile): v1.33, binnen een minor van het sandbox-cluster
+# (v1.32) en van ODCN (v1.34).
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=v1.32.13
-ARG KUBECTL_SHA256_AMD64=db2ae479a63f3665d7f704ab18c0d4d4050144237980763221835b7305703c4c
-ARG KUBECTL_SHA256_ARM64=b1f87f196633a89208546d79bfa4e2470bda70e7bf42c4d3adb008ec208da9d1
+ARG KUBECTL_VERSION=v1.33.13
+ARG KUBECTL_SHA256_AMD64=316d712726d857c20744c57cb36aa47cfc79bc0af7e82cebf3780244b654c073
+ARG KUBECTL_SHA256_ARM64=9fe8aadd5aab9421978c7ac95de6fad304a3c4c0ce9dbf4127579779e0699080
 # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/v(?<version>.+)$
 ARG KUSTOMIZE_VERSION=5.8.3
 ARG KUSTOMIZE_SHA256_AMD64=cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
