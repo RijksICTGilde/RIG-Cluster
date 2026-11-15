@@ -14,7 +14,7 @@ patches:
         value: ocs-storagecluster-ceph-rbd
       - op: replace
         path: /spec/resources/requests/storage
-        value: 20Gi
+        value: 50Gi
   # OpenShift kent de UID uit het bereik van de namespace toe; een vaste 1000 wordt door
   # de SCC geweigerd. Zelfde patch als bij redis.
   - target:
