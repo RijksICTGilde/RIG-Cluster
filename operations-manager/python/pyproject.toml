@@ -435,4 +435,3 @@ ignore_imports = [
     "opi.forms.widgets.lotc -> opi.http.render.templates_lotc",
     "opi.services.help_text -> opi.http.render.templates_lotc",
 ]
-
