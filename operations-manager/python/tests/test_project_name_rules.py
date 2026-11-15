@@ -3,10 +3,12 @@
 import json
 import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import jsonschema
 import pytest
 from opi.core.config import settings
+from opi.forms.editables.generators import ProjectNameGenerator
 from opi.forms.models.project_file import ProjectFileModel
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE
 from opi.utils.patterns import PROJECT_NAME
@@ -134,4 +136,18 @@ def test_a_unique_name_falls_back_to_numbering_with_a_fixed_postfix(monkeypatch:
     name, _display = ensure_unique_project_name("My New Application", {"mna-zzz"})
     assert name != "mna-zzz"
     assert re.match(r"^mna-zz\d$", name)
+    assert validate_project_name(name) is True
+
+
+def test_the_wizard_generator_avoids_a_name_already_in_the_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "FIXED_PROJECT_POSTFIX", "zzz")
+    existing = MagicMock()
+    existing.name = "mna-zzz"
+    store = MagicMock()
+    store.get_all = MagicMock(return_value=[existing])
+    monkeypatch.setattr("opi.forms.editables.generators.get_project_store", lambda: store)
+
+    name = ProjectNameGenerator().generate({"display-name": "My New Application"})
+
+    assert name != "mna-zzz"
     assert validate_project_name(name) is True

@@ -12,7 +12,9 @@ from typing import Any
 
 from opi.core import config as opi_config
 from opi.services.catalog.publish_on_web.issuer import derive_issuer
+from opi.services.project_store import get_project_store
 from opi.utils.age import get_project_public_key
+from opi.utils.project_names import ensure_unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,11 @@ class ProjectNameGenerator:
     """Generate a technical project name from the display-name field."""
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
-        from opi.utils.project_names import generate_project_name
-
         display_name = yaml_data.get("display-name", "")
         if not display_name:
             raise ValueError("Display-name is required to generate project name")
-        technical_name, _ = generate_project_name(display_name)
+        existing_names = {summary.name for summary in get_project_store().get_all()}
+        technical_name, _ = ensure_unique_project_name(display_name, existing_names)
         return technical_name
 
 
