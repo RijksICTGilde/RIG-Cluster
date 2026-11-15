@@ -90,4 +90,4 @@ betekent. Iedereen logt dus eenmalig opnieuw in; dual-read is er bewust niet.
 | begrensde LRU-cache met TTL | `opi/core/session_cache.py` |
 | ORM-model | `opi/services/persistence/sessions.py` |
 | migratie 011 | `opi/migrations/versions/011_add_sessions.py` |
-| guard op levensduur en intrekken | `opi/core/session_guard.py` (ongewijzigd) |
+| guard op levensduur en intrekken | `opi/http/auth/session_guard.py` (ongewijzigd) |

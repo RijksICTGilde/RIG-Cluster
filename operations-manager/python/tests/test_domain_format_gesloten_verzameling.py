@@ -41,11 +41,15 @@ import pytest
 from opi.api.openapi_choices import CHOICES_SOURCE_KEY, annotate_config_choices
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
-from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
+from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebDeploymentConfig
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.catalog.publish_on_web.domain_config import (
+    DOMAIN_FORMAT_TEMPLATES,
+    DomainSetting,
+    domain_setting_path,
+)
 from opi.services.catalog.publish_on_web.editables import DOMAIN_FORMAT_EDITABLE
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.services.project_validation import ProjectIntegrityError, validate_project_structure
 from pydantic import ValidationError
 
 #: Het formaat uit de melding.
@@ -156,7 +160,7 @@ class TestApiWeg:
         """``:upsert-deployment`` draait dezelfde enforcer als de wizard."""
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -170,7 +174,7 @@ class TestApiWeg:
 
             manager = ProjectManager()
             manager.get_name = AsyncMock(return_value="demo")
-            error = await manager._enforce_domain_config(_project(ONZIN), "productie")
+            error = await DeploymentMutations(manager)._enforce_domain_config(_project(ONZIN), "productie")
 
         assert error is not None
         assert ONZIN in error
@@ -178,7 +182,7 @@ class TestApiWeg:
     async def test_upsert_deployment_laat_een_geldig_formaat_door(self):
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -192,7 +196,9 @@ class TestApiWeg:
 
             manager = ProjectManager()
             manager.get_name = AsyncMock(return_value="demo")
-            error = await manager._enforce_domain_config(_project("component-deployment-project"), "productie")
+            error = await DeploymentMutations(manager)._enforce_domain_config(
+                _project("component-deployment-project"), "productie"
+            )
 
         assert error is None
 

@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from keycloak.exceptions import KeycloakPutError
-from opi.bootstrap.keycloak_setup import SECONDS_PER_DAY, KeycloakSetup
 from opi.core.config import settings
-from opi.handlers.keycloak_yaml_handler import _HARDENING_REALM_FIELDS, KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_setup import SECONDS_PER_DAY, KeycloakSetup
+from opi.manager.bootstrap.keycloak_yaml_handler import _HARDENING_REALM_FIELDS, KeycloakYamlHandler
 from opi.utils.passwords import generate_secure_password
 from ruamel.yaml import YAML
 

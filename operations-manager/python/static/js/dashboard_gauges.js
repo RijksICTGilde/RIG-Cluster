@@ -23,9 +23,18 @@ function getGaugeColor(percentage) {
     return '#39870c';                              /* green */
 }
 
+/* CPU and memory show usage against the request, so a high value is good: green means we
+   request what we use, blue means much is requested and little used, orange means usage
+   above the request. */
+function getRequestGaugeColor(percentage) {
+    if (percentage > 100) return '#e17000';      /* orange */
+    if (percentage >= 60) return '#39870c';       /* green */
+    return '#007bc7';                              /* blue */
+}
+
 function initializeGauges(cpuPct, memPct, storagePct) {
-    animateGauge('cpu-gauge', cpuPct, getGaugeColor(cpuPct));
-    animateGauge('memory-gauge', memPct, getGaugeColor(memPct));
+    animateGauge('cpu-gauge', cpuPct, getRequestGaugeColor(cpuPct));
+    animateGauge('memory-gauge', memPct, getRequestGaugeColor(memPct));
     animateGauge('storage-gauge', storagePct, getGaugeColor(storagePct));
 }
 
@@ -44,7 +53,7 @@ function animateGauge(canvasId, targetPct, color) {
     function draw(now) {
         var progress = Math.min((now - start) / duration, 1);
         var eased = 1 - Math.pow(1 - progress, 3);
-        var currentPct = eased * targetPct;
+        var currentPct = eased * Math.min(targetPct, 100);
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 

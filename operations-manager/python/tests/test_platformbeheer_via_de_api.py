@@ -11,11 +11,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from opi.api import endpoint_util
-from opi.api.route_herkenning import route_herkenningen
+from opi.api.route_recognition import route_recognitions
+from opi.http.auth import endpoint_util
 from opi.server import app
 
-#: De routes die platformbeheer doen. Het pad plus de methode, zoals route_herkenningen ze geeft.
+#: De routes die platformbeheer doen. Het pad plus de methode, zoals route_recognitions ze geeft.
 BEHEERROUTES: set[tuple[str, str]] = {
     ("GET", "/api/v2/admin/marked-for-deletion"),
     ("DELETE", "/api/v2/admin/marked-for-deletion/{mark_id}"),
@@ -35,12 +35,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.mark.parametrize("sleutel", sorted(BEHEERROUTES), ids=lambda s: f"{s[0]} {s[1]}")
 def test_de_beheerroute_vraagt_het_token_van_een_platformbeheerder(sleutel: tuple[str, str]) -> None:
-    gevonden = [route for route in route_herkenningen(app) if route.sleutel == sleutel]
+    gevonden = [route for route in route_recognitions(app) if route.key == sleutel]
 
     assert gevonden, f"{sleutel[0]} {sleutel[1]} is niet geregistreerd; is het pad veranderd?"
     for route in gevonden:
-        assert route.herkenningen == ("platformbeheerder-token",), (
-            f"{route} herkent {list(route.herkenningen)} in plaats van het token van een platformbeheerder"
+        assert route.recognitions == ("platformbeheerder-token",), (
+            f"{route} herkent {list(route.recognitions)} in plaats van het token van een platformbeheerder"
         )
 
 

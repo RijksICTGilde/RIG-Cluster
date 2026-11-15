@@ -27,7 +27,7 @@ def _progress() -> MagicMock:
 
 
 async def test_project_delete_completes_when_the_teardown_succeeded() -> None:
-    from opi.core.task_handlers_project import handle_delete_project
+    from opi.runtime.tasks.task_handlers_project import handle_delete_project
 
     progress = _progress()
     pm = AsyncMock()
@@ -49,7 +49,7 @@ async def test_project_delete_completes_when_the_teardown_succeeded() -> None:
 
 async def test_a_partly_failed_project_delete_fails_the_task() -> None:
     """Otherwise a half-deleted project reports as done and its resources linger."""
-    from opi.core.task_handlers_project import handle_delete_project
+    from opi.runtime.tasks.task_handlers_project import handle_delete_project
 
     progress = _progress()
     pm = AsyncMock()
@@ -65,7 +65,7 @@ async def test_a_partly_failed_project_delete_fails_the_task() -> None:
 async def test_deployments_on_another_cluster_say_so() -> None:
     """This instance only manages its own cluster, so it cannot finish the job; the
     message must name the clusters instead of reading as a plain error."""
-    from opi.core.task_handlers_project import handle_delete_project
+    from opi.runtime.tasks.task_handlers_project import handle_delete_project
 
     progress = _progress()
     pm = AsyncMock()
@@ -87,7 +87,7 @@ async def test_component_delete_also_reprocesses_the_project() -> None:
     """Removing it from the project file is half the job; without the reprocess the
     component keeps running. Both used to be separate, and the dialog reported success
     after the first half."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()
@@ -96,7 +96,7 @@ async def test_component_delete_also_reprocesses_the_project() -> None:
 
     with (
         patch(PM_PATH, return_value=pm),
-        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+        patch("opi.runtime.tasks.task_handlers_operations.handle_refresh_project", refresh),
     ):
         result = await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
 
@@ -114,7 +114,7 @@ async def test_component_delete_also_reprocesses_the_project() -> None:
 
 async def test_a_failed_reprocess_after_a_component_delete_stays_visible() -> None:
     """The reprocess reports failure by returning, not by raising."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()
@@ -123,7 +123,7 @@ async def test_a_failed_reprocess_after_a_component_delete_stays_visible() -> No
 
     with (
         patch(PM_PATH, return_value=pm),
-        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+        patch("opi.runtime.tasks.task_handlers_operations.handle_refresh_project", refresh),
     ):
         result = await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
 
@@ -135,7 +135,7 @@ async def test_the_confirmation_travels_to_the_write_layer() -> None:
     """The flag is the caller's statement that they have seen what the deletion takes with
     it. A handler that dropped it would either refuse every deletion the portal starts or
     clean up references nobody confirmed."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()
@@ -144,7 +144,7 @@ async def test_the_confirmation_travels_to_the_write_layer() -> None:
 
     with (
         patch(PM_PATH, return_value=pm),
-        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+        patch("opi.runtime.tasks.task_handlers_operations.handle_refresh_project", refresh),
     ):
         result = await handle_delete_component(
             {"project_name": "demo", "component_name": "web", "confirm_in_use": True}, progress
@@ -157,7 +157,7 @@ async def test_the_confirmation_travels_to_the_write_layer() -> None:
 
 async def test_without_the_confirmation_the_write_layer_hears_no() -> None:
     """Absent means no, not 'unspecified': the guard has to decide on a fact."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()
@@ -166,7 +166,7 @@ async def test_without_the_confirmation_the_write_layer_hears_no() -> None:
 
     with (
         patch(PM_PATH, return_value=pm),
-        patch("opi.core.task_handlers_operations.handle_refresh_project", refresh),
+        patch("opi.runtime.tasks.task_handlers_operations.handle_refresh_project", refresh),
     ):
         await handle_delete_component({"project_name": "demo", "component_name": "web"}, progress)
 
@@ -176,7 +176,7 @@ async def test_without_the_confirmation_the_write_layer_hears_no() -> None:
 async def test_a_component_still_in_use_fails_the_task() -> None:
     """The endpoint refuses it up front, but the guard in the manager is what decides --
     the project can have changed between the check and the task running."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()
@@ -191,7 +191,7 @@ async def test_a_component_still_in_use_fails_the_task() -> None:
 
 
 async def test_an_unknown_component_fails_the_task() -> None:
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     progress = _progress()
     pm = AsyncMock()

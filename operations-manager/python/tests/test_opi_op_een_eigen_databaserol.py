@@ -28,8 +28,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.postgres import PostgresExecutionError, PostgresValidationError
-from opi.core.app_database_owner import ensure_app_database_owner
-from opi.core.app_database_owner import main as owner_main
 from opi.core.config import settings
 from opi.core.database_pool import DatabasePoolError
 from opi.core.database_pools import (
@@ -39,7 +37,9 @@ from opi.core.database_pools import (
     initialize_database_pools,
 )
 from opi.core.db import ORM_MAX_OVERFLOW, ORM_POOL_SIZE, _default_url, app_database_url, configure_engine
-from opi.core.platform_database_access import restrict_platform_databases
+from opi.runtime.startup.app_database_owner import ensure_app_database_owner
+from opi.runtime.startup.app_database_owner import main as owner_main
+from opi.runtime.startup.platform_database_access import restrict_platform_databases
 
 APP_USER = "operations_manager"
 APP_PASSWORD = "app-geheim"
@@ -155,8 +155,8 @@ async def test_de_eigen_database_geeft_de_app_rol_connect(monkeypatch: pytest.Mo
     connector = MagicMock()
     connector.restrict_database_to_roles = AsyncMock(return_value={"status": "restricted"})
     connector.close = AsyncMock()
-    monkeypatch.setattr("opi.core.platform_database_access.create_postgres_connector", lambda *a: connector)
-    monkeypatch.setattr("opi.core.platform_database_access.get_database_server", lambda _: "rig-db-rw")
+    monkeypatch.setattr("opi.runtime.startup.platform_database_access.create_postgres_connector", lambda *a: connector)
+    monkeypatch.setattr("opi.runtime.startup.platform_database_access.get_database_server", lambda _: "rig-db-rw")
 
     await restrict_platform_databases()
 
@@ -287,7 +287,7 @@ async def test_de_overdracht_vraagt_de_catalogus_met_de_twee_rollen() -> None:
         assert aanroep.args[1:] == (APP_USER, "postgres")
 
 
-# --- de entrypoint-stap (opi/core/app_database_owner.py) ------------------
+# --- de entrypoint-stap (opi/runtime/startup/app_database_owner.py) ------------------
 
 
 @pytest.mark.asyncio
@@ -304,7 +304,7 @@ async def test_ensure_app_database_owner_verbindt_als_admin_en_sluit_af(
         gebouwd.append(args)
         return connector
 
-    monkeypatch.setattr("opi.core.app_database_owner.create_postgres_connector", _create)
+    monkeypatch.setattr("opi.runtime.startup.app_database_owner.create_postgres_connector", _create)
 
     uitkomst = await ensure_app_database_owner()
 
@@ -323,7 +323,7 @@ async def test_ensure_app_database_owner_sluit_ook_af_als_de_overdracht_faalt(
     connector = MagicMock()
     connector.transfer_public_objects = AsyncMock(side_effect=PostgresExecutionError("boom"))
     connector.close = AsyncMock()
-    monkeypatch.setattr("opi.core.app_database_owner.create_postgres_connector", lambda *a: connector)
+    monkeypatch.setattr("opi.runtime.startup.app_database_owner.create_postgres_connector", lambda *a: connector)
 
     with pytest.raises(PostgresExecutionError):
         await ensure_app_database_owner()
@@ -336,7 +336,7 @@ def test_main_geeft_0_bij_succes(monkeypatch: pytest.MonkeyPatch) -> None:
         coro.close()  # nooit echt starten, maar wel de coroutine-waarschuwing voorkomen
         return {"relation": 0}
 
-    monkeypatch.setattr("opi.core.app_database_owner.asyncio.run", _run)
+    monkeypatch.setattr("opi.runtime.startup.app_database_owner.asyncio.run", _run)
 
     assert owner_main() == 0
 
@@ -349,6 +349,6 @@ def test_main_geeft_1_als_de_overdracht_faalt(fout: Exception, monkeypatch: pyte
         coro.close()
         raise fout
 
-    monkeypatch.setattr("opi.core.app_database_owner.asyncio.run", _run)
+    monkeypatch.setattr("opi.runtime.startup.app_database_owner.asyncio.run", _run)
 
     assert owner_main() == 1

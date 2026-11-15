@@ -10,12 +10,13 @@ import asyncio
 import time
 
 import pytest
-from opi.core.task_worker import TaskWorker, notify_new_task
+from opi.runtime.tasks.task_worker import TaskWorker
+from opi.services.tasks.async_task_service import notify_new_task
 
 
 def _worker(monkeypatch: pytest.MonkeyPatch, poll: float) -> TaskWorker:
     """Een verse worker, dus ook een verse wekker op de loop van deze test."""
-    monkeypatch.setattr("opi.core.task_worker.settings.TASK_WORKER_POLL_INTERVAL", poll)
+    monkeypatch.setattr("opi.runtime.tasks.task_worker.settings.TASK_WORKER_POLL_INTERVAL", poll)
     return TaskWorker(task_service=None, cluster="c1")  # type: ignore[arg-type]
 
 

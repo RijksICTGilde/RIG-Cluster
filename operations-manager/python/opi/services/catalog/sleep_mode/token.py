@@ -14,11 +14,16 @@ import secrets
 from typing import Any
 
 from opi.services.catalog.sleep_mode.state import read as read_sleep_state
-from opi.utils.age import decrypt_age_content, encrypt_age_content_sync, get_decoded_project_private_key
+from opi.utils.age import (
+    decrypt_age_content,
+    encrypt_age_content_sync,
+    get_decoded_project_private_key,
+    get_project_public_key,
+)
 from opi.utils.api_keys import generate_api_key
 
 #: The env-var the waker reads its token from (matches the Secret key in secret.py).
-WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"  # noqa: S105  # naam van de env-var, geen secret
+WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"  # noqa: S105  # the name of the env var, not a secret
 
 
 def mint() -> str:
@@ -28,7 +33,7 @@ def mint() -> str:
 
 def encrypt(plain_token: str, project_data: dict[str, Any]) -> str:
     """AGE-encrypt a token with the project's public key for storage in the file."""
-    public_key = project_data.get("config", {}).get("age-public-key")
+    public_key = get_project_public_key(project_data)
     if not public_key:
         raise ValueError("Project public key required to encrypt the wake token")
     return encrypt_age_content_sync(plain_token, public_key)

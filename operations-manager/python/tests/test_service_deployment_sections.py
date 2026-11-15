@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentPageContext
 from opi.services.catalog.shared.backups import collect_backups_sections
 from opi.services.registry import collect_deployment_page_sections
@@ -165,8 +165,8 @@ SERVICE_ROUTES = (
 
 
 def test_service_owned_routes_are_mounted_exactly_once() -> None:
-    """Services that share a block hand back the SAME router object, so a shared route
-    is registered once instead of once per owner."""
+    """A block that lazy-loads or opens a modal must be able to reach the route that fills
+    it, and exactly once: a second registration would answer the same path twice."""
     from opi.web.router import web_router
 
     paths = [route.path for route in web_router.routes]

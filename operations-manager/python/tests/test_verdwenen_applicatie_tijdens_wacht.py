@@ -7,7 +7,7 @@ uit de argo-repo gehaald, en de projectbrede taak begon er om 09:22:02 op te wac
 ArgoCD antwoordde vanaf 09:22:16 dat de app niet bestaat, en de wachtlus las dat 144
 keer als een tijdelijke leesfout tot de time-out vol was.
 
-Deze test houdt de uitkomst vast: de wacht meldt ``ApplicationGone``, de deployment
+Deze test houdt de uitkomst vast: de wacht meldt ``ApplicationGoneError``, de deployment
 komt als ``removed`` uit ``_refresh_and_wait``, en de verwerking daarvan levert nul
 sync-fouten op - de run slaagt.
 """
@@ -16,8 +16,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_manager import TaskStatus
-from opi.manager.argo_manager import ApplicationGone
+from opi.manager.argo_manager import ApplicationGoneError
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
 
 DEPLOYMENT = {
     "name": "pr-244",
@@ -30,10 +30,10 @@ DEPLOYMENT = {
 def _progress() -> Any:
     """Een echte voortgangsmanager zonder zijn periodieke flush-lus."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",
@@ -79,7 +79,7 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, wacht_fout: BaseExcepti
     # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
     # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
     argo_connector.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo_connector)
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: argo_connector)
 
     monkeypatch.setattr(
         manager._argo_manager, "wait_for_application_synced", AsyncMock(side_effect=wacht_fout), raising=False
@@ -93,7 +93,7 @@ def _subtasks(progress: Any) -> list[tuple[str, str]]:
 
 @pytest.mark.asyncio
 async def test_verdwenen_applicatie_levert_geen_syncfout_op(monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = _project_manager(monkeypatch, wacht_fout=ApplicationGone("Application 'mpfb-8wh-pr-244' verdween"))
+    manager = _project_manager(monkeypatch, wacht_fout=ApplicationGoneError("Application 'mpfb-8wh-pr-244' verdween"))
     progress = _progress()
 
     geslaagd = await manager.process_project_from_git("projects/mpfb-8wh.yaml", task_progress_manager=progress)
@@ -109,7 +109,7 @@ async def test_verdwenen_applicatie_levert_geen_syncfout_op(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_een_echte_syncfout_blijft_wel_falen(monkeypatch: pytest.MonkeyPatch) -> None:
-    """De tegenproef: alleen ApplicationGone is onschuldig, een gewone RuntimeError niet."""
+    """De tegenproef: alleen ApplicationGoneError is onschuldig, een gewone RuntimeError niet."""
     manager = _project_manager(monkeypatch, wacht_fout=RuntimeError("Application 'mpfb-8wh-pr-244' is degraded"))
     progress = _progress()
 

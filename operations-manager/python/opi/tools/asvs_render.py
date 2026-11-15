@@ -1,19 +1,20 @@
-"""De ASVS-zelfbeoordeling lezen, toetsen en als afvinkdocument renderen.
+"""Read the ASVS self-assessment, weigh it, and render it as a checklist document.
 
-``architecture/asvs-5.0-eisen.yaml`` is de meetlat: de ASVS-eisen op L1 en L2, letterlijk
-uit de standaard. ``architecture/asvs-zelfbeoordeling.yaml`` is ons oordeel per eis, en
-``docs/security/asvs-zelfbeoordeling.md`` volgt daaruit en wordt nooit met de hand bijgewerkt.
+``architecture/asvs-5.0-eisen.yaml`` is the yardstick: the ASVS requirements on L1 and
+L2, verbatim from the standard. ``architecture/asvs-zelfbeoordeling.yaml`` is our
+assessment per requirement, and ``docs/security/asvs-zelfbeoordeling.md`` follows from
+those two and is never edited by hand.
 
-Wat deze toets bewijst: elke eis op het gekozen niveau heeft precies een oordeel, en een
-oordeel dat naar een automatische toets wijst noemt een toets die echt bestaat. Een regel
-die naar een testbestand of een workflow-job verwijst die er niet (meer) is, is geen
-dekking maar een belofte.
+What this gate proves: every requirement on the chosen level has exactly one assessment,
+and an assessment that points at an automated test names a test that really exists. A
+row pointing at a test file or a workflow job that is not (or no longer) there is a
+promise, not coverage.
 
-Gebruik::
+Usage::
 
-    uv run python -m opi.tools.asvs_render           # schrijf het afvinkdocument
-    uv run python -m opi.tools.asvs_render --check    # exit 1 bij een gat of drift
-    uv run python -m opi.tools.asvs_render --stdout   # print, schrijf niet
+    uv run python -m opi.tools.asvs_render           # write the checklist document
+    uv run python -m opi.tools.asvs_render --check    # exit 1 on a gap or on drift
+    uv run python -m opi.tools.asvs_render --stdout   # print it, do not write
 """
 
 from __future__ import annotations
@@ -24,10 +25,11 @@ from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-#: Repo-root: vier mappen boven dit bestand (opi/tools -> opi -> python -> operations-manager).
+from opi.utils.yaml_util import load_yaml_safe
+
+#: Repo root: four directories above this file (opi/tools -> opi -> python -> operations-manager).
 REPO_ROOT = Path(__file__).resolve().parents[4]
 EISEN = REPO_ROOT / "architecture" / "asvs-5.0-eisen.yaml"
 BEOORDELING = REPO_ROOT / "architecture" / "asvs-zelfbeoordeling.yaml"
@@ -35,7 +37,7 @@ AFVINKLIJST = REPO_ROOT / "docs" / "security" / "asvs-zelfbeoordeling.md"
 
 
 class Status(StrEnum):
-    """Hoe een eis is afgedekt."""
+    """How a requirement is covered."""
 
     TOETS = "toets"
     PLAN = "plan"
@@ -43,8 +45,8 @@ class Status(StrEnum):
     NVT = "nvt"
 
 
-#: Hoe elke status in het document heet.
-STATUSNAAM = {
+#: What each status is called in the document.
+STATUS_LABEL = {
     Status.TOETS: "automatische toets",
     Status.PLAN: "in een plan",
     Status.HANDWERK: "handwerk",
@@ -53,7 +55,7 @@ STATUSNAAM = {
 
 
 class Eis(BaseModel):
-    """Een ASVS-eis, letterlijk uit de standaard."""
+    """An ASVS requirement, verbatim from the standard."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -65,7 +67,7 @@ class Eis(BaseModel):
 
 
 class Oordeel(BaseModel):
-    """Ons oordeel over een eis: waar de dekking zit, of dat hij handwerk blijft."""
+    """Our assessment of a requirement: where the coverage is, or that it stays manual."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -77,65 +79,65 @@ class Oordeel(BaseModel):
     toelichting: str | None = None
 
 
-def laad_eisen(pad: Path = EISEN) -> list[Eis]:
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8"))
-    return [Eis(**eis) for eis in inhoud["eisen"]]
+def load_eisen(path: Path = EISEN) -> list[Eis]:
+    content = load_yaml_safe(path.read_text(encoding="utf-8"))
+    return [Eis(**eis) for eis in content["eisen"]]
 
 
-def laad_beoordeling(pad: Path = BEOORDELING) -> tuple[str, list[Oordeel]]:
-    """Het gekozen niveau en de oordelen."""
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8"))
-    return str(inhoud["niveau"]), [Oordeel(**regel) for regel in inhoud["oordelen"]]
+def load_beoordeling(path: Path = BEOORDELING) -> tuple[str, list[Oordeel]]:
+    """The chosen level and the assessments."""
+    content = load_yaml_safe(path.read_text(encoding="utf-8"))
+    return str(content["niveau"]), [Oordeel(**row) for row in content["oordelen"]]
 
 
-def toets_bestaat(verwijzing: str, wortel: Path = REPO_ROOT) -> bool:
-    """Of een genoemde toets bestaat.
+def referenced_test_exists(reference: str, root: Path = REPO_ROOT) -> bool:
+    """Whether a named test exists.
 
-    Een verwijzing is een pad (``operations-manager/python/tests/test_csrf_enforcement.py``)
-    of een pad met een job erachter (``.github/workflows/security.yml#semgrep``). Bij een
-    job wordt ook gekeken of die job in de workflow staat.
+    A reference is a path (``operations-manager/python/tests/test_csrf_enforcement.py``) or a
+    path with a job behind it (``.github/workflows/security.yml#semgrep``). With a job, the
+    workflow is also checked for that job.
     """
-    pad, _, job = verwijzing.partition("#")
-    bestand = wortel / pad
-    if not bestand.is_file():
+    path, _, job = reference.partition("#")
+    file_path = root / path
+    if not file_path.is_file():
         return False
     if not job:
         return True
-    inhoud = yaml.safe_load(bestand.read_text(encoding="utf-8")) or {}
-    return job in (inhoud.get("jobs") or {})
+    content = load_yaml_safe(file_path.read_text(encoding="utf-8")) or {}
+    return job in (content.get("jobs") or {})
 
 
-def meldingen(eisen: list[Eis], oordelen: list[Oordeel]) -> list[str]:
-    """Wat er aan de beoordeling mankeert, leeg als ze volledig en onderbouwd is."""
-    gevonden: list[str] = []
+def find_problems(eisen: list[Eis], oordelen: list[Oordeel]) -> list[str]:
+    """What is wrong with the assessment; empty when it is complete and substantiated."""
+    found: list[str] = []
     per_id: dict[str, list[Oordeel]] = {}
     for oordeel in oordelen:
         per_id.setdefault(oordeel.id, []).append(oordeel)
 
     ids = {eis.id for eis in eisen}
-    gevonden += [f"{eis_id}: geen oordeel, de eis is niet beoordeeld" for eis_id in sorted(ids - per_id.keys())]
-    gevonden += [
+    found += [f"{eis_id}: geen oordeel, de eis is niet beoordeeld" for eis_id in sorted(ids - per_id.keys())]
+    found += [
         f"{eis_id}: oordeel over een eis die niet op dit niveau in de standaard staat"
         for eis_id in sorted(per_id.keys() - ids)
     ]
-    gevonden += [
-        f"{eis_id}: {len(regels)} oordelen, dat moet er een zijn"
-        for eis_id, regels in sorted(per_id.items())
-        if len(regels) > 1
+    found += [
+        f"{eis_id}: {len(rows)} oordelen, dat moet er een zijn"
+        for eis_id, rows in sorted(per_id.items())
+        if len(rows) > 1
     ]
 
     for oordeel in oordelen:
-        gevonden += _bezwaren(oordeel)
-    return gevonden
+        found += _objections(oordeel)
+    return found
 
 
-def _bezwaren(oordeel: Oordeel) -> list[str]:
-    """Wat er mis is met een los oordeel."""
+def _objections(oordeel: Oordeel) -> list[str]:
+    """What is wrong with a single assessment."""
     if oordeel.status is Status.TOETS:
         if not oordeel.toets:
             return [f"{oordeel.id}: status toets zonder een genoemde toets"]
-        ontbrekend = [deel for deel in oordeel.toets.split() if not toets_bestaat(deel)]
-        return [f"{oordeel.id}: genoemde toets {deel} bestaat niet" for deel in ontbrekend]
+        missing = [part for part in oordeel.toets.split() if not referenced_test_exists(part)]
+        return [f"{oordeel.id}: genoemde toets {part} bestaat niet" for part in missing]
     if oordeel.status is Status.PLAN and not oordeel.plan:
         return [f"{oordeel.id}: status plan zonder een genoemd plan"]
     if oordeel.status is Status.HANDWERK and not oordeel.eigenaar:
@@ -145,10 +147,10 @@ def _bezwaren(oordeel: Oordeel) -> list[str]:
     return []
 
 
-def _dekking(oordeel: Oordeel) -> str:
-    """De kolom die zegt waar de dekking zit."""
+def _coverage_cell(oordeel: Oordeel) -> str:
+    """The column that says where the coverage is."""
     if oordeel.status is Status.TOETS:
-        return " ".join(f"`{deel}`" for deel in (oordeel.toets or "").split())
+        return " ".join(f"`{part}`" for part in (oordeel.toets or "").split())
     if oordeel.status is Status.PLAN:
         return oordeel.plan or ""
     if oordeel.status is Status.HANDWERK:
@@ -157,48 +159,48 @@ def _dekking(oordeel: Oordeel) -> str:
 
 
 def render_samenvatting(eisen: list[Eis], oordelen: list[Oordeel]) -> str:
-    """Per kapittel het aantal eisen per status."""
+    """The number of requirements per status, per chapter."""
     per_id = {oordeel.id: oordeel for oordeel in oordelen}
-    tellers: dict[str, Counter[Status]] = {}
+    counters: dict[str, Counter[Status]] = {}
     for eis in eisen:
-        tellers.setdefault(eis.kapittel, Counter())[per_id[eis.id].status] += 1
+        counters.setdefault(eis.kapittel, Counter())[per_id[eis.id].status] += 1
 
-    regels = [
+    rows = [
         "| Kapittel | Eisen | Automatische toets | In een plan | Handwerk | Niet van toepassing |",
         "|---|---|---|---|---|---|",
     ]
-    for kapittel, teller in tellers.items():
-        regels.append(
-            f"| {kapittel} | {sum(teller.values())} | {teller[Status.TOETS]} |"
-            f" {teller[Status.PLAN]} | {teller[Status.HANDWERK]} | {teller[Status.NVT]} |"
+    for kapittel, counter in counters.items():
+        rows.append(
+            f"| {kapittel} | {sum(counter.values())} | {counter[Status.TOETS]} |"
+            f" {counter[Status.PLAN]} | {counter[Status.HANDWERK]} | {counter[Status.NVT]} |"
         )
-    totaal = Counter(oordeel.status for oordeel in oordelen)
-    regels.append(
-        f"| **Totaal** | **{len(eisen)}** | **{totaal[Status.TOETS]}** | **{totaal[Status.PLAN]}** |"
-        f" **{totaal[Status.HANDWERK]}** | **{totaal[Status.NVT]}** |"
+    totals = Counter(oordeel.status for oordeel in oordelen)
+    rows.append(
+        f"| **Totaal** | **{len(eisen)}** | **{totals[Status.TOETS]}** | **{totals[Status.PLAN]}** |"
+        f" **{totals[Status.HANDWERK]}** | **{totals[Status.NVT]}** |"
     )
-    return "\n".join(regels)
+    return "\n".join(rows)
 
 
 def render_kapittels(eisen: list[Eis], oordelen: list[Oordeel]) -> str:
-    """Per kapittel een tabel met elke eis, zijn status en waar de dekking zit."""
+    """A table per chapter with every requirement, its status and where the coverage is."""
     per_id = {oordeel.id: oordeel for oordeel in oordelen}
-    delen = []
+    parts = []
     for kapittel in dict.fromkeys(eis.kapittel for eis in eisen):
-        delen.append(f"### {kapittel}\n")
-        delen.append("| Eis | Niveau | Status | Dekking | Eis uit de standaard |")
-        delen.append("|---|---|---|---|---|")
+        parts.append(f"### {kapittel}\n")
+        parts.append("| Eis | Niveau | Status | Dekking | Eis uit de standaard |")
+        parts.append("|---|---|---|---|---|")
         for eis in (eis for eis in eisen if eis.kapittel == kapittel):
             oordeel = per_id[eis.id]
-            delen.append(
-                f"| {eis.id} | L{eis.niveau} | {STATUSNAAM[oordeel.status]} | {_dekking(oordeel)} | {eis.eis} |"
+            parts.append(
+                f"| {eis.id} | L{eis.niveau} | {STATUS_LABEL[oordeel.status]} | {_coverage_cell(oordeel)} | {eis.eis} |"
             )
-        delen.append("")
-    return "\n".join(delen)
+        parts.append("")
+    return "\n".join(parts)
 
 
 def render(eisen: list[Eis], niveau: str, oordelen: list[Oordeel]) -> str:
-    """Het volledige afvinkdocument, deterministisch uit de twee bronbestanden."""
+    """The complete checklist document, deterministic from the two source files."""
     return "\n".join(
         [
             "# ASVS-zelfbeoordeling van ZAD",
@@ -233,25 +235,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stdout", action="store_true", help="print het document, schrijf het niet")
     args = parser.parse_args(argv)
 
-    eisen = laad_eisen(EISEN)
-    niveau, oordelen = laad_beoordeling(BEOORDELING)
+    eisen = load_eisen(EISEN)
+    niveau, oordelen = load_beoordeling(BEOORDELING)
 
-    # Eerst de meldingen: zonder een oordeel per eis is er niets te renderen, en dan hoort
-    # hier de melding te staan en niet een KeyError uit render().
-    gevonden = meldingen(eisen, oordelen)
-    if gevonden:
-        sys.stderr.write("ASVS-zelfbeoordeling heeft gaten:\n" + "".join(f"  - {m}\n" for m in gevonden))
+    # The problems first: without an assessment per requirement there is nothing to render,
+    # and the report belongs here instead of as a KeyError out of render().
+    found = find_problems(eisen, oordelen)
+    if found:
+        sys.stderr.write("ASVS-zelfbeoordeling heeft gaten:\n" + "".join(f"  - {m}\n" for m in found))
         return 1
 
-    gerenderd = render(eisen, niveau, oordelen)
+    rendered = render(eisen, niveau, oordelen)
 
     if args.stdout:
-        sys.stdout.write(gerenderd)
+        sys.stdout.write(rendered)
         return 0
 
     if args.check:
-        huidig = AFVINKLIJST.read_text(encoding="utf-8") if AFVINKLIJST.exists() else ""
-        if huidig != gerenderd:
+        current = AFVINKLIJST.read_text(encoding="utf-8") if AFVINKLIJST.exists() else ""
+        if current != rendered:
             sys.stderr.write(
                 f"{AFVINKLIJST} loopt achter op de beoordeling.\nGenereer opnieuw: task asvs-afvinklijst\n"
             )
@@ -259,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"ASVS-zelfbeoordeling is volledig: {len(eisen)} eisen, elk met een oordeel\n")
         return 0
 
-    AFVINKLIJST.write_text(gerenderd, encoding="utf-8")
+    AFVINKLIJST.write_text(rendered, encoding="utf-8")
     sys.stdout.write(f"schreef {AFVINKLIJST}\n")
     return 0
 

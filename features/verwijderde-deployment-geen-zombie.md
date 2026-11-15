@@ -96,9 +96,9 @@ van [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-ka
 
 | Wat | Waar |
 |---|---|
-| De query naar open delete-taken | `opi/core/async_task_service.py`, `find_open_delete_deployments` |
+| De query naar open delete-taken | `opi/services/tasks/async_task_service.py`, `find_open_delete_deployments` |
 | Het overslaan in de verwerkingsronde | `opi/manager/project_manager.py`, `process_project` |
-| Het overslaan in de ArgoCD-wacht | `opi/manager/project_manager.py`, `process_project_from_git` |
+| Het overslaan in de ArgoCD-wacht | `opi/manager/project/rollout.py`, `DeploymentRollout.run` |
 | De grendel voor stap 8 | `opi/manager/delete_project_manager.py`, `delete_deployment` |
 | Tests | `tests/test_zombie_deployment.py` |
 

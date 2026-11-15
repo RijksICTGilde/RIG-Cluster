@@ -18,7 +18,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.simple_background import _monitor_argocd_and_deployment
+from opi.runtime.tasks.simple_background import _monitor_argocd_and_deployment
 
 
 def _app(name: str, sync: str = "Synced", health: str = "Healthy") -> dict[str, Any]:
@@ -47,7 +47,7 @@ class RecordingProgress:
 @pytest.fixture(autouse=True)
 def _no_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
     """The monitor sleeps ~43s in total; none of that is what we are testing."""
-    monkeypatch.setattr("opi.core.simple_background.asyncio.sleep", AsyncMock())
+    monkeypatch.setattr("opi.runtime.tasks.simple_background.asyncio.sleep", AsyncMock())
 
 
 async def _run(apps: list[dict[str, Any]], deployment_names: list[str] | None = None) -> RecordingProgress:
@@ -75,7 +75,7 @@ async def test_all_healthy_completes_without_notices() -> None:
 async def test_a_crashing_tenant_app_is_not_our_failure(caplog) -> None:
     """Degraded means the application's own pods fail. Reporting that as a failed
     task contradicted the wizard's own text and produced a push notification."""
-    with caplog.at_level(logging.WARNING, logger="opi.core.simple_background"):
+    with caplog.at_level(logging.WARNING, logger="opi.runtime.tasks.simple_background"):
         progress = await _run([_app("wies-pr-478", health="Degraded")])
 
     assert progress.failed == [], "a crashing app must not fail the deploy step"
@@ -90,7 +90,7 @@ async def test_a_crashing_tenant_app_is_not_our_failure(caplog) -> None:
 
 
 async def test_a_slow_sync_names_what_it_was_waiting_for(caplog) -> None:
-    with caplog.at_level(logging.WARNING, logger="opi.core.simple_background"):
+    with caplog.at_level(logging.WARNING, logger="opi.runtime.tasks.simple_background"):
         progress = await _run([_app("wies-main", sync="OutOfSync", health="Progressing")])
 
     assert progress.failed == []

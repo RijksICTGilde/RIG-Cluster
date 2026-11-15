@@ -30,10 +30,12 @@ from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterable, Iterator
+
+    from prometheus_client.core import Metric
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
-# Zodat een test de scan van kindprocessen op een nep-/proc kan laten lopen.
+# So a test can run the child-process scan against a fake /proc.
 _PROC = "/proc"
 
 # Peak memory tracking state (updated by background sampler every second)
@@ -45,7 +47,6 @@ _sample_task: asyncio.Task[None] | None = None
 logger = logging.getLogger(__name__)
 
 
-# --- Rollout phase timing ---
 # A rollout task takes tens of seconds while the ArgoCD sync inside it takes a few, so
 # the question is always "which phase". These are the phases a rollout is divided into;
 # the list is closed so a dashboard can enumerate them.
@@ -116,6 +117,16 @@ def rollout_phase(phase: str) -> Iterator[None]:
         observe_rollout_phase(phase, time.monotonic() - started)
 
 
+#: Producers of extra metric families, filled by the layer that owns the state. Core
+#: reads nothing upward: the owner registers its own producer.
+_metric_sources: list[Callable[[], Iterable[Metric]]] = []
+
+
+def register_metric_source(source: Callable[[], Iterable[Metric]]) -> None:
+    """Add a producer of metric families to the OPI scrape."""
+    _metric_sources.append(source)
+
+
 class OPICollector(Collector):
     """Custom Prometheus collector for OPI internal state.
 
@@ -123,111 +134,7 @@ class OPICollector(Collector):
     are always fresh without needing a background update loop.
     """
 
-    def collect(self):
-        # --- Project cache ---
-        gauge = GaugeMetricFamily(
-            "opi_projects_cached",
-            "Number of projects in ProjectService in-memory cache",
-        )
-        try:
-            from opi.services.project_service import ProjectService
-
-            if ProjectService._instance is not None:
-                gauge.add_metric([], len(ProjectService._instance._projects))
-        except Exception:
-            logger.debug("Failed to collect project cache metrics", exc_info=True)
-        yield gauge
-
-        # --- Task manager state ---
-        task_projects = GaugeMetricFamily(
-            "opi_task_projects_tracked",
-            "Number of projects tracked in task manager",
-        )
-        task_managers = GaugeMetricFamily(
-            "opi_task_managers_active",
-            "Number of active TaskProgressManager instances",
-        )
-        try:
-            from opi.core.task_manager import _project_managers, _projects
-
-            task_projects.add_metric([], len(_projects))
-            task_managers.add_metric([], len(_project_managers))
-        except Exception:
-            logger.debug("Failed to collect task manager metrics", exc_info=True)
-        yield task_projects
-        yield task_managers
-
-        # --- WebSocket connections ---
-        ws_global = GaugeMetricFamily(
-            "opi_websocket_connections_global",
-            "Number of active global WebSocket connections",
-        )
-        ws_users = GaugeMetricFamily(
-            "opi_websocket_connections_users",
-            "Number of distinct users with active WebSocket connections",
-        )
-        try:
-            from opi.api.logs_websocket_router import (
-                _active_connections,
-                _global_connections,
-            )
-
-            ws_global.add_metric([], len(_global_connections))
-            ws_users.add_metric([], len(_active_connections))
-        except Exception:
-            logger.debug("Failed to collect WebSocket metrics", exc_info=True)
-        yield ws_global
-        yield ws_users
-
-        # --- Bewijsmiddelen per project (RC-322) ---
-        # Zonder deze telling is "de projectsleutel verdwijnt zodra niemand hem meer
-        # gebruikt" een wens. De labelwaarde ``projectsleutel`` is de oude weg; een token
-        # telt mee onder ``persoon`` of ``service-account`` en dus niet als oud.
-        credentials = CounterMetricFamily(
-            "opi_api_credential_calls",
-            "Geslaagde legitimaties per project en per soort bewijsmiddel",
-            labels=["project", "credential"],
-        )
-        try:
-            from opi.api.principal import gebruik_per_project
-
-            for (project, soort), aantal in gebruik_per_project().items():
-                credentials.add_metric([project, soort], aantal)
-        except Exception:
-            logger.debug("Failed to collect credential metrics", exc_info=True)
-        yield credentials
-
-        # --- Mislukte auditschrijfacties ---
-        #
-        # record_action gooit niets naar de aanroeper, dus zonder deze teller zou een
-        # kapotte audit stil zijn. De naam volgt het huisvoorvoegsel opi_, niet het
-        # zad_ uit het ontwerp.
-        audit_failures = CounterMetricFamily(
-            "opi_audit_write_failures",
-            "Mislukte schrijfacties naar het audittrail sinds de start",
-        )
-        try:
-            from opi.services.audit import write_failures
-
-            audit_failures.add_metric([], write_failures())
-        except Exception:
-            logger.debug("Failed to collect audit write failures", exc_info=True)
-        yield audit_failures
-
-        # --- Rate limiter ---
-        rl_clients = GaugeMetricFamily(
-            "opi_rate_limiter_tracked_clients",
-            "Number of clients tracked by the rate limiter",
-        )
-        try:
-            from opi.api.router import subdomain_check_rate_limiter
-
-            rl_clients.add_metric([], len(subdomain_check_rate_limiter._tokens))
-        except Exception:
-            logger.debug("Failed to collect rate limiter metrics", exc_info=True)
-        yield rl_clients
-
-        # --- Database pools ---
+    def collect(self) -> Iterator[Metric]:
         db_active = GaugeMetricFamily(
             "opi_database_pool_active_connections",
             "Number of active database pool connections",
@@ -246,33 +153,13 @@ class OPICollector(Collector):
                     stats = pool.get_connection_stats()
                     db_active.add_metric([name], stats.get("tracked_active", 0))
                     db_size.add_metric([name], stats.get("pool_size", 0))
-                except Exception:
+                except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
                     logger.debug("Failed to collect stats for pool %s", name, exc_info=True)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect database pool metrics", exc_info=True)
         yield db_active
         yield db_size
 
-        # --- Background monitoring tasks ---
-        bg_tasks = GaugeMetricFamily(
-            "opi_background_tasks_active",
-            "Number of active asyncio background monitoring tasks",
-        )
-        try:
-            from opi.core.task_manager import (
-                _active_app_monitoring_tasks,
-                _active_monitoring_tasks,
-            )
-
-            active_count = sum(1 for t in _active_monitoring_tasks.values() if not t.done()) + sum(
-                1 for t in _active_app_monitoring_tasks.values() if not t.done()
-            )
-            bg_tasks.add_metric([], active_count)
-        except Exception:
-            logger.debug("Failed to collect background task metrics", exc_info=True)
-        yield bg_tasks
-
-        # --- GC stats ---
         gc_objects = GaugeMetricFamily(
             "opi_gc_objects",
             "Number of objects tracked by Python garbage collector",
@@ -281,11 +168,10 @@ class OPICollector(Collector):
         try:
             for gen, count in enumerate(gc.get_count()):
                 gc_objects.add_metric([str(gen)], count)
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect GC metrics", exc_info=True)
         yield gc_objects
 
-        # --- Container cgroup memory (what Kubernetes sees) ---
         cgroup_mem = GaugeMetricFamily(
             "opi_container_memory_bytes",
             "Total container memory from cgroup including subprocesses",
@@ -300,12 +186,11 @@ class OPICollector(Collector):
                 break
             except FileNotFoundError:
                 continue
-            except Exception:
+            except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
                 logger.debug("Failed to read cgroup memory from %s", cgroup_path, exc_info=True)
                 break
         yield cgroup_mem
 
-        # --- Child process memory (subprocess RSS at scrape time) ---
         child_rss = GaugeMetricFamily(
             "opi_child_process_rss_bytes",
             "RSS memory of active child processes",
@@ -333,20 +218,19 @@ class OPICollector(Collector):
                         continue
                     rss_pages = int(fields_after_comm[21])
                     rss_bytes = rss_pages * _PAGE_SIZE
-                    # Alleen de procesnaam, nooit de commandoregel: die kan geheimen bevatten
-                    # en een labelwaarde komt in Prometheus en Grafana terecht (BIO2 8.15).
+                    # The process name only, never the command line: that can hold secrets,
+                    # and a label value ends up in Prometheus and Grafana (BIO2 8.15).
                     comm = stat[stat.find("(") + 1 : close_paren]
                     child_rss.add_metric([entry, comm], rss_bytes)
                     num_children += 1
                 except FileNotFoundError, IndexError, ValueError, PermissionError:
                     continue
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to scan child processes", exc_info=True)
         child_count.add_metric([], num_children)
         yield child_rss
         yield child_count
 
-        # --- Peak memory (sampled every second by background task) ---
         peak_mem = GaugeMetricFamily(
             "opi_peak_memory_bytes",
             "Peak container memory since last reset (sampled every second)",
@@ -361,36 +245,33 @@ class OPICollector(Collector):
         peak_ts.add_metric([], _peak_memory_timestamp)
         yield peak_ts
 
-        # --- Event-loop lag ---
-        #
-        # Een counter plus een momentopname, geen maximum-sinds-de-vorige-scrape: /metrics
-        # is open, dus een waarde die bij het lezen wegvalt zou door elke andere lezer voor
-        # Prometheus weggenomen worden. increase() over de counter geeft de piek terug.
-        lag_totaal = CounterMetricFamily(
+        # A counter plus a snapshot, not a maximum-since-the-previous-scrape: /metrics is
+        # open, so a value that disappears on reading would be consumed by any other reader
+        # before Prometheus got it. increase() over the counter gives the peak back.
+        lag_total = CounterMetricFamily(
             "opi_event_loop_lag_seconds_total",
             "Cumulative asyncio event loop lag in seconds",
         )
-        lag_nu = GaugeMetricFamily(
+        lag_now = GaugeMetricFamily(
             "opi_event_loop_lag_current_seconds",
             "Asyncio event loop lag at scrape time, for a stall still in progress",
         )
-        stilstanden = CounterMetricFamily(
+        stalls = CounterMetricFamily(
             "opi_event_loop_stalls_total",
             "Number of event loop stalls above EVENT_LOOP_LAG_WARNING_SECONDS",
         )
         try:
             from opi.core import loop_watchdog
 
-            lag_totaal.add_metric([], loop_watchdog.totale_lag())
-            lag_nu.add_metric([], loop_watchdog.huidige_lag())
-            stilstanden.add_metric([], loop_watchdog.aantal_stilstanden())
-        except Exception:
+            lag_total.add_metric([], loop_watchdog.total_lag())
+            lag_now.add_metric([], loop_watchdog.current_lag())
+            stalls.add_metric([], loop_watchdog.stall_count())
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to collect event loop lag", exc_info=True)
-        yield lag_totaal
-        yield lag_nu
-        yield stilstanden
+        yield lag_total
+        yield lag_now
+        yield stalls
 
-        # --- Per-connector subprocess memory deltas ---
         connector_delta = GaugeMetricFamily(
             "opi_connector_max_memory_delta_bytes",
             "Maximum memory delta observed during subprocess calls per connector",
@@ -409,83 +290,15 @@ class OPICollector(Collector):
             connector_calls.add_metric([name], count)
         yield connector_calls
 
-        # --- Application pods that cannot pull their image ---
-        #
-        # The fleet total is emitted ALWAYS, zero included. It is what the alert reads,
-        # and a metric that only appears once something is broken cannot be told apart
-        # from a metric that is not being produced at all.
-        pull_failures = GaugeMetricFamily(
-            "opi_image_pull_failing_pods",
-            "Application pods on this cluster whose container cannot pull its image",
-        )
-        pull_by_reason = GaugeMetricFamily(
-            "opi_image_pull_failing_pods_by_reason",
-            "The same pods, by namespace and by what the registry answered",
-            # ``project_namespace``, not ``namespace``: the scrape adds a ``namespace``
-            # of its own (the one OPI runs in) and a collision is renamed to
-            # ``exported_namespace`` behind your back.
-            labels=["project_namespace", "reason"],
-        )
-        # When the count was last taken, in the shape of opi_peak_memory_timestamp above.
-        # The count alone cannot say whether it means "nothing is failing" or "nobody
-        # looked": the snapshot starts empty, so a cluster where the cluster-wide pod read
-        # is refused reports a clean zero forever. 0 here means no pass has ever succeeded.
-        pull_observed = GaugeMetricFamily(
-            "opi_image_pull_observed_timestamp",
-            "Unix timestamp of the last image-pull observation that reached the cluster",
-        )
-        total = 0
-        observed_at = 0.0
-        by_reason: dict[tuple[str, str], int] = {}
-        try:
-            from opi.services.image_pull_report import (
-                image_pull_failure_count,
-                image_pull_failure_counts,
-                image_pull_observed_timestamp,
-            )
+        for source in _metric_sources:
+            try:
+                families = list(source())
+            except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
+                logger.debug("Failed to collect from %s", getattr(source, "__name__", source), exc_info=True)
+                continue
+            yield from families
 
-            total = image_pull_failure_count()
-            by_reason = image_pull_failure_counts()
-            observed_at = image_pull_observed_timestamp()
-        except Exception:
-            logger.debug("Failed to collect image-pull metrics", exc_info=True)
-        pull_failures.add_metric([], total)
-        for (namespace, reason), count in by_reason.items():
-            pull_by_reason.add_metric([namespace, reason], count)
-        pull_observed.add_metric([], observed_at)
-        yield pull_failures
-        yield pull_by_reason
-        yield pull_observed
-
-        # --- Scheduled backups that are not happening ---
-        #
-        # One series per deployment with a schedule, refreshed by the backup scheduler on
-        # every tick. The timestamp is 0 while no scheduled snapshot has ever been seen,
-        # in the shape of opi_image_pull_observed_timestamp above: a gauge that is simply
-        # absent cannot be told apart from a backup that is simply late.
-        backup_last_success = GaugeMetricFamily(
-            "opi_backup_last_scheduled_success_timestamp_seconds",
-            "Unix timestamp of the last successful scheduled backup per deployment (0: never seen one)",
-            labels=["project", "deployment"],
-        )
-        backup_unknown = GaugeMetricFamily(
-            "opi_backup_schedule_unknown",
-            "1 when the last scheduler tick could not ask Kopia about this deployment",
-            labels=["project", "deployment"],
-        )
-        try:
-            from opi.services.backup_schedule_report import backup_schedule_states
-
-            for state in backup_schedule_states():
-                labels = [state.project, state.deployment]
-                backup_last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
-                backup_unknown.add_metric(labels, 1 if state.unknown_streak else 0)
-        except Exception:
-            logger.debug("Failed to collect backup schedule metrics", exc_info=True)
-        yield backup_last_success
-        yield backup_unknown
-
-    def describe(self):
+    def describe(self) -> list[Metric]:
         """Return empty description; metrics are generated dynamically."""
         return []
 
@@ -497,7 +310,7 @@ class TracmallocCollector(Collector):
     Has ~10-30% memory overhead, so off by default.
     """
 
-    def collect(self):
+    def collect(self) -> Iterator[Metric]:
         if not tracemalloc.is_tracing():
             return
 
@@ -529,7 +342,7 @@ class TracmallocCollector(Collector):
 
         yield gauge
 
-    def describe(self):
+    def describe(self) -> list[Metric]:
         """Return empty description; metrics are generated dynamically."""
         return []
 
@@ -566,7 +379,7 @@ def _read_cgroup_memory() -> int | None:
                 return int(f.read().strip())
         except FileNotFoundError:
             continue
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             return None
     return None
 
@@ -580,7 +393,7 @@ async def _peak_memory_sampler() -> None:
             if mem is not None and mem > _peak_memory_bytes:
                 _peak_memory_bytes = mem
                 _peak_memory_timestamp = time.time()
-        except Exception:
+        except Exception:  # noqa: BLE001  # a scrape must never fail on one metric
             logger.debug("Failed to sample cgroup memory", exc_info=True)
         await asyncio.sleep(1)
 
@@ -606,7 +419,6 @@ def stop_peak_memory_tracking() -> None:
     _sample_task = None
 
 
-# --- Per-connector subprocess memory tracking ---
 # Records the max memory delta observed per connector during subprocess calls.
 # Key: connector name (e.g. "git", "kubectl", "sops"), Value: max delta in bytes.
 _connector_max_memory_delta: dict[str, int] = {}

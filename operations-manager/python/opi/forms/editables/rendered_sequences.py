@@ -1,41 +1,35 @@
-"""Welke reeksen het formulier daadwerkelijk heeft getekend.
+"""Which sequences the form actually rendered.
 
-Een reeks die de gebruiker leegmaakt en een reeks die het formulier nooit toonde,
-komen op precies dezelfde manier terug: er staat niets over in de inzending. De
-verwerker maakte daar tot nu toe een lijst van, en schreef in beide gevallen ``[]``.
-Voor het eerste geval is dat wat de gebruiker vroeg; voor het tweede is het
-gegevensverlies -- in productie zijn zo ``additional-clients``-vermeldingen
-verdwenen.
+A sequence the user emptied and a sequence the form never showed come back in exactly the same
+way: the submission says nothing about either. Writing ``[]`` for both is what the user asked
+for in the first case and data loss in the second.
 
-De vorm die daarbij past is dezelfde als in ``wizard/write_set.py``: leid het af van
-de stroom, in plaats van veldnamen op te sommen. Het formulier is de stroom, dus het
-formulier zegt het zelf: elke gerenderde reeks stuurt een verborgen veld met haar
-eigen pad mee. Staat het pad in die lijst, dan betekent "geen items" leeggemaakt.
-Staat het er niet in, dan ging deze sectie er niet over en blijft de opgeslagen
-waarde staan.
+So the form says it itself: every rendered sequence sends a hidden field carrying its own path.
+Is the path in that list, then "no items" means emptied. Is it not, then this section was not
+about it and the stored value stays.
 
-Draagt de inzending het veld helemaal niet, dan is er geen uitspraak gedaan (de
-eindinzending van de wizard geeft de samengevoegde projectgegevens als "inzending"
-mee, en die kent geen formuliervelden). Dan blijft het oude gedrag gelden.
+Does the submission not carry the field at all, then no statement was made (the wizard's final
+submission passes the merged project data as "submission", and that knows no form fields), and
+the old behaviour holds.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-#: Naam van het verborgen veld dat elke gerenderde reeks meestuurt. Met ``[]`` erachter
-#: in het formulier, zodat json-enc de haakjes wegstreept en de meerdere waarden als
-#: lijst aankomen (dezelfde route die ``services[]`` al loopt).
-GERENDERDE_REEKSEN_VELD = "_gerenderde-reeksen"
+#: Name of the hidden field every rendered sequence sends along. With ``[]`` behind it in the
+#: form, so json-enc strips the brackets and the several values arrive as a list (the same route
+#: ``services[]`` already takes).
+RENDERED_SEQUENCES_FIELD = "_gerenderde-reeksen"
 
 
 def rendered_sequence_paths(submitted: dict[str, Any]) -> set[str] | None:
-    """De paden van de reeksen die dit formulier tekende, of None als het niets zegt.
+    """The paths of the sequences this form rendered, or None when it says nothing.
 
-    Bij een enkele gerenderde reeks levert htmx een string in plaats van een lijst;
-    beide vormen komen hier binnen.
+    With a single rendered sequence htmx delivers a string instead of a list; both forms
+    arrive here.
     """
-    raw = submitted.get(GERENDERDE_REEKSEN_VELD)
+    raw = submitted.get(RENDERED_SEQUENCES_FIELD)
     if isinstance(raw, str):
         return {raw}
     if isinstance(raw, list):
@@ -44,10 +38,10 @@ def rendered_sequence_paths(submitted: dict[str, Any]) -> set[str] | None:
 
 
 def sequence_was_not_drawn(submitted: dict[str, Any], *paths: str) -> bool:
-    """Of de inzending zegt dat geen van *paths* op het scherm stond.
+    """Whether the submission says none of *paths* was on the screen.
 
-    *paths* zijn de vormen waarin dezelfde reeks kan heten: het echte yaml_path en,
-    bij een gevirtualiseerde reeks, het pad waaronder het formulier hem post.
+    *paths* are the forms the same sequence can go by: the real yaml_path and, for a
+    virtualized sequence, the path the form posts it under.
     """
     drawn = rendered_sequence_paths(submitted)
     if drawn is None:

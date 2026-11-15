@@ -43,8 +43,6 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.catalog.base import (
     APPLICATION_CONTAINER_NAME,
     SERVICE_ROLE_LABEL_KEY,
@@ -55,13 +53,16 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.deployment_health import deployment_health_service
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
+from opi.services.project import Project
+from opi.services.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
+from opi.services.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
-    from opi.core.async_task_service import AsyncTaskService
+    from opi.services.tasks.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -212,11 +213,6 @@ def _record_oom_tune_attempt(project_name: str, deployment_name: str) -> int:
     return _oom_tune_attempts[key]
 
 
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class PodHealthResult:
     """Result of a unified pod health check for one component."""
@@ -253,8 +249,8 @@ class ComponentFailure:
 def component_health_from_oom_failures(failures: list[ComponentFailure]) -> dict[str, ComponentHealth]:
     """Turn OOM failures into the observation hook's input, keyed by component reference.
 
-    Carries the pod generation along: without it the hook cannot tell this evidence from
-    the next pod's and tunes twice on one OOM (toets-hn7/pr-103).
+    Carries the pod generation along: without it the hook cannot tell this evidence from the
+    next pod's and tunes twice on one OOM.
     """
     return {
         (f.component_reference or f.component_name): ComponentHealth(
@@ -267,7 +263,7 @@ def component_health_from_oom_failures(failures: list[ComponentFailure]) -> dict
 class DeploymentHealthError(Exception):
     """Raised when pod health issues are detected during deployment polling."""
 
-    def __init__(self, failures: list[ComponentFailure], namespace: str):
+    def __init__(self, failures: list[ComponentFailure], namespace: str) -> None:
         self.failures = failures
         self.namespace = namespace
         summary = "; ".join(f"{f.component_name}: {f.failure_type}" for f in failures)
@@ -372,7 +368,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     result = PodHealthResult(component_name=unique_name)
     kubectl = KubectlConnector()
 
-    if not KubectlConnector.isConnected:
+    if not KubectlConnector.is_connected:
         logger.warning("kubectl not connected, cannot check pod health for %s", unique_name)
         return result
 
@@ -493,25 +489,23 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                     result.image_pull_container = pull.container
                     result.image_pull_image = pull.image
 
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
         logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
 
     return result
 
 
-# De kubelet-message hoort op EEN regel te passen: wat deze functie teruggeeft komt in de
-# voortgangslijst terecht als de titel van een lijstitem, niet als lopende tekst. Gemeten
-# op productie is een image-pull-message van CRI-O 762 tekens, omdat dezelfde fout er twee
-# keer in staat (eerst als ``pull image err``, daarna als ``artifact err``). Die kwam
-# integraal in die titel terecht, maal twee componenten maal vijftien deployments.
+# A kubelet message has to fit on ONE line: what this function returns ends up in the
+# progress list as the title of a list item and not as running text. A CRI-O image-pull
+# message runs to hundreds of characters, because the same error is in it twice.
 #
-# Vandaar deze grens. Het volledige bericht verdwijnt niet: dat blijft staan in
-# ``component_failures`` (met een vertaalde titel en een suggestie) en in de logs.
+# The full message does not disappear: it stays in ``component_failures`` (with a translated
+# title and a suggestion) and in the logs.
 _MAX_WAITING_DETAIL = 120
 
 
 def _short_detail(message: str) -> str:
-    """Vouw een kubelet-message op tot iets dat als regeltitel leesbaar blijft."""
+    """Fold a kubelet message down to something that stays readable as a line title."""
     collapsed = " ".join(message.split())
     if len(collapsed) <= _MAX_WAITING_DETAIL:
         return collapsed
@@ -543,10 +537,10 @@ def _describe_pod_waiting(pod: dict) -> str | None:
             message = waiting.get("message", "")
             suffix = f": {_short_detail(message)}" if message else ""
             if reason in _IMAGE_PULL_REASONS:
-                # Bewust helemaal zonder message, ook niet ingekort: hier is dat altijd
-                # de registry-dump uit de toelichting bij _MAX_WAITING_DETAIL, en de eerste
-                # 120 tekens daarvan zeggen niets wat de reden hierboven niet al zegt. Welk
-                # image het is en wat eraan te doen valt staat in component_failures.
+                # Deliberately without the message, not even shortened: here it is always
+                # the registry dump described at _MAX_WAITING_DETAIL, whose first characters
+                # say nothing the reason above does not. Which image it is and what to do
+                # about it is in component_failures.
                 return f"image ophalen mislukt ({reason})"
             if reason in _CRASH_LOOP_REASONS:
                 return f"blijft herstarten na een crash{suffix}"
@@ -603,7 +597,7 @@ async def describe_components_waiting(
     wanted = set(component_names)
     kubectl = KubectlConnector()
 
-    if not KubectlConnector.isConnected or not wanted:
+    if not KubectlConnector.is_connected or not wanted:
         return []
 
     try:
@@ -613,7 +607,7 @@ async def describe_components_waiting(
             logger.debug("describe_components_waiting: kubectl failed for %s: %s", namespace, stderr)
             return []
         pods_data = json.loads(stdout)
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
         logger.debug("describe_components_waiting: error for %s: %s", namespace, e)
         return []
 
@@ -709,7 +703,7 @@ async def apply_oom_tune(
         for msg in observation.failures:
             logger.warning("Health watcher: %s", msg)
         return committed
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a background loop must not stop
         logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
         return False
 
@@ -743,14 +737,7 @@ async def _run_oom_check(
         logger.warning("Health watcher: project lookup failed for %s: %s", project_name, e)
         return
 
-    # Find the deployment in project data
-    deployments = project_data.get("deployments", [])
-    target_dep = None
-    for dep in deployments:
-        if dep.get("name") == deployment_name:
-            target_dep = dep
-            break
-
+    target_dep = Project(project_data).find("deployments", name=deployment_name)
     if not target_dep:
         logger.warning("Health watcher: deployment '%s' not found in project '%s'", deployment_name, project_name)
         return
@@ -1075,7 +1062,14 @@ def create_health_check_callback(
             if health.crash_loop_detected or health.oom_detected:
                 try:
                     logs = await kubectl.get_deployment_logs(health.component_name, namespace, lines=20)
-                except Exception as log_err:
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    KubectlConnectionError,
+                    KubectlExecutionError,
+                ) as log_err:
                     logger.debug("Failed to capture logs for %s: %s", health.component_name, log_err)
 
             # The grace period guards against stale lastState from a prior pod. That
@@ -1167,9 +1161,7 @@ def reset_oom_tune_attempts(project_name: str, deployment_name: str) -> None:
         del _last_tuned_pod_template_hash[key]
 
 
-# ---------------------------------------------------------------------------
-# Cluster-wide pod watch: OOM kills outside the deploy window
-# ---------------------------------------------------------------------------
+# Cluster-wide pod watch: OOM kills outside the deploy window.
 #
 # Kubernetes has no Event for an OOM kill; the information sits in the pod status, in
 # ``containerStatuses[].lastState.terminated``. That is why this watch reads pods and not
@@ -1348,10 +1340,7 @@ def resolve_oom_component(kill: ObservedOomKill, project_data: dict) -> str | No
     names in, so a component whose name happens to contain a separator cannot be matched
     to the wrong one.
     """
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if d.get("name") == kill.deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=kill.deployment_name)
     if deployment is None:
         return None
 
@@ -1645,7 +1634,7 @@ async def read_pod_oom_kill(namespace: str, pod_name: str, container_name: str) 
     application-pod guard the watch gets from its selector.
     """
     kubectl = KubectlConnector()
-    if not KubectlConnector.isConnected:
+    if not KubectlConnector.is_connected:
         return None
     try:
         stdout, stderr, code = await kubectl.run_command(["get", "pod", "-n", namespace, pod_name, "-o", "json"])
@@ -1669,8 +1658,8 @@ async def run_oom_metric_sweep(cluster: str) -> int:
     query = _OOM_METRIC_QUERY.format(prefix=get_namespace_prefix(cluster))
     try:
         connector = await get_metrics_connector()
-        rows = await connector.custom_query(query)
-    except Exception as e:
+        rows = await connector.query(query)
+    except Exception as e:  # noqa: BLE001  # a background loop must not stop
         logger.info("OOM metric sweep: disabled, no metrics backend answered the query: %s", e)
         return 0
 

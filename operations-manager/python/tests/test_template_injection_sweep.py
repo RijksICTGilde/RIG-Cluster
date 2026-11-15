@@ -17,8 +17,9 @@ from typing import Any
 
 import pytest
 from opi.core.config import settings
-from opi.generation.manifests import render_template, yaml_scalar
-from opi.handlers.project_file_handler import _normalize_path_config
+from opi.generation.manifests import render_template
+from opi.services.project_file_handler import _normalize_path_config
+from opi.utils.manifest_render import yaml_scalar
 from opi.utils.url_paths import sanitize_path_value
 from ruamel.yaml import YAML
 

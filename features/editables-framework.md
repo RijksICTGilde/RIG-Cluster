@@ -256,12 +256,6 @@ class EditableConverter(Protocol):
 Voorbeelden uit de codebase:
 
 ```python
-class AGEEncryptConverter:
-    """Encrypt/decrypt met AGE keys."""
-    def read(self, value):   # decrypt voor bewerking
-    def write(self, value):  # encrypt voor opslag
-    def view(self, value):   # toont "********"
-
 class KeyValueConverter:
     """KEY=value tekst ↔ dict/string opslag, met AGE encrypt/decrypt."""
 
@@ -286,20 +280,23 @@ class ProjectNameGenerator:
     def generate(self, yaml_data):
         return generate_project_name(yaml_data["display-name"])
 
-class AGEKeyPairGenerator:
+class AttachmentStagingResolveGenerator:
     def generate(self, yaml_data):
-        private_key, public_key = generate_sops_key_pair()
-        # Stash private key voor EncryptedPrivateKeyGenerator
-        yaml_data.setdefault("_generated", {})["age-private-key-plain"] = private_key
-        return public_key
-
-class EncryptedPrivateKeyGenerator:
-    def generate(self, yaml_data):
-        plain = yaml_data["_generated"]["age-private-key-plain"]
-        return encrypt_age_content_sync(plain, settings.SOPS_AGE_PUBLIC_KEY)
+        # Vervangt elke "staging:<token>"-plaatshouder door een AGE-blok
+        ...
 ```
 
 Generators draaien in volgorde, waardoor latere generators afhankelijk kunnen zijn van eerdere resultaten.
+
+Het AGE-sleutelpaar van een nieuw project kwam hier ook uit, bij de eindinzending. Sinds
+RC-463 maakt `build_new_project_base_data()` het bij de START van de wizard: anders stond
+elk geheim dat de gebruiker eerder intypte als platte tekst in het wizardstaatbestand.
+
+Dezelfde sleutel dekt sinds RC-486 ook de stagingopslag (`opi/services/upload_staging.py`).
+Een geuploade bijlage wordt bij `stage_file` met de publieke sleutel van die sessie
+versleuteld en bij `read_staged` weer geopend, zodat er tussen upload en inzending geen
+platte bytes op schijf staan. De generator hierboven ontsleutelt dus met de projectsleutel
+voordat hij het AGE-blok voor de catalogus maakt.
 
 ### Condition — conditioneel veldgedrag
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page

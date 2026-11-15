@@ -1,13 +1,20 @@
 """OPI-to-OPI HTTP connector for federation routing.
 
-Follows the HttpConnector pattern: aiohttp.ClientSession managed via
+Follows the HttpConnector pattern: a session from ``client_session`` managed via an
 async context manager, with typed convenience methods for the OPI task API.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
+
+from opi.connectors.http import client_session
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +29,6 @@ class OpiConnectorError(Exception):
 
 
 class OpiConnector:
-    """HTTP client for communicating with a remote OPI instance."""
-
     def __init__(
         self,
         base_url: str,
@@ -38,14 +43,12 @@ class OpiConnector:
         self.session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self) -> OpiConnector:
-        connector = None if self.verify_tls else aiohttp.TCPConnector(ssl=False)
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            connector=connector,
-        )
+        self.session = client_session(self.timeout, ssl=self.verify_tls)
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         if self.session:
             await self.session.close()
 
@@ -54,10 +57,6 @@ class OpiConnector:
             "X-API-Key": self.api_key,
             "Content-Type": "application/json",
         }
-
-    # ------------------------------------------------------------------
-    # API methods
-    # ------------------------------------------------------------------
 
     async def health_check(self) -> dict:
         """GET /health on the remote OPI instance."""
@@ -92,10 +91,6 @@ class OpiConnector:
         """POST /api/tasks/{task_id}/:cancel. Expects 200."""
         return await self._post(f"/api/tasks/{task_id}/:cancel", body=None, expected_status={200})
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     async def _get(self, path: str, expected_status: set[int]) -> dict:
         if not self.session:
             msg = "OpiConnector session not initialized. Use async context manager."
@@ -128,5 +123,5 @@ class OpiConnector:
     async def _parse_response(resp: aiohttp.ClientResponse) -> dict | str:
         try:
             return await resp.json()
-        except Exception:
+        except aiohttp.ClientError, ValueError:
             return await resp.text()

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 
 #: De twee pods zoals ``kubectl get pods -o json`` ze teruggaf. Alleen de velden die deze
 #: functie leest staan erin; de rest van een echte pod is ruis voor deze meting.
@@ -88,10 +89,12 @@ def _connector() -> KubectlConnector:
 async def _run(stdout: str, code: int = 0) -> list[dict[str, Any]]:
     connector = _connector()
     with (
-        patch.object(KubectlConnector, "isConnected", True),
+        patch.object(KubectlConnector, "is_connected", True),
         patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(stdout, "", code))),
     ):
-        return await connector.get_application_pods("rig-prd-psd-law", "pr-114")
+        return await connector.get_application_pods(
+            "rig-prd-psd-law", deployment_pod_selector("pr-114"), APPLICATION_CONTAINER_NAME
+        )
 
 
 @pytest.mark.asyncio
@@ -129,10 +132,12 @@ async def test_de_selector_sluit_dienstpods_uit_en_scoped_op_de_deployment():
     connector = _connector()
     runner = AsyncMock(return_value=(json.dumps({"items": []}), "", 0))
     with (
-        patch.object(KubectlConnector, "isConnected", True),
+        patch.object(KubectlConnector, "is_connected", True),
         patch.object(connector, "_run_kubectl_command", runner),
     ):
-        await connector.get_application_pods("rig-prd-psd-law", "pr-114")
+        await connector.get_application_pods(
+            "rig-prd-psd-law", deployment_pod_selector("pr-114"), APPLICATION_CONTAINER_NAME
+        )
 
     args = runner.await_args[0][0]
     assert args[:2] == ["get", "pods"]
@@ -202,10 +207,13 @@ async def test_zonder_kubectl_verbinding_geen_aanroep():
     connector = _connector()
     runner = AsyncMock()
     with (
-        patch.object(KubectlConnector, "isConnected", False),
+        patch.object(KubectlConnector, "is_connected", False),
         patch.object(connector, "_run_kubectl_command", runner),
     ):
-        assert await connector.get_application_pods("ns", "pr-114") == []
+        assert (
+            await connector.get_application_pods("ns", deployment_pod_selector("pr-114"), APPLICATION_CONTAINER_NAME)
+            == []
+        )
     runner.assert_not_awaited()
 
 
@@ -213,7 +221,10 @@ async def test_zonder_kubectl_verbinding_geen_aanroep():
 async def test_een_falende_aanroep_gooit_niet():
     connector = _connector()
     with (
-        patch.object(KubectlConnector, "isConnected", True),
-        patch.object(connector, "_run_kubectl_command", AsyncMock(side_effect=RuntimeError("kubectl weg"))),
+        patch.object(KubectlConnector, "is_connected", True),
+        patch.object(connector, "_run_kubectl_command", AsyncMock(side_effect=OSError("kubectl weg"))),
     ):
-        assert await connector.get_application_pods("ns", "pr-114") == []
+        assert (
+            await connector.get_application_pods("ns", deployment_pod_selector("pr-114"), APPLICATION_CONTAINER_NAME)
+            == []
+        )

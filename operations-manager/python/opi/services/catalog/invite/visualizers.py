@@ -63,15 +63,15 @@ INVITE_REALM_ROLE_ITEM = EditableVisualizer(
         "De rol wordt automatisch toegekend aan de gebruiker. Is toegangsbeperking "
         "ingeschakeld, dan is de rol nodig om te kunnen inloggen."
     ),
-    # Geen "Optioneel"-badge: dit is een KIEZER waar altijd iets geselecteerd staat, en de
-    # lege stand heet hier "Geen rol toekennen". Dezelfde reden als bij de URI-velden van
-    # keycloak; zie GEEN_OPTIONEEL_BADGE daar.
+    # No "Optioneel" badge: this is a PICKER where something is always selected, and the empty
+    # position is called "Geen rol toekennen" here. Same reason as with keycloak's URI fields;
+    # see NO_OPTIONAL_BADGE there.
     attributes={"data-no-optional-badge": "1"},
 )
 
-#: De hulptekst staat op het veld zelf en niet hier: het is een keuze en geen lijst meer,
-#: dus twee toelichtingen boven elkaar zouden alleen ruis zijn. Dat de lege keuze "geen
-#: rol" betekent staat in de optie zelf ("Geen rol toekennen").
+#: The help text sits on the field itself and not here: it is a choice, not a list, so two
+#: explanations stacked would be noise. That the empty choice means "no role" is said by the
+#: option itself ("Geen rol toekennen").
 INVITE_REALM_ROLES = EditableVisualizer(
     editable=INVITE_REALM_ROLES_EDITABLE,
     widget=WidgetType.SEQUENCE,

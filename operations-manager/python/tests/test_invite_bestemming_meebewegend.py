@@ -16,6 +16,7 @@ en niet elke URL is afleidbaar. De voorrang is bestemming, dan URL, dan geen kno
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -25,11 +26,13 @@ import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 from opi.forms.editables.converters import InviteTargetConverter
-from opi.manager.project_validation import validation_reasons
+from opi.forms.editables.processor import EditableFormProcessor
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.catalog.invite.target_format import join_target, split_target
+from opi.services.catalog.invite.visualizers import INVITE_ACTIVE
 from opi.services.project_store import ProjectSummary, ProjectUser
+from opi.services.project_validation import validation_reasons
 from pydantic import ValidationError
 from tests.inmemory_session_store import InMemorySessionStore
 
@@ -304,6 +307,20 @@ class TestDeKeuzelijstSchrijftDeKeuze:
         InviteService().settle_destination(project)
 
         assert project["services"][-1]["config"]["active"][0]["application-url"] == "https://ergens.anders.nl/"
+
+    def test_a_stored_target_written_again_stays_the_same(self) -> None:
+        assert InviteTargetConverter().write("frontend:production", context_data=_project()) == "frontend:production"
+
+    def test_whole_flow_validation_accepts_and_keeps_a_stored_target(self) -> None:
+        """The pass before the summary feeds the merged project file back in as the submission."""
+        project = _met_invite(_project(), _basis_entry(**{"application-target": "frontend:production"}))
+
+        result, errors = asyncio.run(
+            EditableFormProcessor().process_json_submission(project, [INVITE_ACTIVE], project, edit_mode=True)
+        )
+
+        assert errors == {}
+        assert result["services"][-1]["config"]["active"][0]["application-target"] == "frontend:production"
 
 
 # ---------------------------------------------------------------------------

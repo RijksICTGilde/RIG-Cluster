@@ -20,8 +20,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 import yaml
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.image_registries.resolution import project_registries
+from opi.services.project_validation import validate_service_configs
 from tests.e2e.helpers.wizard import (
     WizardHelper,
     kies_verplichte_keuzelijsten,
@@ -46,7 +46,7 @@ def captured_yaml(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The project YAML the wizard hands to the create task."""
     captured: list[str] = []
 
-    import opi.core.task_helpers as task_helpers
+    import opi.http.task_helpers as task_helpers
 
     async def _fake_create_async_task(**kwargs: Any) -> dict[str, Any]:
         captured.append(kwargs["payload"]["yaml_content"])

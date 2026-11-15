@@ -18,6 +18,7 @@ import os
 import shutil
 from typing import TYPE_CHECKING, Any
 
+from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.connectors.seaweedfs_shell import SeaweedfsConnector, create_seaweedfs_connector
@@ -33,7 +34,7 @@ from opi.utils.naming import (
 )
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,8 @@ logger = logging.getLogger(__name__)
 _LEGACY_DB_ALIASES = {"database", "postgresql"}
 _LEGACY_MINIO_ALIASES = {"minio", "object-storage"}
 
-#: De resourcetypes van seaweedfs-storage, in de orde waarin ze weg moeten: eerst het
-#: recht, dan de identiteit, dan de data.
+#: The resource types of seaweedfs-storage, in the order they have to go: first the
+#: permission, then the identity, then the data.
 _SEAWEEDFS_RESOURCE_TYPES = ("seaweedfs_policy", "seaweedfs_user", "seaweedfs_bucket")
 
 
@@ -103,14 +104,14 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
     Returns:
         Dict mapping resource_type to a set of (resource_name, cluster) tuples.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
     from opi.services.services import ServiceType
 
     handler = ProjectFileHandler()
     db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
     minio_types = [ServiceType.MINIO_STORAGE.value]
-    # Eigen types naast die van minio: beide diensten noemen hun bucket, identiteit en
-    # policy met dezelfde functies, dus alleen het resourcetype zegt waar hij staat.
+    # Separate types next to minio's: both services name their bucket, identity and policy
+    # with the same functions, so only the resource type says where one lives.
     seaweedfs_types = [ServiceType.SEAWEEDFS_STORAGE.value]
 
     # keycloak_client is intentionally absent: it is only ever marked through
@@ -165,7 +166,7 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
                 expected["seaweedfs_user"].add((generate_minio_username(project_name, deployment_name), cluster))
                 expected["seaweedfs_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
 
-            # Build expected backup_data resource name (matches marking format)
+            # Must match the resource name the marking side writes.
             base_namespace = deployment.get("namespace", "")
             if base_namespace and cluster:
                 from opi.core.cluster_config import get_prefixed_namespace
@@ -301,10 +302,9 @@ async def _purge_marks(
             alias = "default-minio"
             from opi.core.cluster_config import get_minio_host, get_minio_port
 
-            # This passed None, which get_cluster_config rejects outright, so the whole
-            # MinIO purge branch raised before it purged anything -- swallowed by the
-            # except below as "failed to initialize". This instance only manages its own
-            # cluster, so that is the one to configure the alias against.
+            # This instance only manages its own cluster, so that is the one to configure
+            # the alias against. A None here makes get_cluster_config raise, and the except
+            # below swallows that as "failed to initialize".
             minio_host = get_minio_host(settings.CLUSTER_MANAGER)
             minio_port = get_minio_port(settings.CLUSTER_MANAGER)
             await minio_conn.configure_alias(
@@ -326,13 +326,13 @@ async def _purge_marks(
             logger.exception(error_msg)
             results["errors"].append(error_msg)
 
-    # SeaweedFS resources, in dezelfde orde als bij MinIO: policy, identiteit, bucket.
-    # Alleen op een cluster dat de dienst levert; elders staan er ook geen markeringen.
+    # SeaweedFS resources, in the same order as MinIO: policy, identity, bucket. Only on a
+    # cluster that provides the service; elsewhere there are no marks either.
     seaweedfs_marks = [m for m in marks if m["resource_type"] in _SEAWEEDFS_RESOURCE_TYPES]
     if seaweedfs_marks and SeaweedfsConnector.is_configured():
         seaweedfs_conn = create_seaweedfs_connector()
-        for soort in _SEAWEEDFS_RESOURCE_TYPES:
-            for mark in (m for m in seaweedfs_marks if m["resource_type"] == soort):
+        for resource_type in _SEAWEEDFS_RESOURCE_TYPES:
+            for mark in (m for m in seaweedfs_marks if m["resource_type"] == resource_type):
                 await _purge_seaweedfs_resource(seaweedfs_conn, mark, service, results, dry_run)
 
     # Keycloak clients (confirmed orphans from the service-orphan sweep)
@@ -364,23 +364,11 @@ async def reconcile(
     grace_period_days: int | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Run the reconciliation job.
+    """Unmark what is back in the project YAMLs, then purge the marks past the grace period.
 
-    Steps:
-    1. Build expected resource inventory from project YAMLs.
-    2. Query actual resources from PostgreSQL and MinIO.
-    3. Compare expected vs actual:
-       - Orphaned AND marked AND past grace period -> purge.
-       - Orphaned but NOT marked -> mark (first detection).
-       - Marked but now in expected set (restored) -> unmark.
-
-    Args:
-        project_yamls: List of all parsed project YAML dicts.
-        grace_period_days: Override for the grace period. Uses config default if None.
-        dry_run: If True, log actions but do not actually purge resources.
-
-    Returns:
-        Summary dict with counts of actions taken.
+    Orphan detection is not part of this run; see the comment at the end of the function.
+    ``grace_period_days`` falls back to the configured default, and ``dry_run`` logs the
+    actions without purging. Returns a summary per action.
     """
     if grace_period_days is None:
         grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
@@ -396,7 +384,6 @@ async def reconcile(
         "dry_run": dry_run,
     }
 
-    # --- Step 1: Unmark resources that are back in expected (git revert recovery) ---
     all_marks = await service.get_all_marks()
     for mark in all_marks:
         rtype = mark["resource_type"]
@@ -414,17 +401,14 @@ async def reconcile(
                 await service.unmark_resource(rtype, rname, cluster)
             results["unmarked"].append({"type": rtype, "name": rname, "cluster": cluster})
 
-    # --- Step 2: Purge expired marks (re-protected against the expected set) ---
     expired_marks = await service.get_expired_marks(grace_period_days)
     await _purge_marks(expired_marks, service, results, dry_run, expected=expected)
 
-    # --- Step 3: Orphan detection is deliberately NOT automated here ---
-    # Actual-resource scanning lives in opi.jobs.service_orphan_sweep (report-
-    # first by design): GET /api/v2/admin/orphans/report produces a classified
-    # inventory, POST /api/v2/admin/orphans/confirm marks human-confirmed
-    # candidates, after which this job purges them past the grace period.
-    # Auto-marking from a scan is forbidden: a wrong expected set would
-    # schedule live resources for deletion (see the waggl-9et near-miss).
+    # Orphan detection is deliberately NOT automated here. Actual-resource scanning lives
+    # in opi.jobs.service_orphan_sweep: GET /api/v2/admin/orphans/report produces a
+    # classified inventory, POST /api/v2/admin/orphans/confirm marks human-confirmed
+    # candidates, and this job purges them past the grace period. Auto-marking from a scan
+    # is forbidden: a wrong expected set would schedule live resources for deletion.
 
     logger.info(
         "Reconciliation complete: purged=%d, marked=%d, unmarked=%d, errors=%d",
@@ -508,26 +492,26 @@ async def _purge_seaweedfs_resource(
 ) -> None:
     """Purge a SeaweedFS bucket, identity or policy that has passed the grace period.
 
-    Eén functie voor de drie types: ze verschillen alleen in het commando, en de connector
-    verdraagt "bestaat niet" al, dus een halve opruiming is af te maken.
+    One function for the three types: they differ only in the command, and the connector
+    already tolerates "does not exist", so a half-finished cleanup can be completed.
     """
-    soort = mark["resource_type"]
-    naam = mark["resource_name"]
-    verwijder = {
+    resource_type = mark["resource_type"]
+    resource_name = mark["resource_name"]
+    delete_resource = {
         "seaweedfs_policy": connector.delete_policy,
         "seaweedfs_user": connector.delete_user,
         "seaweedfs_bucket": connector.delete_bucket,
-    }[soort]
+    }[resource_type]
     try:
         if dry_run:
-            logger.info("[DRY RUN] Would purge %s: %s", soort, naam)
+            logger.info("[DRY RUN] Would purge %s: %s", resource_type, resource_name)
         else:
-            await verwijder(naam)
+            await delete_resource(resource_name)
             await service.delete_mark(mark["id"])
-            logger.info("Purged %s: %s", soort, naam)
-        results["purged"].append({"type": soort, "name": naam})
+            logger.info("Purged %s: %s", resource_type, resource_name)
+        results["purged"].append({"type": resource_type, "name": resource_name})
     except Exception as e:
-        error_msg = f"Failed to purge {soort} '{naam}': {e}"
+        error_msg = f"Failed to purge {resource_type} '{resource_name}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 
@@ -745,7 +729,7 @@ async def _purge_backup_data(
                         snapshot.snapshot_id,
                         resource_name,
                     )
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KopiaConnectionError, KopiaExecutionError) as e:
                 logger.warning(
                     "Error deleting snapshot %s for '%s': %s",
                     snapshot.snapshot_id,
@@ -835,7 +819,7 @@ async def _purge_pvc(
             workspace = await pm.get_deployment_workspace(repo_name, repo_config)
 
             async def _remove_marked_manifest() -> bool:
-                """Haal het gemarkeerde manifest weg en herbouw de kustomization."""
+                """Remove the marked manifest and rebuild the kustomization."""
                 full_output_dir = os.path.join(await workspace.get_working_dir(), deployment_path)
                 manifest_path = os.path.join(full_output_dir, resource_name)
                 if not os.path.exists(manifest_path):
@@ -845,7 +829,6 @@ async def _purge_pvc(
                 os.remove(manifest_path)
                 logger.info("Deleted PVC manifest: %s", manifest_path)
 
-                # Regenerate kustomization.yaml so the deleted file is no longer listed
                 sops_files, regular_files = pm._manifest_generator.collect_manifest_files(
                     full_output_dir, include_subfolders=False
                 )
@@ -899,7 +882,6 @@ async def _purge_deployment_manifests(
     argocd_app_name = metadata.get("argocd_app_name", "")
 
     try:
-        # Check if the ArgoCD application is still alive
         from opi.connectors import create_argo_connector
 
         argo_connector = create_argo_connector()
@@ -927,7 +909,6 @@ async def _purge_deployment_manifests(
             results["purged"].append({"type": "deployment_manifests", "name": resource_name})
             return
 
-        # Look up the project to get the git connector
         from opi.manager.project_manager import ProjectManager
         from opi.utils.naming import generate_deployment_manifest_path
 
@@ -1008,9 +989,7 @@ async def _purge_namespace(
     cluster = mark["cluster"]
 
     try:
-        # Check if any other marks still reference this namespace
         ns_marks = await service.get_marks_in_namespace(namespace, cluster)
-        # Filter out the namespace mark itself
         other_marks = [m for m in ns_marks if m["id"] != mark["id"]]
 
         if other_marks:

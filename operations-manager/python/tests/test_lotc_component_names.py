@@ -13,7 +13,7 @@ roos geen ``menu`` kende. Allebei gingen ze over het oude systeem, en dat is er 
 import pathlib
 import re
 
-from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
+from opi.http.render.template_helpers import CATALOG_DIR, TEMPLATES_DIR
 
 # Een componenttag met naam ``p``: ``<c-p>``, ``<c-p ...>``, ``<c-p/>`` en ``</c-p>``.
 OUDE_PARAGRAAFTAG = re.compile(r"</?c-p[\s>/]")

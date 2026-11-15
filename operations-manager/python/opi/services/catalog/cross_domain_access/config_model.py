@@ -1,4 +1,4 @@
-"""Typed config model for the ``cross-domain-access`` service (RC-15).
+"""Typed config model for the ``cross-domain-access`` service.
 
 This service is about NETWORK access between projects, not DNS domains. "Domain" here
 means the security perimeter of another project, not a hostname; publish-on-web and the
@@ -49,12 +49,10 @@ from opi.utils.patterns import DNS1123_LABEL
 _NAME_MAX_LENGTH = 40
 
 
-#: The peer project that means "no project limit" (RC-142).
+#: The peer project that means "no project limit".
 #:
-#: A normal inbound rule names ONE peer; the receiver decides per consumer. That is right
-#: when the consumers are a short, known list. It is wrong for a shared facility that any
-#: project may use, where the list is "whoever takes the service" and keeping it by hand
-#: makes the facility's owner the gatekeeper of a self-service platform.
+#: A normal inbound rule names ONE peer, which is right when the consumers are a short,
+#: known list. A shared facility any project may use has no such list.
 #:
 #: ``from: {project: "*"}`` renders as an ingress entry with no ``from`` selector, on
 #: exactly the named port: any source may reach that component there. It is a real
@@ -76,7 +74,7 @@ _WILDCARD_DESCRIPTION = (
 )
 
 
-def _check_wildcard_peer(peer: Any) -> Any:
+def _check_wildcard_peer(peer: Any) -> Any:  # noqa: ANN401  # a project-file value
     """A wildcard peer names nothing else: no deployment, no component.
 
     Refused rather than ignored. A rule reading ``{project: '*', component: 'api'}`` looks
@@ -94,7 +92,7 @@ def _check_wildcard_peer(peer: Any) -> Any:
     return peer
 
 
-# --- full (post-merge) models: a COMPLETE rule ---------------------------------------
+# Full (post-merge) models: a COMPLETE rule.
 
 
 class PeerRef(BaseModel):
@@ -197,7 +195,7 @@ class OutboundRule(BaseModel):
     disabled: bool = Field(default=False, description="Keep the rule but do not apply it.")
 
 
-# --- stored (patch) models: everything but ``name`` optional --------------------------
+# Stored (patch) models: everything but ``name`` optional.
 
 
 class PeerRefPatch(BaseModel):
@@ -299,9 +297,8 @@ class CrossDomainAccessConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     #: Both directions are patchable entry by entry, keyed on the ``name`` that already
-    #: is the merge key between the project and deployment layer. Adding one rule with
-    #: the PUT meant resending every other rule, so the rule you forgot was gone. See
-    #: ``opi/services/config_lists.py``.
+    #: is the merge key between the project and deployment layer; the PUT replaces the
+    #: whole list. See ``opi/services/config_lists.py``.
     ITEM_KEYS: ClassVar[dict[str, str | None]] = {"inbound": "name", "outbound": "name"}
 
     inbound: list[InboundRulePatch] = Field(

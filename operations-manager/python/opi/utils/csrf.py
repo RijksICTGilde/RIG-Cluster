@@ -23,9 +23,10 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
-from opi.utils.logging_redact import redact_invite_key_in_path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+from opi.core.logging_redact import redact_invite_key_in_path
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -206,8 +207,8 @@ def _validate_double_submit(request: Request, submitted_token: str | None) -> No
         HTTPException: 403 if the token is missing or does not match.
     """
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
-    # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
-    # bearer-geheim, en deze twee regels zijn bereikbaar zodra het CSRF-cookie weg is.
+    # The path through the redaction: an invite key sits in the path and is a bearer
+    # secret, and these two records are reachable the moment the CSRF cookie is gone.
     path = redact_invite_key_in_path(request.url.path)
     if not cookie_token or not submitted_token:
         logger.warning("CSRF check failed: token missing on %s %s", request.method, path)
@@ -227,30 +228,6 @@ def ensure_csrf_token(request: Request) -> str:
     directly, or in templates ``{{ request.state.csrf_token }}``.
     """
     return request.state.csrf_token
-
-
-def validate_csrf_token(request: Request, form_data: dict | None) -> None:
-    """Validate CSRF token from form/header matches cookie.
-
-    Kept for backwards compatibility with call sites that validate explicitly.
-    Enforcement is now central in :class:`CSRFMiddleware`; calling this in a
-    handler is idempotent (the middleware already validated the same token).
-
-    Args:
-        request: The FastAPI request object
-        form_data: Dictionary containing form data with csrf_token field
-
-    Raises:
-        HTTPException: If CSRF token is missing or invalid
-    """
-    submitted = None
-    if form_data:
-        candidate = form_data.get(CSRF_FORM_FIELD)
-        if isinstance(candidate, str):
-            submitted = candidate
-    if submitted is None:
-        submitted = request.headers.get(CSRF_HEADER_NAME)
-    _validate_double_submit(request, submitted)
 
 
 def validate_csrf_origin(request: Request) -> None:

@@ -1,7 +1,7 @@
-"""De kaart van ZAD: de graafbouwers achter ``<zad-map>``.
+"""The ZAD map: the graph builders behind ``<zad-map>``.
 
-``project_graph`` tekent een project, ``platform_graph`` het platform van dit cluster.
-Het contract dat ze opleveren staat in :mod:`opi.services.zad_map.contract`.
+``project_graph`` draws one project, ``platform_graph`` this cluster's platform. The
+contract they produce is in :mod:`opi.services.zad_map.contract`.
 """
 
 from opi.services.zad_map.contract import Graph

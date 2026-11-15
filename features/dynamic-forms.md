@@ -100,7 +100,7 @@ Add a `FormSection` to `opi/forms/visualizers/wizard_sections.py`:
 MY_SECTION = FormSection(
     section_id="my-section",
     title="My Section",
-    icon="document-blanco",  # Vertaald naar de NLDD-woordenschat; zie navigation_lotc.py
+    icon="document-blanco",  # Vertaald naar de NLDD-woordenschat; zie opi/utils/nldd_iconen.py
     description="What this section configures",
     editables=[MY_FIELD, OTHER_FIELD],
     layout=Fieldset(

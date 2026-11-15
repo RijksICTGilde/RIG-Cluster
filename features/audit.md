@@ -60,7 +60,7 @@ Eén rij per BESLISSING, niet per verzoek: een upsert met `cloneFrom` weegt eers
 de audit. Een toegestane leesactie levert geen rij, een geweigerde leesactie wel.
 
 Omgekeerd levert één handeling ook één rij: de poort beslist en de handler leest alleen
-wat zij toeliet, via `authorized_project(request)` (`opi/web/authz.py`). Een handler die
+wat zij toeliet, via `authorized_project(request)` (`opi/http/auth/authz.py`). Een handler die
 in zijn body nog eens `authorize` aanroept met de action van zijn EIGEN route zou een
 tweede antwoord op dezelfde vraag geven, en dus een tweede rij;
 `tests/test_een_beslissing_per_handeling.py` loopt `opi/web` af en faalt daarop. Een
@@ -108,14 +108,14 @@ route zijn velden zelf met `@action(..., audit_fields=(...))`, en alleen die, no
 hele body. Vier routes doen dat; `tests/test_audit_hook.py` legt de lijst vast, zodat een
 nieuwe route er bewust bij komt.
 
-`velden=` van `@requires_step_up` staat daar LOS van: dat is wat de step-up-dialoog moet
+`fields=` van `@requires_step_up` staat daar LOS van: dat is wat de step-up-dialoog moet
 herhalen, en daar hoort ook een vrij tekstveld bij (de env-vars van een component, een
 rol, een lidnaam). Die twee lijsten stonden gekoppeld; daardoor liftte de env-var-route
 mee en zou de hele platte env-var-tekst, met wachtwoorden en adressen, een jaar in
 `data.fields` blijven staan.
 
 De poort leest die velden pas NADAT ze de aanroeper heeft toegelaten, en kapt elke
-waarde af op 256 tekens (`MAX_VELDWAARDE`). Twee redenen, beide gemeten op
+waarde af op 256 tekens (`MAX_FIELD_VALUE`). Twee redenen, beide gemeten op
 `POST /projects/{project}/jobs`, dat zijn velden uit het formulier haalt: een geweigerde
 (ook anonieme) aanroep haalde anders de hele urlencoded body door het geheugen voordat de
 403 viel, en `data` is JSONB zonder kolombreedte, dus zo'n body belandde ongeknipt in een
@@ -254,14 +254,14 @@ weggehaald in plaats van dat er nooit een was.
 
 Er is geen schakelaar om de bewaarlus uit te zetten: zonder lus bewaart de tabel
 persoonsgegevens zonder termijn. Hij start met de taakwerker mee
-(`opi/core/audit_retention_scheduler.py`) en draait één keer per etmaal.
+(`opi/runtime/periodic/audit_retention_scheduler.py`) en draait één keer per etmaal.
 
 ## Afhankelijkheden
 
 - `notification_events`, Alembic-migratie `013`, model in
   `opi/services/persistence/notification_events.py`
 - `Actor` en `ActorKind` uit `opi/core/actor.py`
-- de teller in `opi/core/metrics.py`
+- de teller `audit_metrics` onderaan `opi/services/audit.py`, geregistreerd bij de scrape
 - het rechtensysteem: `record_decision` en het regelregister (`opi/core/authz/`)
 - `client_ip` uit `opi/utils/client_ip.py` voor `origin`
 

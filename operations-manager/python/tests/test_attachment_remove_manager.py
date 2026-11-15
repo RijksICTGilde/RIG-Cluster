@@ -17,7 +17,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     attachment_usage_sites,
     extract_attachment_catalog,
     validate_attachment_references,
@@ -29,7 +29,7 @@ CERT = "server-cert"
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -356,7 +356,7 @@ class TestACertificateIsRefusedEvenWhenConfirmed:
 async def test_a_rejected_save_is_reported_rather_than_swallowed() -> None:
     """If a cleanup ever missed a site, the reference check at save is what catches it --
     and the caller must hear that rather than an 'internal error'."""
-    from opi.core.project_schema import ProjectSchemaError
+    from opi.services.project_schema import ProjectSchemaError
 
     project = _project(components=[_coupled_component()])
     manager, save = _wire(project)

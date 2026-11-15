@@ -1,21 +1,21 @@
-"""De platformdata voor de kaart genereren uit de repo.
+"""Generate the platform data for the map out of the repo.
 
-``opi/services/zad_map/platform.json`` beschrijft per systeem wat het is, in welk cluster het
-draait, welke OPI-connector ermee praat, welke catalogus-services erop leunen en waar je
-verder kunt lezen. Het bestand staat in de repo omdat de bronnen NIET in het image zitten:
-``infrastructure/`` en ``features/`` worden niet meegekopieerd (zie de Dockerfile).
+``opi/services/zad_map/platform.json`` describes per system what it is, which cluster it
+runs in, which OPI connector talks to it, which catalog services lean on it and where to
+read further. The file sits in the repo because the sources are NOT in the image:
+``infrastructure/`` and ``features/`` are not copied along (see the Dockerfile).
 
-Bronnen:
-- ``infrastructure/bootstrap/clusters/<cluster>/kustomization.yaml``: wat per cluster
-  draait; een regel met ``#`` ervoor telt als uit;
-- ``opi/connectors/*.py`` en hoe vaak OPI ze importeert: waar ZAD mee praat;
-- ``opi/services/catalog/*/help.md``: de titel van een catalogus-service;
-- ``features/*.md``: verder lezen per systeem, op voorvoegsel van de bestandsnaam.
+Sources:
+- ``infrastructure/bootstrap/clusters/<cluster>/kustomization.yaml``: what runs per
+  cluster; a line with a ``#`` in front counts as off;
+- ``opi/connectors/*.py`` and how often OPI imports them: what ZAD talks to;
+- ``opi/services/catalog/*/help.md``: the title of a catalog service;
+- ``features/*.md``: further reading per system, by filename prefix.
 
-Gebruik::
+Usage::
 
-    uv run python -m opi.tools.zad_map_platform           # schrijf platform.json
-    uv run python -m opi.tools.zad_map_platform --check   # exit 1 als het verouderd is
+    uv run python -m opi.tools.zad_map_platform           # write platform.json
+    uv run python -m opi.tools.zad_map_platform --check   # exit 1 when it is out of date
 """
 
 from __future__ import annotations
@@ -29,14 +29,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 OUTPUT = Path(__file__).resolve().parents[1] / "services" / "zad_map" / "platform.json"
 
-#: De clusters waarvoor een stand wordt vastgelegd, met hun mapnaam in ``clusters/``.
+#: The clusters a state is recorded for, keyed by their directory name in ``clusters/``.
 CLUSTERS = {
     "odcn": "Productie (ODCN)",
     "odcn-staging": "Staging (ODCN)",
     "sandboxed-local": "Sandbox",
 }
 
-#: id: (titel, groep, wat het is). De namen volgen de mappen in
+#: id: (title, group, what it is). The names follow the directories in
 #: ``infrastructure/bootstrap/infrastructure``.
 SYSTEMS: dict[str, tuple[str, str, str]] = {
     "kubernetes": ("Kubernetes API", "platform", "Het cluster zelf: namespaces, workloads, netwerkbeleid en opslag."),
@@ -64,9 +64,9 @@ SYSTEMS: dict[str, tuple[str, str, str]] = {
     "kyverno": ("Kyverno", "platform", "Admission-beleid op het cluster."),
 }
 
-#: De laag in de plaat. ``odcn`` is het fundament dat het cluster levert (in de sandbox:
-#: Kind met onze eigen aanvullingen); ``zad`` is wat ZAD zelf draait naast de Operations
-#: Manager.
+#: The layer in the picture. ``odcn`` is the foundation the cluster provides (in the
+#: sandbox: Kind with our own additions); ``zad`` is what ZAD runs itself next to the
+#: Operations Manager.
 LAYER = {
     "git": "gitops",
     "forgejo": "gitops",
@@ -93,8 +93,9 @@ LAYER = {
     "registry": "odcn",
 }
 
-#: HANDTABEL: welke connector bij welk systeem hoort. Dit volgt niet uit de code; een
-#: connector noemt zijn systeem nergens, en ``subdomain``, ``http`` en ``opi`` zijn intern.
+#: HAND-MAINTAINED: which connector belongs to which system. This does not follow from the
+#: code: a connector names its system nowhere, and ``subdomain``, ``http`` and ``opi`` are
+#: internal.
 CONNECTOR_SYSTEM = {
     "kubectl": "kubernetes",
     "argo": "argocd",
@@ -113,9 +114,9 @@ CONNECTOR_SYSTEM = {
     "vpa": "vpa",
 }
 
-#: HANDTABEL: op welk systeem een catalogus-service leunt. Ook dit staat niet als data in
-#: de code: de imports in een dienstpakket dekken maar een paar diensten, en een dienst die
-#: via een manager werkt noemt het systeem nergens.
+#: HAND-MAINTAINED: which system a catalog service leans on. This is not data in the code
+#: either: the imports in a service package cover only a few services, and a service that
+#: works through a manager names its system nowhere.
 SERVICE_SYSTEM = {
     "postgresql-database": "postgresql",
     "namespace-postgresql-database": "kubernetes",
@@ -138,14 +139,14 @@ SERVICE_SYSTEM = {
     "cross-domain-access": "kubernetes",
 }
 
-#: De mapnaam in de catalogus wijkt soms af van de servicenaam in het projectbestand.
+#: The directory name in the catalog sometimes differs from the service name in the project file.
 CATALOG_DIR = {
     "minio-storage": "minio",
     "seaweedfs-storage": "seaweedfs",
     "namespace-postgresql-database": "namespace_postgres",
 }
 
-#: Feature-documenten per systeem, op voorvoegsel van de bestandsnaam.
+#: Feature documents per system, by filename prefix.
 DOC_PREFIX = {
     "argocd": ("argocd",),
     "keycloak": ("keycloak",),
@@ -169,7 +170,7 @@ _RESOURCE = re.compile(r"\s*(#)?\s*-\s*\.\./\.\./infrastructure/([a-z-]+)/")
 
 
 def cluster_status(root: Path) -> dict[str, dict[str, str]]:
-    """Wat elke cluster-kustomization noemt: ``aan``, of ``uit`` als de regel uitstaat."""
+    """What each cluster kustomization names: ``aan``, or ``uit`` when the line is commented out."""
     status: dict[str, dict[str, str]] = {}
     for cluster in CLUSTERS:
         text = (root / "infrastructure/bootstrap/clusters" / cluster / "kustomization.yaml").read_text()
@@ -185,9 +186,9 @@ def cluster_status(root: Path) -> dict[str, dict[str, str]]:
 
 
 def state_per_cluster(root: Path, system_id: str, listed: dict[str, str]) -> dict[str, str]:
-    """``aan``/``uit`` volgens de cluster-kustomization; ``elders`` als er wel een overlay
-    is maar geen regel; ``afwezig`` als het systeem in dat cluster niet bestaat; ``cluster``
-    als wij er geen uitrol voor hebben; ``extern`` buiten ``infrastructure/``."""
+    """``aan``/``uit`` per the cluster kustomization; ``elders`` when there is an overlay but
+    no line; ``afwezig`` when the system does not exist in that cluster; ``cluster`` when we
+    have no rollout for it; ``extern`` outside ``infrastructure/``."""
     folder = root / "infrastructure/bootstrap/infrastructure" / system_id
     if not folder.is_dir():
         return dict.fromkeys(CLUSTERS, "extern")
@@ -195,7 +196,7 @@ def state_per_cluster(root: Path, system_id: str, listed: dict[str, str]) -> dic
     result = {}
     for cluster in CLUSTERS:
         if not overlays and cluster not in listed:
-            # Alleen beleid of config, geen uitrol van ons: het cluster levert het zelf.
+            # Only policy or config, no rollout of ours: the cluster provides it itself.
             result[cluster] = "cluster"
         elif cluster in listed:
             result[cluster] = listed[cluster]
@@ -207,7 +208,7 @@ def state_per_cluster(root: Path, system_id: str, listed: dict[str, str]) -> dic
 
 
 def connector_usage(opi: Path) -> dict[str, int]:
-    """Hoe vaak OPI elke connector importeert, buiten de connectors zelf."""
+    """How often OPI imports each connector, outside the connectors themselves."""
     counts: dict[str, int] = {}
     for path in sorted(opi.rglob("*.py")):
         if "connectors" in path.parts and path.parent.name == "connectors":

@@ -1,8 +1,8 @@
-"""Van wat een afnemer plakt naar de upstream die wij nodig hebben.
+"""From what a consumer pastes to the upstream we need.
 
-Wat we niet herkennen laten we met rust op de generieke bewerkingen na (protocol eraf,
-kleine letters, geen afsluitende schuine streep), zodat een onbekende vorm door het patroon
-wordt afgewezen in plaats van stil verminkt.
+What we do not recognise is left alone apart from the generic operations (protocol off,
+lowercase, no trailing slash), so an unknown shape is rejected by the pattern instead of
+silently mangled.
 """
 
 from __future__ import annotations
@@ -10,27 +10,27 @@ from __future__ import annotations
 import re
 from typing import Any
 
-#: Waar GitHub-packages werkelijk staan; ``github.com`` is de BROWSER en geen registry.
+#: Where GitHub packages really live; ``github.com`` is the BROWSER and not a registry.
 GITHUB_REGISTRY = "ghcr.io"
-#: Idem voor Docker Hub en voor GitLab.com.
+#: The same for Docker Hub and for GitLab.com.
 DOCKER_HUB_REGISTRY = "docker.io"
 DOCKER_HUB_OFFICIAL_NAMESPACE = "library"
 GITLAB_REGISTRY = "registry.gitlab.com"
 
 _PROTOCOL = re.compile(r"^(?:https?|ssh|git)://")
-#: Een tag of digest achter de laatste padcomponent. Alleen DIT onderscheidt een volledige
-#: image-referentie van een upstream met een pad: ``code.overheid.nl/team`` is een
-#: upstream, ``code.overheid.nl/team/app:1`` is een image.
+#: A tag or digest behind the last path component. THIS is the only thing separating a full
+#: image reference from an upstream with a path: ``code.overheid.nl/team`` is an upstream,
+#: ``code.overheid.nl/team/app:1`` is an image.
 _TAG_OR_DIGEST = re.compile(r"(?::[^/:@]+|@sha256:[0-9a-f]+)$")
 
 
 def normalize_upstream(value: str) -> str:
-    """De upstream die bij *value* hoort, of *value* zelf als we de vorm niet kennen."""
+    """The upstream belonging to *value*, or *value* itself when we do not know the shape."""
     # A pasted pull command (``docker pull [flags] <image>``) ends with the image.
     words = value.split()
     text = _PROTOCOL.sub("", (words[-1] if words else "").lower())
-    # Userinfo (``git@host/x``) blijft bewust staan: wegknippen zou een upstream opleveren
-    # die er geldig uitziet maar ergens anders heen wijst.
+    # Userinfo (``git@host/x``) is deliberately kept: cutting it off would yield an upstream
+    # that looks valid but points somewhere else.
     text = text.split("?", 1)[0].split("#", 1)[0].strip("/")
     if not text:
         return text
@@ -48,9 +48,9 @@ def normalize_upstream(value: str) -> str:
 def _github(host: str, segments: list[str]) -> str | None:
     """``github.com/orgs/<org>/packages`` -> ``ghcr.io/<org>``.
 
-    Ook de gebruikersvariant en de pagina van een enkel package
-    (``github.com/<owner>/<repo>/pkgs/container/<image>``): de ghcr-namespace is in alle
-    drie de gevallen de EIGENAAR, niet de repository.
+    The user variant and the page of a single package too
+    (``github.com/<owner>/<repo>/pkgs/container/<image>``): in all three cases the ghcr
+    namespace is the OWNER, not the repository.
     """
     if host != "github.com" or not segments:
         return None
@@ -64,7 +64,7 @@ def _github(host: str, segments: list[str]) -> str | None:
 def _docker_hub(host: str, segments: list[str]) -> str | None:
     """``hub.docker.com/r/<owner>/<repo>`` -> ``docker.io/<owner>``.
 
-    ``_`` is de plek van de officiele images, en die staan in ``library``.
+    ``_`` is where the official images live, and those sit in ``library``.
     """
     if host != "hub.docker.com" or not segments:
         return None
@@ -77,15 +77,15 @@ def _docker_hub(host: str, segments: list[str]) -> str | None:
 
 
 def _gitlab(host: str, segments: list[str]) -> str | None:
-    """``gitlab.com/<groep>/<project>/container_registry`` -> ``registry.gitlab.com/<groep>/<project>``.
+    """``gitlab.com/<group>/<project>/container_registry`` -> ``registry.gitlab.com/<group>/<project>``.
 
-    Alleen voor gitlab.com. Bij een eigen GitLab is de registryhost een installatiekeuze
-    die wij niet kunnen weten, en een gok zou een upstream opleveren die nergens bestaat.
+    For gitlab.com only. On a self-hosted GitLab the registry host is an installation choice we
+    cannot know, and a guess would yield an upstream that exists nowhere.
     """
     if host != "gitlab.com" or "container_registry" not in segments:
         return None
     project = segments[: segments.index("container_registry")]
-    # ``/-/container_registry`` is de moderne vorm; dat scheidingsteken hoort niet in het pad.
+    # ``/-/container_registry`` is the modern shape; that separator does not belong in the path.
     project = [segment for segment in project if segment != "-"]
     return "/".join([GITLAB_REGISTRY, *project]) if project else None
 
@@ -93,8 +93,8 @@ def _gitlab(host: str, segments: list[str]) -> str | None:
 def _forgejo_packages(host: str, segments: list[str]) -> str | None:
     """``code.overheid.nl/robbert/-/packages`` -> ``code.overheid.nl/robbert``.
 
-    Forgejo en Gitea zetten ``/-/`` tussen de eigenaar en wat je van hem bekijkt, dus alles
-    vanaf dat teken is browserruis.
+    Forgejo and Gitea put ``/-/`` between the owner and what you are looking at, so everything
+    from that marker on is browser noise.
     """
     if "-" not in segments:
         return None
@@ -103,11 +103,11 @@ def _forgejo_packages(host: str, segments: list[str]) -> str | None:
 
 
 def _without_image_reference(host: str, segments: list[str]) -> str:
-    """Een volledige image-referentie terug naar de prefix waar hij onder valt.
+    """A full image reference back to the prefix it falls under.
 
-    ``code.overheid.nl/team/app:1.2`` -> ``code.overheid.nl/team``: de tag valt weg en
-    daarmee ook de laatste padcomponent, want dat is de naam van de repository en niet van
-    de namespace. Zonder tag of digest raken we het pad niet aan.
+    ``code.overheid.nl/team/app:1.2`` -> ``code.overheid.nl/team``: the tag drops out and with
+    it the last path component, because that is the name of the repository and not of the
+    namespace. Without a tag or digest the path is left untouched.
     """
     if not segments or not _TAG_OR_DIGEST.search(segments[-1]):
         return "/".join([host, *segments])
@@ -115,11 +115,11 @@ def _without_image_reference(host: str, segments: list[str]) -> str:
 
 
 def upstream_from_project_images(project_data: dict[str, Any]) -> str | None:
-    """De upstream die uit de images van dit project volgt, of None als hij niet volgt.
+    """The upstream that follows from this project's images, or None when it does not.
 
-    Alleen als het antwoord eenduidig is: bij meer dan een prefix is de vraag juist het
-    punt. Een image zonder host (``nginx:alpine``) telt
-    niet mee: die staat op Docker Hub en daar heb je geen eigen registry voor nodig.
+    Only when the answer is unambiguous: with more than one prefix the question is the point.
+    An image without a host (``nginx:alpine``) does not count: it lives on Docker Hub, and no
+    private registry is needed for that.
     """
     prefixes = {
         prefix
@@ -130,13 +130,13 @@ def upstream_from_project_images(project_data: dict[str, Any]) -> str | None:
 
 
 def _project_images(project_data: dict[str, Any]) -> list[str]:
-    """Elke image die in dit projectbestand staat, op een component of op een deployment."""
-    dragers = list(project_data.get("components", []) or [])
+    """Every image in this project file, on a component or on a deployment."""
+    carriers = list(project_data.get("components", []) or [])
     for deployment in project_data.get("deployments", []) or []:
         if isinstance(deployment, dict):
-            dragers.extend(deployment.get("components", []) or [])
+            carriers.extend(deployment.get("components", []) or [])
     return [
         component["image"]
-        for component in dragers
+        for component in carriers
         if isinstance(component, dict) and isinstance(component.get("image"), str)
     ]

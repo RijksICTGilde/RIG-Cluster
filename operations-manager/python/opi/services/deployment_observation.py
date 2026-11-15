@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
 from opi.services.oom_watcher import record_oom_tune_generation
+from opi.services.project import Project
 from opi.services.registry import listeners
 from opi.services.services_enums import ActionEvent
 
@@ -56,7 +57,7 @@ async def run_after_sync_observation(
 
     project_data, filename = await get_project_data_from_git(project_name)
 
-    dep = next((d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None)
+    dep = Project(project_data).find("deployments", name=deployment_name)
     if dep is None:
         logger.warning(
             "After-sync observation: deployment '%s' not found in project '%s'", deployment_name, project_name

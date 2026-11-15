@@ -8,16 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.db_console_reaper import DbConsoleReaper
-from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
+from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.db_console_manager import (
     DbConsoleManager,
     DbConsoleSession,
     DbConsoleTool,
 )
+from opi.runtime.periodic.db_console_reaper import DbConsoleReaper
+from opi.services.secrets import DatabaseSecret
 from opi.utils import naming
-from opi.utils.secrets import DatabaseSecret
 
 # --------------------------------------------------------------------- naming
 
@@ -494,7 +494,7 @@ async def test_get_latest_run_queries_newest(orm_db):
 def test_is_stale_starting():
     """A pod-less 'starting' run older than the window is reconcilable (so begin() can
     clear it instead of wedging forever); a fresh one, a terminal one, or None is not."""
-    from opi.manager.run_support import is_stale_starting
+    from opi.services.runs_support import is_stale_starting
 
     fresh = {"status": "starting", "started_at": datetime.now(UTC).isoformat()}
     stale = {"status": "starting", "started_at": (datetime.now(UTC) - timedelta(seconds=600)).isoformat()}
@@ -508,10 +508,10 @@ def test_is_stale_starting():
 async def test_pending_state_maps_registry(monkeypatch):
     """The status poll derives starting/failed/stale/none from the runs registry.
 
-    pending_state is the shared run_support helper used by both the db-console and
+    pending_state is the shared runs_support helper used by both the db-console and
     job routers; here it is exercised for the db-console kind.
     """
-    from opi.manager import run_support as r
+    from opi.services import runs_support as r
     from opi.services.runs_service import RunKind
 
     class _FakeRuns:
@@ -522,7 +522,7 @@ async def test_pending_state_maps_registry(monkeypatch):
             return self._run
 
     async def call():
-        return await r.pending_state("p", "d", RunKind.DB_CONSOLE, "console", None)
+        return await r.pending_state("p", "d", RunKind.DB_CONSOLE, "console")
 
     # in-flight start -> 'starting'
     monkeypatch.setattr(
@@ -545,3 +545,18 @@ async def test_pending_state_maps_registry(monkeypatch):
     assert state == "none"
     assert err is not None
     assert "time-out" in err
+
+
+def test_the_block_routes_are_mounted_on_the_web_router() -> None:
+    """The service offers them through ``web_routers()``; forget that and the modal asks
+    for a path that does not exist."""
+    from opi.web.router import web_router
+
+    paths = {getattr(route, "path", "") for route in web_router.routes}
+    for path in (
+        "/projects/{project_name}/db-console",
+        "/projects/{project_name}/db-console/{deployment_name}/modal",
+        "/projects/{project_name}/db-console/{deployment_name}/status",
+        "/projects/{project_name}/db-console/{session_id}/stop",
+    ):
+        assert path in paths, f"{path} is not mounted"

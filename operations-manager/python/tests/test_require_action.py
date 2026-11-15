@@ -1,4 +1,4 @@
-"""``require_action`` (opi/web/authz.py): 403 op een te smalle rol, en alleen de
+"""``require_action`` (opi/http/auth/authz.py): 403 op een te smalle rol, en alleen de
 WEIGERING wordt een beslissing.
 
 Voor een aanroep die zelf niets doet: een GET die een formulier herrendert
@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
+from opi.http.auth.authz import ROLE_TOO_NARROW, require_action
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import TE_SMALLE_ROL, require_action
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -37,8 +37,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT_NAME}.yaml",
         data={"name": PROJECT_NAME, "deployments": [{"name": "live", "environment": "acceptatie"}]},
         users=[
-            ProjectUser(email=OPS, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=KIJKER, roles=["viewer"], type=LidSoort.PERSOON),
+            ProjectUser(email=OPS, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=KIJKER, roles=["viewer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -54,8 +54,8 @@ def _store(project: ProjectSummary | None) -> Iterator[None]:
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         yield
 
@@ -79,7 +79,7 @@ def test_a_role_too_narrow_gives_403_with_the_fixed_text() -> None:
         require_action(_request(KIJKER), Action.RESTORE_RUN, PROJECT_NAME)
 
     assert info.value.status_code == 403
-    assert info.value.detail == TE_SMALLE_ROL
+    assert info.value.detail == ROLE_TOO_NARROW
 
 
 def test_a_refusal_is_recorded_so_the_audit_sees_the_attempt() -> None:

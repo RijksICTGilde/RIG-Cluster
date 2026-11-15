@@ -28,8 +28,8 @@ from opi.api.logs_router import get_component_pods, resolve_component_pods
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
-from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.services import project_authorization
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.services.user_service import UserService
 from starlette.websockets import WebSocketDisconnect
 
@@ -135,7 +135,7 @@ async def test_resolve_returns_none_for_a_deployment_on_another_cluster():
 
 def _request(email: str | None) -> MagicMock:
     """Een verzoek met (of zonder) sessie. ``login_at`` hoort erbij: zonder inlogtijdstip
-    is een sessie voorbij haar absolute levensduur (opi/core/session_guard.py)."""
+    is een sessie voorbij haar absolute levensduur (opi/http/auth/session_guard.py)."""
     request = MagicMock()
     request.session = {"user": {"email": email, "login_at": time.time()}} if email else {}
     return request

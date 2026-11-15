@@ -11,12 +11,17 @@ Deze tests leggen de twee eigenschappen vast waar dat op hing.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.core.templates_lotc import templates_lotc as templates
+from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services import resource_tuning_service
 from opi.services.resource_tuning_service import observe_recent_oom_kills
+from opi.web.router import oom_status_fragment
 
 TEMPLATE = "bg/_oom-status.html.j2"
 
@@ -30,7 +35,7 @@ class _FakeConnector:
         self.pods = pods
         self.queries: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         return [{"metric": {"pod": pod}, "value": [0, "1"]} for pod in self.pods]
 
@@ -135,6 +140,43 @@ def test_wat_de_tuner_deed_blijft_staan_zonder_meting() -> None:
     assert "192Mi" in uitvoer
     assert "placeholder" in uitvoer
     assert "2 keer verhoogd" in uitvoer
+
+
+def _store_with(project_data: dict[str, Any]) -> Any:
+    store = MagicMock()
+    store.get.return_value = SimpleNamespace(data=project_data)
+    return store
+
+
+@pytest.mark.asyncio
+async def test_unknown_deployment_returns_404() -> None:
+    """A name not in the project file is "not found", not a crash."""
+    with (
+        patch("opi.web.router.get_current_user", MagicMock(return_value={"email": "u@example.com"})),
+        patch("opi.web.router.is_user_authorized_for_project", MagicMock(return_value=True)),
+        patch("opi.web.router.get_project_store", MagicMock(return_value=_store_with(_project(["placeholder"])))),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await oom_status_fragment(MagicMock(), "dd-mco", "ghost")
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_known_deployment_renders_the_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The normal path: the deployment named in the path is found and passed through."""
+    monkeypatch.setattr(resource_tuning_service, "get_metrics_connector", lambda: _async(_FakeConnector([])))
+
+    with (
+        patch("opi.web.router.get_current_user", MagicMock(return_value={"email": "u@example.com"})),
+        patch("opi.web.router.is_user_authorized_for_project", MagicMock(return_value=True)),
+        patch("opi.web.router.get_project_store", MagicMock(return_value=_store_with(_project(["placeholder"])))),
+        patch("opi.web.router.render", MagicMock(return_value=HTMLResponse("ok"))) as render_mock,
+    ):
+        await oom_status_fragment(MagicMock(), "dd-mco", "preview")
+
+    context = render_mock.call_args.kwargs["context"]
+    assert context["deployment"]["name"] == "preview"
 
 
 async def _async(value: Any) -> Any:

@@ -18,8 +18,8 @@ from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY
 from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
 
 if TYPE_CHECKING:
-    from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def select_waker_component(
     config: SleepModeConfig,
     handler: ProjectFileHandler,
 ) -> str | None:
-    """Pick the one component that gets the waker, or None (rules in plan section 5).
+    """Pick the one component that gets the waker, or None.
 
     1. ``waker-component`` set and web-published with standard TLS -> that one.
     2. Exactly one web-published (standard TLS) component -> that one.
@@ -121,7 +121,7 @@ def build_waker_deployment_values(
     generated_at: str = "",
     image_pull_secrets_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Values for ``deployment.yaml.jinja`` for the waker (plan section 7).
+    """Values for ``deployment.yaml.jinja`` for the waker.
 
     Only the fields that differ from a normal component; everything app-specific
     (storage, sidecars, app env/secrets) is explicitly emptied so the waker pod is
@@ -131,8 +131,8 @@ def build_waker_deployment_values(
     than a constant because the waker has no Service of its own: it joins the
     application's by carrying the same ``app`` label. A waker on any other port is still
     selected by that Service, still passes its own probes -- they go straight to the
-    container port -- and answers nothing. That is how a hardcoded 8080 left every
-    project whose component listens elsewhere with a healthy pod and a dead hostname.
+    container port -- and answers nothing, which leaves every project whose component
+    listens elsewhere with a healthy pod and a dead hostname.
     """
     image = settings.SLEEP_MODE_WAKER_IMAGE
     # A moving :latest tag must be re-pulled; a pinned tag (incl. a kind-loaded local
@@ -189,9 +189,9 @@ def build_waker_configmap_values(
 ) -> dict[str, Any]:
     """Values for ``configmap.yaml.jinja`` holding the waker's presentation config.
 
-    ``ZAD_PORT`` is the other half of the port fix: the manifest declares the container
-    port, this tells the process inside to listen there. The image defaults to 8080 when
-    the variable is absent, so an older waker image keeps behaving as it did.
+    ``ZAD_PORT`` tells the process inside which port to listen on; the manifest declares
+    that same port on the container. The image defaults to 8080 when the variable is absent,
+    so an older waker image still comes up.
     """
     title_template = config.title or "{deployment}"
     title = title_template.format(project=project_name, deployment=deployment_name, component=component_reference)

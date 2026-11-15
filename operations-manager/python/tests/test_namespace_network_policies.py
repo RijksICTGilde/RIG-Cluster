@@ -15,8 +15,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from opi.generation.manifests import ManifestGenerator
+from opi.manager.project.emitters import emit_namespace_network_policies
+from opi.manager.project.helm_deployment import HelmDeployment
+from opi.manager.project.manifests.application import ApplicationManifests
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
-from opi.utils.project_utils import namespace_level_deployment
+from opi.services.project_utils import namespace_level_deployment
+
+#: Where the helm paths bind their module names, and so where a patch has to land.
+_HELM = "opi.manager.project.helm_deployment"
 
 CLUSTER = "odcn-production"
 NAMESPACE = "rig-prd-demo"
@@ -32,10 +39,9 @@ PROJECT_DATA: dict[str, Any] = {
 
 
 def _emit(deployment_name: str, output_dir: str) -> list[str]:
-    manager = ProjectManager.__new__(ProjectManager)
-    manager._manifest_generator = ManifestGenerator()
     deployment = next(d for d in PROJECT_DATA["deployments"] if d["name"] == deployment_name)
-    return manager._emit_namespace_network_policies(
+    return emit_namespace_network_policies(
+        ManifestGenerator(),
         project_data=PROJECT_DATA,
         project_name="demo",
         deployment=deployment,
@@ -115,7 +121,7 @@ class TestWatErGeschrevenWordt:
 def _manager() -> ProjectManager:
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
         patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),
@@ -128,10 +134,10 @@ def _manager() -> ProjectManager:
 
 
 class TestNamespacePolicyFilesBereikenDeKustomization:
-    """``_emit_namespace_network_policies`` schrijft de bestanden alleen op schijf; of ze
+    """``emit_namespace_network_policies`` schrijft de bestanden alleen op schijf; of ze
     ook in de ArgoCD-applicatie van een helm- of helmfile-deployment belanden hangt af
-    van het doorgeven van ``namespace_policy_files`` in ``_process_helm_chart_deployment``
-    en ``_process_helmfile_deployment``. Zonder die regel staat de policy wel op schijf
+    van het doorgeven van ``namespace_policy_files`` in ``process_helm_chart_deployment``
+    en ``process_helmfile_deployment``. Zonder die regel staat de policy wel op schijf
     maar niet in de kustomization, en dus niet in de cluster: precies het gat dat deze
     taak dicht (zie de aanleiding in features/restrictive-network-policies.md).
     """
@@ -142,12 +148,14 @@ class TestNamespacePolicyFilesBereikenDeKustomization:
     async def test_een_helm_chart_deployment_neemt_de_namespace_policies_op(self, tmp_path):
         manager = _manager()
         manager.get_contents = AsyncMock(return_value=self.PROJECT_DATA)
-        manager._get_helm_values_context = AsyncMock(return_value={})
-        manager._create_deployment_secrets = AsyncMock(return_value=[])
         manager._project_file_handler = MagicMock()
 
-        with patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-demo"):
-            await manager._process_helm_chart_deployment(
+        with (
+            patch.object(HelmDeployment, "get_helm_values_context", AsyncMock(return_value={})),
+            patch.object(HelmDeployment, "create_deployment_secrets", AsyncMock(return_value=[])),
+            patch(f"{_HELM}.get_prefixed_namespace", return_value="rig-demo"),
+        ):
+            await HelmDeployment(manager).process_helm_chart_deployment(
                 {**self.DEPLOYMENT, "helm-charts": []},
                 MagicMock(),
                 str(tmp_path),
@@ -160,17 +168,17 @@ class TestNamespacePolicyFilesBereikenDeKustomization:
     async def test_een_helmfile_deployment_neemt_de_namespace_policies_op(self, tmp_path):
         manager = _manager()
         manager.get_contents = AsyncMock(return_value=self.PROJECT_DATA)
-        manager._get_helm_values_context = AsyncMock(return_value={})
-        manager._create_deployment_secrets = AsyncMock(return_value=[])
-        manager._clone_helmfile_source = AsyncMock(return_value=("unused", None))
-        manager._write_helmfile_custom_files = MagicMock(return_value={})
         manager._project_file_handler = MagicMock()
 
         with (
-            patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-demo"),
-            patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"),
+            patch.object(HelmDeployment, "get_helm_values_context", AsyncMock(return_value={})),
+            patch.object(HelmDeployment, "create_deployment_secrets", AsyncMock(return_value=[])),
+            patch(f"{_HELM}.clone_helmfile_source", AsyncMock(return_value=("unused", None))),
+            patch(f"{_HELM}.write_helmfile_custom_files", MagicMock(return_value={})),
+            patch(f"{_HELM}.get_prefixed_namespace", return_value="rig-demo"),
+            patch(f"{_HELM}.encrypt_to_sops_files_or_fail"),
         ):
-            await manager._process_helmfile_deployment(
+            await HelmDeployment(manager).process_helmfile_deployment(
                 {**self.DEPLOYMENT, "helmfile": []},
                 MagicMock(),
                 str(tmp_path),
@@ -182,7 +190,7 @@ class TestNamespacePolicyFilesBereikenDeKustomization:
 
 
 class TestComponentDeploymentKrijgtOokDeNamespacePolicies:
-    """``_process_deployment_manifests`` roept ``_emit_namespace_network_policies`` aan
+    """``_process_deployment_manifests`` roept ``emit_namespace_network_policies`` aan
     voordat hij naar een van de drie takken vertakt (regel 4354-4363), dus ook de gewone
     component-tak krijgt de default-deny en de baseline zonder label. Anders dan bij een
     helm- of helmfile-deployment komt de kustomization hier uit een scan van de map
@@ -208,19 +216,20 @@ class TestComponentDeploymentKrijgtOokDeNamespacePolicies:
         manager.get_contents = AsyncMock(return_value=self.PROJECT_DATA)
         manager.get_name = AsyncMock(return_value="demo")
         manager.get_repository_path = AsyncMock(return_value="")
-        manager.create_application_manifests = AsyncMock(return_value=[])
-        manager._prune_obsolete_component_manifests = MagicMock()
-        manager._prune_obsolete_service_manifests = MagicMock()
 
         git_connector = MagicMock()
         git_connector.get_working_dir = AsyncMock(return_value=str(tmp_path))
 
         with (
-            patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-demo"),
-            patch("opi.manager.project_manager.apply_rules_to_directory"),
-            patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"),
-            patch.object(
-                manager, "_emit_namespace_network_policies", wraps=manager._emit_namespace_network_policies
+            patch.object(ApplicationManifests, "create_application_manifests", AsyncMock(return_value=[])),
+            patch.object(RepositoryManifests, "prune_obsolete_component_manifests", MagicMock()),
+            patch("opi.manager.project.manifests.repository.prune_obsolete_service_manifests"),
+            patch("opi.manager.project.manifests.repository.get_prefixed_namespace", return_value="rig-demo"),
+            patch("opi.manager.project.manifests.repository.apply_rules_to_directory"),
+            patch("opi.manager.project.manifests.repository.encrypt_to_sops_files_or_fail"),
+            patch(
+                "opi.manager.project.manifests.repository.emit_namespace_network_policies",
+                wraps=emit_namespace_network_policies,
             ) as spy,
         ):
             await manager._process_deployment_manifests(self.DEPLOYMENT, git_connector)

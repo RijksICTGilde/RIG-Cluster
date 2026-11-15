@@ -1,4 +1,4 @@
-"""Visualizers voor de dienst ``image-registries``."""
+"""Visualizers for the ``image-registries`` service."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ REGISTRY_DISPLAY_NAME = EditableVisualizer(
     ),
 )
 
-# Meegestuurd maar niet op het scherm: de slug is de verwijzing vanaf componenten en ligt
-# vast zodra hij bestaat. Zie REGISTRY_NAME_EDITABLE voor waarom hij niet weg kan.
+# Submitted but not on screen: the slug is the reference from components and is fixed once it
+# exists. See REGISTRY_NAME_EDITABLE for why it cannot be left out.
 REGISTRY_NAME = EditableVisualizer(
     editable=REGISTRY_NAME_EDITABLE,
     widget=WidgetType.HIDDEN,

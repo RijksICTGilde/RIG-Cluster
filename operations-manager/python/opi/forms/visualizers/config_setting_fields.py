@@ -1,4 +1,4 @@
-"""Build a form field out of a service's declared room (RC-168, step 4).
+"""Build a form field out of a service's declared room.
 
 A field whose bounds the service already declared should not have them typed out a
 second time next to its widget. ``setting_field`` turns one ``ConfigSetting`` into the
@@ -51,8 +51,7 @@ def setting_field(
     the value comes from a less specific layer or the service default. Without it an
     untouched field on a deployment writes the service default over the project's value.
 
-    Raises:
-        SettingError: if the service does not open the field up at ``layer``.
+    Raises ``SettingError`` when the service does not open the field up at ``layer``.
     """
     editable = Editable(
         yaml_path=setting.yaml_path(service, layer),

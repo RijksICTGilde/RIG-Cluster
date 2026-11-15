@@ -14,9 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
-from opi.core.async_task_service import TaskType
-from opi.core.backup_scheduler import BackupScheduler, parse_rrule
+from opi.manager.backup import BackupResult, BucketBackupResult, DatabaseBackupResult
+from opi.runtime.backup.backup_scheduler import BackupScheduler, parse_rrule
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.tasks.async_task_service import TaskType
 
 # 2026-05-20 is a Wednesday during CEST (UTC+2). 00:30 UTC = 02:30 Amsterdam,
 # which is just past today's 02:00 daily target — within the catch-up window
@@ -125,7 +126,7 @@ class TestSchedulerPicksUpYamlSchedule:
             return snaps
 
         scheduler._get_namespace_snapshots = fake_get.__get__(scheduler, BackupScheduler)  # type: ignore[method-assign]
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with patch("opi.runtime.backup.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             asyncio.run(scheduler._check_and_schedule())
 
@@ -505,19 +506,20 @@ class TestHandleBackupExecution:
     def backup_mocks(self):
         """Patch all external dependencies of handle_backup.
 
-        Patches target the consumer module (task_handlers_backup) where the
-        names are bound at import time.
+        The resolve and the run id are bound in the handler; the steps themselves live in
+        the use case (opi/manager/backup/run.py), so their connectors are patched there.
         """
-        _thb = "opi.core.task_handlers_backup"
+        _thb = "opi.runtime.backup.task_handlers_backup"
+        _run = "opi.manager.backup.run"
         with (
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_thb}.create_backup_manager") as mock_bm,
-            patch(f"{_thb}.create_database_backup_manager") as mock_dbm,
-            patch(f"{_thb}.create_bucket_backup_manager") as mock_bbm,
-            patch(f"{_thb}.create_kubectl_connector") as mock_kubectl,
-            patch(f"{_thb}.create_project_file_handler") as mock_pfh,
-            patch(f"{_thb}.DatabaseSecret") as mock_db_secret,
-            patch(f"{_thb}.get_object_storage_secret", new_callable=AsyncMock) as mock_get_object_storage_secret,
+            patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
+            patch(f"{_run}.create_backup_manager") as mock_bm,
+            patch(f"{_run}.create_database_backup_manager") as mock_dbm,
+            patch(f"{_run}.create_bucket_backup_manager") as mock_bbm,
+            patch(f"{_run}.create_kubectl_connector") as mock_kubectl,
+            patch(f"{_run}.create_project_file_handler") as mock_pfh,
+            patch(f"{_run}.DatabaseSecret") as mock_db_secret,
+            patch(f"{_run}.get_object_storage_secret", new_callable=AsyncMock) as mock_get_object_storage_secret,
             patch(f"{_thb}.generate_backup_run_id", return_value="20260325020000"),
         ):
             # Set up resolve to return a valid project/deployment
@@ -531,7 +533,7 @@ class TestHandleBackupExecution:
             )
 
             # PVC backup returns success
-            pvc_result = MagicMock(success=True)
+            pvc_result = BackupResult(namespace="rig-test-project", pvc_name="prod-web-data-v1", success=True)
             mock_bm.return_value.backup_project_deployment = AsyncMock(return_value=[pvc_result])
 
             # Database: deployment uses database service
@@ -544,7 +546,9 @@ class TestHandleBackupExecution:
 
             db_secret = MagicMock(host="db", port="5432", database="app", username="u", password="p")
             mock_db_secret.get_data = AsyncMock(return_value=db_secret)
-            db_result = MagicMock(success=True)
+            db_result = DatabaseBackupResult(
+                namespace="rig-test-project", pvc_name="postgres", success=True, reference_name="postgres"
+            )
             mock_dbm.return_value.backup_database = AsyncMock(return_value=db_result)
 
             # MinIO
@@ -554,7 +558,9 @@ class TestHandleBackupExecution:
             mock_pfh.return_value.get_components_using_service.return_value = [
                 {"component_name": "web-app", "reference_name": "minio-storage"}
             ]
-            bucket_result = MagicMock(success=True)
+            bucket_result = BucketBackupResult(
+                namespace="rig-test-project", pvc_name="minio-storage", success=True, reference_name="minio-storage"
+            )
             mock_bbm.return_value.backup_bucket = AsyncMock(return_value=bucket_result)
 
             yield {
@@ -569,7 +575,7 @@ class TestHandleBackupExecution:
 
     def test_all_resource_types_backed_up(self, backup_mocks) -> None:
         """With all resource_types, PVC + database + MinIO are all called."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         payload = {
             "project_name": "test-project",
@@ -584,7 +590,7 @@ class TestHandleBackupExecution:
 
     def test_pvc_only_backup(self, backup_mocks) -> None:
         """With only pvc resource type, only PVC backup is called."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         payload = {
             "project_name": "test-project",
@@ -599,7 +605,7 @@ class TestHandleBackupExecution:
 
     def test_database_only_backup(self, backup_mocks) -> None:
         """With only database resource type, only database backup is called."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         payload = {
             "project_name": "test-project",
@@ -613,7 +619,7 @@ class TestHandleBackupExecution:
 
     def test_resolve_failure_returns_error(self, backup_mocks) -> None:
         """If deployment resolution fails, handler returns error without running backups."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         backup_mocks["resolve"].side_effect = ValueError("Project niet gevonden")
         payload = {
@@ -628,9 +634,11 @@ class TestHandleBackupExecution:
 
     def test_pvc_failure_marks_partial(self, backup_mocks) -> None:
         """If PVC backup fails, result is partial failure but other types still run."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
-        failed_pvc = MagicMock(success=False)
+        failed_pvc = BackupResult(
+            namespace="rig-test-project", pvc_name="prod-web-data-v1", success=False, error="pod mislukt"
+        )
         backup_mocks["backup_manager"].return_value.backup_project_deployment = AsyncMock(return_value=[failed_pvc])
         payload = {
             "project_name": "test-project",
@@ -645,7 +653,7 @@ class TestHandleBackupExecution:
 
     def test_database_exception_marks_partial(self, backup_mocks) -> None:
         """If database backup throws, it's caught and marked as partial failure."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         backup_mocks["database_backup_manager"].return_value.backup_database = AsyncMock(
             side_effect=RuntimeError("Connection refused")
@@ -661,9 +669,72 @@ class TestHandleBackupExecution:
         backup_mocks["backup_manager"].return_value.backup_project_deployment.assert_awaited_once()
         backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_awaited_once()
 
-    def test_no_db_secret_skips_database(self, backup_mocks) -> None:
-        """If no database secret exists, database backup is skipped gracefully."""
-        from opi.core.task_handlers_backup import handle_backup
+    def test_database_result_failure_marks_partial(self, backup_mocks) -> None:
+        """A database step that answers success=False (no exception) also fails the run."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        failed_db = DatabaseBackupResult(
+            namespace="rig-test-project",
+            pvc_name="postgres",
+            success=False,
+            error="pg_dump mislukt",
+            reference_name="postgres",
+        )
+        backup_mocks["database_backup_manager"].return_value.backup_database = AsyncMock(return_value=failed_db)
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_awaited_once()
+
+    def test_bucket_exception_marks_partial(self, backup_mocks) -> None:
+        """If the object-storage backup throws, it's caught and marked as partial failure."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket = AsyncMock(
+            side_effect=RuntimeError("mirror mislukt")
+        )
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+        # PVC and database should still have run
+        backup_mocks["backup_manager"].return_value.backup_project_deployment.assert_awaited_once()
+        backup_mocks["database_backup_manager"].return_value.backup_database.assert_awaited_once()
+
+    def test_bucket_result_failure_marks_partial(self, backup_mocks) -> None:
+        """A bucket step that answers success=False (no exception) also fails the run."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        failed_bucket = BucketBackupResult(
+            namespace="rig-test-project",
+            pvc_name="minio-storage",
+            success=False,
+            error="mirror mislukt",
+            reference_name="minio-storage",
+        )
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket = AsyncMock(return_value=failed_bucket)
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["pvc", "database", "minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is False
+
+    def test_no_db_secret_skips_database_and_says_so(self, backup_mocks) -> None:
+        """Without a database secret the step is skipped, with the reason in the result (B3).
+
+        This used to record silent success: the subtask went green and the answer said
+        nothing about the database it passed over.
+        """
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         backup_mocks["db_secret"].get_data = AsyncMock(return_value=None)
         payload = {
@@ -673,11 +744,70 @@ class TestHandleBackupExecution:
         }
         result = _run(handle_backup(payload, _make_progress()))
         assert result["success"] is True
+        assert result["skipped"] == [
+            {"resource_type": "database", "reason": "Overgeslagen: het secret van deze deployment is er niet"}
+        ]
         backup_mocks["database_backup_manager"].return_value.backup_database.assert_not_awaited()
+
+    def test_no_object_storage_secret_skips_the_bucket_and_says_so(self, backup_mocks) -> None:
+        """The same for the object storage (B3)."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["minio_secret"].return_value = None
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        assert [skip["resource_type"] for skip in result["skipped"]] == ["minio"]
+        backup_mocks["bucket_backup_manager"].return_value.backup_bucket.assert_not_awaited()
+
+    def test_a_database_without_a_component_is_backed_up_under_the_default_reference(self, backup_mocks) -> None:
+        """A deployment of helm-charts only still gets a database backup (B4).
+
+        It used to be skipped with a green subtask while the wizard did offer "database",
+        so the backup silently was not there.
+        """
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["project_file_handler"].return_value.get_components_using_service.return_value = []
+        backup_mocks["project_file_handler"].return_value.deployment_service_types.return_value = [
+            "postgresql-database"
+        ]
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["database"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        call = backup_mocks["database_backup_manager"].return_value.backup_database.await_args
+        assert call.kwargs["reference_name"] == "prod-postgresql"
+        assert call.kwargs["component_name"] is None
+        assert call.kwargs["generation"] == 1
+
+    def test_a_bucket_without_a_component_is_backed_up_under_the_default_reference(self, backup_mocks) -> None:
+        """The same for the object storage (B4)."""
+        from opi.runtime.backup.task_handlers_backup import handle_backup
+
+        backup_mocks["project_file_handler"].return_value.get_components_using_service.return_value = []
+        backup_mocks["project_file_handler"].return_value.deployment_service_types.return_value = ["minio-storage"]
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "prod",
+            "resource_types": ["minio"],
+        }
+        result = _run(handle_backup(payload, _make_progress()))
+        assert result["success"] is True
+        call = backup_mocks["bucket_backup_manager"].return_value.backup_bucket.await_args
+        assert call.kwargs["reference_name"] == "prod-minio"
+        assert call.kwargs["component_name"] is None
 
     def test_progress_tracking(self, backup_mocks) -> None:
         """Handler reports progress through the progress manager."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         progress = _make_progress()
         payload = {
@@ -694,7 +824,7 @@ class TestHandleBackupExecution:
 
     def test_default_resource_types(self, backup_mocks) -> None:
         """If resource_types is not in payload, defaults to all three."""
-        from opi.core.task_handlers_backup import handle_backup
+        from opi.runtime.backup.task_handlers_backup import handle_backup
 
         payload = {
             "project_name": "test-project",
@@ -763,7 +893,7 @@ class TestSchedulerToHandlerPipeline:
 
         projects_dict = {"webshop": project}
         with (
-            patch("opi.core.backup_scheduler.get_project_store") as mock_get,
+            patch("opi.runtime.backup.backup_scheduler.get_project_store") as mock_get,
             freeze_time(_FROZEN_TIME),
         ):
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
@@ -804,7 +934,7 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.runtime.backup.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
@@ -843,7 +973,7 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.runtime.backup.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
@@ -855,39 +985,67 @@ class TestSchedulerToHandlerPipeline:
 # ---------------------------------------------------------------------------
 
 
+def _restore_project_manager() -> MagicMock:
+    """A ProjectManager whose read and commit of the generation do nothing."""
+    manager = MagicMock()
+    manager.get_contents = AsyncMock(return_value={"name": "test-project", "deployments": [{"name": "prod"}]})
+    manager.save_and_commit_project = AsyncMock()
+    manager.close = AsyncMock()
+    return manager
+
+
+@pytest.fixture
+def restore_mocks():
+    """Patch external dependencies of handle_restore for existing deployment path."""
+    _thb = "opi.runtime.backup.task_handlers_backup"
+    _bt = "opi.runtime.backup.backup_tasks"
+    _rr = "opi.manager.backup.restore_run"
+    with (
+        patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
+        patch(f"{_rr}.restore_pvc_with_versioning") as mock_pvc,
+        patch(f"{_rr}.restore_database_with_versioning") as mock_database,
+        patch(f"{_rr}.restore_bucket_with_versioning") as mock_bucket,
+        patch(f"{_rr}.ProjectManager") as mock_project_manager,
+        patch(f"{_bt}._provision_deployment_infrastructure") as mock_provision,
+    ):
+        mock_project = MagicMock()
+        mock_project.model_dump.return_value = {"name": "test-project"}
+        mock_project.filename = "test-project.yaml"
+        mock_resolve.return_value = (
+            mock_project,
+            {"name": "test-project", "deployments": [{"name": "prod"}]},
+            "rig-test-project",
+            "local",
+        )
+        restored = {
+            "success": True,
+            "error": None,
+            "old_generation": 0,
+            "new_generation": 1,
+            "old_resource_name": "resource-v0",
+            "new_resource_name": "resource-v1",
+        }
+        for primitive in (mock_pvc, mock_database, mock_bucket):
+            primitive.return_value = restored
+        mock_project_manager.return_value = _restore_project_manager()
+        mock_provision.return_value = None
+
+        yield {
+            "resolve": mock_resolve,
+            "pvc": mock_pvc,
+            "database": mock_database,
+            "bucket": mock_bucket,
+            "project_manager": mock_project_manager,
+            "provision": mock_provision,
+        }
+
+
 class TestHandleRestoreExistingDeployment:
     """Handler restores backup items to an existing deployment."""
 
-    @pytest.fixture
-    def restore_mocks(self):
-        """Patch external dependencies of handle_restore for existing deployment path."""
-        _thb = "opi.core.task_handlers_backup"
-        _bt = "opi.core.backup_tasks"
-        with (
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_bt}._restore_single_resource") as mock_restore_single,
-            patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
-        ):
-            mock_project = MagicMock()
-            mock_project.model_dump.return_value = {"name": "test-project"}
-            mock_resolve.return_value = (
-                mock_project,
-                {"name": "test-project", "deployments": [{"name": "prod"}]},
-                "rig-test-project",
-                "local",
-            )
-            mock_restore_single.return_value = None  # async, returns None on success
-            mock_provision.return_value = None
-
-            yield {
-                "resolve": mock_resolve,
-                "restore_single": mock_restore_single,
-                "provision": mock_provision,
-            }
-
     def test_restore_existing_all_items(self, restore_mocks) -> None:
-        """Restore to existing deployment calls _restore_single_resource per item."""
-        from opi.core.task_handlers_backup import handle_restore
+        """Restore to existing deployment runs the versioning restore per item."""
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": "test-project",
@@ -906,11 +1064,12 @@ class TestHandleRestoreExistingDeployment:
         }
         result = _run(handle_restore(payload, _make_progress()))
         assert result["success"] is True
-        assert restore_mocks["restore_single"].await_count == 2
+        restore_mocks["pvc"].assert_awaited_once()
+        restore_mocks["database"].assert_awaited_once()
 
     def test_restore_existing_resolve_failure(self, restore_mocks) -> None:
         """If deployment resolution fails, handler returns error."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         restore_mocks["resolve"].side_effect = ValueError("Niet gevonden")
         payload = {
@@ -925,14 +1084,14 @@ class TestHandleRestoreExistingDeployment:
         result = _run(handle_restore(payload, _make_progress()))
         assert result["success"] is False
         assert "Niet gevonden" in result["error"]
-        restore_mocks["restore_single"].assert_not_awaited()
+        restore_mocks["pvc"].assert_not_awaited()
 
     def test_restore_existing_partial_failure(self, restore_mocks) -> None:
         """If one restore item fails, result marks partial failure."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
-        # First item succeeds, second raises
-        restore_mocks["restore_single"].side_effect = [None, RuntimeError("DB restore failed")]
+        # The PVC lands, the database raises
+        restore_mocks["database"].side_effect = RuntimeError("DB restore failed")
         payload = {
             "project_name": "test-project",
             "backup_run_id": "20260325020000",
@@ -958,7 +1117,7 @@ class TestHandleRestoreExistingDeployment:
         Removing "Manifesten bijwerken" must not swallow the failure: the reason still
         reaches fail_project, with the wording that replaced "manifesten bijwerken".
         """
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         restore_mocks["provision"].side_effect = RuntimeError("secret rotation mislukt")
         payload = {
@@ -983,7 +1142,7 @@ class TestHandleRestoreExistingDeployment:
 
     def test_restore_existing_progress_tracking(self, restore_mocks) -> None:
         """Handler reports progress through the progress manager."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         progress = _make_progress()
         payload = {
@@ -1004,7 +1163,7 @@ class TestHandleRestoreExistingDeployment:
 
     def test_restore_empty_items_succeeds(self, restore_mocks) -> None:
         """Restore with no backup items still resolves and succeeds."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": "test-project",
@@ -1016,7 +1175,75 @@ class TestHandleRestoreExistingDeployment:
         progress = _make_progress()
         result = _run(handle_restore(payload, progress))
         assert result["success"] is True
-        restore_mocks["restore_single"].assert_not_awaited()
+        restore_mocks["pvc"].assert_not_awaited()
+
+
+class TestTheItemsAreReadWhenTheTaskStarts:
+    """A payload that names only the run leaves the items to the task (RC-482, decision R11).
+
+    The wizard and the backup-run route choose a run, and the task can start minutes later:
+    a run that the retention sweep removed in between would otherwise be restored from a
+    list that no longer exists.
+    """
+
+    def test_a_payload_without_items_reads_the_run(self, restore_mocks) -> None:
+        from opi.runtime.backup.task_handlers_backup import handle_restore
+
+        items = [{"resource_type": "pvc", "component_name": "web-app", "snapshot_id": "snap-1", "storage_name": "data"}]
+        payload = {
+            "project_name": "test-project",
+            "backup_run_id": "20260325020000",
+            "target_deployment": "prod",
+            "source_deployment": "prod",
+            "create_new_deployment": False,
+        }
+        with patch(
+            "opi.runtime.backup.task_handlers_backup.backup_run_items", AsyncMock(return_value=items)
+        ) as fetched:
+            result = _run(handle_restore(payload, _make_progress()))
+
+        assert result["success"] is True
+        restore_mocks["pvc"].assert_awaited_once()
+        assert fetched.await_args.args == ("test-project", "local", "rig-test-project", "prod", "20260325020000")
+
+    def test_a_run_that_is_gone_fails_the_task(self, restore_mocks) -> None:
+        from opi.runtime.backup.task_handlers_backup import handle_restore
+
+        payload = {
+            "project_name": "test-project",
+            "backup_run_id": "20260325020000",
+            "target_deployment": "prod",
+            "source_deployment": "prod",
+            "create_new_deployment": False,
+        }
+        gone = ValueError("backup-run '20260325020000' bestaat niet (meer)")
+        progress = _make_progress()
+        with patch("opi.runtime.backup.task_handlers_backup.backup_run_items", AsyncMock(side_effect=gone)):
+            result = _run(handle_restore(payload, progress))
+
+        assert result["success"] is False
+        assert "bestaat niet" in result["error"]
+        restore_mocks["pvc"].assert_not_awaited()
+        progress.fail_project.assert_called_once()
+
+    def test_a_payload_without_a_source_deployment_reads_the_run_on_its_id(self, restore_mocks) -> None:
+        """The backup-run route names the target it restores INTO, not the one that made the run."""
+        from opi.runtime.backup.task_handlers_backup import handle_restore
+
+        items = [{"resource_type": "pvc", "component_name": "web-app", "snapshot_id": "snap-1", "storage_name": "data"}]
+        payload = {
+            "project_name": "test-project",
+            "backup_run_id": "20260325020000",
+            "target_deployment": "prod",
+            "create_new_deployment": False,
+        }
+        with patch(
+            "opi.runtime.backup.task_handlers_backup.backup_run_items_for_restore", AsyncMock(return_value=items)
+        ) as fetched:
+            result = _run(handle_restore(payload, _make_progress()))
+
+        assert result["success"] is True
+        assert fetched.await_args.args == ("test-project", "local", "rig-test-project", "20260325020000")
 
 
 # ---------------------------------------------------------------------------
@@ -1030,19 +1257,19 @@ class TestHandleRestoreNewDeployment:
     @pytest.fixture
     def new_deploy_mocks(self):
         """Patch external dependencies for the new deployment restore path."""
-        _thb = "opi.core.task_handlers_backup"
-        _bt = "opi.core.backup_tasks"
+        _thb = "opi.runtime.backup.task_handlers_backup"
+        _rr = "opi.manager.backup.restore_run"
         with (
-            patch(f"{_thb}._create_deployment_from_source") as mock_create,
-            patch(f"{_thb}._pre_restore_pvcs") as mock_pre_restore,
+            patch(f"{_thb}.create_deployment_for_restore") as mock_create,
+            patch(f"{_thb}.pre_restore_pvcs") as mock_pre_restore,
             patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
-            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_bt}._restore_single_resource") as mock_restore_single,
+            patch(f"{_thb}.resolve_deployment_target") as mock_resolve,
+            patch(f"{_rr}.restore_pvc_with_versioning") as mock_restore_item,
         ):
             mock_create.return_value = None
             mock_pre_restore.return_value = None
             mock_provision.return_value = None
-            mock_restore_single.return_value = None
+            mock_restore_item.return_value = None
 
             mock_project = MagicMock()
             mock_project.model_dump.return_value = {"name": "test-project"}
@@ -1058,12 +1285,12 @@ class TestHandleRestoreNewDeployment:
                 "pre_restore": mock_pre_restore,
                 "provision": mock_provision,
                 "resolve": mock_resolve,
-                "restore_single": mock_restore_single,
+                "restore_item": mock_restore_item,
             }
 
     def test_new_deployment_full_flow(self, new_deploy_mocks) -> None:
         """Full new deployment restore: create -> pre-restore PVCs -> provision -> restore non-PVC."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": "test-project",
@@ -1087,24 +1314,23 @@ class TestHandleRestoreNewDeployment:
         assert result["success"] is True
 
         # Verify call order
-        new_deploy_mocks["create"].assert_awaited_once_with(
-            "test-project",
-            "staging",
-            "prod",
-            deployment_config={"subdomain": "staging"},
-            backup_run_id="20260325020000",
-            config_source="prod",
-        )
+        new_deploy_mocks["create"].assert_awaited_once()
+        (restore,) = new_deploy_mocks["create"].await_args.args
+        assert restore.target_deployment == "staging"
+        assert restore.source_deployment == "prod"
+        assert restore.backup_run_id == "20260325020000"
+        assert restore.deployment_config == {"subdomain": "staging"}
+        assert restore.config_source == "prod"
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
-        # New deployment path does not call resolve or restore_single:
+        # New deployment path does not resolve or restore items itself:
         # database/minio data is restored during provisioning via clone-from.
         new_deploy_mocks["resolve"].assert_not_awaited()
-        new_deploy_mocks["restore_single"].assert_not_awaited()
+        new_deploy_mocks["restore_item"].assert_not_awaited()
 
     def test_new_deployment_pvc_only(self, new_deploy_mocks) -> None:
         """New deployment with only PVC items: no resolve or single-restore needed."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": "test-project",
@@ -1122,11 +1348,11 @@ class TestHandleRestoreNewDeployment:
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
         new_deploy_mocks["resolve"].assert_not_awaited()
-        new_deploy_mocks["restore_single"].assert_not_awaited()
+        new_deploy_mocks["restore_item"].assert_not_awaited()
 
     def test_new_deployment_create_failure(self, new_deploy_mocks) -> None:
         """If deployment creation fails, nothing else runs."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         new_deploy_mocks["create"].side_effect = ValueError("Bron deployment niet gevonden")
         payload = {
@@ -1147,7 +1373,7 @@ class TestHandleRestoreNewDeployment:
 
     def test_new_deployment_provision_failure(self, new_deploy_mocks) -> None:
         """If infrastructure provisioning fails, restore doesn't proceed."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         new_deploy_mocks["provision"].side_effect = RuntimeError("Provisioning mislukt")
         payload = {
@@ -1169,11 +1395,11 @@ class TestHandleRestoreNewDeployment:
         assert result["success"] is False
         assert "Provisioning mislukt" in result["error"]
         new_deploy_mocks["resolve"].assert_not_awaited()
-        new_deploy_mocks["restore_single"].assert_not_awaited()
+        new_deploy_mocks["restore_item"].assert_not_awaited()
 
-    def test_new_deployment_db_only_no_restore_single(self, new_deploy_mocks) -> None:
-        """Database-only items are restored during provisioning, not via restore_single."""
-        from opi.core.task_handlers_backup import handle_restore
+    def test_new_deployment_db_only_restores_during_provisioning(self, new_deploy_mocks) -> None:
+        """Database-only items are restored during provisioning, not item by item."""
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": "test-project",
@@ -1194,8 +1420,8 @@ class TestHandleRestoreNewDeployment:
         assert result["success"] is True
         new_deploy_mocks["create"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
-        # Non-PVC items are restored during provisioning, not via restore_single
-        new_deploy_mocks["restore_single"].assert_not_awaited()
+        # Non-PVC items are restored during provisioning
+        new_deploy_mocks["restore_item"].assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1203,8 +1429,27 @@ class TestHandleRestoreNewDeployment:
 # ---------------------------------------------------------------------------
 
 
+def _create_for_restore(**extra: Any):
+    """The use case call these tests drive: one restore target, built from "production"."""
+    return _create_for_restore_from("production", **extra)
+
+
+def _create_for_restore_from(source: str, **extra: Any):
+    from opi.manager.backup.restore_run import NewDeploymentRestore, create_deployment_for_restore
+
+    return create_deployment_for_restore(
+        NewDeploymentRestore(
+            project_name="test-project",
+            target_deployment="staging",
+            source_deployment=source,
+            backup_run_id="",
+            **extra,
+        )
+    )
+
+
 class TestCreateDeploymentFromSourceYAML:
-    """Verify _create_deployment_from_source correctly modifies project data."""
+    """Verify create_deployment_for_restore correctly modifies project data."""
 
     @pytest.fixture
     def yaml_mocks(self):
@@ -1238,10 +1483,10 @@ class TestCreateDeploymentFromSourceYAML:
         mock_project.data = project_data
         mock_project.filename = "test-project.yaml"
 
-        _bt = "opi.core.backup_tasks"
+        _rr = "opi.manager.backup.restore_run"
         with (
-            patch(f"{_bt}.get_project_store") as mock_ps,
-            patch(f"{_bt}.ProjectManager") as mock_pm_cls,
+            patch(f"{_rr}.get_project_store") as mock_ps,
+            patch(f"{_rr}.ProjectManager") as mock_pm_cls,
         ):
             mock_ps.return_value.get.return_value = mock_project
             # The mutation now reads fresh via ProjectManager.get_contents() and
@@ -1260,9 +1505,7 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_new_deployment_added_to_yaml(self, yaml_mocks) -> None:
         """New deployment is appended to project_data['deployments']."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         deployments = yaml_mocks["project_data"]["deployments"]
         assert len(deployments) == 2
@@ -1271,9 +1514,7 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_new_deployment_has_clone_from_backup(self, yaml_mocks) -> None:
         """New deployment has clone-from type 'backup' referencing source."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert new_dep["clone-from"]["type"] == "backup"
@@ -1282,9 +1523,7 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_new_deployment_copies_components(self, yaml_mocks) -> None:
         """Components are deep-copied from the deployment the config is inherited from."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production", config_source="production"))
+        _run(_create_for_restore(config_source="production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert len(new_dep["components"]) == 1
@@ -1296,9 +1535,7 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_new_deployment_excludes_domain_fields(self, yaml_mocks) -> None:
         """Domain-related fields are excluded from copy (user provides via config)."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         # Asked of the service that owns them (RC-60), so the assertion says "this
@@ -1309,23 +1546,19 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_new_deployment_auto_subdomain(self, yaml_mocks) -> None:
         """When source subdomain matches source name, new subdomain = target name."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) == "staging"
 
     def test_deployment_config_overrides(self, yaml_mocks) -> None:
         """User-provided deployment_config overrides domain fields."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
         config = {
             "subdomain": "my-staging",
             "base-domain": "custom.dev",
             "domain-format": "subdomain-project",
         }
-        _run(_create_deployment_from_source("test-project", "staging", "production", deployment_config=config))
+        _run(_create_for_restore(deployment_config=config))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         # A caller-supplied deployment_config still lands at the deployment root; the
@@ -1341,22 +1574,14 @@ class TestCreateDeploymentFromSourceYAML:
         value (``has_domain_setting``). Reading it as "is None" would treat the explicit null
         as absent and overwrite it with the target name (RC-60 review, suggestion 3).
         """
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(
-            _create_deployment_from_source(
-                "test-project", "staging", "production", deployment_config={"subdomain": None}
-            )
-        )
+        _run(_create_for_restore(deployment_config={"subdomain": None}))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) is None
 
     def test_preserves_cluster_and_namespace(self, yaml_mocks) -> None:
         """Cluster, namespace, and repository are copied from source."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert new_dep["cluster"] == "local"
@@ -1365,9 +1590,7 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_saves_and_commits(self, yaml_mocks) -> None:
         """Project file is persisted through the single validated save path."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_for_restore())
 
         yaml_mocks["save"].assert_called_once()
         # save_and_commit_project(project_data, commit_message)
@@ -1379,7 +1602,67 @@ class TestCreateDeploymentFromSourceYAML:
 
     def test_source_not_found_raises(self, yaml_mocks) -> None:
         """Raises ValueError when source deployment doesn't exist."""
-        from opi.core.backup_tasks import _create_deployment_from_source
-
         with pytest.raises(ValueError, match="niet gevonden"):
-            _run(_create_deployment_from_source("test-project", "staging", "nonexistent"))
+            _run(_create_for_restore_from("nonexistent"))
+
+
+class TestAHeldLockIsMarkedOnTheRun:
+    """A step that gave up waiting for the backup lock is recognizable by its type.
+
+    The answer carries ``lock_error`` so an entry point can give a 409 for it instead of
+    calling the whole run broken, without matching on the message.
+    """
+
+    def test_the_run_reports_the_lock_that_stayed_held(self) -> None:
+        from opi.manager.backup.base import BackupLockBusyError
+        from opi.manager.backup.run import BackupRunRequest, backup_deployment, backup_run_answer
+
+        with patch("opi.manager.backup.run.create_backup_manager") as pvc_manager:
+            pvc_manager.return_value.backup_project_deployment = AsyncMock(
+                side_effect=BackupLockBusyError("Could not acquire backup lock - another backup is running")
+            )
+            result = _run(
+                backup_deployment(
+                    BackupRunRequest(
+                        project_name="test-project",
+                        deployment_name="prod",
+                        project_data={"name": "test-project"},
+                        app_namespace="rig-test-project",
+                        cluster="local",
+                        resource_types=["pvc"],
+                        trigger="manual",
+                        backup_run_id="20260325020000",
+                    ),
+                    progress=_make_progress(),
+                    parent_task_id="task-1",
+                )
+            )
+
+        assert result.success is False
+        assert result.lock_error == "Could not acquire backup lock - another backup is running"
+        assert backup_run_answer(result)["lock_error"] == result.lock_error
+
+    def test_another_runtime_error_is_no_lock(self) -> None:
+        from opi.manager.backup.run import BackupRunRequest, backup_deployment
+
+        with patch("opi.manager.backup.run.create_backup_manager") as pvc_manager:
+            pvc_manager.return_value.backup_project_deployment = AsyncMock(side_effect=RuntimeError("pod weggevallen"))
+            result = _run(
+                backup_deployment(
+                    BackupRunRequest(
+                        project_name="test-project",
+                        deployment_name="prod",
+                        project_data={"name": "test-project"},
+                        app_namespace="rig-test-project",
+                        cluster="local",
+                        resource_types=["pvc"],
+                        trigger="manual",
+                        backup_run_id="20260325020000",
+                    ),
+                    progress=_make_progress(),
+                    parent_task_id="task-1",
+                )
+            )
+
+        assert result.success is False
+        assert result.lock_error is None

@@ -1,0 +1,64 @@
+schema-version: '2.17'
+name: golden-kaal
+display-name: Golden kaal domein
+description: Een component ook op het kale domein
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - reference: publish-on-web
+    config:
+      domains:
+        allowed-domains:
+          - domain: voorbeeld.nl
+            status: approved
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-kaal.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    services:
+      - publish-on-web
+  - name: api
+    type: single
+    ports:
+      inbound: [3000]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    services:
+      - publish-on-web
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-kaal
+    repository: main-repo
+    services:
+      - reference: publish-on-web
+        config:
+          subdomain: app
+          base-domain: voorbeeld.nl
+          expose-component-on-bare-domain: web
+    components:
+      - reference: web
+        image: nginx:1.27
+      - reference: api
+        image: python:3.14-slim

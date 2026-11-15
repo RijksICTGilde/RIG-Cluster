@@ -18,7 +18,7 @@ Two properties are measured:
 from __future__ import annotations
 
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     COMPONENT_USAGE_DEPENDENCY,
     COMPONENT_USAGE_DEPLOYMENT,
     COMPONENT_USAGE_WEB_ADDRESS,
@@ -26,7 +26,7 @@ from opi.handlers.project_file_handler import (
     component_usage_sites,
     remove_component_references,
 )
-from opi.manager.project_validation import validate_component_references
+from opi.services.project_validation import validate_component_references
 
 WEB = "web"
 

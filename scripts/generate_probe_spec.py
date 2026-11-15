@@ -46,7 +46,7 @@ if str(_OPI_ROOT) not in sys.path:
 
 from opi.services.services import ServiceAdapter  # noqa: E402  (after sys.path bootstrap above)
 from opi.services.services_enums import ServiceType  # noqa: E402
-from opi.utils import secrets as secrets_module  # noqa: E402
+from opi.services import secrets as secrets_module  # noqa: E402
 
 # Spec format version. Bump only on a structural change to the JSON shape (new
 # fields, renamed keys) - the Go loader pins to this. Adding services/variables

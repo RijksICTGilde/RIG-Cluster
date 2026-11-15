@@ -220,7 +220,7 @@ class TestDeStoringZelf:
         # deze twee valt het verzoek op een 404 en meet de test de foutpagina niet.
         from unittest.mock import MagicMock
 
-        from opi.web import authz
+        from opi.http.auth import authz
 
         project = MagicMock()
         project.name = "dd-mco"
@@ -281,10 +281,10 @@ class TestEenOnbekendeStatus:
     """Een uitzondering in de foutafhandeling is het ene ding dat nooit mag gebeuren."""
 
     def test_een_status_buiten_de_standaard_valt_niet_om(self) -> None:
-        from opi.core.errors import statusomschrijving
+        from opi.core.errors import status_phrase
 
-        assert statusomschrijving(500) == "Internal Server Error"
-        assert statusomschrijving(599) == "599"
+        assert status_phrase(500) == "Internal Server Error"
+        assert status_phrase(599) == "599"
 
 
 class TestDeLogKrijgtHetRegelnummer:
@@ -364,7 +364,8 @@ class TestDeCategorieIsEenBelofte:
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504])
     def test_elke_5xx_zegt_dat_het_niet_aan_je_verzoek_lag(self, status: int) -> None:
-        from opi.api.v2.models import ErrorCategory, category_for_status
+        from opi.api.v2.models import category_for_status
+        from opi.core.errors import ErrorCategory
 
         assert category_for_status(status) == ErrorCategory.InternalError
 
@@ -372,12 +373,14 @@ class TestDeCategorieIsEenBelofte:
     def test_een_4xx_krijgt_geen_categorie_die_we_niet_kunnen_waarmaken(self, status: int) -> None:
         """Een 4xx krijgt de envelop niet; kwam hij er toch in, dan is Unknown de eerlijke
         waarde -- de status alleen zegt niet of het de invoer, de rechten of een race was."""
-        from opi.api.v2.models import ErrorCategory, category_for_status
+        from opi.api.v2.models import category_for_status
+        from opi.core.errors import ErrorCategory
 
         assert category_for_status(status) == ErrorCategory.Unknown
 
     def test_een_taak_met_internal_error_verandert_niet_mee(self) -> None:
         """Bewust: `error_category` is een waarde die clients al uitlezen."""
-        from opi.api.v2.models import ErrorCategory, error_category_for
+        from opi.api.v2.models import error_category_for
+        from opi.core.errors import ErrorCategory
 
         assert error_category_for("internal_error") == ErrorCategory.Unknown

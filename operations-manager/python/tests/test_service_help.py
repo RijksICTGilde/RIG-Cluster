@@ -21,11 +21,11 @@ import pathlib
 
 import opi
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services import ServiceType
 from opi.services.help_text import markdown_to_components, read_help_markdown, render_service_help
 from opi.services.services import ServiceAdapter
-from opi.web.navigation_lotc import to_nldd_icon
+from opi.utils.nldd_iconen import to_nldd_icon
 
 _TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates_lotc"
 # A service's explanation lives in that service's own package (RC-36); the loader has

@@ -11,7 +11,7 @@ ORM-backed (:class:`opi.services.persistence.runs.Run`) on the shared async engi
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003
+from datetime import datetime  # noqa: TC003  # runtime-resolved by SQLAlchemy Mapped
 from enum import StrEnum
 
 from sqlalchemy import func, select, update

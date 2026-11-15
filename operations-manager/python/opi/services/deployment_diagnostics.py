@@ -14,9 +14,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.errors import ErrorCategory
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,
@@ -172,7 +172,7 @@ async def gather_deployment_errors(
     tree_available = True
     try:
         tree_nodes = await argo.get_application_resource_tree(app_name)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # a diagnostics fetch must never break the page
         logger.debug("Could not fetch resource tree for %s: %s", app_name, exc)
         tree_nodes = []
         tree_available = False
@@ -199,7 +199,7 @@ async def gather_deployment_errors(
         try:
             k8s_ns = get_prefixed_namespace(cluster, base_namespace)
             raw_events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # a diagnostics fetch must never break the page
             logger.debug("Could not fetch namespace events for %s: %s", deployment_name, exc)
             raw_events = []
 
@@ -299,12 +299,11 @@ def gather_sync_deviations(
     health_status = (status.get("health") or {}).get("status")
     operation_state = status.get("operationState", {}) or {}
     resources = status.get("resources", []) or []
-    # Sleutel-aanwezigheid, niet truthiness: ArgoCD's ``automated: {}`` betekent aan.
+    # Key presence, not truthiness: ArgoCD's ``automated: {}`` means on.
     auto_sync = "automated" in (((status_data.get("spec") or {}).get("syncPolicy")) or {})
 
-    # Loopt er een sync die al te lang staat, dan is "bij de volgende sync" een belofte die
-    # niemand inlost: zolang hij staat wordt elke volgende overgeslagen, en hij eindigt niet uit
-    # zichzelf (RC-250).
+    # While a sync has been stuck for too long, "at the next sync" is a promise nobody keeps:
+    # every following sync is skipped as long as it stands, and it does not end by itself.
     operation = read_sync_operation(status_data)
     blocked_for = (
         format_duration(operation_age_seconds(operation))

@@ -16,11 +16,11 @@ import asyncpg
 import pytest
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import KeycloakConnector
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.manager.minio_manager import MinioManager
 from opi.services.credential_rotation import rotatable_services_for_deployment, services_with_pending_clone
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 class _Rollen:
@@ -270,11 +270,13 @@ def _sso_manager(bestaand_secret: Any) -> KeycloakManager:
     """Een KeycloakManager waarvan alleen de clienttak van de SSO-opbouw echt loopt."""
     mgr = KeycloakManager.__new__(KeycloakManager)
     mgr.project_manager = SimpleNamespace(  # type: ignore[attr-defined]
-        _get_project_keycloak_config_for_cluster=AsyncMock(return_value={"realm": "proj-realm", "host": "https://kc"}),
-        _get_keycloak_url_for_cluster=lambda cluster: "https://kc",
         _get_secret_from_map=lambda *args: bestaand_secret,
         _add_secret_to_create=lambda *args: None,
     )
+    mgr._get_project_keycloak_config_for_cluster = AsyncMock(  # type: ignore[method-assign]
+        return_value={"realm": "proj-realm", "host": "https://kc"}
+    )
+    mgr._get_keycloak_url_for_cluster = lambda cluster: "https://kc"  # type: ignore[method-assign]
     return mgr
 
 

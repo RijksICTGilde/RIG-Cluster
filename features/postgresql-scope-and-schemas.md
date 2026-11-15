@@ -145,7 +145,7 @@ vooraan stond (`rapportage` < `v2`). Zie "Welk schema een database-restore herno
 | Naamgeving | `opi/utils/naming.py` (`generate_extra_database_schema`, `generate_schema_variable_name`) |
 | Provisioning | `opi/manager/database_manager.py` |
 | Kloon | `opi/connectors/postgres.py` (`clone_schema`) |
-| Secret/variabelen | `opi/utils/secrets.py` (`DatabaseSecret`) |
+| Secret/variabelen | `opi/services/secrets.py` (`DatabaseSecret`) |
 | UI | `opi/services/catalog/postgresql_database/{editables,visualizers}.py` + `config_form_section` |
 | Save-validatie | `opi/forms/editables/validators.py` (`SchemaPostfixValidator`), `opi/forms/editables/enforcers.py` (`UniqueSchemaEnforcer`) |
 | Projectbrede naamcontrole | `opi/services/catalog/postgresql_database/schema_names.py`, aan de haak `validate_project` |

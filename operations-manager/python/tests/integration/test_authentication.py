@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def mock_project_service_with_projects() -> Any:
     """Mock project service with test projects registered."""
-    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+    with patch("opi.http.auth.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
         # Create test projects

@@ -18,7 +18,8 @@ import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from opi.connectors.kubectl import KubectlConnector
-from opi.generation.manifests import MANIFEST_FILTERS, render_template, render_template_source
+from opi.generation.manifests import render_template
+from opi.utils.manifest_render import MANIFEST_FILTERS, render_template_source
 from tests.test_template_injection_sweep import BACKUP_CTX, BACKUP_EN_RESTORE_SJABLONEN
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"

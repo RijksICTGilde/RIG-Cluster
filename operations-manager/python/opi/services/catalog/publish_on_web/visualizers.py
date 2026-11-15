@@ -3,9 +3,9 @@
 Component level: the TLS mode and the certificate attachment, consumed by the
 component-form aggregation via ``config_component_visualizers()``.
 
-Deployment level (RC-60): the "Webadres" fields. They moved here with their editables --
-the display of a field belongs with the field, and the service that owns the value owns
-both. ``forms/visualizers/fields/domains.py`` re-exports them under their familiar names.
+Deployment level: the "Webadres" fields. They live with their editables -- the display of a
+field belongs with the field, and the service that owns the value owns both.
+``forms/visualizers/fields/domains.py`` re-exports them under their familiar names.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ PUBLISH_ON_WEB_ATTACHMENT = EditableVisualizer(
 )
 
 
-# --- the deployment-component layer: the same pair, as an override (RC-78) ------------
+# The deployment-component layer: the same pair, as an override.
 #
 # Both labels say what the field is an override OF, because at this layer an empty value
 # does not mean "no TLS" -- it means "whatever the component says". The inherit option
@@ -81,7 +81,7 @@ DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = EditableVisualizer(
 )
 
 
-# --- the deployment layer: the "Webadres" fields --------------------------------------
+# The deployment layer: the "Webadres" fields.
 
 DOMAIN_FORMAT = EditableVisualizer(
     editable=DOMAIN_FORMAT_EDITABLE,

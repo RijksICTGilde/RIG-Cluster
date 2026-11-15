@@ -11,8 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.grafana_prometheus import GrafanaConnectionError
-from opi.connectors.prometheus import PrometheusQueryError
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
 from opi.services.project_service import ProjectSummary
 from opi.services.zad_map.contract import Graph
 from opi.services.zad_map.project import project_graph, usage_targets
@@ -159,7 +158,7 @@ def test_the_output_validates_against_the_contract() -> None:
 @pytest.mark.asyncio
 async def test_a_failing_metrics_store_costs_the_sizes_not_the_map() -> None:
     connector = MagicMock()
-    connector.custom_query = AsyncMock(side_effect=PrometheusQueryError("down"))
+    connector.query = AsyncMock(side_effect=MetricsQueryError("down"))
     with patch("opi.services.zad_map.usage.get_metrics_connector", AsyncMock(return_value=connector)):
         usage = await measure_usage({"rig-demo"}, {"demo_productie"})
 
@@ -170,7 +169,7 @@ async def test_a_failing_metrics_store_costs_the_sizes_not_the_map() -> None:
 async def test_an_unavailable_metrics_backend_costs_the_sizes_not_the_map() -> None:
     """The same outcome as a failing query: no sizes, and a map that still renders."""
     connector = MagicMock()
-    connector.custom_query = AsyncMock(side_effect=GrafanaConnectionError("not available"))
+    connector.query = AsyncMock(side_effect=MetricsUnavailableError("not available"))
     with patch("opi.services.zad_map.usage.get_metrics_connector", AsyncMock(return_value=connector)):
         usage = await measure_usage({"rig-demo"}, {"demo_productie"})
 
@@ -187,7 +186,7 @@ async def test_measurements_are_keyed_by_namespace_pvc_and_database() -> None:
         return [{"metric": {"datname": "demo_productie"}, "value": [0, "30"]}]
 
     connector = MagicMock()
-    connector.custom_query = AsyncMock(side_effect=answer)
+    connector.query = AsyncMock(side_effect=answer)
     with patch("opi.services.zad_map.usage.get_metrics_connector", AsyncMock(return_value=connector)):
         usage = await measure_usage({"rig-demo", 'bad"name'}, {"demo_productie"})
 
@@ -197,7 +196,7 @@ async def test_measurements_are_keyed_by_namespace_pvc_and_database() -> None:
         database_size={"demo_productie": 30.0},
     )
     # An unsafe name never reaches the query.
-    assert all('bad"name' not in call.args[0] for call in connector.custom_query.await_args_list)
+    assert all('bad"name' not in call.args[0] for call in connector.query.await_args_list)
 
 
 @pytest.mark.parametrize(

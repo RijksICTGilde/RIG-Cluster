@@ -1,9 +1,4 @@
-"""
-Form models for OPI.
-
-This package contains Pydantic models with FormMeta annotations
-for dynamic form generation.
-"""
+"""Pydantic models with ``FormMeta`` annotations, for dynamic form generation."""
 
 from opi.forms.models.project import (
     ComponentFormModel,
@@ -25,13 +20,11 @@ from opi.forms.models.project_file import (
 )
 
 __all__ = [
-    # Self-service form models
     "ComponentFormModel",
     "ComponentModel",
     "DeploymentComponentModel",
     "DeploymentModel",
     "PortsModel",
-    # Project file models (matching YAML structure)
     "ProjectFileModel",
     "ProjectFormModel",
     "ProjectUserModel",

@@ -39,7 +39,7 @@ SERVICE = "health-check"
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -131,7 +131,7 @@ class TestRolloutFollowsTheBinding:
 
     @pytest.mark.asyncio
     async def test_task_handler_processes_after_a_binding_only(self):
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = MagicMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": [], "components_updated": ["api"]})
@@ -154,7 +154,7 @@ class TestRolloutFollowsTheBinding:
 
     @pytest.mark.asyncio
     async def test_task_handler_skips_when_truly_nothing_changed(self):
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = MagicMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": [], "components_updated": []})

@@ -17,12 +17,12 @@ class NamespaceRedisService(Service):
         icon="zandloper",
         color="rood",
         shared_per_deployment=True,
-        secret_class="RedisSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="RedisSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in RedisVariables],
         hidden=True,
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )
     cleanup_manager_key = ManagerKey.REDIS
-    # May enrol itself (RC-84): carries no project-level config at all, so an explicit
+    # May enrol itself: carries no project-level config at all, so an explicit
     # project selection would record a decision that was never made.
     allows_implicit_project_selection = True

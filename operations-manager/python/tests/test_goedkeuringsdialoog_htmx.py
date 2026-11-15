@@ -25,7 +25,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from opi.core.template_helpers import TEMPLATES_DIR
+from opi.http.render.template_helpers import TEMPLATES_DIR
 
 SJABLOON = pathlib.Path(TEMPLATES_DIR) / "bg" / "admin-approvals.html.j2"
 MODAL_CSS = pathlib.Path(__file__).resolve().parents[1] / "static" / "css" / "modal.css"

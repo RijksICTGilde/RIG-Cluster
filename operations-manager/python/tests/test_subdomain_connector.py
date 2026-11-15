@@ -9,7 +9,7 @@ from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.subdomain import (
+from opi.services.catalog.publish_on_web.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
     RESERVED_SUBDOMAINS,
     SubdomainNotAvailableError,
@@ -283,7 +283,7 @@ class TestValidateBaseDomain:
 
     def test_valid_base_domain_local(self):
         """Valid base domain for local cluster passes validation."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error = validate_base_domain("kind", "local")
         assert is_valid is True
@@ -291,7 +291,7 @@ class TestValidateBaseDomain:
 
     def test_valid_base_domain_production(self):
         """Valid base domain for production cluster passes validation."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error = validate_base_domain("rijks.app", "odcn-production")
         assert is_valid is True
@@ -299,7 +299,7 @@ class TestValidateBaseDomain:
 
     def test_invalid_base_domain(self):
         """Invalid base domain fails validation (must be syntactically invalid)."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         # Custom domains with valid syntax are now accepted, so use a truly invalid domain
         is_valid, error = validate_base_domain("-invalid", "local")
@@ -308,7 +308,7 @@ class TestValidateBaseDomain:
 
     def test_empty_base_domain(self):
         """Empty base domain fails validation."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error = validate_base_domain("", "local")
         assert is_valid is False
@@ -316,7 +316,7 @@ class TestValidateBaseDomain:
 
     def test_case_insensitive(self):
         """Base domain validation is case insensitive."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error = validate_base_domain("RIJKS.APP", "odcn-production")
         assert is_valid is True
@@ -324,7 +324,7 @@ class TestValidateBaseDomain:
 
     def test_all_clusters_validation(self):
         """Base domain validation without cluster checks against all supported domains."""
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         # rijks.app should be valid when no cluster specified
         is_valid, error = validate_base_domain("rijks.app")
@@ -340,7 +340,7 @@ class TestGetSupportedBaseDomains:
 
     def test_local_cluster_domains(self):
         """get_supported_base_domains returns correct domains for local cluster."""
-        from opi.connectors.subdomain import get_supported_base_domains
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         domains = get_supported_base_domains("local")
         assert "kind" in domains
@@ -348,7 +348,7 @@ class TestGetSupportedBaseDomains:
 
     def test_production_cluster_domains(self):
         """get_supported_base_domains returns correct domains for production cluster."""
-        from opi.connectors.subdomain import get_supported_base_domains
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         domains = get_supported_base_domains("odcn-production")
         assert "rijks.app" in domains
@@ -358,7 +358,7 @@ class TestGetSupportedBaseDomains:
 
     def test_all_clusters_domains(self):
         """get_supported_base_domains returns all domains when no cluster specified."""
-        from opi.connectors.subdomain import get_supported_base_domains
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         domains = get_supported_base_domains()
         assert "kind" in domains
@@ -372,7 +372,7 @@ class TestBaseDomainValidationInRegister:
     @pytest.mark.asyncio
     async def test_register_validates_base_domain(self):
         """register raises BaseDomainValidationError for invalid base domain."""
-        from opi.connectors.subdomain import BaseDomainValidationError
+        from opi.services.catalog.publish_on_web.subdomain import BaseDomainValidationError
 
         connector = SubdomainConnector()
 

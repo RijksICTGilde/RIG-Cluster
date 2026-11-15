@@ -30,7 +30,7 @@ Bijvoorbeeld: `docker save mink-app:v1.0` gepusht door project `mink` als
 `image_name=app&tag=v1.0` landt op `rcr.rijksapps.nl/rig/zad:mink_app-v1.0`.
 
 Het scheidingsteken tussen de eigenaar en de rest is de **underscore**. Een projectnaam
-matcht `^[a-z][a-z0-9-]*$` en kan dus nooit een underscore bevatten, terwijl een
+matcht `PROJECT_NAME` (`opi/utils/patterns.py`) en kan dus nooit een underscore bevatten, terwijl een
 image-naam dat wel mag. Het deel vóór de eerste underscore is daarmee ondubbelzinnig de
 eigenaar, ook als de image-naam er zelf een bevat. Was het koppelteken de scheiding
 geweest, dan zouden project `foo` met image `bar-backend` en project `foo-bar` met image
@@ -149,7 +149,7 @@ schrijfkant, en die is gepind.
 | Tagopbouw en eigenaar-afleiding | `opi/utils/naming.py` |
 | Bestemming en validatie van het pushdoel | `opi/connectors/skopeo.py` |
 | Endpoint | `opi/api/image_router.py` |
-| Leescontrole | `opi/manager/project_validation.py` |
+| Leescontrole | `opi/services/project_validation.py` |
 | Tests (twee projecten, twee sleutels) | `tests/test_tenant_isolation_registry.py` |
 | Tests (connector) | `tests/test_skopeo_connector.py` |
 

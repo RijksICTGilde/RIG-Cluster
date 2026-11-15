@@ -1,17 +1,11 @@
-"""Voorbeeldvelden om de omgezette formulierlaag te kunnen bekijken.
+"""Example fields, so the form layer can be looked at without a real project.
 
-De formulierlaag is de zwaarste stap van de omzetting geweest en tegelijk de enige die
-je niet op een gewone pagina ziet: hij zit in de wizard, en die heeft een echt project
-nodig. Zonder iets als dit zou de laag wel omgezet zijn maar niet te beoordelen.
+These are REAL ``FormField`` objects and not a made-up project file: a fabricated project
+looks like an existing one in a screenshot, and that is the kind of image a reader later
+believes. Keep the labels unmistakably examples.
 
-Wat hier staat zijn ECHTE ``FormField``-objecten, geen nagemaakt project. Dat verschil
-is belangrijk: een verzonnen projectbestand zou er in een screenshot uitzien als een
-bestaand project, en dat is precies het soort beeld dat later voor waar wordt
-aangezien. Een veld met het label "Projectnaam" is onmiskenbaar een voorbeeld.
-
-De reeks dekt elk veldtype dat de applicatie kent, plus de standen die in de omzetting
-konden sneuvelen: een veld met hulptekst, een met een foutmelding, een uitgeschakeld
-veld, en een met htmx-attributen.
+The series covers every widget type the application knows, plus the states that are easy to
+lose: a field with help text, one with an error, a read-only one, and one with htmx attributes.
 """
 
 from opi.forms.field import FormField
@@ -37,8 +31,7 @@ EXAMPLE_FIELDS: list[FormField] = [
         placeholder="Waar is dit project voor?",
         attributes={"rows": "3"},
     ),
-    # Een veld met een foutmelding: lotc-forms leidt de foutstaat hieruit af, dus dit
-    # toetst meteen dat de aparte invalid-vlag terecht is weggevallen.
+    # lotc-forms derives the error state from ``errors``; there is no separate invalid flag.
     FormField(
         name="email",
         path="users[0].email",
@@ -49,7 +42,7 @@ EXAMPLE_FIELDS: list[FormField] = [
         value="geen-adres",
         errors=["Dit is geen geldig e-mailadres."],
     ),
-    # Een veld met htmx: de attribuutbundel moet op het invoerveld landen.
+    # With htmx: the attribute bundle has to land on the input itself.
     FormField(
         name="subdomain",
         path="deployments[0].subdomain",
@@ -97,8 +90,7 @@ EXAMPLE_FIELDS: list[FormField] = [
         label="Publiceren op het web",
         value=True,
     ),
-    # Een uitgeschakeld veld: readonly hoorde in de roos-versie bij bool_attr en is nu
-    # :disabled. Zichtbaar moeten blijven dat het er staat maar niet aanpasbaar is.
+    # Read-only: visible, and not editable.
     FormField(
         name="api_key",
         path="config.api-key",

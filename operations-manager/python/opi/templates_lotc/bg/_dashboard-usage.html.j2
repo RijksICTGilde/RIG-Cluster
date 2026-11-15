@@ -30,6 +30,30 @@
    bg/_resource-formats.html.j2. #}
 {% from "bg/_resource-formats.html.j2" import cores, gib %}
 
+{# Een regel van "Gebruik per project": gebruikt / gevraagd / limiet, en een balk tot de
+   limiet in drie stukken. Groen is gebruikt binnen de request, grijs is gevraagd maar niet
+   gebruikt, oranje is gebruik boven de request. Het lege deel tot het eind is de ruimte die
+   de limiet nog laat. Het percentage is gebruik tegen gevraagd. #}
+{% macro usage_line(project_name, icon, icon_color, label, used_text, request_text, limit_text, used, requested, limit) %}
+    <c-stack gap="xs">
+        <c-cluster justify="between" align="center" gap="sm">
+            <c-span><c-icon icon="{{ icon | nldd_icon }}" size="sm" color="{{ icon_color }}" /> {{ label }}</c-span>
+            <c-span><strong>{{ used_text }}</strong> gebruikt{% if requested > 0 %} / {{ request_text }} gevraagd{% endif %}{% if limit > 0 %} / {{ limit_text }} limiet{% endif %}{% if requested > 0 %} ({{ (used / requested * 100) | round | int }}%){% endif %}</c-span>
+        </c-cluster>
+        {# Without a request or limit there is no scale, and a bar without one is no measurement. #}
+        {% if requested > 0 or limit > 0 %}
+            <c-progress-bar
+                max="{{ [used, requested, limit] | max }}"
+                value-display="tooltip"
+                accessible-label="{{ project_name }}: {{ label }} gebruikt ten opzichte van gevraagd en limiet">
+                <c-progress-bar-segment-indicator value="{{ [used, requested] | min }}" color="success" name="gebruikt" />
+                <c-progress-bar-segment-indicator value="{{ [requested - used, 0] | max }}" color="neutral" name="gevraagd, niet gebruikt" />
+                <c-progress-bar-segment-indicator value="{{ [used - requested, 0] | max }}" color="warning" name="boven gevraagd" />
+            </c-progress-bar>
+        {% endif %}
+    </c-stack>
+{% endmacro %}
+
 {% if prometheus_available and metrics %}
     {# Eigen stack: het fragment landt via htmx in een kale div, buiten de stack van de
        pagina, dus zonder deze zou "Gebruik per project" tegen de meters aan staan. #}
@@ -50,7 +74,7 @@
                 <canvas id="cpu-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
                     <span class="gauge-percentage">{{ metrics.cpu_percentage }}%</span>
-                    <span class="gauge-label">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</span>
+                    <span class="gauge-label">{{ metrics.cpu_usage_display }} gebruikt van {{ metrics.cpu_request_display }} gevraagd, limiet {{ metrics.cpu_limit_display }} cores</span>
                 </div>
             </div>
         {% endcall %}
@@ -60,12 +84,11 @@
                 <canvas id="memory-gauge" class="gauge"></canvas>
                 <div class="gauge-value">
                     <span class="gauge-percentage">{{ metrics.memory_percentage }}%</span>
-                    {# Drie getallen en niet twee: de meter loopt op gebruik tegen limiet, maar
-                       de REKENING loopt op de request (per pod het hoogste van request en
-                       gebruik, zie de PrometheusRule operations-manager-billing). Zonder de
-                       gevraagde waarde erbij is op deze pagina niet te zien waarvoor betaald
-                       wordt. #}
-                    <span class="gauge-label">{{ metrics.memory_usage_display }} gebruikt / {{ metrics.memory_request_display }} gevraagd / {{ metrics.memory_limit_display }} limiet</span>
+                    {# De meter loopt op gebruik tegen gevraagd: de request is wat we nodig
+                       denken te hebben, en de rekening loopt erop (per pod het hoogste van
+                       request en gebruik, zie de PrometheusRule operations-manager-billing).
+                       De limiet is ruimte voor uitschieters. #}
+                    <span class="gauge-label">{{ metrics.memory_usage_display }} gebruikt van {{ metrics.memory_request_display }} gevraagd, limiet {{ metrics.memory_limit_display }}</span>
                 </div>
             </div>
         {% endcall %}
@@ -121,7 +144,9 @@
        dezelfde - de twee macro's komen uit bg/_resource-formats.html.j2, zodat 512 MiB
        hier niet anders geschreven wordt dan daar.
 
-       WAT DE BALK VOORSTELT: het gebruik ten opzichte van de LIMIET van dat project.
+       WAT DE BALK VOORSTELT: gebruik tegen gevraagd, met de limiet als eind van de balk
+       (zie de macro usage_line bovenaan). Hieronder de oorspronkelijke afweging, die nog
+       geldt voor de keuze per project in plaats van aandeel van het cluster.
 
        Niet het aandeel van het clustertotaal. Dat was de vorige vorm, en die beantwoordt
        een andere vraag: "wie is de grootste" in plaats van "hoeveel ruimte heeft dit
@@ -142,7 +167,9 @@
     {% for project in projects %}
         {% set mem_mb = project.get('memory_mb') or 0 %}
         {% set cpu = project.get('cpu_cores') or 0 %}
+        {% set mem_request_mb = project.get('memory_request_mb') or 0 %}
         {% set mem_limit_mb = project.get('memory_limit_mb') or 0 %}
+        {% set cpu_request = project.get('cpu_request_cores') or 0 %}
         {% set cpu_limit = project.get('cpu_limit_cores') or 0 %}
         {# ELK project komt in de lijst, ook zonder verbruik. Hier stond een guard op
            ``mem_mb or cpu``, en die liet een project dat niets gebruikt stil VERDWIJNEN:
@@ -157,11 +184,11 @@
             'naam': project.display_name,
             'pad': project.name,
             'mem_used': mem_mb * 1048576,
+            'mem_request': mem_request_mb * 1048576,
             'mem_limit': mem_limit_mb * 1048576,
-            'mem_pct': ([100, (mem_mb / mem_limit_mb * 100) | round | int] | min) if mem_limit_mb else 0,
             'cpu_used': cpu,
+            'cpu_request': cpu_request,
             'cpu_limit': cpu_limit,
-            'cpu_pct': ([100, (cpu / cpu_limit * 100) | round | int] | min) if cpu_limit else 0,
         }) %}
     {% endfor %}
     {% set op_geheugen = regels | sort(attribute='mem_used', reverse=true) | list %}
@@ -185,35 +212,8 @@
                         </c-heading>
 
                         {# Geheugen eerst: dat is waar je op stuurt. #}
-                        <c-stack gap="xs">
-                            <c-cluster justify="between" align="center" gap="sm">
-                                <c-span><c-icon icon="database" size="sm" color="groen" /> Geheugen (in gebruik)</c-span>
-                                <c-span><strong>{{ gib(regel.mem_used) }}</strong>{% if regel.mem_limit > 0 %} / {{ gib(regel.mem_limit) }} ({{ regel.mem_pct }}%){% endif %}</c-span>
-                            </c-cluster>
-                            {% if regel.mem_limit > 0 %}
-                                <c-progress-bar
-                                    :value="regel.mem_pct"
-                                    max="100"
-                                    value-display="tooltip"
-                                    color="success"
-                                    accessible-label="{{ regel.naam }}: geheugengebruik ten opzichte van de limiet" />
-                            {% endif %}
-                        </c-stack>
-
-                        <c-stack gap="xs">
-                            <c-cluster justify="between" align="center" gap="sm">
-                                <c-span><c-icon icon="cylinder-split" size="sm" color="donkerblauw" /> CPU</c-span>
-                                <c-span><strong>{{ cores(regel.cpu_used) }}</strong>{% if regel.cpu_limit > 0 %} / {{ cores(regel.cpu_limit) }} cores ({{ regel.cpu_pct }}%){% else %} cores{% endif %}</c-span>
-                            </c-cluster>
-                            {% if regel.cpu_limit > 0 %}
-                                <c-progress-bar
-                                    :value="regel.cpu_pct"
-                                    max="100"
-                                    value-display="tooltip"
-                                    color="accent"
-                                    accessible-label="{{ regel.naam }}: CPU-gebruik ten opzichte van de limiet" />
-                            {% endif %}
-                        </c-stack>
+                        {{ usage_line(regel.naam, "database", "groen", "Geheugen", gib(regel.mem_used), gib(regel.mem_request), gib(regel.mem_limit), regel.mem_used, regel.mem_request, regel.mem_limit) }}
+                        {{ usage_line(regel.naam, "cylinder-split", "donkerblauw", "CPU", cores(regel.cpu_used), cores(regel.cpu_request), cores(regel.cpu_limit) ~ " cores", regel.cpu_used, regel.cpu_request, regel.cpu_limit) }}
                     </c-stack>
                 {% endfor %}
             {% else %}

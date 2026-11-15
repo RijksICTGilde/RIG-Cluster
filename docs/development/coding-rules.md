@@ -23,7 +23,7 @@ Eén principe gaat boven alle andere: **code wordt veel vaker gelezen dan geschr
 
 Een goede naam maakt commentaar overbodig. Neem de tijd voor een naam: hij wordt duizend keer gelezen.
 
-- **Alles in het Engels**: modules, classes, functies, variabelen, testnamen, logberichten, exceptions. De teksten die een gebruiker in de UI ziet blijven Nederlands en staan in `opi/locale/` of de templates, niet als losse strings in Python.
+- **Alles in het Engels**: modules, classes, functies, variabelen, testnamen, logberichten, exceptions. Nederlandse tekst mag alleen in wat de gebruiker ziet: een label, `help_text`, de `description` van een veld, het `detail` van een `HTTPException`, en de templates. Welk i18n-mechanisme die teksten uiteindelijk draagt is een eigen kaartje; tot dan staan ze waar ze staan.
 - **Python-conventies (PEP 8)**: `snake_case` voor modules, functies en variabelen; `PascalCase` voor classes; `UPPER_SNAKE_CASE` voor constanten.
 - **Functies zijn werkwoorden**, wat ze teruggeven of doen: `render_manifests`, `create_bucket`, `is_expired`. Classes en variabelen zijn zelfstandige naamwoorden.
 - **Booleans lezen als een vraag**: `is_enabled`, `has_backup`, `should_retry`. Nooit `flag`, `check` of `status` voor een bool.
@@ -51,7 +51,7 @@ Een goede naam maakt commentaar overbodig. Neem de tijd voor een naam: hij wordt
 - **Klein.** Richtwaarde 20 regels, signaal boven 40, splitsen boven 60. De body van een functie past op één scherm.
 - **Doet één ding, op één abstractieniveau.** Een orchestratiefunctie leest als een inhoudsopgave: `validate`, `provision`, `render`, `commit`, `sync`. Het detailwerk staat in de functies die hij aanroept, niet ertussen.
 - **Leest van boven naar beneden.** De publieke functie bovenaan, de functies die hij aanroept eronder, in volgorde van aanroep.
-- **Hooguit vier parameters.** Meer is een signaal dat ze bij elkaar horen: maak er een `dataclass` of Pydantic-model van.
+- **Hooguit vier parameters.** Meer is een signaal dat ze bij elkaar horen: maak er een `dataclass` of Pydantic-model van. Een FastAPI-route is hiervan uitgezonderd: FastAPI injecteert zijn dependencies als parameters, dus het aantal zegt daar niets over de functie. De logica in die route blijft dun.
 - **Geen flag-argumenten.** `render(project, include_secrets=True)` is twee functies: `render_manifests` en `render_secrets`.
 - **Diepte hooguit drie niveaus.** Gebruik guard clauses en `return` vroeg in plaats van geneste `if`-blokken.
 - **Cyclomatische complexiteit hooguit 10.**
@@ -74,17 +74,25 @@ Het belangrijkste hoofdstuk voor deze repo. Code staat op de plek waar hij hoort
 
 ### Lagen
 
-De packages onder `opi/` vormen lagen. Een laag importeert alleen uit de lagen **onder** zich, nooit uit een laag erboven, en lagen op hetzelfde niveau importeren elkaar niet.
+De packages onder `opi/` vormen lagen. Een laag importeert alleen uit de lagen **onder** zich, nooit uit een laag erboven. Staan er meerdere packages in één laag, dan zegt het contract per laag of ze elkaar mogen importeren: `api`, `web` en `middleware` niet, `runtime` en `jobs` wel, en `services`, `forms` en `generation` ook.
 
 | Laag | Packages | Rol |
 |---|---|---|
-| 1. Ingang | `api`, `web`, `jobs`, `middleware`, `server.py`, `worker_main.py` | HTTP, UI en geplande taken: vertaalt een verzoek naar een aanroep, en het resultaat terug. Geen bedrijfslogica (zie "Eén pad per handeling"). |
-| 2. Orchestratie | `manager` | Zet de stappen van een use case achter elkaar: project aanmaken, verwijderen, herstellen. |
-| 3. Domein | `services`, `forms`, `generation`, `schemas`, `handlers` | De regels van ZAD: wat een service is, hoe een projectbestand eruitziet, welke manifests eruit komen. Weet niets van HTTP. |
-| 4. Integratie | `connectors` | Praat met één extern systeem per module. Weet niets van ZAD-begrippen zoals een project of een service. |
-| 5. Fundament | `core`, `utils` | Configuratie, logging, generieke hulpmiddelen. Importeert niets uit `opi/` buiten zichzelf. |
+| 1. Composition | `server.py`, `worker_main.py`, `__main__.py`, `tools` | Zet de applicatie in elkaar |
+| 2. Ingang | `api`, `web`, `middleware` | HTTP en UI, dunne adapters (zie "Eén pad per handeling") |
+| 3. HTTP-gedeeld | `http`: auth-decorators, session guard, step-up, template-helpers, rate limiter | Wat alle ingangen delen |
+| 4. Runtime | `runtime`: opstart, schedulers, task worker en task handlers, watchers, reconcilers, plus `jobs` | Ingangen die niet uit HTTP komen |
+| 5. Orchestratie | `manager` | Eén use case per handeling |
+| 6. Domein | `services`, `forms`, `generation` | De regels van ZAD; vandaag één laag, later sublagen |
+| 7. Integratie | `connectors` | Eén extern systeem per module, geen ZAD-begrippen |
+| 8. Fundament-hulp | `utils` | Generieke hulpmiddelen, leest `core.config` |
+| 9. Fundament | `core`: configuratie, logging, metrics-registratie, database-infrastructuur en request-context | Importeert niets uit `opi` buiten zichzelf |
 
-Dit is een **voorstel**: de inventarisatie toetst het aan de code en stelt de indeling bij voordat een gate hem afdwingt. Vandaag importeert onder meer `core` uit `manager` en `api`, `services` uit `web`, en `connectors` uit `services`. Precies die pijlen omhoog maken de repo moeilijk te veranderen.
+`handlers` is als package verdwenen: elke module daaruit staat nu in het domein, de orchestratie of bij een connector.
+
+Dit is de indeling, en `import-linter` dwingt hem af: het contract staat in `operations-manager/python/pyproject.toml` en draait als gate (hoofdstuk 11). De pijlen omhoog die nog staan zijn uitzonderingen in dat contract, per oorzaak gegroepeerd, en het commentaar bij elke groep noemt de keuze. Buiten de uitzondering hieronder kan die lijst alleen krimpen.
+
+**De uitzondering op de lagen: een catalogusservice draagt zijn eigen ingangen.** Een service onder `opi/services/catalog/<service>/` is een eigen pakketje, en alles van die service staat in die map: zijn provisioning en manifests, maar ook zijn routes, taakhandlers, scheduler en flow. Die ingangen staan boven de manager (ze roepen een use case aan) en gebruiken de auth-decorators en de renderer uit `opi/http`, dus ze wijzen omhoog. Dat is gewild: samenhang gaat voor (het lagencontract is een hulpmiddel, geen doel). Daarom is dit de ene plek waar het contract met een wildcard werkt, zodat een nieuwe service er geen regel voor hoeft toe te voegen. Zie `docs/development/services.md` voor de haken. De ENE LOTC-sjabloonomgeving die in de ingangslaag staat terwijl de domeinlaag componenten-markup oplevert is een losse, nog open keuze.
 
 ### Eén pad per handeling
 
@@ -111,11 +119,34 @@ Een handeling die op meerdere plekken begint, zoals een project aanmaken via de 
 Goede code heeft geen commentaar nodig. Commentaar is een eerlijke bekentenis dat de code het niet zelf kon zeggen.
 
 - **Eerst de code verbeteren.** Wil je uitleggen wat een blok doet, haal het dan uit in een functie met een naam die dat zegt.
-- **Commentaar legt het waarom uit, nooit het wat.** Wel: een afwijking van de afspraak, een bewuste keuze, een valkuil die de vorige versie in liep, een verwijzing naar een externe bug of een eis. Niet: wat de volgende regel doet.
-- **Docstrings alleen waar naam en type hints tekortschieten**: een publieke functie met een niet-voor-de-hand-liggend contract, een exception die hij gooit, een voorwaarde die de aanroeper moet kennen. Een docstring die de functienaam herhaalt, verdwijnt.
+- **Commentaar zegt wat een lezer nodig heeft om de code nu veilig te wijzigen, nooit hoe hij zo geworden is.** Wel: een randvoorwaarde die niet uit de code blijkt (een volgorde die ertoe doet, een externe API die zich vreemd gedraagt, een eis), een afwijking van een afspraak, een verwijzing naar een externe bug. Niet: wat de volgende regel doet, waarom een class of opzet gekozen is, welke alternatieven zijn afgewogen, wat de vorige versie deed, hoeveel parameters een opzet scheelt. Die afweging hoort in het commitbericht of op de PR, bij de wijziging die hem nodig had.
+- **De toets**: helpt deze zin iemand die de code morgen wijzigt en de geschiedenis niet kent? Zo niet, dan hoort hij in het commitbericht.
+
+  ```python
+  # Niet: verantwoordt de opzet, zegt niets over het gebruik
+  class DeploymentUpsertRequest:
+      """What one upsert call asks for.
+
+      Nine values that travel together through every step of an attempt. As parameters they
+      gave each step more arguments than it had of its own, and a step that needed one more
+      of them meant touching every call in the chain.
+      """
+
+  # Wel: een valkuil die nu nog geldt
+  def _apply_component_images(...) -> list[str]:
+      """Point the deployment's components at the requested images; returns the warnings.
+
+      ``change_parts`` is appended to while mutating, not compared afterwards: by then the
+      old image is gone from the deployment and every comparison says "no change".
+      """
+  ```
+
+- **Docstrings beschrijven het contract**, niet de reden waarom het object bestaat: wat erin gaat, wat eruit komt, wat hij gooit, wat de aanroeper moet weten. Alleen waar naam en type hints tekortschieten. Een docstring die de naam herhaalt, verdwijnt.
+- **Nooit meer commentaar dan code.** Een functie met meer commentaarregels dan coderegels legt iets uit dat de code zelf had moeten zeggen.
 - **Geen uitgecommentarieerde code.** Git onthoudt hem.
 - **Geen `TODO` in code.** Open werk is een kaartje op het ZAD-bord.
 - **Geen sectiekoppen** (`# ---- Helpers ----`) in een bestand. Heeft een bestand ze nodig, dan zijn het meerdere bestanden.
+- **Een `# noqa` noemt zijn reden.** `# noqa: S608  # de query is opgebouwd uit vaste namen`, zoals de bestaande code het al doet. Een kale `# noqa` is niet te beoordelen en verdwijnt nooit meer.
 - **Geen em dashes**, ook niet in commentaar.
 
 ## 7. Fouten
@@ -138,7 +169,7 @@ Goede code heeft geen commentaar nodig. Commentaar is een eerlijke bekentenis da
 ## 9. Tests
 
 - **Testen gedrag, niet implementatie.** Een refactor die het gedrag gelijk laat, breekt geen test. Doet hij dat wel, dan test de test de verkeerde dingen.
-- **De teststructuur spiegelt de code**: `opi/manager/backup/restore.py` heeft `tests/manager/backup/test_restore.py`.
+- **De teststructuur spiegelt de code**: `opi/manager/backup/restore.py` heeft `tests/manager/backup/test_restore.py`. Dat geldt voor nieuwe tests; de bestaande tests, die bijna allemaal plat in `tests/` staan, worden in een eigen latere ronde herschikt.
 - **De naam zegt het gedrag**: `test_restore_fails_when_snapshot_is_missing`, niet `test_restore_2`.
 - **Arrange, act, assert**, één gedrag per test.
 - **Snel en onafhankelijk.** Geen volgorde-afhankelijkheid, geen gedeelde toestand tussen tests. De lagen en de live groepen staan in [toetsen.md](toetsen.md).
@@ -161,23 +192,86 @@ De repo in één keer omzetten is gevaarlijk. Een ronde volgt deze regels:
 4. **Eerst verplaatsen, dan veranderen.** Een functie die naar een andere module gaat, verhuist eerst ongewijzigd. Verbeteren gebeurt in de volgende PR, zodat de diff leesbaar blijft.
 5. **Strangler fig voor de grote bestanden.** `project_manager.py` en zijn soortgenoten worden niet herschreven. Er komt een nieuwe module naast, één verantwoordelijkheid verhuist, de oude plek roept de nieuwe aan, de aanroepers verhuizen mee, en de oude code verdwijnt als niemand hem meer gebruikt.
 6. **Ratchet.** Is een regel na een ronde in een deel van de code gehaald, dan gaat de gate voor dat deel aan (een ruff-regel, een import-linter-contract, een lengtecheck). Vanaf dan kan het niet meer terugzakken.
-7. **Buiten een ronde geldt "Surgical changes"** uit `CLAUDE.md`: raak alleen aan wat je taak vraagt. Opruimen gebeurt in een ronde, niet terloops.
+7. **Elke stap is een commit.** Tests, `ruff check`, `ruff format --check` en `pyright` staan groen op die commit, niet pas op een verzamelcommit aan het eind.
+8. **Buiten een ronde geldt "Surgical changes"** uit `CLAUDE.md`: raak alleen aan wat je taak vraagt. Opruimen gebeurt in een ronde, niet terloops.
+
+### Hoe je meet
+
+`task code-metrics` meet `opi/` tegen de getallen hierboven: per module, functie en class de maat, het aantal dat boven elke drempel van hoofdstuk 3 en 4 zit, de langste en meest complexe functies, en per package de import-pijlen uit hoofdstuk 5 (apart geteld voor een import bovenaan, een import in een functie en een import onder `TYPE_CHECKING`). Met `CSV=<map>` komen de vier tabellen in die map, zodat een ronde zijn cijfers tegen een eerdere run kan leggen.
+
+De telwijze staat vast in `operations-manager/python/scripts/measure_code.py` en zijn toetsen: een ronde vergelijkt met een vorige meting, dus een wijziging in hoe geteld wordt maakt die vergelijking stuk.
 
 ### Gates die de regels afdwingen
 
-Elke gate gaat aan per package, zodra de ronde voor dat package klaar is.
+Een gate staat voor de hele `operations-manager` aan, niet per package. Wat bestond toen hij
+aanging, staat in een **baseline**, en die kan alleen krimpen: nieuwe code valt er meteen onder,
+bestaande code wordt niet rood, en een opruimronde kan de lijst alleen korter maken. Een regel
+toevoegen aan een baseline kan niet met gereedschap; dat is een handmatige wijziging die in de
+diff staat en op de PR verdedigd wordt.
 
-| Regel | Gate |
-|---|---|
-| Complexiteit ≤ 10 | ruff `C901` met `max-complexity = 10` (nu 30 en uitgezet voor `opi/`) |
-| Functielengte, parameters, takken | ruff `PLR0915`, `PLR0913`, `PLR0912` |
-| Naamgeving | ruff `N` (pep8-naming) |
-| Geen uitgecommentarieerde code | ruff `ERA001` (nu uitgezet) |
-| `raise ... from` | ruff `B904` (nu uitgezet) |
-| Annotaties | ruff `ANN` (nu uitgezet) |
-| Lagen en geen cycli | `import-linter` met een `layers`-contract en `independence`-contracten |
-| Modulelengte | een kleine check in de Taskfile op het aantal regels per bestand |
-| Taal | een check op Nederlandse woorden in identifiers en commentaar, met een allowlist voor domeintermen |
+**Aan, met een baseline:**
+
+| Regel | Gate | In de baseline |
+|---|---|---|
+| Complexiteit ≤ 10 | ruff `C901`, `max-complexity = 10` | 206 |
+| Functielengte, takken | ruff `PLR0915`, `PLR0912` | 99 en 122 |
+| Hooguit vier parameters | ruff `PLR0913`, `max-args = 4` (uit in `opi/api`, `opi/web` en de catalogusrouters) | 310 |
+| Naamgeving | ruff `N` | 57 |
+| Geen uitgecommentarieerde code | ruff `ERA001`, in `unfixable` zodat `--fix` het niet stil weghaalt | 62 |
+| `raise ... from` | ruff `B904` | 17 |
+| Geen kale `except Exception` | ruff `BLE001` | 303 |
+| Annotaties | ruff `ANN001`, `ANN201`, `ANN202`, `ANN204`, `ANN401` | 892 |
+| Taal in identifiers | conventiecheck | 10907 regels in 768 bestanden |
+| Taal in commentaar en docstrings | conventiecheck | 16087 regels in 1181 bestanden |
+| Niet meer commentaar dan code | conventiecheck | 80 functies in 65 bestanden |
+| Lagen, en geen cycli tussen lagen | `import-linter`, het `layers`-contract in `pyproject.toml` | 57 import-paren |
+
+De aantallen zijn de meting van opschoonronde 1, op de import-paren na: die zijn de meting van
+opschoonronde 6, die ze van 183 naar 57 bracht. De ruff-getallen zijn de overtredingen in `opi/`
+zonder `migrations`; de baseline noteert per bestand welke regel, en dat zijn 700 regels in 315
+bestanden. De conventiecheck meet `opi/` en `tests/`, en zijn baseline telt 27074 regels in 1199
+bestanden.
+
+```bash
+task lint-baseline                  # ruff: een regel die een bestand niet meer overtreedt verdwijnt
+task lint-baseline-check            # ruff: faalt op een verouderde regel
+task code-conventions               # de conventiecheck zoals de hook hem draait
+task code-conventions-baseline      # conventies: verlaagt de aantallen naar wat de code nu is
+task lint-imports                   # het layers-contract; faalt op een nieuwe pijl omhoog en op een overbodige uitzondering
+```
+
+De ruff-baseline is `operations-manager/python/ruff-baseline.toml`, binnengehaald met `extend`;
+de handgeschreven uitzonderingen staan daarom in `extend-per-file-ignores`, zodat ze samenvoegen
+in plaats van elkaar overschrijven. De conventiebaseline is
+`scripts/code-conventions-baseline.json`. Beide hangen in `.pre-commit-config.yaml`, en CI draait
+pre-commit. `tests/test_lint_baseline.py` faalt als de ruff-baseline een regel bevat die een
+bestand niet meer overtreedt, zodat een opgeruimd bestand ook echt van de lijst gaat.
+
+Het layers-contract staat in `operations-manager/python/pyproject.toml`, met de lagen uit
+hoofdstuk 5 en de 57 pijlen omhoog als `ignore_imports`, per oorzaak gegroepeerd en met exacte
+paren in plaats van wildcards. De ratchet zit in `unmatched_ignore_imports_alerting = "error"`:
+een uitzondering die niet meer nodig is maakt de gate rood, net als een nieuwe pijl omhoog. De
+lijst kan daarmee alleen krimpen, en wie een pijl oplost haalt zijn regel in dezelfde PR weg. De
+gate hangt als hook `lint-imports` in `.pre-commit-config.yaml`, dus hij draait ook in CI. Een
+`independence`-contract hoeft er niet naast: de lagen die elkaar niet mogen importeren staan in
+het contract met `|` gescheiden, die het wel mogen met `:`. Wat het contract niet ziet is een
+cyclus BINNEN een laag, zoals twee modules in `services` die elkaar importeren, en een package
+onder `opi/` dat in geen laag staat: `opi.migrations` valt er bewust buiten, maar een nieuw
+package valt er ook buiten tot iemand het in de lijst zet. Een import die alleen onder
+`TYPE_CHECKING` staat ziet hij ook niet: `exclude_type_checking_imports = true` laat hem buiten
+beschouwing, want hij is geen koppeling op looptijd.
+
+Wat de ruff-ratchet niet ziet: hij zet een regel per BESTAND stil, dus een tweede `C901` in een
+bestand dat al voor `C901` op de lijst staat valt er niet door. Elke andere regel in dat bestand
+wel, en de conventiecheck telt wel per regel. Fijner dan per bestand zou een `noqa` per regel in
+876 functies betekenen, en dat is de prijs niet waard.
+
+**Nog niet aan:**
+
+| Regel | Gate | Wanneer |
+|---|---|---|
+| Modulelengte | een check in de Taskfile op het aantal regels per bestand | als de grote bestanden zijn opgesplitst; nu zou de baseline de hele lijst zijn |
+| pyright `standard` | `typeCheckingMode` in `pyproject.toml` | ronde voor ronde, zie hoofdstuk 8 |
 
 ## Bronnen
 

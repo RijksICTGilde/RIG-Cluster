@@ -40,9 +40,9 @@ SLEEP_MATCH = EditableVisualizer(
         "vanzelf slapen en houd je alleen de knop op de deploymentpagina."
     ),
     placeholder="pr-*, *-preview",
-    # Ook voor de API-documentatie: dit veld is een vrije string, dus zonder voorbeeld weet
-    # een client wel dat er tekst in moet maar niet dat het om een glob op de deploymentnaam
-    # gaat (zie opi/api/openapi_choices.py).
+    # For the API documentation too: this field is a free string, so without an example a
+    # client knows text goes in but not that it is a glob on the deployment name (see
+    # opi/api/openapi_choices.py).
     examples=["pr-*", "*-preview", "acceptatie"],
 )
 

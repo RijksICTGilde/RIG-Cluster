@@ -1,30 +1,25 @@
-"""Admin routes for the generic, catalog-driven approver interface (RC-5).
+"""Admin routes for the generic, catalog-driven approver interface.
 
-Lists pending approval items across all projects and drives the approve/deny modal.
-The items + verdicts flow through the catalog ApprovalSpecs (opi/services/approvals.py),
-so this router is not domain-specific: publish-on-web declares a domain and a subdomain
-approval, send-email declares one for the use of the service itself.
-Historically ``router_subdomain_admin`` at ``/admin/subdomains``.
-
-Provides a listing page of all approval requests across projects, and admin-scoped modal
-wizard endpoints for approving/denying them. Reuses the editable form framework — no
-custom form processing.
+A listing page of the pending approval items across all projects, plus the admin-scoped modal
+wizard endpoints that approve or deny them. The items and the verdicts flow through the catalog
+ApprovalSpecs in ``opi/services/approvals.py``, so this router is not domain-specific:
+publish-on-web declares a domain and a subdomain approval, send-email declares one for the use
+of the service itself.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.connectors.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.forms import FormRenderer, get_default_nl_translator
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.resolver import (
@@ -37,14 +32,25 @@ from opi.forms.wizard.session import (
     load_modal_state_for,
     save_modal_state_by_token,
 )
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.auth.request_authority import RequestAuthority
+from opi.http.render.lotc_switch import render_fragment
+from opi.http.render.menu import get_menu_items
+from opi.http.task_helpers import queue_rollout
+from opi.utils.nldd_iconen import to_nldd_icon
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.wizard.state import WizardState
+from opi.manager.project.update import ProjectChange, record_approval_decision
+from opi.manager.project_manager import ProjectManager
 from opi.services.approvals import collect_approval_items
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.services.project_store import ConflictError, get_project_store
+from opi.services.project_utils import apply_literal_scalars
 from opi.services.registry import get_service
+from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
-from opi.web.lotc_switch import render_fragment
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import to_nldd_icon
-from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +59,8 @@ approvals_router = APIRouter(prefix="/admin/approvals", tags=["approvals"])
 FLOW_ID = "admin-approval"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _create_renderer() -> FormRenderer:
-    """De formulierrenderer voor dit verzoek; alleen de adapter wisselt.
-
-    Zelfde keuze als in ``opi/web/router_detail_edit.py``: dezelfde editables, dezelfde
-    waarden, dezelfde foutmeldingen, andere widgets. Een dialoog uit twee
-    componentsystemen rendert niet.
-    """
+    """The form renderer for this request."""
     return FormRenderer(
         widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
@@ -72,14 +68,14 @@ def _create_renderer() -> FormRenderer:
 
 
 def _render_section_html(
-    section: Any,
+    section: FormSection,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
 ) -> str:
-    """Render form fields for a section.
+    """Render the form fields of a section.
 
-    De adapter rendert meteen af; die HTML mag daarna NIET nog een keer door een
-    sjabloonrender, want hij draagt wat iemand in het formulier heeft getypt.
+    The adapter renders at once, and that HTML must NOT go through a template render again: it
+    carries what someone typed into the form.
     """
     renderer = _create_renderer()
     if not section.layout:
@@ -97,8 +93,8 @@ def _render_section_html(
 def _render_modal_step(
     request: Request,
     wizard_token: str | None,
-    state: Any,
-    section: Any,
+    state: WizardState,
+    section: FormSection,
     step_html: str,
     project_name: str,
     errors: dict[str, list[str]] | None = None,
@@ -124,14 +120,11 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
-        # Deze dialoog draagt zijn eigen titel ("Domeingoedkeuring - <project>", gezet door
-        # openApprovalDialog in bg/admin-approvals.html.j2), en die zegt hetzelfde als de
-        # kop van de sectie plus de projectnaam. Met allebei stonden er twee koppen boven
-        # elkaar. De flow heeft hier maar EEN stap, dus de sectiekop vertelt ook niet waar
-        # je bent. Alleen hier uit; de bewerkdialogen van een project houden hem.
+        # The dialog carries its own title, which says the same as the section head, and this
+        # flow has only ONE step, so the section head would be a second heading above it. Off
+        # here only: the edit dialogs of a project keep theirs.
         "show_section_head": False,
-        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
-        # NLDD-woordenschat nodig.
+        # Our sections carry Dutch ROOS icon names; the LOTC templates need the NLDD words.
         "nldd_icon": to_nldd_icon,
     }
     return render_fragment(
@@ -141,20 +134,19 @@ def _render_modal_step(
     )
 
 
-def _modal_error(request: Request, melding: str, status_code: int) -> HTMLResponse:
-    """Een weigering van de dialoog als leesbaar fragment, met de echte statuscode.
+def _modal_error(request: Request, message: str, status_code: int) -> HTMLResponse:
+    """A refusal of the dialog as a readable fragment, with the real status code.
 
-    De dialoog wordt door htmx gevuld, dus wat de route antwoordt is wat de gebruiker
-    ziet. Een ``HTTPException`` levert hier JSON op en htmx wisselt bij een foutcode
-    standaard niets in: samen is dat een venster dat opengaat en leeg blijft. Vandaar een
-    fragment. De statuscode blijft staan - dat htmx hem toch toont, staat als
-    ``htmx:beforeSwap``-haak in bg/admin-approvals.html.j2.
+    htmx fills the dialog, so what the route answers is what the user sees. An
+    ``HTTPException`` gives JSON here, and htmx swaps nothing on an error code by default,
+    which together is a window that opens and stays empty. The status code is kept; the
+    ``htmx:beforeSwap`` hook in the template makes htmx show the fragment anyway.
     """
     return HTMLResponse(
         content=render_fragment(
             request,
             template="bg/_modal-fout.html.j2",
-            context={"request": request, "melding": melding},
+            context={"request": request, "melding": message},
         ),
         status_code=status_code,
     )
@@ -179,19 +171,13 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-
-#: De statussen waarop gefilterd kan worden. De sleutel staat in de URL (``?status=``), het
-#: label in de keuzelijst. Als lijst en niet als dict, omdat de VOLGORDE de volgorde in de
-#: lijst is; ``""`` is alles en staat daarom vooraan.
+#: The statuses that can be filtered on: the key goes in the URL (``?status=``), the label in
+#: the picker. A list and not a dict, because the ORDER is the order in the picker, with ``""``
+#: for everything in front.
 #:
-#: De sleutels zijn dezelfde als die in het projectbestand staan (``current_status``), en de
-#: labels dezelfde als de badges in de tabel (``status_labels`` in het sjabloon). Twee lijsten
-#: die hetzelfde zeggen zouden uit elkaar lopen; dat is hier nog niet opgelost, maar
-#: tests/test_approvals_statusfilter.py legt vast dat ze gelijk blijven.
+#: The keys are the same as the ones in the project file (``current_status``) and the labels the
+#: same as the badges in the table (``status_labels`` in the template). Two lists that say the
+#: same thing would drift apart; tests/test_approvals_statusfilter.py holds them equal.
 APPROVAL_STATUSSEN: list[tuple[str, str]] = [
     ("", "Alle statussen"),
     ("requested", "Aangevraagd"),
@@ -200,67 +186,63 @@ APPROVAL_STATUSSEN: list[tuple[str, str]] = [
 ]
 
 
-def filter_op_status(projects_data: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
-    """Houd alleen de aanvragen met deze status over, en de projecten die er nog hebben.
+def filter_by_status(projects_data: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
+    """Keep only the requests with this status, and the projects that still have one.
 
-    Een project waarvan geen enkele aanvraag overblijft valt weg: een projectpaneel met een
-    lege tabel eronder leest als "dit project heeft niets", terwijl het er wel iets heeft dat
-    je nu even niet ziet.
+    A project left without a single request drops out: a project panel with an empty table
+    under it reads as "this project has nothing".
 
-    Een lege of onbekende status filtert niet. Onbekend is bewust hetzelfde als leeg en niet
-    "niets gevonden": ``?status=onzin`` in een gedeelde link hoort de lijst te tonen, niet een
-    lege pagina die als een storing leest.
+    An empty or unknown status does not filter. Unknown is deliberately the same as empty and
+    not "nothing found": a mistyped ``?status=`` in a shared link should show the list, not an
+    empty page that reads as a failure.
     """
-    if not status or status not in {sleutel for sleutel, _ in APPROVAL_STATUSSEN if sleutel}:
+    if not status or status not in {key for key, _ in APPROVAL_STATUSSEN if key}:
         return projects_data
 
-    gefilterd: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
     for project in projects_data:
         items = [item for item in project["approval_items"] if item.get("current_status") == status]
         if items:
-            gefilterd.append({**project, "approval_items": items})
-    return gefilterd
+            filtered.append({**project, "approval_items": items})
+    return filtered
 
 
-def groepeer_per_dienst(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Bundel de aanvragen van een project per DIENST, met de naam en het icoon van die dienst.
+def group_by_service(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bundle the requests of a project per SERVICE, with that service's name and icon.
 
-    Een domeinaanvraag en een dienstaanvraag zijn verschillende dingen, en de lijst hoort
-    dat te laten zien. De groepskop haalt zijn naam, icoon en kleur uit de
-    ``ServiceDefinition`` in de registry en niet uit een lijstje in het sjabloon: dan
-    verschijnt een vierde dienst met goedkeuring er vanzelf goed op.
+    The group head takes its name, icon and colour from the ``ServiceDefinition`` in the
+    registry and not from a list in the template, so a fourth service with an approval appears
+    correctly on its own.
 
-    ``toon_soort`` is de generieke vorm van "voegt de soort-tag iets toe?". Bij
-    publish-on-web onderscheidt hij domein van subdomein; bij een dienst met een enkele
-    soort herhaalt hij alleen de groepskop, en dan blijft de kolom weg.
+    "toon_soort" is the generic form of "does the kind tag add anything?": for
+    publish-on-web it tells a domain from a subdomain, and for a service with one kind it only
+    repeats the group head, so the column stays away.
 
-    De volgorde is die van de items zelf (dus die van de catalogus), zodat de lijst niet
-    van run tot run wisselt. De TELLING blijft over ITEMS gaan -- ``approval_items`` blijft
-    naast deze groepen bestaan, want "x van y aanvragen" telt aanvragen en geen groepen.
+    The order is that of the items themselves, so the list does not shift from run to run. The
+    COUNT keeps going over ITEMS, so ``approval_items`` stays next to these groups: "x of y
+    requests" counts requests and not groups.
     """
-    groepen: dict[str, dict[str, Any]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for item in items:
-        sleutel = item.get("service") or item.get("type") or ""
-        groep = groepen.get(sleutel)
-        if groep is None:
-            groep = {"service": sleutel, "naam": item.get("label") or sleutel, "icoon": "", "aanvragen": []}
+        key = item.get("service") or item.get("type") or ""
+        group = groups.get(key)
+        if group is None:
+            group = {"service": key, "naam": item.get("label") or key, "icoon": "", "aanvragen": []}
             try:
-                definitie = get_service(ServiceType(sleutel)).definition
+                definition = get_service(ServiceType(key)).definition
             except ValueError, KeyError:
-                # Een item van een dienst die de registry niet (meer) kent. Het opschrift
-                # van de spec is dan het beste dat er is; beter dan de rij weglaten.
-                logger.warning(
-                    "Goedkeuringsitem van onbekende dienst %r; groepskop valt terug op het opschrift", sleutel
-                )
+                # An item of a service the registry does not know; the label of the spec is
+                # then the best there is, and better than leaving the row out.
+                logger.warning("Goedkeuringsitem van onbekende dienst %r; groepskop valt terug op het opschrift", key)
             else:
-                groep["naam"] = definitie.name
-                groep["icoon"] = definitie.icon
-            groepen[sleutel] = groep
-        groep["aanvragen"].append(item)
+                group["naam"] = definition.name
+                group["icoon"] = definition.icon
+            groups[key] = group
+        group["aanvragen"].append(item)
 
-    for groep in groepen.values():
-        groep["toon_soort"] = any(item.get("label") and item["label"] != groep["naam"] for item in groep["aanvragen"])
-    return list(groepen.values())
+    for group in groups.values():
+        group["toon_soort"] = any(item.get("label") and item["label"] != group["naam"] for item in group["aanvragen"])
+    return list(groups.values())
 
 
 @approvals_router.get("", response_class=HTMLResponse)
@@ -271,28 +253,20 @@ async def list_subdomains(request: Request) -> Response:
 
     user = require_platform_admin(request)
 
-    # Pull the latest project data from git so an entry added externally
-    # (manual yaml edit + push, or a request created elsewhere) shows up
-    # on the admin overview instead of returning a stale in-memory cache.
+    all_projects_data = _collect_all_projects_approval_data()
 
-    alle_projecten = _collect_all_projects_approval_data()
-
-    # Filteren gebeurt HIER en niet in de browser: dan werkt het ook zonder JavaScript, is
-    # een gefilterde lijst deelbaar als URL, en staat de gekozen waarde na een swap nog
-    # steeds in de keuzelijst omdat de server hem meerendert. Zelfde opzet als het zoeken
-    # en sorteren op /projects (opi/web/lotc_switch.py).
+    # Filtering happens HERE and not in the browser: it then works without JavaScript, a
+    # filtered list is shareable as a URL, and the chosen value survives a swap because the
+    # server renders it along.
     status = (request.query_params.get("status") or "").strip()
-    # Filteren op ITEMS, daarna pas groeperen: de teller onderaan telt aanvragen en geen
-    # groepen, en een groep die na het filteren leeg is hoort er niet te staan.
+    # Filter on ITEMS first and group after: the counter at the bottom counts requests and not
+    # groups, and a group that is empty after filtering should not be there.
     projects_data = [
-        {**project, "approval_groups": groepeer_per_dienst(project["approval_items"])}
-        for project in filter_op_status(alle_projecten, status)
+        {**project, "approval_groups": group_by_service(project["approval_items"])}
+        for project in filter_by_status(all_projects_data, status)
     ]
 
-    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
-    # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
-    # en die blijft roos renderen zolang de wizard zelf niet om is.
-    from opi.web.lotc_switch import build_lotc_admin, render
+    from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(
         request,
@@ -301,10 +275,9 @@ async def list_subdomains(request: Request) -> Response:
             "request": request,
             "menu_items": get_menu_items(user),
             "projects_data": projects_data,
-            # De ONGEFILTERDE telling gaat mee, zodat de lege lijst kan zeggen of er niets
-            # is of alleen niets met deze status. Dat verschil is het enige dat een
-            # gefilterde lege pagina bruikbaar maakt.
-            "approvals_totaal": sum(len(p["approval_items"]) for p in alle_projecten),
+            # The UNFILTERED count travels along, so an empty list can say whether there is
+            # nothing at all or only nothing with this status.
+            "approvals_totaal": sum(len(p["approval_items"]) for p in all_projects_data),
             "approvals_getoond": sum(len(p["approval_items"]) for p in projects_data),
             "approval_status": status,
             "approval_statussen": APPROVAL_STATUSSEN,
@@ -321,9 +294,8 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     """Initialize the domain approval modal wizard for a project."""
     user = require_platform_admin(request)
 
-    # Deze drie weigeringen komen IN de dialoog terecht, dus ze gaan als fragment terug en
-    # niet als HTTPException: de gebruiker heeft net op "Beheren" geklikt en het venster
-    # staat al open.
+    # These three refusals land IN the dialog, which is already open, so they go back as a
+    # fragment and not as an HTTPException.
     if flow_id != FLOW_ID:
         return _modal_error(request, f"Onbekende flow '{flow_id}'.", 404)
 
@@ -339,7 +311,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     flow = get_flow(flow_id)
     first_section = flow.sections[0]
 
-    # Seed wizard state with approval items
     seed_data: dict[str, Any] = {"_approval_items": approval_items}
 
     wizard_token, state = init_modal_state_tokenized(
@@ -382,7 +353,6 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             detail="Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
         )
 
-    # Parse JSON body
     content_type = request.headers.get("content-type", "")
     if "application/json" not in content_type:
         logger.warning("Expected JSON body, got content-type: %s", content_type)
@@ -393,32 +363,13 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     body = await request.json()
     body.pop("_wizard_token", None)
 
-    # No editables — store raw form data directly (same pattern as backup/restore)
+    # No editables: store the raw form data directly, the same as backup and restore do.
     state.store_step_data(section_id, body)
     state.mark_completed(section_id)
     save_modal_state_by_token(wizard_token, state)
 
-    # Single-section flow: no review, go straight to submit
+    # Single-section flow: no review, straight to submit.
     return await _do_submit(request, wizard_token, user, project_name)
-
-
-def _redeploy_scope(project_data: dict[str, Any], items: list[Any]) -> list[str] | None:
-    """The deployments this verdict has to redeploy; ``None`` means the whole project.
-
-    A decision on a domain or subdomain only affects the deployments publishing on it. A
-    decision on a value in the PROJECT config (a registry quota) belongs to no deployment,
-    and the project manifests are only generated in a round that does at least one
-    deployment: a scope of zero landed such a verdict in the project file and never in the
-    cluster. An empty list still means zero deployments, not all of them.
-    """
-    affected: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict) or item.get("status", "skip") == "skip":
-            continue
-        if item.get("type") not in DOMAIN_ITEM_TYPES:
-            return None
-        affected.update(find_deployments_for_domain_item(project_data, item))
-    return sorted(affected)
 
 
 def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> dict[str, Any]:
@@ -463,95 +414,84 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
 
     merged_data = state.get_merged_data()
 
-    # Inject admin email so post_merge can record it in history
+    # The admin email travels along so post_merge can record it in the history.
     merged_data["_admin_email"] = user.get("email", "")
 
-    # Merge with existing project data
     project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    # Read fresh from Git, not the cache, so the approval merges onto current state and a
-    # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
-    from opi.manager.project_manager import ProjectManager
-
-    # Explicitly close the ProjectManager so its temp git clone is cleaned up,
-    # on every exit path including the validation-error re-render below.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    try:
-        existing_data = await project_manager.get_contents()
+    def apply(existing_data: dict[str, Any]) -> dict[str, Any]:
+        stored = copy.deepcopy(existing_data)
         existing_data.update(merged_data)
 
-        # Run post_merge — maps _approval_items back to domains structure
+        # The bulk copy above writes everything the session carried, so a manipulated
+        # session could put a realm password or another service's approval state in the
+        # file. Guarded here and not through EditGuard.PLATFORM_FIELDS: the approval state
+        # is itself platform-managed, so guarding AFTER the verdict below would restore it
+        # and throw the decision away. The verdict is written by the platform's own writer,
+        # which is exactly the exception the guard documents.
+        ServiceAdapter.enforce_platform_managed_fields(existing_data, stored)
+
+        # post_merge maps ``_approval_items`` back onto the domains structure.
         for section in active_sections:
             if section.post_merge:
                 section.post_merge(existing_data, merged_data)
 
-        deployment_names = _redeploy_scope(existing_data, merged_data.get("_approval_items", []))
-
-        # Strip transient keys that should not persist to YAML
+        # Transient keys that must not reach the YAML.
         existing_data.pop("_admin_email", None)
         existing_data.pop("_approval_items", None)
 
-        _apply_literal_scalars(existing_data)
+        apply_literal_scalars(existing_data)
+        return existing_data
 
-        # Save through the single validated path: schema + structural integrity
-        # validation, canonical dumper, commit + push, and cache refresh in one shot.
-        # A validation failure re-renders the approval step with the message instead
-        # of 500ing (e.g. pre-existing structural drift surfaced by the full check).
-        try:
-            await project_manager.save_and_commit_project(
-                existing_data,
-                f"Update project {project_name} (domain approval)",
-                # This route is the only place that may set an approval decision.
-                approval_decision=True,
-            )
-        # ConflictError hoort in dezelfde rij als de validatiefouten: zonder deze regel
-        # viel hij door naar buiten als een kale 500.
-        except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
-            logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
-            first_section = active_sections[0]
-            render_data = _reseed_approval_items(state.get_merged_data(), project_name)
-            step_html = _render_section_html(first_section, render_data)
-            # ConflictError goes through as-is; validation errors get an intro ("het project is daarna niet geldig").
-            if isinstance(e, ConflictError):
-                message = str(e)
-            else:
-                message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
-            rendered = _render_modal_step(
-                request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
-            )
-            return HTMLResponse(content=rendered)
+    change = ProjectChange(
+        project_name=project_name,
+        apply=apply,
+        commit_message=f"Update project {project_name} (domain approval)",
+        # A platform admin decides here, so none of the guards an ordinary edit runs apply.
+        # This is also the one write that may set an approval status; see P7 and P8 of RC-483.
+        guards=frozenset(),
+    )
+    # Closed explicitly, so its temp git clone is cleaned up on every exit path.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        result = await record_approval_decision(change, RequestAuthority(request, project_name), project_manager)
+    # A validation failure re-renders the approval step with the message instead of 500ing
+    # (e.g. pre-existing structural drift surfaced by the full check). ConflictError belongs
+    # in the same row; without it, it falls through as a bare 500.
+    except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+        logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
+        first_section = active_sections[0]
+        render_data = _reseed_approval_items(state.get_merged_data(), project_name)
+        step_html = _render_section_html(first_section, render_data)
+        # ConflictError goes through as-is; a validation error gets an intro.
+        if isinstance(e, ConflictError):
+            message = str(e)
+        else:
+            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
+        rendered = _render_modal_step(
+            request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
+        )
+        return HTMLResponse(content=rendered)
     finally:
         await project_manager.close()
     logger.info("Project %s domains updated via admin approval (by %s)", project_name, user.get("email"))
 
-    # Trigger full project processing
-    from opi.utils.yaml_util import dump_yaml_to_string
+    if not result.needs_rollout:
+        # Every item skipped: nothing was written, so there is nothing to reconcile and no
+        # progress to follow.
+        logger.info("Approval for %s decided nothing, so no round was started", project_name)
+        clear_modal_state_by_token(wizard_token)
+        return HTMLResponse(content=render_fragment(request, template="bg/_modal-wizard-success.html.j2", context={}))
 
-    yaml_content = dump_yaml_to_string(existing_data)
-
-    from opi.core.task_helpers import create_async_task
-
-    task = await create_async_task(
-        request=request,
-        task_type="create_project",
-        project_name=project_name,
-        payload={
-            "project_name": project_name,
-            "yaml_content": yaml_content,
-            "deployment_names": deployment_names,
-            # Besluit al opgeslagen; taak moet het niet herschrijven.
-            "project_file_already_saved": True,
-        },
-        max_attempts=1,
-    )
+    deployment_names = result.rollout_deployments
+    task_id = await queue_rollout(request, project_name, deployment_names)
     logger.info(
         "Approval for %s scoped redeploy to deployment(s): %s",
         project_name,
-        "(whole project)" if deployment_names is None else deployment_names or "(none affected)",
+        "(whole project)" if deployment_names is None else deployment_names,
     )
-    task_id = str(task["task_id"])
 
     rendered = render_fragment(
         request,

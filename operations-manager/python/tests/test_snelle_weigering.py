@@ -23,17 +23,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
-from opi.api import rate_limiter
-from opi.api.endpoint_util import validate_api_token
-from opi.api.rate_limiter import (
+from opi.core.authz.actions import Action, action
+from opi.core.config import settings
+from opi.http import rate_limiter
+from opi.http.auth.endpoint_util import validate_api_token
+from opi.http.rate_limiter import (
     API_FLOOD_LIMITER,
     AUTH_FAILURE_PER_CLIENT,
     AUTH_FAILURE_PER_KEY,
     IPRateLimiter,
     retry_after_seconds,
 )
-from opi.core.authz.actions import Action, action
-from opi.core.config import settings
 from opi.middleware.rate_limit import RateLimitMiddleware
 from starlette.requests import Request
 from starlette.testclient import TestClient
@@ -105,7 +105,7 @@ def _projectstore(api_key: str = "goede-sleutel") -> MagicMock:
     return store
 
 
-# De handeling hoort erbij zoals op elke echte route: ``handhaaf`` weigert een
+# De handeling hoort erbij zoals op elke echte route: ``enforce`` weigert een
 # token-bereikbare route zonder markering met een RuntimeError.
 @action(Action.PROJECT_READ)
 @validate_api_token
@@ -115,7 +115,7 @@ async def _route(request: Request, project_name: str = "") -> dict[str, Any]:
 
 async def _poging(store: MagicMock, ip: str, sleutel: str, user_agent: str = "toets") -> int:
     """Doet een poging en geeft de statuscode terug (200 als de route werd bereikt)."""
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         try:
             await _route(request=_request(ip, user_agent, sleutel), project_name="demo")
         except HTTPException as fout:
@@ -136,7 +136,7 @@ class TestDeFaaltellerOpDeSleutelpaden:
                 assert await _poging(store, ip, f"fout-{poging}") == 401
 
             with (
-                patch("opi.api.endpoint_util.get_project_store", return_value=store),
+                patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
                 pytest.raises(HTTPException) as fout,
             ):
                 await _route(request=_request(ip, api_key="fout-weer"), project_name="demo")
@@ -353,7 +353,7 @@ class TestDeClientidentificatie:
                     *request.scope["headers"],
                     (b"x-forwarded-for", f"198.51.100.{poging + 1}".encode()),
                 ]
-                with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+                with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
                     try:
                         await _route(request=request, project_name="demo")
                     except HTTPException as fout:

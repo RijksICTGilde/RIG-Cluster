@@ -116,7 +116,7 @@ veranderd.
 
 ## Afhankelijkheden
 
-- `opi/api/user_token_auth.py` -- tokenverificatie en de allowlist (uit het aanmaak-endpoint)
+- `opi/http/auth/user_token_auth.py` -- tokenverificatie en de allowlist (uit het aanmaak-endpoint)
 - `opi/services/project_authorization.py` -- `is_user_authorized_for_project` en
   `get_user_role_for_project`
 - De projectstore, die de sleutel al ontsleuteld in de cache heeft staan

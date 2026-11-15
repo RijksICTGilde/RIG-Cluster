@@ -1230,7 +1230,7 @@ async def test_a_credential_in_the_stderr_stays_out_of_the_message(
     remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the URL shape from the stderr; ``redact_text`` does not know URL userinfo."""
-    from opi.utils.logging_redact import redact_text
+    from opi.core.logging_redact import redact_text
 
     repo = _repo(remote)
     work = tmp_path / "work"

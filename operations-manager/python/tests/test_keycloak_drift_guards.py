@@ -24,7 +24,7 @@ from keycloak.exceptions import KeycloakGetError
 from opi.connectors.keycloak import KeycloakConnector
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.project import Project
-from opi.utils.secrets import KeycloakSecret
+from opi.services.secrets import KeycloakSecret
 
 
 class TestRealmExists:
@@ -247,15 +247,6 @@ class TestRealmPresenceIsEstablishedTwice:
 
     def _manager(self) -> KeycloakManager:
         project_manager = MagicMock()
-        project_manager._get_project_keycloak_config_for_cluster = AsyncMock(
-            return_value={
-                "host": "https://keycloak.example",
-                "realm": "vp-8bw-odcn-production",
-                "username": "vp_8bw_odcn_production_admin",
-                "password": "AGE-ENCRYPTED-PASSWORD",
-            }
-        )
-        project_manager._get_keycloak_url_for_cluster = MagicMock(return_value="https://keycloak.example")
         project_manager._get_secret_from_map = MagicMock(
             return_value=KeycloakSecret(
                 client_id="vp-8bw-productie",
@@ -270,6 +261,15 @@ class TestRealmPresenceIsEstablishedTwice:
         )
 
         manager = KeycloakManager(project_manager)
+        manager._get_project_keycloak_config_for_cluster = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                "host": "https://keycloak.example",
+                "realm": "vp-8bw-odcn-production",
+                "username": "vp_8bw_odcn_production_admin",
+                "password": "AGE-ENCRYPTED-PASSWORD",
+            }
+        )
+        manager._get_keycloak_url_for_cluster = MagicMock(return_value="https://keycloak.example")  # type: ignore[method-assign]
         # The idempotent reconciliation steps are not what these tests are about.
         for step in (
             "_ensure_realm_authentication_flow",
@@ -331,7 +331,7 @@ class TestRealmPresenceIsEstablishedTwice:
         # host answers "no such realm" for a realm that is alive on the current one.
         manager = self._manager()
         project_manager = manager.project_manager
-        project_manager._get_project_keycloak_config_for_cluster = AsyncMock(
+        manager._get_project_keycloak_config_for_cluster = AsyncMock(  # type: ignore[method-assign]
             return_value={
                 "host": "https://keycloak.old-domain.example",
                 "realm": "vp-8bw-odcn-production",

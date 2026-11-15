@@ -26,8 +26,8 @@ een onbemande mailbox daar is erger dan geen record.
 |---|---|
 | De gewenste toestand (zones, issuers, TTL) | `opi/core/dns_config.py` |
 | De TransIP REST API v6 | `opi/connectors/transip.py` |
-| De reconciler | `opi/core/caa_reconciler.py` |
-| De aanroep bij het opstarten | `opi/core/startup.py` |
+| De reconciler | `opi/runtime/periodic/caa_reconciler.py` |
+| De aanroep bij het opstarten | `opi/runtime/startup/startup.py` |
 
 De reconciler is **add-only**:
 

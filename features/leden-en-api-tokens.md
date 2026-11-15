@@ -75,7 +75,7 @@ zijn tokens, zonder dat er iets ingetrokken hoeft te worden.
 
 ### Wat een service account nooit mag
 
-`HUMAN_REQUIRED` (`opi/api/principal.py`) zijn de handelingen die een geverifieerde MENS
+`HUMAN_REQUIRED` (`opi/http/auth/principal.py`) zijn de handelingen die een geverifieerde MENS
 vragen, ongeacht het doelwit. Vandaag staat daar `token.manage` in: wie een token kan
 maken kan zijn eigen bewijsmiddel vermenigvuldigen, en dat hoort geen pijplijn te kunnen.
 Een service account krijgt daarop altijd een 403 met `cause: principal-kind-not-allowed`:
@@ -86,7 +86,7 @@ een eigen reden en niet "te weinig rechten", want zijn rol klopt en zijn SOORT n
 Een handeling die productie raakt vraagt een VERSE 2-factor (RC-332), en met een
 `zad_`-token loopt dat langs dezelfde weg als met een SSO-bearer. Het handhavingspunt zet
 de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies waar
-`opi/api/otp_step_up.py` de persoon leest tegen wie de code getoetst wordt. Een code van
+`opi/http/auth/otp_step_up.py` de persoon leest tegen wie de code getoetst wordt. Een code van
 iemand anders aan een aanroep hangen kan dus niet.
 
 Een persoonlijk token activeert zijn step-up met `POST /api/v2/projects/{project}/step-up` en
@@ -156,7 +156,7 @@ token-bereikbare route wijst er precies een aan:
 async def update_image_v2(...): ...
 ```
 
-`controleer_handelingen` draait bij het opstarten over `app.routes` en WEIGERT te starten
+`check_route_actions` draait in `create_app` over `app.routes` en WEIGERT te starten
 als een BEWAAKTE route geen action noemt of als die action geen regel heeft. Zonder die controle zou zo'n route
 stilzwijgend alles openen wat het token mag.
 
@@ -165,7 +165,7 @@ FastAPI als endpoint registreert.
 
 ## Het handhavingspunt
 
-`opi/api/principal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
+`opi/http/auth/principal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
 beslist een keer:
 
 1. hash de gepresenteerde `X-API-Key` en zoek hem bij de tokens van de leden van het
@@ -190,7 +190,7 @@ De actor wordt SERVER-SIDE gezet, op de ingang, nooit uit een body:
 
 Elke lezer van `users:` die iets met een MENS doet (een Keycloak-gebruiker, een
 uitnodiging, een mail, OTP, de inloglijst, de databaseconsole) gebruikt
-`human_members(project)` uit `opi/services/project_leden.py`. Een service account heeft
+`human_members(project)` uit `opi/services/project_members.py`. Een service account heeft
 geen postvak en geen 2-factor, dus zou daar een toegang opleveren die niemand kan
 gebruiken.
 
@@ -205,15 +205,15 @@ Dat formulier bezit het pad `users` als geheel (`USERS_SEQUENCE_EDITABLE`), dus 
 voorziening gooide een collega toevoegen elk token en elk service account van het project
 weg, onder een commit die "Projectleden bijgewerkt" heet.
 
-`opi/forms/wizard/leden.py` houdt daarom uit het formulier wat het niet bewerkt, en zet het
+`opi/forms/wizard/members.py` houdt daarom uit het formulier wat het niet bewerkt, en zet het
 bij het opslaan terug, net zoals `opi/forms/wizard/secrets.py` dat voor versleutelde
 waarden doet:
 
-- `leden_voor_formulier` vult de modaal met alleen de mensen, zonder hun tokens. Een
+- `members_for_form` vult de modaal met alleen de mensen, zonder hun tokens. Een
   service-accountregel in het formulier zou als lid zonder adres landen, en geen uitkomst
   laat hem overleven: leegmaken valt op de verplichte-veldcontrole, weghalen verwijdert het
   account en een adres invullen laat het schema de regel weigeren;
-- `zet_verborgen_leden_terug` zet bij het opslaan de service accounts terug zoals ze in het
+- `restore_hidden_members` zet bij het opslaan de service accounts terug zoals ze in het
   bestand staan, en de tokens van een mens op zijn e-mailadres. Een lid dat uit de lijst is
   gehaald is zijn tokens wel kwijt, want dat is wat het verwijderen van een lid hoort te
   doen; er gaat een regel in het log over welke dat waren.
@@ -254,7 +254,7 @@ beheerder wel voor iedereen, want offboarding moet kunnen zonder op die persoon 
 eigen token intrekken: wat iemand hier mag staat in `users:` van het projectbestand, en wie
 daar niet staat heeft er geen bewijsmiddel. Zijn weg is zich als lid toevoegen, en dat is
 een commit die iemand kan reviewen. Het tabblad Team toont hem daarom ook geen knoppen
-(`is_projectbeheerder`), zodat de knop en de weigering erachter dezelfde bron lezen.
+(`is_project_admin`), zodat de knop en de weigering erachter dezelfde bron lezen.
 
 ```bash
 # een token uitgeven; de waarde staat EEN keer in dit antwoord
@@ -279,7 +279,7 @@ naast de naam, en toont de formulieren om een token uit te geven of te roteren d
 Bij de andere leden zitten die in een accordion.
 
 Logt er ergens toch een token mee, dan maskeert `SecretRedactionFilter`
-(`opi/utils/logging_redact.py`) de vorm `zad_` plus 40 of meer url-veilige tekens. Vandaag
+(`opi/core/logging_redact.py`) de vorm `zad_` plus 40 of meer url-veilige tekens. Vandaag
 logt niets de waarde; dit is het vangnet voor de volgende logregel die hem meeneemt.
 
 ## De migratie van de projectsleutel

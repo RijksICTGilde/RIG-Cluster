@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.services import gedeelde_diensten
+from opi.services import shared_services
 
 
 class _Prom:
@@ -26,7 +26,7 @@ class _Prom:
     def __init__(self) -> None:
         self.gevraagd: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.gevraagd.append(query)
         if "realms_total" in query:
             return [{"metric": {}, "value": [0, "12"]}]
@@ -56,7 +56,7 @@ def prom(monkeypatch: pytest.MonkeyPatch) -> _Prom:
 
 @pytest.mark.asyncio
 async def test_de_realms_komen_met_hun_gebruikers_en_logins(prom: _Prom) -> None:
-    blok = await gedeelde_diensten.haal_keycloak()
+    blok = await shared_services.fetch_keycloak()
 
     assert blok.gemeten
     per_realm = {rij.realm: rij for rij in blok.rijen}
@@ -69,7 +69,7 @@ async def test_de_realms_komen_met_hun_gebruikers_en_logins(prom: _Prom) -> None
 @pytest.mark.asyncio
 async def test_het_aantal_realms_staat_los_van_de_rijen(prom: _Prom) -> None:
     """Een realm zonder gebruikers levert geen rij op, maar bestaat wel."""
-    blok = await gedeelde_diensten.haal_keycloak()
+    blok = await shared_services.fetch_keycloak()
 
     assert blok.totaal == 12.0
     assert len(blok.rijen) == 2
@@ -77,7 +77,7 @@ async def test_het_aantal_realms_staat_los_van_de_rijen(prom: _Prom) -> None:
 
 @pytest.mark.asyncio
 async def test_de_meeste_gebruikers_staan_bovenaan(prom: _Prom) -> None:
-    blok = await gedeelde_diensten.haal_keycloak()
+    blok = await shared_services.fetch_keycloak()
 
     assert [rij.realm for rij in blok.rijen] == ["wies", "toets-hn7"]
 
@@ -85,7 +85,7 @@ async def test_de_meeste_gebruikers_staan_bovenaan(prom: _Prom) -> None:
 @pytest.mark.asyncio
 async def test_de_logins_gaan_over_24_uur(prom: _Prom) -> None:
     """De scrape-job draait elke twee uur; een korter venster geeft lege cellen."""
-    await gedeelde_diensten.haal_keycloak()
+    await shared_services.fetch_keycloak()
 
     login_queries = [q for q in prom.gevraagd if "rig_keycloak_logins_total" in q]
     assert login_queries, "er is geen loginquery gedaan"
@@ -101,11 +101,11 @@ async def test_dit_blok_gebruikt_onze_eigen_prometheus(monkeypatch: pytest.Monke
     """
 
     async def _verboden(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("haal_keycloak mag niet via get_metrics_connector lopen")
+        raise AssertionError("fetch_keycloak mag niet via get_metrics_connector lopen")
 
     monkeypatch.setattr("opi.connectors.prometheus.get_metrics_connector", _verboden)
 
-    blok = await gedeelde_diensten.haal_keycloak()
+    blok = await shared_services.fetch_keycloak()
 
     assert blok.gemeten
 
@@ -113,12 +113,12 @@ async def test_dit_blok_gebruikt_onze_eigen_prometheus(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_een_kapotte_bron_kost_het_blok_en_niet_de_pagina(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Stuk:
-        async def custom_query(self, query: str) -> list[dict[str, Any]]:
+        async def query(self, query: str) -> list[dict[str, Any]]:
             raise RuntimeError("prometheus onbereikbaar")
 
     monkeypatch.setattr("opi.connectors.prometheus.PrometheusConnector", lambda *a, **k: _Stuk())
 
-    blok = await gedeelde_diensten.haal_keycloak()
+    blok = await shared_services.fetch_keycloak()
 
     assert blok.gemeten is False
     assert blok.fout is not None
@@ -139,11 +139,11 @@ def test_de_gauges_kijken_terug_en_vertrouwen_niet_op_het_staleness_venster() ->
     gauges = ("realms", "gebruikers", "gebruikers_per_idp")
 
     for naam in gauges:
-        query = gedeelde_diensten._KEYCLOAK_QUERIES[naam]
+        query = shared_services._KEYCLOAK_QUERIES[naam]
         assert "last_over_time" in query, (
             f"query '{naam}' is een kale instant-query en levert daarmee bijna altijd niets: {query}"
         )
 
     for naam in ("logins", "mislukte_logins"):
-        query = gedeelde_diensten._KEYCLOAK_QUERIES[naam]
+        query = shared_services._KEYCLOAK_QUERIES[naam]
         assert "increase(" in query, f"query '{naam}' hoort een range-selector te gebruiken: {query}"

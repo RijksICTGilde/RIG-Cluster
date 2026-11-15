@@ -22,15 +22,15 @@ from opi.tools.biv_render import (
     REPO_ROOT,
     Inventaris,
     Score,
-    aanvalsproef_doelen,
-    gaten,
+    aanvalsproef_targets,
+    find_gaps,
+    find_problems,
     load_inventaris,
     main,
-    meldingen,
-    ongedekte_aanvalsproef,
+    missing_aanvalsproef_targets,
     render,
     render_diagram,
-    render_tabel,
+    render_table,
 )
 from pydantic import ValidationError
 
@@ -60,7 +60,7 @@ def test_inventaris_valideert(inventaris: Inventaris) -> None:
 def test_bbn_volgt_uit_de_hoogste_score(inventaris: Inventaris) -> None:
     verwacht = {Score.LAAG: 1, Score.MIDDEN: 2, Score.HOOG: 3}
     for component in inventaris.componenten:
-        assert component.bbn == verwacht[component.hoogste_score]
+        assert component.bbn == verwacht[component.highest_score]
 
 
 def test_de_componenten_van_het_plan_staan_erin(inventaris: Inventaris) -> None:
@@ -157,7 +157,7 @@ def test_overzicht_loopt_niet_achter(inventaris: Inventaris) -> None:
 
 
 def test_elke_component_heeft_precies_een_rij(inventaris: Inventaris) -> None:
-    regels = render_tabel(inventaris).splitlines()
+    regels = render_table(inventaris).splitlines()
     # De kopregel met de kolomnamen en de scheidingsregel eronder horen niet bij de data.
     rijen = regels[2:]
     assert len(rijen) == len(inventaris.componenten)
@@ -166,7 +166,7 @@ def test_elke_component_heeft_precies_een_rij(inventaris: Inventaris) -> None:
 
 
 def test_mitigatielinks_zijn_niet_leeg_bij_m_of_hoger(inventaris: Inventaris) -> None:
-    tabel = render_tabel(inventaris)
+    tabel = render_table(inventaris)
     for component in inventaris.componenten:
         for as_naam in ASSEN:
             if component.score(as_naam) is Score.LAAG:
@@ -181,7 +181,7 @@ def test_mitigatielinks_zijn_niet_leeg_bij_m_of_hoger(inventaris: Inventaris) ->
 
 
 def test_de_eerste_vulling_heeft_geen_gaten(inventaris: Inventaris) -> None:
-    assert gaten(inventaris) == []
+    assert find_gaps(inventaris) == []
 
 
 def test_score_h_zonder_toets_is_een_gat(ruwe_inventaris: dict) -> None:
@@ -190,7 +190,7 @@ def test_score_h_zonder_toets_is_een_gat(ruwe_inventaris: dict) -> None:
     component["vertrouwelijkheid"] = "H"
     component["mitigaties"]["vertrouwelijkheid"] = [{"maatregel": "iets", "bron": "RC-370"}]
 
-    meldingen = gaten(Inventaris.model_validate(ruw))
+    meldingen = find_gaps(Inventaris.model_validate(ruw))
 
     assert meldingen == [f"{component['id']} / vertrouwelijkheid: score H zonder mitigatie met een toets"]
 
@@ -200,7 +200,7 @@ def test_verdwenen_toets_is_een_gat(ruwe_inventaris: dict) -> None:
     component = ruw["componenten"][0]
     component["mitigaties"]["integriteit"][0]["toets"] = "operations-manager/python/tests/test_weg.py"
 
-    meldingen = gaten(Inventaris.model_validate(ruw))
+    meldingen = find_gaps(Inventaris.model_validate(ruw))
 
     assert f"{component['id']} / integriteit: toets 'operations-manager/python/tests/test_weg.py' bestaat niet" in (
         meldingen
@@ -212,14 +212,14 @@ def test_verdwenen_bron_is_een_gat(ruwe_inventaris: dict) -> None:
     component = ruw["componenten"][0]
     component["mitigaties"]["integriteit"][0]["bron"] = "plans/bestaat-niet.md"
 
-    meldingen = gaten(Inventaris.model_validate(ruw))
+    meldingen = find_gaps(Inventaris.model_validate(ruw))
 
     assert f"{component['id']} / integriteit: bron 'plans/bestaat-niet.md' bestaat niet" in meldingen
 
 
 def test_de_check_meldt_niets_op_de_eerste_vulling(inventaris: Inventaris) -> None:
     """De CI-check draait groen op de inventaris zoals hij nu staat."""
-    assert meldingen(inventaris) == []
+    assert find_problems(inventaris) == []
 
 
 def test_elke_genoemde_toets_bestaat(inventaris: Inventaris) -> None:
@@ -234,16 +234,16 @@ def test_elke_genoemde_toets_bestaat(inventaris: Inventaris) -> None:
 
 
 def test_elke_component_met_score_h_is_een_doel_van_de_aanvalsproef(inventaris: Inventaris) -> None:
-    assert ongedekte_aanvalsproef(inventaris) == []
+    assert missing_aanvalsproef_targets(inventaris) == []
 
 
 def test_aanvalsproef_doelen_komen_uit_de_inventaris(inventaris: Inventaris) -> None:
     """Het harnas leest deze lijst; een tweede, losse lijst van onderdelen bestaat niet."""
-    doelen = aanvalsproef_doelen(inventaris)
+    doelen = aanvalsproef_targets(inventaris)
 
     assert doelen == sorted(doelen)
     assert set(doelen) <= {component.id for component in inventaris.componenten}
-    assert set(doelen) >= {c.id for c in inventaris.componenten if c.hoogste_score is Score.HOOG}
+    assert set(doelen) >= {c.id for c in inventaris.componenten if c.highest_score is Score.HOOG}
 
 
 def test_h_component_buiten_de_aanvalsproef_valt_op(ruwe_inventaris: dict) -> None:
@@ -251,7 +251,7 @@ def test_h_component_buiten_de_aanvalsproef_valt_op(ruwe_inventaris: dict) -> No
     component = ruw["componenten"][0]
     component["aanvalsproef"] = False
 
-    assert ongedekte_aanvalsproef(Inventaris.model_validate(ruw)) == [component["id"]]
+    assert missing_aanvalsproef_targets(Inventaris.model_validate(ruw)) == [component["id"]]
 
 
 # --- 6. De BIO-narratief verwijst, schrijft niet over --------------------------------
@@ -402,7 +402,7 @@ def test_een_pijp_of_regelafbreking_breekt_de_tabel_niet(ruwe_inventaris: dict) 
     component["mitigaties"]["integriteit"][0]["maatregel"] = "a | b\nc"
     kolommen = 10
 
-    tabel = render_tabel(Inventaris.model_validate(ruw))
+    tabel = render_table(Inventaris.model_validate(ruw))
     rijen = tabel.splitlines()[2:]
 
     assert len(rijen) == len(ruw["componenten"])
@@ -418,11 +418,11 @@ def test_een_pijp_of_regelafbreking_breekt_de_tabel_niet(ruwe_inventaris: dict) 
 def test_vind_repo_root_vindt_de_checkout(tmp_path: Path) -> None:
     root = tmp_path / "checkout"
     (root / "architecture").mkdir(parents=True)
-    (root / biv_render.INVENTARIS_VANAF_ROOT).write_text("componenten: []", encoding="utf-8")
+    (root / biv_render.INVENTARIS_FROM_ROOT).write_text("componenten: []", encoding="utf-8")
     diep = root / "a" / "b" / "c"
     diep.mkdir(parents=True)
 
-    assert biv_render.vind_repo_root(diep / "biv_render.py") == root
+    assert biv_render.find_repo_root(diep / "biv_render.py") == root
 
 
 def test_vind_repo_root_weigert_buiten_een_checkout(tmp_path: Path) -> None:
@@ -431,4 +431,4 @@ def test_vind_repo_root_weigert_buiten_een_checkout(tmp_path: Path) -> None:
     image_pad.parent.mkdir(parents=True)
 
     with pytest.raises(FileNotFoundError, match="geen checkout rond"):
-        biv_render.vind_repo_root(image_pad)
+        biv_render.find_repo_root(image_pad)

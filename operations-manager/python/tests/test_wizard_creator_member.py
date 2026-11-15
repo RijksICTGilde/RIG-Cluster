@@ -7,7 +7,7 @@ project created through the wizard was rejected on ``users/0``.
 from __future__ import annotations
 
 from jsonschema import Draft202012Validator
-from opi.core.project_schema import _load_latest_schema
+from opi.services.project_schema import _load_latest_schema
 from opi.web.router_wizard import creator_as_member
 
 

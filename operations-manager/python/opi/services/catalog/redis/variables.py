@@ -1,7 +1,7 @@
 """Environment variables the redis service provides -- single source of truth.
 
-Lives in the service's own package (RC-36): what a service hands to a deployment
-is part of that service, not of a shared module.
+Lives in the service's own package: what a service hands to a deployment is part of that
+service, not of a shared module.
 """
 
 from enum import Enum
@@ -16,28 +16,28 @@ class RedisVariables(Enum):
         name="REDIS_HOST",
         description="Redis server hostname",
         source="secret",
-        secret_key="host",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="host",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_HOST"],
     )
     PORT = VariableDefinition(
         name="REDIS_PORT",
         description="Redis server port",
         source="secret",
-        secret_key="port",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="port",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_PORT"],
     )
     USERNAME = VariableDefinition(
         name="REDIS_USERNAME",
         description="Redis ACL username",
         source="secret",
-        secret_key="username",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="username",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_USERNAME"],
     )
     PASSWORD = VariableDefinition(
         name="REDIS_PASSWORD",
         description="Redis password",
         source="secret",
-        secret_key="password",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="password",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_PASSWORD"],
     )
     PREFIX = VariableDefinition(
@@ -48,13 +48,13 @@ class RedisVariables(Enum):
             "tot sleutels en kanalen die met <prefix>: beginnen"
         ),
         source="secret",
-        secret_key="key_prefix",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="key_prefix",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_PREFIX"],
     )
     URL = VariableDefinition(
         name="REDIS_URL",
         description="Full Redis connection URL",
         source="secret",
-        secret_key="url",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="url",  # noqa: S106  # the name of the key or the secret class, not a secret
         aliases=["APP_REDIS_URL"],
     )

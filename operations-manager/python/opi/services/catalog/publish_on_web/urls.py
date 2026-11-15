@@ -4,21 +4,24 @@ Publish-on-web is the service that decides whether a component is reachable from
 internet and under which hostname, so the derivation lives here rather than in the page
 that happens to show it first.
 
-Two readers today: the project detail page lists these as links, and the invite form
-offers them as the destination of its success button. That second one is why this moved
-out of ``web/router.py`` -- a user setting up an invitation knows which deployment and
-component they want people to land on, not the URL, so the form has to derive it for
-them.
+Two readers: the project detail page lists these as links, and the invite form offers them
+as the destination of its success button. A user setting up an invitation knows which
+deployment and component they want people to land on, not the URL, so the form derives it
+for them.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
-from opi.utils.naming import generate_public_url, get_component_ingress_map
+from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
+from opi.utils.naming import generate_public_url
+
+if TYPE_CHECKING:
+    from opi.services.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ def public_urls_for_deployment(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
     project_name: str,
-    project_file_handler: Any,
+    project_file_handler: ProjectFileHandler,
 ) -> list[dict[str, str]]:
     """Every public URL this deployment exposes, one entry per component/path pair.
 
@@ -91,7 +94,7 @@ def public_url_map_for_deployment(
     project_data: dict[str, Any],
     deployment: dict[str, Any],
     project_name: str,
-    project_file_handler: Any,
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, str]:
     """Component name -> its primary public URL, for this deployment.
 
@@ -101,9 +104,8 @@ def public_url_map_for_deployment(
     present with a guessed hostname -- an address that answers 404 is worse than no
     address, because a client stores it and passes it on.
 
-    This is the one source for that answer. The refresh task reports it, the deployment
-    endpoint returns it and the detail page links it; deriving it three times is how they
-    came to disagree (RC-104, vraag 13).
+    This is the one source for that answer: the refresh task reports it, the deployment
+    endpoint returns it and the detail page links it.
     """
     cluster = deployment.get("cluster")
     if not cluster:
@@ -121,7 +123,9 @@ def public_url_map_for_deployment(
     return urls
 
 
-def public_urls_for_project(project_data: dict[str, Any], project_file_handler: Any) -> list[dict[str, str]]:
+def public_urls_for_project(
+    project_data: dict[str, Any], project_file_handler: ProjectFileHandler
+) -> list[dict[str, str]]:
     """Every public URL in the project, with the deployment name added to each entry.
 
     Used to offer a destination to pick. The deployment name is part of the entry because

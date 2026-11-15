@@ -1,9 +1,4 @@
-"""
-ArgoCD connector for managing ArgoCD applications and authentication.
-
-This module provides functionality to authenticate with ArgoCD and manage applications,
-including triggering synchronization of applications.
-"""
+"""Authenticate with ArgoCD and drive its applications: sync, refresh, status, deletion."""
 
 import asyncio
 import functools
@@ -15,121 +10,109 @@ from typing import Any
 
 import aiohttp
 
-from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
-from opi.utils.connect_retry import retry_on_connect_error
-from opi.utils.logging_redact import redact_sensitive_headers
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
+from opi.core.connect_retry import retry_on_connect_error
+from opi.core.logging_redact import redact_sensitive_headers
 
 logger = logging.getLogger(__name__)
 
-# ArgoCD session tokens are JWTs valid for 24 hours, but a connector is built per
-# operation (16 call sites) and each construction used to log in again. That login
-# costs ~700ms because ArgoCD verifies the password with bcrypt, so it dominated
-# every page load and task step that touched ArgoCD.
-#
-# The token is therefore shared process-wide, keyed by (server, user). Two locks:
-# _token_cache_lock guards the dict (threads read it too), and _token_refresh_lock makes
-# a burst of callers that all find the cache empty produce ONE login instead of one each.
+# An ArgoCD session token is a JWT valid for 24 hours, and a login costs ~700ms because
+# ArgoCD verifies the password with bcrypt. The token is therefore shared process-wide, keyed
+# by (server, user). Two locks: _token_cache_lock guards the dict (threads read it too), and
+# _token_refresh_lock makes a burst of callers that all find the cache empty produce ONE
+# login instead of one each.
 _token_cache: dict[tuple[str, str], str] = {}
 _token_cache_lock = threading.Lock()
 _token_refresh_lock = asyncio.Lock()
 
 # While argocd-server restarts its API server in-process, the service can be without an
 # endpoint for as long as its 20 second graceful-shutdown deadline. 30 seconds covers
-# that with margin. Why it restarts: docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
+# that with margin. Why it restarts: `docs/post-mortems/argocd-server-herstart-elke-40-minuten.md`.
 CONNECT_RETRY_SECONDS = 30.0
 
 
 @functools.cache
-def _ssl_context_voor(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext:
-    """Een ssl-context per (verify_ssl, ca_bundle), gedeeld over het hele proces.
-
-    Voorkomt dat ssl.create_default_context() de CA-bundel per request van schijf leest.
+def _ssl_context_for(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext:
+    """One ssl context per (verify_ssl, ca_bundle), shared across the process.
 
     Raises:
-        ArgoTLSConfigurationError: de bundel op dit pad ontbreekt of bevat geen certificaat
+        ArgoTLSConfigurationError: the bundle at this path is missing or holds no certificate.
     """
     try:
         context = ssl.create_default_context(cafile=ca_bundle)
-    except (OSError, ssl.SSLError) as fout:
-        # De bundel is een optionele mount, dus een cluster zonder ConfigMap komt hier
-        # met een melding die het pad niet noemt. Terugvallen op plain HTTP is geen uitweg.
+    except (OSError, ssl.SSLError) as error:
+        # The bundle is an optional mount, so a cluster without the ConfigMap arrives here.
+        # Falling back to plain HTTP is not a way out.
         raise ArgoTLSConfigurationError(
-            f"ARGOCD_CA_BUNDLE={ca_bundle} is niet te lezen als CA-bundel: {_exc_text(fout)}"
-        ) from fout
+            f"ARGOCD_CA_BUNDLE={ca_bundle} is niet te lezen als CA-bundel: {_exc_text(error)}"
+        ) from error
     if not verify_ssl:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
     return context
 
 
-#: Een gedeelde ClientSession per (verify_ssl, ca_bundle) en per event loop. Elk ArgoCD-
-#: verzoek opende er zijn eigen, met een eigen TCP-verbinding en TLS-handshake erbij; een
-#: wachtlus doet er tientallen per deployment. De loop hoort in de sleutel omdat een sessie
-#: aan de loop vastzit waarop ze gemaakt is.
+#: One shared ClientSession per (verify_ssl, ca_bundle) and per event loop. The loop belongs
+#: in the key because a session is bound to the loop it was made on.
 _sessions: dict[tuple[bool, str | None, int], aiohttp.ClientSession] = {}
 _session_lock = asyncio.Lock()
 
 
 async def _shared_session(verify_ssl: bool, ca_bundle: str | None) -> aiohttp.ClientSession:
-    """De gedeelde sessie voor deze TLS-instelling, aangemaakt bij het eerste gebruik."""
-    sleutel = (verify_ssl, ca_bundle, id(asyncio.get_running_loop()))
-    sessie = _sessions.get(sleutel)
-    if sessie is not None and not sessie.closed:
-        return sessie
+    """The shared session for this TLS setting, created on first use."""
+    key = (verify_ssl, ca_bundle, id(asyncio.get_running_loop()))
+    session = _sessions.get(key)
+    if session is not None and not session.closed:
+        return session
     async with _session_lock:
-        sessie = _sessions.get(sleutel)
-        if sessie is not None and not sessie.closed:
-            return sessie
-        sessie = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context_voor(verify_ssl, ca_bundle)))
-        _sessions[sleutel] = sessie
-        return sessie
+        session = _sessions.get(key)
+        if session is not None and not session.closed:
+            return session
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context_for(verify_ssl, ca_bundle)))
+        _sessions[key] = session
+        return session
 
 
 async def close_shared_sessions() -> None:
-    """Sluit de gedeelde sessies. Hoort bij het afsluiten van het proces."""
-    for sessie in list(_sessions.values()):
-        if not sessie.closed:
-            await sessie.close()
+    """Close the shared sessions. Belongs to shutting the process down."""
+    for session in list(_sessions.values()):
+        if not session.closed:
+            await session.close()
     _sessions.clear()
 
 
 def _exc_text(error: BaseException) -> str:
-    """De tekst van een uitzondering, of de klasse als die tekst leeg is.
+    """The text of an exception, or its class when that text is empty.
 
-    TimeoutError heeft een lege str(), dus str(error) alleen logde niets bij timeouts.
+    TimeoutError has an empty str(), so str(error) alone logs nothing on a timeout.
     """
     return str(error) or type(error).__name__
 
 
 class ArgoTransportError(RuntimeError):
-    """De vraag aan ArgoCD kwam niet aan of kwam niet terug: timeout, connect-fout, 5xx.
+    """The question to ArgoCD did not arrive or did not come back: timeout, connect error, 5xx.
 
-    Dit zegt niets over de toestand van de applicatie, dus een wacht-lus hoort door te
-    pollen in plaats van af te breken. Subklasse van RuntimeError zodat aanroepers die
-    dat al afvangen zich niet anders gedragen dan voorheen.
+    It says nothing about the state of the application, so a wait loop keeps polling rather
+    than breaking off.
     """
 
 
 class ArgoTLSConfigurationError(ValueError):
-    """TLS staat aan met certificaatcontrole, maar er is geen CA-bundel om tegen te toetsen.
+    """TLS is on with certificate verification, but there is no CA bundle to verify against.
 
-    De CA van de ArgoCD-server (de service-CA op ODCN, de eigen CA op de sandbox) zit niet
-    in de systeemtrust van de container, dus zonder bundel faalt elke aanroep alsnog.
+    The CA of the ArgoCD server (the service CA on ODCN, our own CA on the sandbox) is not in
+    the container's system trust, so without a bundle every call fails anyway.
     """
 
 
 class ArgoAuthConfigurationError(ValueError):
-    """Er is geen manier om bij ArgoCD binnen te komen: geen ARGOCD_TOKEN en geen
-    gebruiker met wachtwoord.
+    """There is no way in: neither ARGOCD_TOKEN nor a user with a password.
 
-    Vroeger stond hier admin/admin als default, dus een vergeten instelling probeerde stil
-    het beheeraccount. OPI hoort met het eigen account `opi` en zijn API-token te werken.
+    OPI works with its own account `opi` and its API token.
     """
 
 
 class ArgoConnector:
-    """Connector for interacting with ArgoCD server."""
-
     def __init__(
         self,
         server_host: str = "argocd-server",
@@ -141,23 +124,15 @@ class ArgoConnector:
         verify_ssl: bool = False,
         ca_bundle: str | None = None,
         connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
-    ):
-        """
-        Initialize the ArgoCD connector and perform login.
+    ) -> None:
+        """``token`` is sent as a bearer and skips the login path altogether.
 
-        Args:
-            server_host: ArgoCD server hostname or service name
-            server_port: ArgoCD server port
-            username: Username for authentication (login path)
-            password: Password for authentication (login path)
-            token: API token of the ArgoCD account; sent as bearer, no login at all
-            use_tls: Whether to use TLS/HTTPS
-            verify_ssl: Whether to verify SSL certificates
-            ca_bundle: Path of the mounted CA bundle to verify the server certificate against
-            connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
+        ``ca_bundle`` is the path of the mounted bundle the server certificate is verified
+        against; ``connect_retry_seconds`` is how long a connect failure keeps being retried,
+        0 to fail fast.
 
         Raises:
-            ArgoTLSConfigurationError: TLS with certificate verification but no CA bundle
+            ArgoTLSConfigurationError: TLS with certificate verification but no CA bundle.
         """
         if use_tls and verify_ssl and not ca_bundle:
             raise ArgoTLSConfigurationError("ARGOCD_USE_TLS en ARGOCD_VERIFY_SSL staan aan zonder ARGOCD_CA_BUNDLE")
@@ -172,25 +147,22 @@ class ArgoConnector:
         self.ca_bundle = ca_bundle
         self.connect_retry_seconds = connect_retry_seconds
 
-        # Build base URL
         protocol = "https" if use_tls else "http"
         self.base_url = f"{protocol}://{server_host}:{server_port}"
         self._actual_base_url = self.base_url
 
-        # Authentication token
         self.auth_token: str | None = None
-
-        # Default application name
         self.default_app_name = "user-applications"
 
         logger.debug(f"ArgoConnector initialized with server: {self.base_url}")
 
-        # Een API-token skips de cache: hij verloopt niet per sessie en is voor elke connector dezelfde.
+        # An API token skips the cache: it does not expire per session and is the same for
+        # every connector. Without one, read the cache and do not log in on the loop
+        # (~700ms, plus a 10s timeout when ArgoCD is unreachable); ensure_authenticated
+        # logs in asynchronously when it has to.
         if token:
             self.auth_token = token
         else:
-            # Haal cache op, niet inloggen op de loop (~700 ms + 10 s timeout als onbereikbaar).
-            # ensure_authenticated logt async in als nodig.
             self.auth_token = self._cached_token()
 
     def _cache_key(self) -> tuple[str, str]:
@@ -207,9 +179,8 @@ class ArgoConnector:
     def _invalidate_token(self, used_token: str | None) -> None:
         """Drop the shared token, but only if it is still the one that just failed.
 
-        Compare-and-clear: another caller may already have replaced it after our
-        request went out. Clearing unconditionally would throw away that fresh
-        token and send everyone back through a login they do not need.
+        Compare-and-clear: another caller may already have replaced it after our request went
+        out, and clearing unconditionally would throw away that fresh token.
         """
         if used_token is None:
             return
@@ -218,13 +189,9 @@ class ArgoConnector:
                 _token_cache.pop(self._cache_key(), None)
 
     async def login(self) -> bool:
-        """
-        Login to ArgoCD server and obtain authentication token.
+        """Obtain a session token; False when the login failed.
 
-        Met een API-token is er niets in te loggen: het token is de autorisatie.
-
-        Returns:
-            True if login successful, False otherwise
+        With an API token there is nothing to log in to: the token IS the authorization.
         """
         if self.token:
             self.auth_token = self.token
@@ -232,7 +199,7 @@ class ArgoConnector:
 
         try:
             return await retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
 
@@ -267,17 +234,17 @@ class ArgoConnector:
                 return False
 
     def _ssl_context(self) -> ssl.SSLContext:
-        return _ssl_context_voor(self.verify_ssl, self.ca_bundle)
+        return _ssl_context_for(self.verify_ssl, self.ca_bundle)
 
     async def ensure_authenticated(self) -> bool:
         """Ensure we have a valid authentication token, logging in at most once.
 
-        Ook de "is ArgoCD bereikbaar"-toets van de pagina's: die keek vroeger of de
-        constructor een token had bemachtigd, en die logt niet meer in.
+        Also the "is ArgoCD reachable" check of the pages, because the constructor no longer
+        logs in.
 
-        The shared token is re-checked after acquiring the refresh lock: when many
-        callers hit an empty cache at the same moment, the first performs the login
-        and the rest adopt its token instead of each paying another ~700ms.
+        The shared token is re-checked after acquiring the refresh lock: when many callers hit
+        an empty cache at the same moment, the first performs the login and the rest adopt its
+        token instead of each paying another ~700ms.
         """
         if self.auth_token:
             return True
@@ -289,16 +256,14 @@ class ArgoConnector:
 
         # The login behind this lock retries connect failures, so holding it can cost the
         # holder's whole budget. Only a caller that asked to fail fast refuses to queue up
-        # behind that; it degrades exactly as it does on a login that failed. A free lock
-        # is still taken straight away, so this refuses to wait, never to log in.
+        # behind that. An unheld lock is still acquired at once, so this refuses to wait,
+        # never to log in.
         #
-        # A caller that did ask to ride out a restart waits for the holder. Bounding that
-        # wait on its OWN budget cut it off just before the holder succeeded: on budget 30
-        # with argocd 20 seconds away the holder's attempts land on t=0, 1, 3, 7, 15 and 30,
-        # and the login that lands costs another ~700ms of bcrypt, so the waiter gave up at
-        # t=30 and killed the very deployment task this retry exists for. The wait is
-        # bounded in practice, because the holder is off the lock within its own budget
-        # plus one login.
+        # A caller that did ask to ride out a restart waits for the holder WITHOUT a bound of
+        # its own: on its own budget it would give up just before the holder succeeds, since
+        # the holder's last attempt lands at the end of that same budget and its login costs
+        # another ~700ms of bcrypt. The wait is bounded in practice, because the holder is off
+        # the lock within its own budget plus one login.
         wait_seconds = None if self.connect_retry_seconds > 0 else 0
         try:
             async with asyncio.timeout(wait_seconds):
@@ -324,19 +289,7 @@ class ArgoConnector:
         retry_count: int = 0,
         timeout_seconds: int = 30,
     ) -> tuple[int, str]:
-        """
-        Make an authenticated HTTP request with automatic retry on 401.
-
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            url: Request URL
-            json_data: Optional JSON body
-            retry_count: Current retry attempt (for 401 handling)
-            timeout_seconds: Request timeout in seconds (default: 30)
-
-        Returns:
-            Tuple of (status_code, response_text)
-        """
+        """Make an authenticated request, re-authenticating once on a 401."""
         if not await self.ensure_authenticated():
             return 401, "Authentication failed"
 
@@ -388,14 +341,9 @@ class ArgoConnector:
         return status, response_text
 
     async def sync_application(self, app_name: str | None = None) -> bool:
-        """
-        Trigger synchronization of an ArgoCD application.
+        """Trigger synchronization of an ArgoCD application.
 
-        Args:
-            app_name: Name of the application to sync. If None, uses default_app_name
-
-        Returns:
-            True if sync was triggered successfully, False otherwise
+        ``app_name`` defaults to ``default_app_name``.
         """
         app_name = app_name or self.default_app_name
         logger.info(f"Triggering sync for application: {app_name}")
@@ -412,7 +360,7 @@ class ArgoConnector:
                 logger.error(f"Sync failed with status {status_code}: {response_text}")
                 return False
 
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             reason = str(e) or repr(e)
             logger.error(f"Error during sync of application '{app_name}': {reason}")
             return False
@@ -486,16 +434,14 @@ class ArgoConnector:
         manifests, so calling it right after our own push fails fast with the real message
         instead of waiting for the controller to reconcile.
 
-        Args:
-            app_name: Application name. If None, uses default_app_name.
-            revision: Optional git revision to render. When omitted, ArgoCD renders the
-                application's current target revision.
+        ``revision`` is the git revision to render; without it ArgoCD renders the
+        application's current target revision.
 
         Returns:
             ``(ok, body)`` where ``ok`` is True on HTTP 200 (the render succeeded; the
             manifests themselves are not needed, only that it worked). On any other status
             or a transport error ``ok`` is False and ``body`` is the response body or error
-            text - which for a generation failure contains the underlying cause. The caller
+            text, which for a generation failure holds the underlying cause. The caller
             decides whether the body indicates a render failure worth blocking on.
         """
         app_name = app_name or self.default_app_name
@@ -512,24 +458,17 @@ class ArgoConnector:
                 return True, response_text
             logger.warning(f"Manifest render for '{app_name}' returned status {status_code}")
             return False, response_text
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             reason = str(e) or repr(e)
             logger.error(f"Error rendering manifests for application '{app_name}': {reason}")
             return False, reason
 
     async def get_application_resource_tree(self, app_name: str | None = None) -> list[dict[str, Any]]:
-        """
-        Get the resource tree for an ArgoCD application.
+        """The resource tree's nodes, or an empty list on any failure.
 
-        The resource tree includes child resources (Pods, ReplicaSets) with their
-        health status and messages, which provides more detail than the top-level
-        application status (e.g., image pull errors on Pods).
-
-        Args:
-            app_name: Name of the application. If None, uses default_app_name
-
-        Returns:
-            List of resource tree nodes, or empty list on error
+        The tree holds the child resources (Pods, ReplicaSets) with their health status and
+        messages, which is more detail than the top-level application status carries: an image
+        pull error, for instance, only shows on the Pod.
         """
         app_name = app_name or self.default_app_name
         logger.info(f"Getting resource tree for application: {app_name}")
@@ -551,17 +490,12 @@ class ArgoConnector:
                 logger.error(f"Resource tree request failed with status {status_code}: {response_text}")
                 return []
 
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             logger.error(f"Error getting resource tree for {app_name}: {_exc_text(e)}")
             return []
 
     async def list_applications(self) -> list[dict[str, Any]]:
-        """
-        List all ArgoCD applications.
-
-        Returns:
-            List of application dictionaries if successful, empty list otherwise
-        """
+        """Every application, or an empty list on any failure."""
         logger.debug("Listing all ArgoCD applications")
         list_url = f"{self._actual_base_url}/api/v1/applications"
 
@@ -575,46 +509,26 @@ class ArgoConnector:
             else:
                 logger.error(f"List applications request failed with status {status_code}: {response_text}")
                 return []
-        except Exception as e:
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
             logger.error(f"Error listing applications: {_exc_text(e)}")
             return []
 
     async def login_and_sync(self, app_name: str | None = None) -> str | None:
-        """
-        Convenience method to login and refresh an application in one call.
-
-        Args:
-            app_name: Name of the application to refresh. If None, uses default_app_name
-
-        Returns:
-            The ``reconciledAt`` timestamp on success, ``None`` on failure.
-        """
-        # This method is now redundant since refresh_application handles authentication automatically
+        """The ``reconciledAt`` timestamp on success, ``None`` on failure."""
         return await self.refresh_application(app_name)
 
     async def refresh_application(self, app_name: str | None = None, hard_refresh: bool = False) -> str | None:
-        """
-        Refresh an ArgoCD application.
+        """Refresh an application; ``hard_refresh`` also clears the manifest cache and is slower.
 
-        Args:
-            app_name: Name of the application to refresh. If None, uses default_app_name
-            hard_refresh: If True, performs a hard refresh (clears manifest cache, slower).
-                         If False, performs a soft refresh (only checks for source changes, faster).
-                         Default is False (soft refresh) for better performance.
-
-        Returns:
-            The ``reconciledAt`` timestamp from the response on success, or
-            ``None`` on failure.  Callers can pass this value to
-            ``wait_for_application_synced`` so it knows when the status is
-            fresh.
+        Returns the ``reconciledAt`` timestamp on success and ``None`` on failure. Pass that
+        value to ``wait_for_application_synced``, which uses it to tell a fresh status from a
+        stale one.
         """
         app_name = app_name or self.default_app_name
         refresh_type = "hard" if hard_refresh else "normal"
         logger.info(f"Triggering {refresh_type} refresh for application: {app_name}")
 
-        # Use GET request with refresh query parameter (correct ArgoCD API usage)
-        # Soft refresh: refresh=normal (checks for source changes only, faster)
-        # Hard refresh: refresh=hard (clears cache, forces re-render, slower)
+        # A refresh is a GET with a query parameter, not a POST.
         refresh_param = "hard" if hard_refresh else "normal"
         refresh_url = f"{self._actual_base_url}/api/v1/applications/{app_name}?refresh={refresh_param}"
 
@@ -625,10 +539,9 @@ class ArgoConnector:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")
                 response_data = json.loads(response_text)
                 status = response_data.get("status", {}) or {}
-                # Surface a render/compare error the moment it appears, at the source. ArgoCD
-                # sets an *Error condition (e.g. ComparisonError) when it cannot generate or
-                # compare the manifests; logging it here puts the real cause in the OPI logs
-                # instead of only in the ArgoCD UI.
+                # ArgoCD sets an *Error condition (e.g. ComparisonError) when it cannot
+                # generate or compare the manifests. Logging it here puts the real cause in
+                # the OPI logs instead of only in the ArgoCD UI.
                 for condition in status.get("conditions", []) or []:
                     if str(condition.get("type", "")).endswith("Error"):
                         logger.warning(
@@ -650,41 +563,27 @@ class ArgoConnector:
                 logger.error(f"{refresh_type.title()} refresh failed with status {status_code}: {response_text}")
                 return None
 
-        except Exception as e:
-            # Some transport errors stringify to "" — fall back to the type name so
-            # the line is never a bare "... refresh:" with no reason.
+        except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, ArgoTransportError) as e:
+            # Some transport errors stringify to "": fall back to the repr so the line is
+            # never a bare "... refresh:" with no reason.
             reason = str(e) or repr(e)
             logger.error(f"Error during {refresh_type} refresh of application '{app_name}': {reason}")
             return None
 
     async def hard_refresh_application(self, app_name: str | None = None) -> str | None:
-        """
-        Convenience method to perform a hard refresh (clears cache, forces re-render).
+        """A hard refresh, which clears the cache and forces a re-render.
 
-        Use sparingly as it's resource-intensive and can slow down ArgoCD.
-        For most use cases, the default soft refresh is sufficient and faster.
-
-        Args:
-            app_name: Name of the application to refresh. If None, uses default_app_name
-
-        Returns:
-            The ``reconciledAt`` timestamp on success, ``None`` on failure.
+        Use sparingly: it is resource-intensive and can slow ArgoCD down. The default soft
+        refresh is enough for nearly everything.
         """
         return await self.refresh_application(app_name, hard_refresh=True)
 
     async def application_exists(self, app_name: str) -> bool:
-        """
-        Check if an ArgoCD application exists.
-
-        Args:
-            app_name: Name of the application to check
-
-        Returns:
-            True if application exists, False if it doesn't exist (404)
+        """Whether the application exists.
 
         Raises:
-            PermissionError: If access to the application is denied (403)
-            RuntimeError: If an unexpected error occurs
+            PermissionError: access to the application was denied.
+            RuntimeError: any other unexpected status.
         """
         logger.debug(f"Checking if application exists: {app_name}")
 
@@ -698,55 +597,47 @@ class ArgoConnector:
         app_name: str,
         max_retries: int = 5,
         retry_delay: int = 3,
-        kubectl_connector: Any = None,
+        kubectl_connector: KubectlConnector | None = None,
         namespace: str | None = None,
         progress_window_seconds: int | None = None,
         stall_retries: int = 12,
     ) -> bool:
-        """
-        Wait for an ArgoCD application to be fully deleted.
+        """True only when the application is CONFIRMED deleted.
 
-        ArgoCD is queried first - it is, and ought to remain, our primary source of
-        truth. But its API has proven untrustworthy under control-plane stress: it
-        returns 'permission denied' to an admin caller for applications that still
-        exist, conflating "gone", "can't see it", and "I'm stalled". So we never treat
-        that response as "deleted". When ArgoCD's answer is anything but a confident
-        "still exists", we double-check against the Kubernetes API, which fails
-        honestly (the object, a clean NotFound, or a distinguishable error).
+        ArgoCD is queried first, but its API is not trustworthy under control-plane stress: it
+        answers 'permission denied' for applications that still exist, conflating "gone",
+        "can't see it" and "I'm stalled". That answer is therefore never read as "deleted":
+        anything but a confident "still exists" is double-checked against the Kubernetes API,
+        which fails honestly (the object, a clean NotFound, or a distinguishable error).
 
         Args:
-            app_name: Name of the application to wait for
-            max_retries: Maximum number of retries
-            retry_delay: Delay between retries in seconds
-            kubectl_connector: Connector used to confirm absence against the Kubernetes
-                API when ArgoCD is ambiguous. Without it, an ambiguous ArgoCD answer
-                cannot be confirmed and deletion is reported as unconfirmed (False).
-            namespace: Namespace holding the ArgoCD Application CR; defaults to this instance's cluster
+            kubectl_connector: Confirms absence against the Kubernetes API when ArgoCD is
+                ambiguous. Without it an ambiguous answer cannot be confirmed and deletion is
+                reported as unconfirmed (False).
+            namespace: Namespace holding the ArgoCD Application CR; defaults to this
+                instance's cluster.
             progress_window_seconds: How long to keep waiting WHILE the namespace is visibly
-                EMPTYING, beyond the ``max_retries`` window. ``None`` keeps the old
-                behaviour: the wait ends at ``max_retries``, progress or not.
+                EMPTYING, beyond the ``max_retries`` window. ``None`` ends the wait at
+                ``max_retries``, progress or not.
             stall_retries: How many consecutive polls without a MEASURED DECREASE end the wait
                 once the ``max_retries`` window has passed. A read that failed counts here
                 too: it is not a stall, but it is no proof of progress either, and only a
                 namespace that empties earns the extra window.
-
-        Returns:
-            True only if the application is confirmed deleted, False otherwise.
         """
         import asyncio
 
         # Beyond the plain max_retries window the wait continues while the namespace keeps
         # EMPTYING, and gives up on a stall instead of on the clock. The window AND the stall
         # both have to be reached: on the stall alone a brief hiccup in a healthy cascade
-        # would end the wait early. Background: features/argocd-vastgelopen-verwijdering.md.
+        # would end the wait early. See features/argocd-vastgelopen-verwijdering.md.
         max_progress_retries = 0 if progress_window_seconds is None else progress_window_seconds // max(retry_delay, 1)
         limit = max(max_retries, max_progress_retries)
         progress_window = max_progress_retries > max_retries
         without_progress = 0
         # The LOWEST count seen, not the previous one. Against the previous count a namespace
         # that bounces (30, 31, 30, ...) scores a decrease every other poll and so buys the
-        # wider window without ever emptying: measured on a stuck Application, 30/31 ran to
-        # 120 polls instead of 40. A cascade that really works keeps setting a new low.
+        # wider window without ever emptying. A cascade that really works keeps setting a
+        # new low.
         lowest_remaining: int | None = None
         progress_types: list[str] | None = None
         types_unavailable = False
@@ -762,12 +653,11 @@ class ArgoConnector:
                 return None
             try:
                 if progress_types is None:
-                    # Discovered once per wait, failure included. The types a cluster has do not
-                    # change while a cascade runs, and asking per poll doubles the calls this wait
-                    # makes. Without types there is nothing to measure, so the poll yields no
-                    # window either, and retrying the discovery would repeat both the
-                    # api-resources call and its ERROR for every poll of the wait.
-                    # Only the kinds this Application owns; fallback to full discovery.
+                    # Discovered once per wait, failure included: the types a cluster has do
+                    # not change while a cascade runs, and retrying the discovery would repeat
+                    # both the api-resources call and its ERROR on every poll. Without types
+                    # there is nothing to measure, so the poll yields no window either.
+                    # Only the kinds this Application owns, falling back to full discovery.
                     progress_types = await kubectl_connector.argocd_application_resource_types(app_name, namespace)
                     if progress_types is None:
                         progress_types = await kubectl_connector.list_namespaced_resource_types()
@@ -778,11 +668,11 @@ class ArgoConnector:
             except (KubectlConnectionError, KubectlExecutionError) as e:
                 # A kubectl that throws is a FAILED MEASUREMENT, not a failed wait: the same
                 # None as an unreadable inventory, so no stall and no wider window. kubectl
-                # raises this the moment its connection test flips isConnected to False, which
+                # raises this the moment its connection test flips is_connected to False, which
                 # is exactly the stressed control plane this measurement was built for. Letting
                 # it out skips the force route at the caller, and with force=True the caller's
-                # except marks the Application deleted, so the project file loses the deployment
-                # while the cluster still has it: the divergence this PR removes.
+                # except marks the Application deleted, so the project file would lose the
+                # deployment while the cluster still has it.
                 logger.warning(f"Could not measure deletion progress for {app_name}: {e}")
                 # Only a failed DISCOVERY is remembered, for the reason above; the inventory is
                 # a per-poll read and may well succeed on the next one.
@@ -809,11 +699,9 @@ class ArgoConnector:
                 logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{limit}")
 
             except PermissionError:
-                # FALLBACK: 'permission denied' is NOT proof the app is gone. The ArgoCD
-                # API has proven it cannot be trusted here - it returns this to an admin
-                # while merely stalled, for apps that still exist. Until ArgoCD can be
-                # trusted again (and it really ought to be our single source of truth,
-                # and may be in the future), we double-check the Kubernetes API directly.
+                # FALLBACK: 'permission denied' is NOT proof the app is gone. ArgoCD answers
+                # this while merely stalled, for apps that still exist, so the Kubernetes API
+                # is asked directly.
                 if await _confirmed_gone_via_k8s():
                     logger.info(
                         f"Application {app_name} confirmed deleted via Kubernetes API "
@@ -825,7 +713,16 @@ class ArgoConnector:
                     f"shows it still present (or could not confirm) - treating as NOT deleted"
                 )
 
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+                RuntimeError,
+                KubectlConnectionError,
+                KubectlExecutionError,
+            ) as e:
                 logger.error(f"Error checking application deletion status: {_exc_text(e)}")
 
             # Never raises: a measurement that fails is None, see _deletion_progress.
@@ -838,11 +735,10 @@ class ArgoConnector:
             else:
                 underway, remaining, complete = progress
                 # Emptying, not merely changing. A count that grows or bounces is movement
-                # without progress, and the ordering of (project, deployment) serialises
-                # deletes per deployment, so a delete of pr-62 and an add of pr-64 share one
-                # namespace: the add's resources must not buy the wider window for the stuck
-                # delete. ``complete`` is logged for the reader and kept out of the
-                # comparison, since a flapping inventory is not progress either.
+                # without progress, and deletes are serialised per deployment, so a delete and
+                # an add can share one namespace: the add's resources must not buy the wider
+                # window for the stuck delete. ``complete`` is logged for the reader and kept
+                # out of the comparison, since a flapping inventory is not progress either.
                 new_low = lowest_remaining is None or remaining < lowest_remaining
                 verdict = (
                     " - the namespace is still emptying, waiting"
@@ -885,31 +781,13 @@ def create_argo_connector(
     ca_bundle: str | None = None,
     connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
 ) -> ArgoConnector:
-    """
-    Create and return an ArgoConnector instance.
-
-    Uses configuration values from settings if parameters are not provided.
-
-    Args:
-        server_host: ArgoCD server hostname or service name (defaults to config)
-        server_port: ArgoCD server port (defaults to config)
-        username: Username for authentication (defaults to config)
-        password: Password for authentication (defaults to config)
-        token: API token of the ArgoCD account (defaults to config)
-        use_tls: Whether to use TLS/HTTPS (defaults to config)
-        verify_ssl: Whether to verify SSL certificates (defaults to config)
-        ca_bundle: Path of the mounted CA bundle (defaults to config)
-        connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
-
-    Returns:
-        ArgoConnector instance
+    """An ArgoConnector; every parameter left at None comes from the settings.
 
     Raises:
-        ArgoAuthConfigurationError: geen token en geen gebruiker met wachtwoord geconfigureerd
+        ArgoAuthConfigurationError: no token and no user with a password configured.
     """
     from opi.core.config import settings
 
-    # Use settings as defaults if parameters are not provided
     final_server_host = server_host if server_host is not None else settings.ARGOCD_HOST
     final_server_port = server_port if server_port is not None else settings.ARGOCD_PORT
     final_username = username if username is not None else settings.ARGOCD_USERNAME

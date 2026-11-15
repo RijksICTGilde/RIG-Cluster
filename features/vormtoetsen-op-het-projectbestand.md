@@ -23,7 +23,8 @@ twee teksten. `tests/test_project_schema_validation.py` toetst dat ze gelijk zij
 
 | veld | vorm | bron |
 |---|---|---|
-| `components[*]/resources/**`, `deployments[*]/components[*]/resources/**` | Kubernetes-hoeveelheid (`500m`, `1`, `256Mi`, `1.5Gi`) | `K8S_QUANTITY_PATTERN`, `opi/services/resource_analyzer.py`, overgenomen in `$defs/k8s-quantity` |
+| `name` | projectnaam: letter-begin, max 20 in `validate_project_name` | `PROJECT_NAME`, `opi/utils/patterns.py`; `PROJECT_NAME_MAX_LENGTH=20` |
+| `components[*]/resources/**`, `deployments[*]/components[*]/resources/**` | Kubernetes-hoeveelheid (`500m`, `1`, `256Mi`, `1.5Gi`) | `K8S_QUANTITY_PATTERN`, `opi/utils/k8s_quantity.py`, overgenomen in `$defs/k8s-quantity` |
 | `env-vars`, `user-env-vars` als mapping | variabelenaam als sleutel, waarde zonder CR, LF of NUL | `ENV_VAR_NAME_PATTERN`, `opi/utils/env_vars.py`, overgenomen in `$defs/env-var-map` |
 | `users[*]/email` | e-mailadres | `EMAIL_PATTERN`, `opi/forms/editables/validators.py`, overgenomen in `$defs/user` |
 | `components[*]/name`, `deployments[*]/name`, `deployments[*]/components[*]/reference` | DNS-1123-label dat met een letter begint | `$defs/dns-1123-label-letter-first` |
@@ -31,7 +32,7 @@ twee teksten. `tests/test_project_schema_validation.py` toetst dat ze gelijk zij
 | `components[*]/image`, de `image` van een eigen PostgreSQL-cluster | image-verwijzing | `CONTAINER_IMAGE_PATTERN`, `opi/utils/naming.py` |
 | component-`path` (`match`, `rewrite`), `logout-path`, het pad van de metrics-scraper | URL-pad van een tenant | `SAFE_PATH_PATTERN`, `opi/utils/url_paths.py` |
 | `subdomain` van publish-on-web | DNS-1123-subdomein, kleine letters, per punt-gescheiden deel maximaal 63 tekens | `DNS1123_SUBDOMAIN`, `opi/utils/patterns.py` |
-| `base-domain` van publish-on-web | domeinnaam | `DOMAIN_PATTERN`, `opi/connectors/subdomain.py` |
+| `base-domain` van publish-on-web | domeinnaam | `DOMAIN_PATTERN`, `opi/services/catalog/publish_on_web/subdomain.py` |
 
 Een patroon eindigt op `\Z` en niet op `$`: in Python matcht `$` ook vóór een afsluitende
 newline, dus `/metrics\n` en `mijn-app\n` kwamen er anders door.
@@ -74,7 +75,7 @@ editable: plan `invoer-eerst-schoon-dan-getoetst.md`.
 
 - `opi/services/project_store.py` -- `_validate`, het chokepoint
 - `opi/schemas/project_v2.json` -- de `$defs` met de patronen
-- `opi/core/project_schema.py` -- de validator, met `format_checker` aan (`format` doet pas
+- `opi/services/project_schema.py` -- de validator, met `format_checker` aan (`format` doet pas
   iets mét een checker; het werk doet het `pattern` ernaast)
 - `opi/utils/forbidden_characters.py` -- de backstop
 - `tests/test_project_schema_validation.py` -- de gelijkheid van schema en constante

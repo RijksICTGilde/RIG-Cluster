@@ -1,0 +1,489 @@
+"""The Kubernetes secrets OPI writes per deployment, one dataclass per service.
+
+Each class knows its secret name, its service type and how its fields map to secret keys,
+so the key mapping lives in one place instead of at every writer and reader.
+"""
+
+import logging
+from abc import ABC
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+
+from opi.services import ServiceType
+from opi.services.services import ServiceAdapter
+from opi.utils.dockerconfig import dockerconfigjson
+from opi.utils.naming import generate_schema_variable_name
+
+if TYPE_CHECKING:
+    from opi.connectors.kubectl import KubectlConnector
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound="BaseSecret")
+
+
+@dataclass
+class SecretContext:
+    """Context for secret operations."""
+
+    namespace: str
+    prefix: str  # deployment_name, component_name, etc.
+    kubectl_connector: KubectlConnector
+    manifest_generator: Any
+
+
+class BaseSecret(ABC):
+    """Base class for all secret types with generic create/get methods."""
+
+    # Set by every concrete subclass.
+    SECRET_NAME_TEMPLATE: ClassVar[str] = ""
+    SERVICE_TYPE: ClassVar[ServiceType]
+
+    def __post_init__(self) -> None:  # noqa: B027  # an optional hook; the base deliberately does nothing
+        """Default post-initialization hook. Subclasses can override for custom validation."""
+
+    @classmethod
+    def _get_service_variables(cls) -> list[Any]:
+        return ServiceAdapter.get_service_definition(cls.SERVICE_TYPE).variables
+
+    def to_k8s_secret_data(self) -> dict[str, str]:
+        """Convert dataclass fields to Kubernetes secret key-value pairs including aliases."""
+        secret_data: dict[str, str] = {}
+
+        variables = self._get_service_variables()
+
+        for var_def in variables:
+            if var_def.source == "secret" and var_def.secret_key:
+                value_str = str(getattr(self, var_def.secret_key))
+                secret_data[var_def.name] = value_str
+                for alias in var_def.aliases:
+                    secret_data[alias] = value_str
+
+        additional_keys = self._get_additional_keys()
+        secret_data.update(additional_keys)
+
+        return secret_data
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Override in subclasses to add computed or additional keys."""
+        return {}
+
+    @classmethod
+    def from_k8s_secret_data(cls: type[T], secret_data: dict[str, str]) -> T:
+        """Create instance from Kubernetes secret data using service definitions."""
+        kwargs = {}
+
+        if cls.SERVICE_TYPE is None:
+            # This method should only be called on concrete subclasses, not the abstract base class
+            return cls(**kwargs)
+
+        variables = cls._get_service_variables()
+
+        for var_def in variables:
+            if var_def.source == "secret" and var_def.secret_key:
+                # Skip computed fields that aren't actual dataclass fields (e.g., connection_string property)
+                if hasattr(cls, "__dataclass_fields__") and var_def.secret_key not in cls.__dataclass_fields__:
+                    continue
+
+                k8s_keys_to_try = [var_def.name, *var_def.aliases]
+
+                for k8s_key in k8s_keys_to_try:
+                    if k8s_key in secret_data:
+                        value = secret_data[k8s_key]
+                        value = cls._convert_field_value(var_def.secret_key, value)
+                        kwargs[var_def.secret_key] = value
+                        break
+
+        return cls(**kwargs)
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Override in subclasses for field-specific type conversion."""
+        return value
+
+    @classmethod
+    def get_secret_name(cls, prefix: str) -> str:
+        """Generate secret name using prefix."""
+        return cls.SECRET_NAME_TEMPLATE.format(prefix=prefix)
+
+    @classmethod
+    async def get(cls: type[T], context: SecretContext) -> T | None:
+        """Retrieve secret from Kubernetes."""
+        secret_name = cls.get_secret_name(context.prefix)
+        logger.debug(f"Retrieving secret {secret_name} from namespace {context.namespace}")
+
+        secret_data = await context.kubectl_connector.get_secret(secret_name, context.namespace)
+
+        if not secret_data:
+            logger.debug(f"Secret {secret_name} not found in namespace {context.namespace}")
+            return None
+
+        return cls.from_k8s_secret_data(secret_data)
+
+    @classmethod
+    async def get_data(cls: type[T], kubectl_connector: KubectlConnector, namespace: str, prefix: str) -> T | None:
+        """Retrieve secret data directly with kubectl connector and return typed object."""
+        secret_name = cls.get_secret_name(prefix)
+        logger.debug(f"Retrieving secret {secret_name} from namespace {namespace}")
+
+        secret_data = await kubectl_connector.get_secret(secret_name, namespace)
+
+        if not secret_data:
+            logger.debug(f"Secret {secret_name} not found in namespace {namespace}")
+            return None
+
+        return cls.from_k8s_secret_data(secret_data)
+
+
+@dataclass
+class DatabaseSecret(BaseSecret):
+    """Database secret configuration using service definitions."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    database: str
+    schema: str
+    # Read-only role for the database console (and read-only application use).
+    # Defaulted so secrets persisted before this field existed still deserialize;
+    # they are populated on the next deployment reprocess.
+    ro_username: str = ""
+    ro_password: str = ""
+    # Extra schemas (RC-17), as ``(postfix, full_schema_name)`` in the order the role's
+    # search_path should list them (after the default ``schema``). Each one is exposed
+    # as ``DATABASE_SCHEMA_{POSTFIX}`` (+ APP_ alias) and joined into the search_path.
+    # Not a service-definition variable and not reconstructed from k8s (the names are
+    # dynamic), so it defaults empty and is populated when the secret is authored.
+    extra_schemas: list[tuple[str, str]] = field(default_factory=list)
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.POSTGRESQL_DATABASE
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    def _search_path(self) -> str:
+        """The role's schema search order: the default schema, then every extra schema.
+
+        ``public`` stays last so unqualified objects the platform expects there still
+        resolve. This is the single source for both the ALTER ROLE search_path and the
+        connection-string ``options`` parameter."""
+        schemas = [self.schema, *(name for _, name in self.extra_schemas), "public"]
+        return ",".join(schemas)
+
+    @property
+    def connection_string(self) -> str:
+        """The PostgreSQL connection string, with the search_path as literal commas.
+
+        With no extra schemas that yields the unchanged ``--search_path=<schema>,public``.
+        """
+        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self._search_path()}"
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Add computed keys that are not defined in service definitions."""
+        keys = {
+            # Computed, so it is not in the service definition.
+            "DATABASE_SERVER_FULL": self.connection_string,
+            "APP_DATABASE_SERVER_FULL": self.connection_string,
+        }
+        # One variable per extra schema, so an app can name a specific schema without
+        # having to reconstruct the generated name (RC-17 decision 10.2).
+        for postfix, schema_name in self.extra_schemas:
+            var = generate_schema_variable_name(postfix)
+            keys[var] = schema_name
+            keys[f"APP_{var}"] = schema_name
+        return keys
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
+        return value
+
+
+@dataclass
+class MinIOSecret(BaseSecret):
+    """MinIO/Object Store secret configuration using service definitions."""
+
+    host: str
+    port: int
+    access_key: str
+    secret_key: str
+    bucket_name: str
+    region: str = "us-east-1"  # Default region - will be overridden by settings.MINIO_REGION
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-minio"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    @property
+    def url(self) -> str:
+        """Generate MinIO endpoint URL (host:port)."""
+        return f"{self.host}:{self.port}"
+
+    @property
+    def endpoint_url(self) -> str:
+        """Generate full MinIO endpoint URL with http:// prefix."""
+        return f"http://{self.host}:{self.port}"
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Add computed keys like OBJECT_STORE_URL and OBJECT_STORE_ENDPOINT_URL."""
+        return {
+            "OBJECT_STORE_URL": self.url,
+            "APP_OBJECT_STORE_URL": self.url,
+            "OBJECT_STORE_ENDPOINT_URL": self.endpoint_url,
+            "APP_OBJECT_STORE_ENDPOINT_URL": self.endpoint_url,
+        }
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
+        return value
+
+
+@dataclass
+class SeaweedFSSecret(MinIOSecret):
+    """The same secret as MinIO, with a name and service of its own (RC-331).
+
+    An application therefore sees exactly the same variables (``MinIOVariables``); only
+    host, port and keys differ. Switching over is swapping an endpoint, not code.
+    """
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-seaweedfs"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
+#: The two services that deliver the same ``OBJECT_STORE_*`` variables. Whoever means "the
+#: object storage of this deployment" names this list, so a new consumer cannot forget one;
+#: the ``validate_project`` of seaweedfs-storage refuses both on one deployment.
+OBJECT_STORAGE_SERVICE_TYPES: list[str] = [
+    ServiceType.MINIO_STORAGE.value,
+    ServiceType.SEAWEEDFS_STORAGE.value,
+]
+
+
+async def get_object_storage_secret(
+    kubectl_connector: KubectlConnector, namespace: str, prefix: str
+) -> MinIOSecret | None:
+    """The object storage secret of a deployment, whichever of the two services it is.
+
+    The two secrets have the same fields and differ only in name, so a consumer (backup,
+    restore) does not need to know the difference. At most one of the two can exist, because
+    both on one deployment is refused.
+    """
+    for secret_class in (MinIOSecret, SeaweedFSSecret):
+        secret = await secret_class.get_data(kubectl_connector=kubectl_connector, namespace=namespace, prefix=prefix)
+        if secret is not None:
+            return secret
+    return None
+
+
+@dataclass
+class KeycloakSecret(BaseSecret):
+    """Keycloak/OIDC secret configuration."""
+
+    client_id: str
+    client_secret: str
+    public_client_id: str
+    discovery_url: str
+    base_url: str
+    realm: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.KEYCLOAK
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    @property
+    def hostname(self) -> str:
+        """Bare hostname (and port if present) extracted from base_url.
+
+        Apps that have host-name config fields rejecting full URLs (e.g.
+        OpenProject's openid_connect.<provider>.host) read this directly
+        via the OIDC_HOSTNAME variable, avoiding scheme-stripping in
+        user-env-vars.
+        """
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.base_url)
+        # netloc holds host[:port]; the path is the fallback for a bare hostname passed
+        # without a scheme, which base_url should always have.
+        return parsed.netloc or parsed.path
+
+
+@dataclass
+class RedisSecret(BaseSecret):
+    """Redis cache secret configuration using service definitions."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    key_prefix: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.REDIS
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    @property
+    def url(self) -> str:
+        """Generate Redis connection URL with ACL username."""
+        return f"redis://{self.username}:{self.password}@{self.host}:{self.port}/0"
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Add computed keys like REDIS_URL."""
+        return {
+            "REDIS_URL": self.url,
+            "APP_REDIS_URL": self.url,
+        }
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
+        return value
+
+
+@dataclass
+class SendEmailSecret(BaseSecret):
+    """SMTP credentials for the platform mail relay.
+
+    ``from_address`` travels with the credentials because the relay pins the sender to it:
+    an application that reads it from here sends what will actually go out.
+    """
+
+    host: str
+    port: int
+    username: str
+    password: str
+    from_address: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEND_EMAIL
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
+        return value
+
+
+@dataclass
+class MetricsAuthSecret(BaseSecret):
+    """Metrics scraper authentication secret.
+
+    Contains the Bearer token that Prometheus sends when scraping /metrics.
+    Applications use this to validate that scrape requests come from Prometheus.
+    The token is cluster-wide (same value for all deployments).
+    """
+
+    token: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.METRICS_SCRAPER
+
+
+@dataclass
+class PlatformSecret(BaseSecret):
+    """Platform-provided variables secret (always available per component)."""
+
+    deployment_name: str
+    component_name: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"  # noqa: S105  # a template for the secret name, not a secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.PLATFORM
+
+
+@dataclass
+class UserSecret(BaseSecret):
+    """User-defined environment variables secret."""
+
+    env_vars: dict[str, str]
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-user"  # noqa: S105  # a template for the secret name, not a secret
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    def to_k8s_secret_data(self) -> dict[str, str]:
+        """For user secrets, the env_vars dict is the secret data."""
+        return self.env_vars.copy()
+
+    @classmethod
+    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> UserSecret:
+        """Create from all secret data as env_vars."""
+        return cls(env_vars=secret_data.copy())
+
+
+@dataclass
+class RegistrySecret(BaseSecret):
+    """Container registry secret configuration for imagePullSecrets."""
+
+    registry_url: str
+    username: str
+    password: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"  # noqa: S105  # a template for the secret name, not a secret
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    def to_dockerconfigjson(self) -> str:
+        """The .dockerconfigjson content in auth-only format."""
+        return dockerconfigjson(self.registry_url, self.username, self.password)
+
+    def to_k8s_secret_data(self) -> dict[str, str]:
+        """For registry secrets, return the .dockerconfigjson key."""
+        return {".dockerconfigjson": self.to_dockerconfigjson()}
+
+    @classmethod
+    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> RegistrySecret:
+        """Create from .dockerconfigjson secret data."""
+        import base64
+        import json
+
+        dockerconfig_json = secret_data.get(".dockerconfigjson", "{}")
+        config = json.loads(dockerconfig_json)
+
+        auths = config.get("auths", {})
+        if not auths:
+            msg = "No registry found in .dockerconfigjson"
+            raise ValueError(msg)
+
+        registry_url = next(iter(auths.keys()))
+        auth_data = auths[registry_url]
+
+        if "auth" in auth_data:
+            auth_decoded = base64.b64decode(auth_data["auth"]).decode()
+            if ":" not in auth_decoded:
+                raise ValueError(f"Invalid auth format for registry '{registry_url}': expected 'username:password'")
+            username, password = auth_decoded.split(":", 1)
+        else:
+            # Fallback to legacy username/password fields
+            username = auth_data.get("username", "")
+            password = auth_data.get("password", "")
+
+        return cls(registry_url=registry_url, username=username, password=password)

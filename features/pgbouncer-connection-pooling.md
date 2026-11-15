@@ -222,7 +222,7 @@ pooler_manifest = render_template(
 
 #### 2.3 Update Namespace-Specific Endpoint
 
-**File**: `opi/core/cluster_config.py` (modify)
+**File**: `opi/utils/naming.py` (modify)
 
 ```python
 def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) -> str:

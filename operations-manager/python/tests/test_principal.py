@@ -15,19 +15,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from opi.api import principal as mod
-from opi.api.principal import (
-    AccessDenied,
-    NotRecognised,
-    PrincipalKind,
-    beslis,
-    recognise_principal,
-    reset_gebruik,
-    tel_gebruik,
-)
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
-from opi.services.project_leden import hash_van
+from opi.http.auth import principal as mod
+from opi.http.auth.principal import (
+    AccessDeniedError,
+    NotRecognisedError,
+    PrincipalKind,
+    count_usage,
+    decide_action,
+    recognise_principal,
+    reset_usage,
+)
+from opi.services.members import MemberKind
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
 
@@ -41,7 +41,7 @@ TOKEN_VERLOPEN = "zad_verlopen"
 
 
 def _token(naam: str, waarde: str, *, dagen: int = 30) -> ProjectToken:
-    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=dagen), hash=hash_van(waarde))
+    return ProjectToken(name=naam, expires=datetime.now(UTC) + timedelta(days=dagen), hash=hash_of(waarde))
 
 
 def _project(naam: str = "bouwput") -> ProjectSummary:
@@ -58,7 +58,7 @@ def _project(naam: str = "bouwput") -> ProjectSummary:
             ),
             ProjectUser(email=DEV, role="developer", tokens=[_token("cli", TOKEN_DEV)]),
             ProjectUser(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
                 role="admin",
                 tokens=[_token("pijplijn", TOKEN_BOUWSTRAAT)],
@@ -100,14 +100,14 @@ async def test_een_token_van_een_service_account_draagt_zijn_naam(project: Proje
 
 @pytest.mark.asyncio
 async def test_een_onbekend_token_wordt_niet_herkend(project: ProjectSummary) -> None:
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal("zad_nooit-uitgegeven", project)
 
 
 @pytest.mark.asyncio
 async def test_een_verlopen_token_opent_niets(project: ProjectSummary) -> None:
     """Zonder dat iemand iets intrekt. Dat is waar de verplichte vervaldatum voor is."""
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal(TOKEN_VERLOPEN, project)
 
 
@@ -116,7 +116,7 @@ async def test_een_token_van_een_ander_project_geeft_dezelfde_401(project: Proje
     """Niet een 403: anders is het verschil een manier om projectnamen af te tasten."""
     ander = _project("anderproject")
     ander.users = [ProjectUser(email="iemand@rijksoverheid.nl", role="admin")]
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal(TOKEN_BEHEERDER, ander)
 
 
@@ -126,7 +126,7 @@ async def test_een_mens_zonder_platformtoegang_verliest_zijn_token(
 ) -> None:
     """Offboarding in het gebruikersbeheer raakt geen projectbestand, maar wel dit token."""
     monkeypatch.setattr(get_user_service(), "is_email_allowed", lambda email: False)
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal(TOKEN_BEHEERDER, project)
 
 
@@ -146,7 +146,7 @@ async def test_de_oude_projectsleutel_werkt_zolang_hij_in_het_bestand_staat() ->
 @pytest.mark.asyncio
 async def test_een_beheerder_mag_schrijven(project: ProjectSummary) -> None:
     principal = await recognise_principal(TOKEN_BEHEERDER, project)
-    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE)
+    decide_action(principal, project=project, action=Action.DEPLOYMENT_WRITE)
 
 
 @pytest.mark.asyncio
@@ -157,16 +157,16 @@ async def test_een_developer_schrijft_buiten_productie_wel_en_op_productie_niet(
     from opi.core.authz.engine import Resource
 
     principal = await recognise_principal(TOKEN_DEV, project)
-    beslis(principal, project=project, handeling=Action.DEPLOYMENT_READ)
+    decide_action(principal, project=project, action=Action.DEPLOYMENT_READ)
 
     acceptatie = Resource(project=project.name, path="project/x/deployment/acc", deployment="acc")
-    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=acceptatie)
+    decide_action(principal, project=project, action=Action.DEPLOYMENT_WRITE, resource=acceptatie)
 
     productie = Resource(
         project=project.name, path="project/x/deployment/live", deployment="live", environment="productie"
     )
-    with pytest.raises(AccessDenied):
-        beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=productie)
+    with pytest.raises(AccessDeniedError):
+        decide_action(principal, project=project, action=Action.DEPLOYMENT_WRITE, resource=productie)
 
 
 @pytest.mark.asyncio
@@ -179,8 +179,8 @@ async def test_een_token_sterft_met_het_lidmaatschap(project: ProjectSummary) ->
     principal = await recognise_principal(TOKEN_BEHEERDER, project)
     project.users = [lid for lid in project.users or [] if lid.email != BEHEERDER]
 
-    with pytest.raises(AccessDenied, match="geen lid"):
-        beslis(principal, project=project, handeling=Action.PROJECT_READ)
+    with pytest.raises(AccessDeniedError, match="geen lid"):
+        decide_action(principal, project=project, action=Action.PROJECT_READ)
 
 
 @pytest.mark.asyncio
@@ -196,8 +196,8 @@ async def test_een_verlaagde_rol_werkt_meteen_door(project: ProjectSummary) -> N
     productie = Resource(
         project=project.name, path="project/x/deployment/live", deployment="live", environment="productie"
     )
-    with pytest.raises(AccessDenied, match="openen"):
-        beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=productie)
+    with pytest.raises(AccessDeniedError, match="openen"):
+        decide_action(principal, project=project, action=Action.DEPLOYMENT_WRITE, resource=productie)
 
 
 @pytest.mark.asyncio
@@ -211,9 +211,9 @@ async def test_een_service_account_mag_geen_tokens_beheren(project: ProjectSumma
     from opi.core.authz.engine import Cause
 
     principal = await recognise_principal(TOKEN_BOUWSTRAAT, project)
-    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE)
+    decide_action(principal, project=project, action=Action.DEPLOYMENT_WRITE)
 
-    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=False)
+    beslissing = decide_action(principal, project=project, action=Action.TOKEN_MANAGE, step_up_fresh=False)
     assert beslissing.allowed is False
     assert beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED
 
@@ -221,7 +221,7 @@ async def test_een_service_account_mag_geen_tokens_beheren(project: ProjectSumma
 @pytest.mark.asyncio
 async def test_een_mens_mag_wel_tokens_beheren(project: ProjectSummary) -> None:
     principal = await recognise_principal(TOKEN_BEHEERDER, project)
-    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=True)
+    beslissing = decide_action(principal, project=project, action=Action.TOKEN_MANAGE, step_up_fresh=True)
     assert beslissing.allowed is True
 
 
@@ -233,7 +233,7 @@ async def test_de_oude_sleutel_mag_geen_tokens_beheren() -> None:
     project = _project()
     project.api_key = "oude-sleutel"
     principal = await recognise_principal("oude-sleutel", project)
-    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=False)
+    beslissing = decide_action(principal, project=project, action=Action.TOKEN_MANAGE, step_up_fresh=False)
     assert beslissing.allowed is False
     assert beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED
 
@@ -243,13 +243,13 @@ async def test_de_oude_sleutel_mag_geen_tokens_beheren() -> None:
 
 def test_het_gebruik_wordt_per_project_en_soort_geteld() -> None:
     """Zonder deze telling is het afbouwpad van de projectsleutel een wens."""
-    reset_gebruik()
-    tel_gebruik("bouwput", PrincipalKind.PROJECT_KEY)
-    tel_gebruik("bouwput", PrincipalKind.PROJECT_KEY)
-    tel_gebruik("bouwput", PrincipalKind.SERVICE_ACCOUNT)
+    reset_usage()
+    count_usage("bouwput", PrincipalKind.PROJECT_KEY)
+    count_usage("bouwput", PrincipalKind.PROJECT_KEY)
+    count_usage("bouwput", PrincipalKind.SERVICE_ACCOUNT)
 
-    assert mod.gebruik_per_project() == {
+    assert mod.usage_per_project() == {
         ("bouwput", "project-key"): 2,
         ("bouwput", "service-account"): 1,
     }
-    reset_gebruik()
+    reset_usage()

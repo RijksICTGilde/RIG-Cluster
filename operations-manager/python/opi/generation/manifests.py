@@ -1,28 +1,29 @@
-"""
-Manifest generation utilities for creating Kubernetes manifests with templating and kustomization support.
-
-This module provides functionality to:
-- Generate individual manifests from templates with variable substitution
-- Create manifests with SOPS encryption support (.to-sops.yaml naming)
-- Generate kustomization.yaml and decrypt-sops.yaml files from collected manifests
-- Support for both regular and SOPS-encrypted manifest workflows
+"""Manifest generation: render Jinja templates into Kubernetes manifests and the
+kustomization that lists them, with support for SOPS-encrypted files (``.to-sops.yaml``).
 """
 
-import functools
 import glob
 import logging
 import os
 import re
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, Template
-from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
+from opi.utils.manifest_render import compiled_template, render_template_source
 from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
+from opi.utils.yaml_util import (
+    dump_yaml_for_go,
+    load_yaml_documents_safe,
+    load_yaml_round_trip,
+)
+
+#: Absolute directory of the Jinja manifest templates, derived from this file and so
+#: independent of the cwd and of the caller's depth. ``render_template`` resolves via settings.
+MANIFEST_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
 
 #: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
 #: the ArgoCD CMP plugin injects as ``checksum/config`` on every pod template.
@@ -35,35 +36,26 @@ from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
 CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 
-#: Variabelen die de CMP-plugin zelf leest of zet. Een helmfile-deployment mag ze niet via
-#: .cmp-env meegeven: daarmee stuurt het de namespace, het sleutelpad of de render van de
-#: plugin. Dezelfde lijst staat als case-patroon in het pluginscript in
-#: bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml, dat shell is en niets kan
-#: importeren -- ``tests/test_cmp_env_contract.py`` pint de twee tegen elkaar.
+#: Variables the CMP plugin reads or sets itself. A helmfile deployment may not pass them
+#: through .cmp-env: that would let it steer the namespace, the key path or the plugin's
+#: render. The same list sits as a case pattern in the plugin script in
+#: bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml, which is shell and cannot
+#: import it -- ``tests/test_cmp_env_contract.py`` pins the two against each other.
 CMP_ENV_RESERVED_PREFIXES = ("ARGOCD_", "SOPS_", "KUSTOMIZE_", "HELM_", "HELMFILE_", "KUBE", "BASH", "LD_", "GIT_")
 CMP_ENV_RESERVED_NAMES = frozenset({"PATH", "HOME", "IFS", "ENV", "SHELL", "PS4", "PROMPT_COMMAND"})
 
-#: De env-vars van een helmfile-deployment gaan versleuteld naar git: OPI schrijft
-#: ``cmp-env.to-sops.yaml``, SOPS maakt er ``cmp-env.sops.yaml`` van en de plugin
-#: ontsleutelt dat na het ophalen van de projectsleutel (RC-333).
-CMP_ENV_NAME = "cmp-env"
-
-#: Het platte bestand van voor RC-333. OPI ruimt het op waar het nog staat, en de
-#: git-guard weigert een nieuw of gewijzigd exemplaar.
-CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
-
-#: Dezelfde sleutelvorm als component-env-vars in opi/schemas/project_v2.json.
+#: The same key shape as component env vars in opi/schemas/project_v2.json.
 CMP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 logger = logging.getLogger(__name__)
 
 
 def cmp_env_rejection(key: str, value: str) -> str | None:
-    """Waarom dit paar niet in ``.cmp-env`` mag, of ``None`` als het mag.
+    """Why this pair may not go into ``.cmp-env``, or ``None`` when it may.
 
-    Weigert precies wat de parser in het pluginscript weigert, zodat een fout bij het
-    opslaan opvalt en niet pas bij de render. De melding noemt nooit de waarde: die is
-    configuratie van de tenant en kan een secret zijn.
+    Refuses exactly what the parser in the plugin script refuses, so a mistake shows up on
+    save and not only at render time. The message never names the value: that is tenant
+    configuration and may be a secret.
     """
     if not CMP_ENV_KEY_PATTERN.match(key):
         return f"'{key}' is not a valid environment variable name"
@@ -74,85 +66,7 @@ def cmp_env_rejection(key: str, value: str) -> str | None:
     return None
 
 
-def yaml_scalar(value: object) -> str:
-    """Render ``value`` as a YAML double-quoted scalar that survives a round-trip.
-
-    Tenant values reach a Secret manifest verbatim, so the quoting has to hold for
-    every legal string. Naive ``"{{ value }}"`` quoting breaks on a backslash: it
-    becomes an invalid YAML escape, SOPS refuses the whole file and the deployment
-    aborts. It also folds a lone carriage return into a space, silently. ``| tojson``
-    fixes the backslash but writes an astral character as a surrogate pair, which
-    SOPS rejects with "found invalid Unicode character escape code". Letting the
-    YAML emitter do it escapes exactly what YAML requires and nothing else.
-
-    Alleen een ``str``. Een niet-string hier is een sjabloonfout: elke optionele waarde
-    staat in een ``{% if %}``, dus een ``None`` of een ontbrekende variabele betekent dat
-    die guard mist. De emitter maakt er anders ``!!null "null"`` of ``!!int "5"`` van, en
-    dat belandt ongemerkt in een manifest.
-    """
-    if not isinstance(value, str):
-        raise TypeError(
-            f"yaml_scalar verwacht een str, kreeg {type(value).__name__}. Een ontbrekende of "
-            "optionele sjabloonvariabele hoort achter een if-blok, niet door dit filter."
-        )
-    emitter = YAML(typ="safe", pure=True)
-    emitter.default_style = '"'
-    emitter.allow_unicode = True
-    # A width this large keeps the scalar on one line; the emitter would otherwise
-    # fold a long value across lines, and folding rewrites runs of whitespace.
-    emitter.width = 10**9
-    buffer = StringIO()
-    emitter.dump(value, buffer)
-    return buffer.getvalue().rstrip("\n")
-
-
-#: De filters die elk manifestsjabloon mag gebruiken. Een tweede omgeving (een test die
-#: ``StrictUndefined`` wil) registreert ze hiermee, in plaats van ze over te typen en er
-#: een te vergeten.
-MANIFEST_FILTERS: dict[str, Any] = {"yaml_scalar": yaml_scalar}
-
-
-@functools.cache
-def _omgeving() -> Environment:
-    """De gedeelde Jinja2-omgeving voor alle manifestsjablonen.
-
-    De FileSystemLoader is er voor ``{% include %}`` van sidecar-sjablonen.
-    ``autoescape=False`` is de standaard en is wat een YAML-sjabloon nodig heeft.
-    """
-    env = Environment(
-        loader=FileSystemLoader(settings.MANIFESTS_PATH),
-        trim_blocks=True,
-        lstrip_blocks=True,
-        # Houdt de slotnewline van een ingesloten partial, anders plakt de volgende regel eraan vast.
-        keep_trailing_newline=True,
-        autoescape=False,  # noqa: S701  # uitvoer is YAML, escaping via yaml_scalar
-    )
-    env.filters.update(MANIFEST_FILTERS)
-    return env
-
-
-@functools.lru_cache(maxsize=256)
-def _gecompileerd(bron: str) -> Template:
-    """Een gecompileerd sjabloon, op de brontekst gecachet.
-
-    Compileren van ``deployment.yaml.jinja`` kost alleen al 12 ms en gebeurde per
-    manifest opnieuw. De sleutel is de tekst, niet het pad: een gewijzigd bestand op
-    schijf levert een andere tekst op en dus een nieuwe compilatie.
-    """
-    return _omgeving().from_string(bron)
-
-
-def render_template_source(bron: str, variables: dict[str, Any]) -> str:
-    """Render manifestbron via de gedeelde omgeving.
-
-    Het enige renderpunt voor een sjabloon dat als TEKST binnenkomt in plaats van als
-    bestandsnaam. Een eigen ``Environment()`` ernaast betekent twee plekken om een filter
-    of een instelling te vergeten (RC-339).
-    """
-    return _gecompileerd(bron).render(**variables)
-
-
-def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
+def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:  # noqa: ANN401  # a parsed manifest document
     """Kustomize resource identity ``(apiVersion, kind, namespace, name)`` for a manifest doc.
 
     Returns ``None`` for docs that carry no resource identity (empty docs, lists, or docs
@@ -188,16 +102,14 @@ def check_duplicate_resource_identities(output_dir: str, regular_files: list[str
     Raises:
         RuntimeError: When two distinct files declare the same resource identity.
     """
-    yaml = YAML(typ="safe")
     seen: dict[tuple[str, str, str, str], str] = {}
     for rel in regular_files:
         path = os.path.join(output_dir, rel)
         if not os.path.isfile(path):
             continue
         try:
-            with open(path) as f:
-                docs = list(yaml.load_all(f))
-        except Exception as exc:
+            docs = load_yaml_documents_safe(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, YAMLError) as exc:
             logger.debug("Skipping duplicate-identity scan for %s: %s", rel, exc)
             continue
         for doc in docs:
@@ -218,15 +130,7 @@ def check_duplicate_resource_identities(output_dir: str, regular_files: list[str
 
 
 def render_template(template_name: str, variables: dict[str, Any]) -> str:
-    """
-    Load and render a Jinja2 template from the manifests directory.
-
-    Args:
-        template_name: Name of the template file (relative to MANIFESTS_PATH)
-        variables: Dictionary of variables for template substitution
-
-    Returns:
-        Rendered template as a string
+    """Load and render a Jinja2 template, named relative to ``MANIFESTS_PATH``.
 
     Raises:
         FileNotFoundError: If template file doesn't exist
@@ -240,7 +144,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
     with open(template_path) as f:
         template_content = f.read()
 
-    result = _gecompileerd(template_content).render(**variables)
+    result = compiled_template(template_content).render(**variables)
 
     logger.debug(f"Successfully rendered template: {template_name}")
     return result
@@ -249,29 +153,11 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
 class ManifestGenerator:
     """Generator for Kubernetes manifests with templating and kustomization support."""
 
-    def __init__(self):
-        """
-        Initialize the ManifestGenerator.
-
-        Args:
-            kubectl_connector: Optional kubectl connector for templating (if not provided, basic templating is used)
-        """
+    def __init__(self) -> None:
         logger.debug("ManifestGenerator initialized")
 
     def template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
-        """
-        Replace Jinja2 template variables in a manifest.
-
-        This implementation handles Jinja2 variable templating.
-        Variables in the manifest should be in the format {{ variable }} or {{ nested.variable }}.
-
-        Args:
-            manifest_content: The content of the manifest file
-            variables: Dictionary of variables to replace, can include nested dictionaries
-
-        Returns:
-            The processed manifest content with variables replaced
-        """
+        """Render the Jinja2 variables in a manifest; raises ``RuntimeError`` when it fails."""
         logger.debug(f"Templating manifest with Jinja2 variables: {variables.keys()}")
 
         try:
@@ -282,23 +168,15 @@ class ManifestGenerator:
         except Exception as e:
             error_msg = f"Error templating manifest with Jinja2: {e}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def create_manifest_file(
         self, template_path: str, values: dict[str, Any], output_dir: str, output_filename: str, use_sops: bool = False
     ) -> str:
-        """
-        Create a single manifest file from a template with variable substitution.
+        """Create one manifest file from a template, and return its full path.
 
-        Args:
-            template_path: Path to the manifest template file
-            values: Dictionary of values for template substitution
-            output_dir: Directory where the manifest should be created (must exist)
-            output_filename: Name of the output file (without extension)
-            use_sops: If True, creates .to-sops.yaml file for later encryption
-
-        Returns:
-            The full path to the created manifest file
+        ``output_filename`` carries no extension: ``use_sops`` decides between
+        ``.to-sops.yaml`` (encrypted later) and plain ``.yaml``.
 
         Raises:
             FileNotFoundError: If template file doesn't exist
@@ -307,18 +185,14 @@ class ManifestGenerator:
         logger.debug(f"Creating manifest from template: {template_path}")
 
         try:
-            # Check if template exists
             if not os.path.exists(template_path):
                 raise FileNotFoundError(f"Template file not found: {template_path}")
 
-            # Read the template
             with open(template_path) as f:
                 template_content = f.read()
 
-            # Process the template with values
             processed_manifest = self.template_manifest(template_content, values)
 
-            # Determine output filename based on SOPS usage
             if use_sops:
                 final_filename = sops_filenames(output_filename).plaintext
                 logger.debug(f"Creating SOPS manifest: {final_filename}")
@@ -326,10 +200,8 @@ class ManifestGenerator:
                 final_filename = f"{output_filename}.yaml"
                 logger.debug(f"Creating regular manifest: {final_filename}")
 
-            # Ensure output directory exists
             os.makedirs(output_dir, exist_ok=True)
 
-            # Write the manifest file
             output_path = os.path.join(output_dir, final_filename)
             with open(output_path, "w") as f:
                 f.write(processed_manifest)
@@ -339,22 +211,14 @@ class ManifestGenerator:
 
         except Exception as e:
             logger.error(f"Error creating manifest file: {e}")
-            raise RuntimeError(f"Failed to create manifest: {e}")
+            raise RuntimeError(f"Failed to create manifest: {e}") from e
 
     def create_multiple_manifests(self, manifest_configs: list[dict[str, Any]], output_dir: str) -> list[str]:
-        """
-        Create multiple manifest files from a list of configurations.
+        """Create several manifest files, and return the paths of the ones that succeeded.
 
-        Args:
-            manifest_configs: List of dictionaries, each containing:
-                - template_path: Path to template file
-                - values: Values for substitution
-                - output_filename: Output filename (without extension)
-                - use_sops: Optional, whether to use SOPS (default False)
-            output_dir: Directory where manifests should be created
-
-        Returns:
-            List of paths to created manifest files
+        Each entry of ``manifest_configs`` holds ``template_path``, ``values``,
+        ``output_filename`` and optionally ``use_sops``. A config that fails is logged and
+        skipped; the others are still created.
         """
         logger.info(f"Creating {len(manifest_configs)} manifests in {output_dir}")
 
@@ -377,9 +241,8 @@ class ManifestGenerator:
 
                 created_files.append(manifest_path)
 
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.error(f"Failed to create manifest from config {config}: {e}")
-                # Continue with other manifests even if one fails
                 continue
 
         logger.info(f"Successfully created {len(created_files)} out of {len(manifest_configs)} manifests")
@@ -388,19 +251,11 @@ class ManifestGenerator:
     def collect_manifest_files(
         self, directory: str, include_subfolders: bool = False, project_name: str | None = None
     ) -> tuple[list[str], list[str]]:
-        """
-        Collect all YAML manifest files in a directory and categorize them.
+        """Collect the YAML manifests in a directory as ``(sops_files, regular_files)``.
 
-        Expected folder structure: given_path/project_name/deployment_name/
-
-        Args:
-            directory: Directory to scan for manifest files
-            include_subfolders: If True, recursively scan subfolders
-            project_name: Project name to remove from file paths (required for standard structure,
-                         may be None for ArgoCD or other special cases)
-
-        Returns:
-            Tuple of (sops_files, regular_files) containing relative paths with project_name removed
+        Expected folder structure: given_path/project_name/deployment_name/. ``project_name``
+        is stripped from the returned relative paths; it may be ``None`` for ArgoCD and other
+        special cases that do not have that level.
         """
         logger.debug(
             f"Collecting manifest files from directory: {directory} (include_subfolders: {include_subfolders})"
@@ -410,23 +265,18 @@ class ManifestGenerator:
             all_files = []
 
             if include_subfolders:
-                # Recursively find all YAML files in directory and subdirectories
                 yaml_pattern = os.path.join(directory, "**", "*.yaml")
                 all_files.extend(glob.glob(yaml_pattern, recursive=True))
 
-                # Also find .yml files
                 yml_pattern = os.path.join(directory, "**", "*.yml")
                 all_files.extend(glob.glob(yml_pattern, recursive=True))
             else:
-                # Find YAML files only in the immediate directory
                 yaml_pattern = os.path.join(directory, "*.yaml")
                 all_files.extend(glob.glob(yaml_pattern))
 
-                # Also find .yml files
                 yml_pattern = os.path.join(directory, "*.yml")
                 all_files.extend(glob.glob(yml_pattern))
 
-            # Convert to relative paths from the base directory
             base_path = Path(directory)
             relative_files = []
             # Sorted: glob follows the directory order, which differs per checkout and
@@ -436,10 +286,9 @@ class ManifestGenerator:
                     rel_path = Path(file_path).relative_to(base_path)
                     relative_files.append(str(rel_path))
                 except ValueError:
-                    # Skip files that aren't under the base directory
+                    # Not under the base directory, so it has no relative path here.
                     continue
 
-            # Separate SOPS files from regular files first
             sops_files = [f for f in relative_files if f.endswith((SOPS_SUFFIX, TO_SOPS_SUFFIX))]
             regular_files = [
                 f
@@ -447,15 +296,11 @@ class ManifestGenerator:
                 if f.endswith((".yaml", ".yml")) and not f.endswith((SOPS_SUFFIX, TO_SOPS_SUFFIX))
             ]
 
-            # Remove project_name from paths if provided (for structure: given_path/project_name/deployment_name/)
-            # TODO: why would we do this?
             if project_name:
 
                 def remove_project_from_path(file_path: str) -> str:
-                    """Remove project_name directory from the beginning of the path."""
                     path_parts = file_path.split("/")
                     if len(path_parts) > 1 and path_parts[0] == project_name:
-                        # Remove the project_name part and rejoin
                         return "/".join(path_parts[1:])
                     return file_path
 
@@ -469,28 +314,17 @@ class ManifestGenerator:
 
             return sops_files, regular_files
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Error collecting manifest files: {e}")
             return [], []
 
-    # TODO: this logic is in the cluster config and should be retrieved from there
     def _determine_namespace_with_prefix(
         self, namespace: str | None, deployment: dict[str, Any] | None = None
     ) -> str | None:
-        """
-        Determine the namespace with the correct cluster prefix.
-
-        Args:
-            namespace: The namespace parameter passed to create_kustomization_files
-            deployment: Optional deployment data containing cluster information
-
-        Returns:
-            Namespace with correct prefix, or None if namespace is None
-        """
+        """The namespace with its cluster prefix; unchanged when ``deployment`` names no cluster."""
         if namespace is None:
             return None
 
-        # If deployment is provided, extract cluster information
         if deployment:
             cluster_name = deployment.get("cluster")
             if not cluster_name:
@@ -498,7 +332,6 @@ class ManifestGenerator:
             try:
                 prefix = get_namespace_prefix(cluster_name)
 
-                # Check if namespace already has the correct prefix
                 if not namespace.startswith(prefix):
                     logger.debug(f"Adding prefix '{prefix}' to namespace '{namespace}'")
                     return f"{prefix}{namespace}"
@@ -509,7 +342,6 @@ class ManifestGenerator:
                 logger.warning(f"Failed to get namespace prefix for cluster '{cluster_name}': {e}")
                 return namespace
 
-        # If no deployment context, return namespace as-is
         return namespace
 
     def create_kustomization_files(
@@ -523,26 +355,17 @@ class ManifestGenerator:
         deployment: dict[str, Any] | None = None,
         helm_charts: list[dict[str, Any]] | None = None,
     ) -> bool:
-        """
-        Create kustomization.yaml and decrypt-sops.yaml files using YAML templates.
+        """Create kustomization.yaml and, when there are SOPS files, decrypt-sops.yaml.
 
-        Args:
-            output_dir: Directory where kustomization files should be created
-            namespace: Optional namespace for the kustomization
-            sops_files: Optional list of SOPS files (if None, will be auto-detected)
-            regular_files: Optional list of regular files (if None, will be auto-detected)
-            include_subfolders: If True, recursively scan subfolders when auto-detecting files
-            project_name: If provided, removes this project directory from file paths
-            deployment: Optional deployment data containing cluster information for namespace prefixing
-            helm_charts: Optional list of helm chart configurations for helmCharts section
+        ``sops_files`` and ``regular_files`` are auto-detected from ``output_dir`` when they
+        are ``None``; ``include_subfolders`` and ``project_name`` only steer that detection.
 
-        Returns:
-            True if files were created successfully, False otherwise
+        Returns False on failure, except for a duplicate resource identity: that raises, so
+        the deploy stops before the broken kustomization is committed.
         """
         logger.info(f"Creating kustomization files in directory: {output_dir}")
 
         try:
-            # Auto-detect files if not provided
             if sops_files is None or regular_files is None:
                 detected_sops, detected_regular = self.collect_manifest_files(
                     output_dir, include_subfolders, project_name
@@ -550,8 +373,8 @@ class ManifestGenerator:
                 sops_files = sops_files or detected_sops
                 regular_files = regular_files or detected_regular
 
-            # Apply final exclusion filter right before creating kustomization files
-            # This prevents kustomization files from including themselves as resources
+            # Right before creating them, so a kustomization file never lists itself as a
+            # resource.
             exclude_files = [
                 "kustomization.yaml",
                 "kustomization.yml",
@@ -562,106 +385,78 @@ class ManifestGenerator:
             sops_files = [f for f in sops_files if f not in exclude_files]
             regular_files = [f for f in regular_files if f not in exclude_files]
 
-            # Failsafe before commit/push: two files with the same resource identity make
-            # kustomize refuse to build the whole directory, and that failure only surfaces
-            # later inside the ArgoCD CMP. Catch the whole class here with a clear message.
+            # Before commit/push: two files with the same resource identity make kustomize
+            # refuse to build the whole directory, and that failure only surfaces later
+            # inside the ArgoCD CMP.
             check_duplicate_resource_identities(output_dir, regular_files)
 
             logger.info(
                 f"Kustomization will include {len(sops_files)} SOPS files and {len(regular_files)} regular files"
             )
 
-            # Load kustomization.yaml template
-            yaml = YAML()
             kustomization_template_path = os.path.join(settings.MANIFESTS_PATH, "kustomization.yaml.jinja")
-            with open(kustomization_template_path) as f:
-                kustomization_data = yaml.load(f)
+            kustomization_data = load_yaml_round_trip(Path(kustomization_template_path).read_text(encoding="utf-8"))
 
-            # Determine namespace with correct prefix
             prefixed_namespace = self._determine_namespace_with_prefix(namespace, deployment)
 
-            # Update kustomization data
             if prefixed_namespace:
                 kustomization_data["namespace"] = prefixed_namespace
 
-            # Set resources to regular files
             kustomization_data["resources"] = regular_files or []
 
-            # Handle generators for SOPS files
             if sops_files:
                 kustomization_data["generators"] = ["decrypt-sops.yaml"]
             else:
-                # Remove generators if no SOPS files
                 kustomization_data.pop("generators", None)
 
-            # Add helmCharts section if provided
             if helm_charts:
                 kustomization_data["helmCharts"] = helm_charts
                 logger.info(f"Added {len(helm_charts)} helm charts to kustomization")
 
-            # Write kustomization.yaml
             kustomization_path = os.path.join(output_dir, "kustomization.yaml")
-            with open(kustomization_path, "w") as f:
-                yaml.dump(kustomization_data, f)
+            Path(kustomization_path).write_text(dump_yaml_for_go(kustomization_data), encoding="utf-8")
 
             logger.info(f"Created kustomization.yaml: {kustomization_path}")
 
             # Create decrypt-sops.yaml if there are SOPS files
             if sops_files:
                 decrypt_sops_template_path = os.path.join(settings.MANIFESTS_PATH, "decrypt-sops.yaml.jinja")
-                with open(decrypt_sops_template_path) as f:
-                    decrypt_sops_data = yaml.load(f)
+                decrypt_sops_data = load_yaml_round_trip(Path(decrypt_sops_template_path).read_text(encoding="utf-8"))
 
                 # decrypt-sops.yaml lists the names the files carry after encryption, so both
                 # halves of one pair collapse onto the same name, hence the deduplication.
                 decrypt_files = list(dict.fromkeys(sops_filenames(f).encrypted for f in sops_files))
 
-                # Update files list
                 decrypt_sops_data["files"] = decrypt_files
 
-                # Write decrypt-sops.yaml
                 decrypt_sops_path = os.path.join(output_dir, "decrypt-sops.yaml")
-                with open(decrypt_sops_path, "w") as f:
-                    yaml.dump(decrypt_sops_data, f)
+                Path(decrypt_sops_path).write_text(dump_yaml_for_go(decrypt_sops_data), encoding="utf-8")
 
                 logger.info(f"Created decrypt-sops.yaml: {decrypt_sops_path}")
 
             return True
 
         except RuntimeError:
-            # A duplicate resource identity is a real, actionable error - let it propagate
-            # so the deploy stops before the broken kustomization is committed, rather than
-            # being swallowed into a False return.
+            # A duplicate resource identity must not be swallowed into a False return: the
+            # deploy has to stop before the broken kustomization is committed.
             raise
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Error creating kustomization files: {e}")
             return False
 
     def generate_manifests_with_kustomization(
         self, manifest_configs: list[dict[str, Any]], output_dir: str, namespace: str | None = None
     ) -> bool:
-        """
-        Generate multiple manifests and create kustomization files in one operation.
-
-        Args:
-            manifest_configs: List of manifest configurations
-            output_dir: Directory where all files should be created
-            namespace: Optional namespace for kustomization
-
-        Returns:
-            True if all operations succeeded, False otherwise
-        """
+        """Create the manifests and their kustomization files in one go; False on any failure."""
         logger.info(f"Generating manifests with kustomization in {output_dir}")
 
         try:
-            # Create all manifests
             created_files = self.create_multiple_manifests(manifest_configs, output_dir)
 
             if not created_files:
                 logger.warning("No manifests were created")
                 return False
 
-            # Create kustomization files
             kustomization_result = self.create_kustomization_files(output_dir, namespace)
 
             if not kustomization_result:
@@ -671,20 +466,6 @@ class ManifestGenerator:
             logger.info(f"Successfully generated {len(created_files)} manifests with kustomization")
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"Error in generate_manifests_with_kustomization: {e}")
             return False
-
-
-def create_manifest_generator(kubectl_connector=None) -> ManifestGenerator:
-    """
-    Create and return a ManifestGenerator instance.
-
-    Args:
-        kubectl_connector: Optional kubectl connector for advanced templating
-
-    Returns:
-        ManifestGenerator instance
-    """
-    logger.debug("Creating ManifestGenerator")
-    return ManifestGenerator()

@@ -196,4 +196,4 @@ SSL certificate problem: unable to get local issuer certificate
 - `operations-manager/python/opi/configs/keycloak/bootstrap.yaml` - Production bootstrap (creates `local-cluster` client)
 - `operations-manager/python/opi/configs/keycloak/bootstrap-local.yaml` - Local bootstrap (uses production upstream)
 - `operations-manager/python/opi/core/config.py` - `KEYCLOAK_BOOTSTRAP_CONFIG` setting
-- `operations-manager/python/opi/bootstrap/keycloak_setup.py` - Bootstrap file selection logic
+- `operations-manager/python/opi/manager/bootstrap/keycloak_setup.py` - Bootstrap file selection logic

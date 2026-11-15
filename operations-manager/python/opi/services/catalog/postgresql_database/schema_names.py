@@ -1,9 +1,9 @@
-"""Of de samengestelde schemanamen van dit project passen (RC-59).
+"""Whether this project's composed schema names fit.
 
-Een extra schema heet ``{project}_{deployment}_{postfix}`` en dat moet binnen de 63
-tekens van PostgreSQL blijven. Hoeveel ruimte de postfix heeft hangt dus af van de
-project- en deploymentnaam, en die staan niet in het configblok van de dienst: daarom
-een regel over het hele project en geen veldregel.
+An extra schema is called ``{project}_{deployment}_{postfix}`` and has to stay within
+PostgreSQL's 63 characters. How much room the postfix has therefore depends on the project and
+deployment name, and those are not in the service's config block: hence a rule about the whole
+project and not a field rule.
 """
 
 from __future__ import annotations
@@ -15,13 +15,12 @@ from opi.utils.naming import generate_extra_database_schema
 
 
 def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
-    """Elk extra schema tegen ELKE deployment, ook een deployment die er nog niet was toen
-    de schemalijst werd opgeslagen.
+    """Every extra schema against EVERY deployment, including a deployment that did not exist
+    when the schema list was stored.
 
-    Dat is het gat dat ``UniqueSchemaEnforcer`` openliet: een postfix die vandaag past,
-    past niet meer zodra er een deployment met een langere naam bij komt, en op die weg
-    keek niets naar schema's. Een gemarkeerd schema telt niet mee, want dat mag een
-    opslag niet blokkeren (``get_postgres_schemas``).
+    ``UniqueSchemaEnforcer`` does not cover that: a postfix that fits today no longer fits
+    once a deployment with a longer name is added. A marked schema does not count, because it
+    must not block a save (``get_postgres_schemas``).
     """
     errors: list[str] = []
     project_name = project_data.get("name") or ""

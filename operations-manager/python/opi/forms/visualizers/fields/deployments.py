@@ -142,7 +142,7 @@ DEPLOYMENT_BACKUP_RESOURCE_TYPES = EditableVisualizer(
     description="Selecteer welke resource types automatisch worden geback-upt.",
 )
 
-# Manual backup visualizers (transient)
+# Manual backup visualizers: transient.
 BACKUP_DEPLOYMENT_NAME = EditableVisualizer(
     editable=BACKUP_DEPLOYMENT_NAME_EDITABLE,
     widget=WidgetType.SELECT,
@@ -226,7 +226,7 @@ DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
         DEPLOYMENT_COMP_REFERENCE,
         DEPLOYMENT_COMP_IMAGE,
         DEPLOYMENT_COMP_PULL_POLICY,
-        # Per-service deployment-component visualizers, from the registry (RC-25).
+        # Per-service deployment-component visualizers, from the registry.
         *deployment_component_service_visualizers(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     ],
@@ -240,8 +240,8 @@ DEPLOYMENT_COMP_REFERENCE_READONLY = EditableVisualizer(
 )
 
 # The per-deployment certificate override belongs to publish-on-web and is declared in its
-# package (RC-78), where the deployment form also picks it up from. Re-exported here under
-# the names the domain wizard's certificate step already used.
+# package, which is also where the deployment form picks it up. Re-exported here under the
+# names the domain wizard's certificate step uses.
 DEPLOYMENT_COMP_PUBLISH_TLS = PUBLISH_ON_WEB_DEPLOYMENT_COMP_TLS
 DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = PUBLISH_ON_WEB_DEPLOYMENT_COMP_ATTACHMENT
 

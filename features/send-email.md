@@ -744,7 +744,7 @@ een mislukte uitrol zonder `error_type` en krijgen daarom helemaal geen categori
 gat is breder dan mail en staat als eigen taak op PR #236.
 
 Een podwissel van de relay kost geen uitrol meer: de connector herhaalt een connectfout
-30 seconden lang (`opi/utils/connect_retry.py`, dezelfde lus als de ArgoCD-connector).
+30 seconden lang (`opi/core/connect_retry.py`, dezelfde lus als de ArgoCD-connector).
 
 ### Niemand merkt het als de relay plat ligt
 
@@ -766,10 +766,10 @@ doet de check niets.
 | De dienst | `opi/services/catalog/send_email/` |
 | De manager (accounts) | `opi/manager/mail_manager.py` |
 | De connector (management-API) | `opi/connectors/mail.py` |
-| Het account van ZAD | `ensure_platform_mail_account` in `opi/core/startup.py` |
+| Het account van ZAD | `ensure_platform_mail_account` in `opi/runtime/startup/startup.py` |
 | De relay | `infrastructure/bootstrap/infrastructure/mail/` |
 | De geheimen | `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` en `mail-db-credentials-secret.yaml` |
 | De database (rol + Database, declaratief) | `infrastructure/bootstrap/infrastructure/postgresql/database/base/` |
-| De readiness-wacht + melding | `opi/core/mail_relay_watcher.py` |
+| De readiness-wacht + melding | `opi/runtime/periodic/mail_relay_watcher.py` |
 | De proef op de auto-ban | `scripts/mail_autoban_check.py` |
 | Tests | `tests/test_send_email_service.py`, `tests/test_mail_relay_watcher.py` |

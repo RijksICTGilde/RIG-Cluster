@@ -17,9 +17,9 @@ hem opent.
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
+from opi.http.render.lotc_switch import build_lotc_introduction
 from opi.services.registry import SERVICE_DEFINITIONS
 from opi.services.services_enums import ServiceKind, ServiceType
-from opi.web.lotc_switch import build_lotc_introductie
 
 if TYPE_CHECKING:
     import pytest
@@ -77,7 +77,7 @@ def test_een_vervangen_dienst_staat_er_niet_op(monkeypatch: pytest.MonkeyPatch) 
     """MinIO is vervangen door SeaweedFS waar die er is; dan is het geen keuze meer."""
     monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
 
-    namen = [d["name"] for d in build_lotc_introductie(None)["diensten_zelf"]]
+    namen = [d["name"] for d in build_lotc_introduction(None)["diensten_zelf"]]
 
     assert ServiceType.MINIO_STORAGE.value not in namen
     assert ServiceType.SEAWEEDFS_STORAGE.value in namen
@@ -93,7 +93,7 @@ def _catalogus() -> tuple[list[str], list[str]]:
 def test_de_dienstenlijst_is_die_van_de_catalogus() -> None:
     """Elke kaart komt uit ``SERVICE_DEFINITIONS``, en geen enkele dienst ontbreekt."""
     zelf, achtergrond = _catalogus()
-    context = build_lotc_introductie(None)
+    context = build_lotc_introduction(None)
 
     assert [d["label"] for d in context["diensten_zelf"]] == zelf
     assert [d["label"] for d in context["diensten_achtergrond"]] == achtergrond
@@ -108,7 +108,7 @@ def test_verborgen_diensten_staan_er_niet_op() -> None:
     toont ze wel, en bewust - daar zoek je omgevingsvariabelen op.
     """
     verborgen = {d.name for d in SERVICE_DEFINITIONS.values() if d.hidden}
-    context = build_lotc_introductie(None)
+    context = build_lotc_introduction(None)
 
     getoond = {d["label"] for d in context["diensten_zelf"]} | {d["label"] for d in context["diensten_achtergrond"]}
     assert verborgen, "geen enkele dienst is meer verborgen; dan zegt deze test niets"
@@ -129,7 +129,7 @@ def test_elke_dienst_op_de_pagina_staat_er_ook_echt_op(test_client: TestClient) 
 
 def test_de_omschrijving_komt_letterlijk_van_de_dienst() -> None:
     """Niet hertaald. Wat de dienst over zichzelf zegt, is wat de pagina belooft."""
-    context = build_lotc_introductie(None)
+    context = build_lotc_introduction(None)
     per_naam = {d.name: d for d in SERVICE_DEFINITIONS.values()}
 
     for kaart in context["diensten_zelf"] + context["diensten_achtergrond"]:

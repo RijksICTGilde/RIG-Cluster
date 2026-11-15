@@ -1,8 +1,7 @@
 """What the two sleep-mode endpoints answer, as models a client can read off the spec.
 
-Both endpoints used to return a bare ``JSONResponse``, so ``/openapi.json`` held no schema,
-no values and no explanation: a generated client saw an object and had to guess. Worse, the
-two neighbouring endpoints both called their field ``state`` while meaning different things:
+The two neighbouring endpoints each have a field called ``state``, and they mean different
+things:
 
 * ``/status`` answers ``starting | ready``. That is the poll contract of the waker image,
   which only checks whether the word is ``ready`` (``images/zad-waker/main.go``). The image
@@ -10,11 +9,10 @@ two neighbouring endpoints both called their field ``state`` while meaning diffe
   keeps its two values and its exact spelling, forever.
 * ``/wake`` answers ``awake | sleeping | waking``, the real sleep state.
 
-One word, three meanings. Rather than break a running waker, both endpoints now carry a
-second field, ``sleep_state``, that always means the same thing: the deployment's real
-sleep state, plus ``disabled`` when sleep-mode does not apply to this deployment at all.
-That last value is what ``/status`` could never say -- it reported a hardcoded ``starting``
-for a project without a waker, which is why the CLI saw ``starting`` and nothing else.
+Rather than break a running waker, both endpoints carry a second field, ``sleep_state``,
+that always means the same thing: the deployment's real sleep state, plus ``disabled`` when
+sleep-mode does not apply to this deployment at all -- the value ``/status`` cannot express
+in its own frozen field.
 
 The per-value descriptions travel as ``x-choices``, the same key ``opi/api/openapi_choices.py``
 puts on service config fields, so a reader meets one convention for "these are the values
@@ -27,7 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from opi.api.openapi_choices import CHOICES_KEY
+from opi.services.catalog.base import CHOICES_KEY
 
 #: The real sleep state of a deployment, as reported by both endpoints.
 SleepStateValue = Literal["awake", "sleeping", "waking", "disabled"]

@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
-from opi.tools.biv_render import aanvalsproef_doelen, load_inventaris
+from opi.tools.biv_render import aanvalsproef_targets, load_inventaris
 
 from security_tests.baseline import lees_baseline
 from security_tests.doel import LOKAAL, SANDBOX
@@ -275,7 +275,7 @@ def dekkingstabel(doelsoort: str = "") -> list[str]:
         "| component | beproefd door | beproefbaar tegen |",
         "|---|---|---|",
     ]
-    for doel in aanvalsproef_doelen(load_inventaris()):
+    for doel in aanvalsproef_targets(load_inventaris()):
         proeven = ", ".join(sorted(per_component.get(doel, []))) or "nog niet beproefd"
         doelen = ", ".join(sorted(doelen_per_component.get(doel, set()))) or "-"
         regels.append(f"| {doel} | {proeven} | {doelen} |")

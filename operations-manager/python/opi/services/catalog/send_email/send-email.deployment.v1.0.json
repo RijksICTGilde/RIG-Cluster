@@ -46,7 +46,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "What ONE deployment may decide about its own outgoing mail (RC-401).\n\nThe account is per deployment, so the budget and the sender are too. A field left out\nis inherited from the project; a field that is filled in is this deployment's own, and\nan address or a budget above the platform default is its own REQUEST. That separation\nis deliberate: a deployment with an approved override keeps it when the project lowers\nits own value, while a deployment that inherits follows the project down.",
+  "description": "What ONE deployment may decide about its own outgoing mail.\n\nThe account is per deployment, so the budget and the sender are too. A field left out\nis inherited from the project; a field that is filled in is this deployment's own, and\nan address or a budget above the platform default is its own REQUEST. That separation\nis deliberate: a deployment with an approved override keeps it when the project lowers\nits own value, while a deployment that inherits follows the project down.",
   "properties": {
     "from-address": {
       "anyOf": [

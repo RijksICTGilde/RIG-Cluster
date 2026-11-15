@@ -14,11 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, SchemaInventory
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.project_manager import ProjectManager
 from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceType
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.registry import get_service
 
 if TYPE_CHECKING:
@@ -956,7 +956,7 @@ async def test_the_flag_reaches_a_remote_clone_started_by_the_run(chisel: dict[s
     with (
         patch("opi.utils.age.get_decoded_project_private_key", AsyncMock(return_value="sleutel")),
         patch("opi.utils.age.decrypt_password_smart", AsyncMock(return_value="pw")),
-        patch("opi.utils.chisel_helper.chisel_tunnel", tunnel),
+        patch("opi.manager.chisel_helper.chisel_tunnel", tunnel),
     ):
         result = await manager._ensure_database_state(
             project_name="demo",

@@ -6,9 +6,10 @@ import os
 import re
 from typing import Any
 
-from opi.manager.clone_validation import resolve_clone_source_deployment
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
+from opi.services.clone_validation import resolve_clone_source_deployment
 from opi.utils.naming import generate_deployment_manifest_path, generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
@@ -17,15 +18,7 @@ MARKED_FOR_DELETION_SUFFIX = ".marked-for-deletion.yaml"
 
 
 class PVCManager:
-    """Manager for PVC-related operations and resources."""
-
     def __init__(self, project_manager: ProjectManager) -> None:
-        """
-        Initialize the PVCManager with reference to ProjectManager.
-
-        Args:
-            project_manager: The main ProjectManager instance for accessing shared resources
-        """
         self.project_manager = project_manager
 
     async def delete_old_pvc_manifests(
@@ -35,33 +28,19 @@ class PVCManager:
         storage_name: str,
         current_generation: int,
     ) -> list[str]:
-        """
-        Delete old PVC manifest files when generation changes.
+        """Delete the PVC manifests of generations below ``current_generation``, so ArgoCD
+        prunes those PVCs on its next sync. The current generation's manifest is kept.
 
-        This method finds and deletes PVC manifest files with generation numbers
-        lower than the current generation. This ensures ArgoCD will prune the
-        old PVCs when syncing. The current generation manifest is kept.
+        The patterns come from naming.py: ``{component}-{storage}-pvc.yaml`` for generation 0
+        and ``{component}-{storage}-pvc-vN.yaml`` above it.
 
-        Uses naming.py utilities to determine correct patterns:
-        - generation 0: {component}-{storage}-pvc.yaml
-        - generation N: {component}-{storage}-pvc-vN.yaml
-
-        Args:
-            project_dir: Directory containing the project manifests
-            component_name: Name of the component
-            storage_name: Name of the storage volume
-            current_generation: Current generation number
-
-        Returns:
-            List of deleted manifest file paths
+        Returns the paths of the manifests that were deleted.
         """
         deleted_files = []
 
-        # Use naming utilities to get base pattern
         manifest_type = generate_pvc_manifest_type(storage_name)
         base_name = generate_manifest_name(component_name, manifest_type, generation=0)
 
-        # Pattern to match all PVC manifest files for this component and storage
         pattern = os.path.join(project_dir, f"{base_name}*.yaml")
 
         logger.info(
@@ -69,10 +48,8 @@ class PVCManager:
             f"with pattern {base_name}*.yaml (current generation: {current_generation})"
         )
 
-        # Find all matching manifest files
         matching_files = glob.glob(pattern)
 
-        # Regex to extract generation number from filename
         # Matches: component-storage-pvc-v1.yaml -> 1
         # Also matches: component-storage-pvc.yaml -> None (generation 0)
         generation_regex = re.compile(rf"{re.escape(base_name)}-v(\d+)\.yaml$")
@@ -81,7 +58,6 @@ class PVCManager:
         for file_path in matching_files:
             filename = os.path.basename(file_path)
 
-            # Check if file has generation suffix
             match = generation_regex.search(filename)
             if match:
                 file_generation = int(match.group(1))
@@ -95,7 +71,6 @@ class PVCManager:
                     logger.debug(
                         f"Keeping PVC manifest: {filename} (generation {file_generation} >= {current_generation})"
                     )
-            # Check if file has no generation suffix (generation 0)
             elif no_generation_regex.search(filename):
                 if current_generation > 0:
                     logger.info(f"Deleting old PVC manifest: {filename} (generation 0 < {current_generation})")
@@ -117,19 +92,7 @@ class PVCManager:
         storage_name: str,
         generation: int,
     ) -> str:
-        """
-        Get the PVC manifest filename for a given generation.
-
-        Uses the naming utility to ensure consistency across the codebase.
-
-        Args:
-            component_name: Name of the component
-            storage_name: Name of the storage volume
-            generation: Current generation number
-
-        Returns:
-            Manifest filename (e.g., "webapp-data-pvc-v2.yaml" or "webapp-data-pvc.yaml")
-        """
+        """The PVC manifest filename of one generation, e.g. "webapp-data-pvc-v2.yaml"."""
         manifest_type = generate_pvc_manifest_type(storage_name)
         return f"{generate_manifest_name(component_name, manifest_type, generation)}.yaml"
 
@@ -146,32 +109,16 @@ class PVCManager:
         manifest_generator: ManifestGenerator,
         force_clone_override: bool = False,
     ) -> list[str]:
-        """
-        Create PVC manifests for a component, handling generation and cleanup.
+        """Create the PVC manifests of a component, with its generations and their cleanup.
 
-        This method:
-        1. Reads generation for each storage from project data
-        2. Deletes old generation manifest files if generation > 0
-        3. Creates new PVC manifest with current generation
-        4. Handles clone-from logic with mode/status checking (consistent with database/minio)
+        Per storage: read the generation, delete the manifests of older generations, write
+        the manifest of this one, and apply the ``clone-from`` the deployment declares.
 
         Args:
-            project_data: The parsed project data
-            deployment: Deployment configuration
-            component_name: Name of the component
-            unique_name: Unique name for resources (from generate_unique_name)
-            persistent_storage: List of persistent storage configs with names
-            namespace: Kubernetes namespace
-            cluster: Cluster name
-            full_output_dir: Output directory for manifests
-            manifest_generator: ManifestGenerator instance
-            force_clone_override: Runtime override for force_clone (from API)
+            unique_name: Resource name from ``generate_unique_name``.
+            force_clone_override: Runtime override of force_clone, from the API.
 
-        Returns:
-            List of created manifest filenames
-
-        Raises:
-            Exception: If manifest creation fails
+        Returns the filenames that were created.
         """
         from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
         from opi.utils.naming import generate_pvc_name, generate_unique_name
@@ -179,7 +126,6 @@ class PVCManager:
         created_files = []
         deployment_name = deployment["name"]
 
-        # Get cluster storage configuration
         storage_class_name = get_storage_class_name(cluster)
         access_modes = get_storage_access_modes(cluster)
 
@@ -188,7 +134,6 @@ class PVCManager:
         for storage in persistent_storage:
             storage_name = storage["name"]
 
-            # Get generation for this storage from project data (default 0 = normal name, no suffix)
             generation = (
                 self.project_manager._project_file_handler.get_storage_generation(
                     project_data, deployment_name, component_name, storage_name
@@ -196,7 +141,6 @@ class PVCManager:
                 or 0
             )
 
-            # Get backup setting for this storage (project-level or per-storage override)
             backup_enabled = self.project_manager._project_file_handler.get_storage_backup_enabled(
                 project_data, component_name, storage_name
             )
@@ -206,7 +150,6 @@ class PVCManager:
                 f"with generation {generation}, backup_enabled={backup_enabled}"
             )
 
-            # DELETE OLD MANIFESTS if generation > 0
             if generation is not None and generation > 0:
                 deleted_files = await self.delete_old_pvc_manifests(
                     project_dir=full_output_dir,
@@ -218,11 +161,9 @@ class PVCManager:
                     logger.info(f"Deleted {len(deleted_files)} old PVC manifest(s) for {component_name}/{storage_name}")
 
             # An entry without a size cannot come from a validated write: ``size`` is a
-            # required field on the storage config model, so this only fires for a file
-            # that reached the repo another way. It used to fall back to 10Gi, ten times
-            # the largest size the platform offers and a volume nobody asked for. The
-            # starting size is the honest answer instead: it is what enabling the service
-            # gives you, and a volume that turns out too small can still grow.
+            # required field on the storage config model, so this only fires for a file that
+            # reached the repo another way. It falls back to the starting size, which is what
+            # enabling the service gives you, and a volume that is too small can still grow.
             size = storage.get("size")
             if not size:
                 logger.warning(
@@ -231,7 +172,6 @@ class PVCManager:
                 )
                 size = DEFAULT_STORAGE_SIZE
 
-            # Prepare PVC variables using centralized naming utility with generation
             pvc_variables = {
                 "name": generate_pvc_name(unique_name, storage_name, generation),
                 "namespace": namespace,
@@ -241,7 +181,6 @@ class PVCManager:
                 "backup_enabled": backup_enabled,
             }
 
-            # Handle clone-from logic for PVC (consistent with database_manager and minio_manager)
             clone_from = deployment.get("clone-from")
             force_clone = force_clone_override or deployment.get("force-clone", False)
             should_skip_clone = False
@@ -309,7 +248,6 @@ class PVCManager:
                         f"for {component_name}/{storage_name}"
                     )
 
-                    # Generate source PVC name using source deployment's generation
                     source_unique_name = generate_unique_name(source_deployment, component_name)
                     source_pvc_name = generate_pvc_name(source_unique_name, storage_name, source_generation)
                     pvc_variables["source_pvc_name"] = source_pvc_name
@@ -327,10 +265,8 @@ class PVCManager:
                         source=f"deployment:{source_deployment}",
                     )
 
-                    # Report clone to project_manager for status tracking
                     self.project_manager.report_clone_performed(deployment_name, "persistent-storage", generation)
 
-            # Create PVC manifest using centralized naming utility with generation
             manifest_type = generate_pvc_manifest_type(storage_name)
             pvc_manifest_name = generate_manifest_name(component_name, manifest_type, generation)
 
@@ -374,8 +310,7 @@ class PVCManager:
         already registered id"). Removing the marked twin here restores a single manifest.
 
         The live volume is not affected: ArgoCD re-adopts the existing PVC through the
-        restored plain manifest, so nothing is pruned. This is a pure filesystem operation -
-        the hard requirement that repairs the render; the stale ``marked_for_deletion`` row
+        restored plain manifest, so nothing is pruned. The stale ``marked_for_deletion`` row
         is reconciled separately by :meth:`_prune_stale_pvc_marks`, which keys off the file
         no longer existing.
 
@@ -409,14 +344,13 @@ class PVCManager:
 
         The marked-for-deletion *file* is the source of truth: a row only means something
         while its ``<name>.marked-for-deletion.yaml`` still sits in the deployment directory.
-        Once the file is gone - because the resource came back (twin removed above) or was
-        cleaned up by hand - the row is stale and is deleted here.
+        Once the file is gone, because the resource came back (twin removed above) or was
+        cleaned up by hand, the row is stale and is deleted here.
 
         Selection is on ``(project, deployment, cluster, type=pvc)`` and then filtered by
         file existence, so a sibling storage that is genuinely still marked (its file is
-        still present) is left untouched. Best-effort: guarded on database availability, so
-        a missing pool warns and continues. Removing the file already repaired the render;
-        this is administration.
+        still present) is left untouched. Best effort: a missing database pool warns and
+        continues, because removing the file already repaired the render.
         """
         try:
             from opi.core.database_pools import get_database_pool
@@ -452,27 +386,18 @@ class PVCManager:
         project_data: dict[str, Any],
         marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
-        """Handle cleanup when persistent-storage service is removed from a deployment.
+        """Clean up when the persistent-storage service is removed from a deployment.
 
-        Instead of deleting PVC manifests (which would cause ArgoCD to prune
-        the PVCs immediately), this method **renames** each PVC manifest file
-        with a ``.marked-for-deletion.yaml`` suffix.  The renamed file stays
-        in the kustomize directory so ArgoCD keeps the PVC alive.
-
-        A record is inserted into the ``marked_for_deletion`` table with the
-        exact filename so the reconciliation job can later remove the file,
-        regenerate ``kustomization.yaml``, and let ArgoCD prune the PVC after
-        the grace period.
+        Each PVC manifest is RENAMED with a ``.marked-for-deletion.yaml`` suffix rather than
+        deleted, because deleting it would have ArgoCD prune the PVC at once. The renamed
+        file stays in the kustomize directory, so ArgoCD keeps the volume alive, and a row in
+        the ``marked_for_deletion`` table carries the exact filename so the reconciliation
+        job can remove the file after the grace period.
 
         Args:
-            project_name: Name of the project.
-            deployment_name: Name of the deployment losing the service.
-            deployment_data: The deployment dict from the *previous* YAML.
-            project_data: The *previous* project YAML.
-            marked_for_deletion_service: Optional service for deferred deletion.
-
-        Returns:
-            Structured result dict with operations, errors, success.
+            deployment_data: The deployment dict from the PREVIOUS YAML.
+            project_data: The PREVIOUS project YAML.
+            marked_for_deletion_service: Left out, the manifest is deleted at once.
         """
         from opi.core.cluster_config import get_prefixed_namespace
 
@@ -489,18 +414,16 @@ class PVCManager:
             "errors": [],
         }
 
-        # Find components in this deployment that had persistent-storage
         file_handler = self.project_manager._project_file_handler
         component_refs = file_handler.extract_deployment_components(project_data, deployment_name)
 
-        # Get the deployment git connector via the proper API
         repositories = project_data.get("repositories", [])
         repo_config = repositories[0] if repositories else {}
         repo_name = repo_config.get("name", "") if isinstance(repo_config, dict) else ""
 
         try:
             git_connector = await self.project_manager.get_deployment_workspace(repo_name, repo_config)
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, GitCommandTimeoutError, GitRemoteUnavailableError) as e:
             error_msg = (
                 f"Cannot access git workspace for repository '{repo_name}' "
                 f"- cannot rename PVC manifests for deferred deletion: {e}"
@@ -521,7 +444,6 @@ class PVCManager:
             if not ref_name:
                 continue
 
-            # Get persistent storage entries for this component
             storage_configs = file_handler.extract_component_storage(project_data, ref_name)
             persistent_storage = file_handler.get_persistent_storage(storage_configs)
 
@@ -531,7 +453,6 @@ class PVCManager:
             for storage in persistent_storage:
                 storage_name = storage["name"]
 
-                # Get the generation to compute the correct manifest filename
                 generation = (
                     file_handler.get_storage_generation(project_data, deployment_name, ref_name, storage_name) or 0
                 )
@@ -547,7 +468,6 @@ class PVCManager:
                     )
                     continue
 
-                # Rename the file: webapp-data-pvc.yaml -> webapp-data-pvc.marked-for-deletion.yaml
                 marked_filename = manifest_filename.replace(".yaml", MARKED_FOR_DELETION_SUFFIX)
                 marked_path = os.path.join(full_output_dir, marked_filename)
 
@@ -558,7 +478,6 @@ class PVCManager:
                     marked_filename,
                 )
 
-                # Record in marked_for_deletion table
                 if marked_for_deletion_service is not None:
                     await marked_for_deletion_service.mark_resource(
                         resource_type="pvc",
@@ -591,7 +510,6 @@ class PVCManager:
                         ref_name,
                     )
                 else:
-                    # No marked_for_deletion_service available - delete the manifest immediately
                     os.remove(marked_path)
                     result["operations"].append(
                         {

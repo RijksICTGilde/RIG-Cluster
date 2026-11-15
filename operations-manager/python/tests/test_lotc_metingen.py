@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.web.router import _heeft_metingen
+from opi.web.router import _has_measurements
 
 WORTEL = Path(__file__).resolve().parent.parent
 TABS = WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2"
@@ -44,7 +44,7 @@ class _Deployment:
 
 
 def _render(naam: str, context: dict[str, Any]) -> str:
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     return templates_lotc.env.get_template(naam).render(**context)
 
@@ -173,13 +173,13 @@ def test_met_metingen_staat_er_geen_melding() -> None:
         ("lege-pvc", {}, {"dep1-web-data": {"values": []}}, False),
     ],
 )
-def test_heeft_metingen(naam: str, metrics: dict[str, Any], pvc: dict[str, Any], verwacht: bool) -> None:
+def test_has_measurements(naam: str, metrics: dict[str, Any], pvc: dict[str, Any], verwacht: bool) -> None:
     """Een limiet is geen meting: die komt uit de deploymentdefinitie.
 
     Telde hij mee, dan zou een deployment met limieten en zonder waarden er als "er is
     gemeten" uitzien en de melding nooit krijgen.
     """
-    assert _heeft_metingen(metrics, pvc) is verwacht, naam
+    assert _has_measurements(metrics, pvc) is verwacht, naam
 
 
 def test_het_resourcegebruik_zegt_wat_de_balk_toont() -> None:
@@ -335,6 +335,7 @@ def _dashboard(**extra: Any) -> str:
     metrics: dict[str, Any] = {
         "cpu_percentage": 10,
         "cpu_usage_display": "1.0",
+        "cpu_request_display": "2.0",
         "cpu_limit_display": "10",
         "memory_percentage": 20,
         "memory_usage_display": "1 GiB",
@@ -355,16 +356,20 @@ def _dashboard(**extra: Any) -> str:
                 "name": "a",
                 "display_name": "Project A",
                 "cpu_cores": 0.03,
+                "cpu_request_cores": 0.1,
                 "cpu_limit_cores": 1.0,
                 "memory_mb": 64.0,
+                "memory_request_mb": 128.0,
                 "memory_limit_mb": 512.0,
             },
             {
                 "name": "b",
                 "display_name": "Project B",
                 "cpu_cores": 0.01,
+                "cpu_request_cores": 0.5,
                 "cpu_limit_cores": 2.0,
                 "memory_mb": 2048.0,
+                "memory_request_mb": 1536.0,
                 "memory_limit_mb": 4096.0,
             },
             # Een project waar Prometheus nog niets over zei. Het draagt de sleutels dus
@@ -391,7 +396,8 @@ def test_de_geheugenmeter_toont_gebruikt_gevraagd_en_limiet() -> None:
     """
     tekst = _tekst(_dashboard())
 
-    assert "1 GiB gebruikt / 3 GiB gevraagd / 5 GiB limiet" in tekst, tekst
+    assert "20% 1 GiB gebruikt van 3 GiB gevraagd, limiet 5 GiB" in tekst, tekst
+    assert "10% 1.0 gebruikt van 2.0 gevraagd, limiet 10 cores" in tekst, tekst
 
 
 def test_netwerkverkeer_zonder_meetpunten_zegt_dat() -> None:
@@ -415,20 +421,30 @@ def test_netwerkverkeer_met_meetpunten_tekent_wel() -> None:
 
 
 def test_per_project_staan_geheugen_en_cpu_in_de_vorm_van_de_projectkaart() -> None:
-    """Gebruikt / limiet met een percentage, precies zoals op de projectpagina.
+    """Used / requested / limit, with the percentage of used against requested.
 
-    De balk is het gebruik ten opzichte van de LIMIET van dat project, niet het aandeel
-    van het clustertotaal: een project op 95% van zijn geheugen is een probleem, ook als
-    het maar 3% van het cluster gebruikt.
+    Per project, not as a share of the cluster total: a project far above its request is a
+    problem, even if it uses 3% of the cluster.
     """
     tekst = _tekst(_dashboard())
 
-    assert "Geheugen (in gebruik) 2.0 GiB / 4.0 GiB (50%)" in tekst, tekst
-    assert "CPU 10m / 2.0 cores (0%)" in tekst, tekst
-    # 512 MiB is boven 0,1 GiB en wordt dus als GiB geschreven - dezelfde grens als op de
-    # projectkaart, want het is dezelfde macro.
-    assert "Geheugen (in gebruik) 64 MiB / 0.5 GiB (12%)" in tekst, tekst
-    assert "CPU 30m / 1.0 cores (3%)" in tekst, tekst
+    assert "Geheugen 2.0 GiB gebruikt / 1.5 GiB gevraagd / 4.0 GiB limiet (133%)" in tekst, tekst
+    assert "CPU 10m gebruikt / 500m gevraagd / 2.0 cores limiet (2%)" in tekst, tekst
+    # Below 1 GiB in MiB, so a 128 MiB request does not read as "0.1 GiB"; the same rule as
+    # on the project card, because it is the same macro.
+    assert "Geheugen 64 MiB gebruikt / 128 MiB gevraagd / 512 MiB limiet (50%)" in tekst, tekst
+    assert "CPU 30m gebruikt / 100m gevraagd / 1.0 cores limiet (30%)" in tekst, tekst
+
+
+def test_the_bar_splits_used_unused_request_and_overflow() -> None:
+    """Project B uses 2 GiB of 1.5 GiB requested: 1.5 green, nothing grey, 0.5 orange."""
+    html = _dashboard()
+    project_b = html.split("Project B", 1)[1].split("CPU", 1)[0]
+    gib = 1024**3
+
+    assert f'value="{1.5 * gib}" color="success"' in project_b, project_b
+    assert '<nldd-progress-bar-segment-indicator color="neutral"' in project_b, project_b  # 0 renders no value
+    assert f'value="{0.5 * gib}" color="warning"' in project_b, project_b
 
 
 def test_de_volgorde_is_aflopend_op_geheugen() -> None:
@@ -482,8 +498,8 @@ def test_zonder_limiet_geen_percentage_en_geen_balk_per_project() -> None:
     )
     tekst = _tekst(html)
 
-    assert "Geheugen (in gebruik) 64 MiB" in tekst, tekst
-    assert "CPU 30m cores" in tekst, tekst
+    assert "Geheugen 64 MiB gebruikt" in tekst, tekst
+    assert "CPU 30m gebruikt" in tekst, tekst
     assert "%)" not in tekst.split("Gebruik per project", 1)[1], tekst
     assert "progress-bar" not in html.split("Gebruik per project", 1)[1]
 

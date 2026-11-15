@@ -1,8 +1,7 @@
-"""Een QR-code als inline SVG.
+"""A QR code as inline SVG.
 
-Server-side en inline, want de pagina die een QR nodig heeft draagt een geheim: een
-script van een CDN hoort daar niet bij. Zie de aanwijzing in
-``features/keycloak-realm-admin-otp.md``.
+Server side and inline, because the page that needs a QR carries a secret and a script from a
+CDN does not belong there. See ``features/keycloak-realm-admin-otp.md``.
 """
 
 from __future__ import annotations
@@ -13,10 +12,10 @@ import segno
 
 
 def qr_svg(payload: str, scale: int = 5) -> str:
-    """De QR van ``payload`` als SVG-markup, zonder XML-declaratie."""
+    """SVG markup without an XML declaration, so it can be embedded in a page."""
     buffer = io.BytesIO()
-    # Eigen witte achtergrond: in de donkere weergave staan zwarte modules anders op een
-    # donkere kaart en is er niets te scannen.
+    # An explicit white background: in dark mode the black modules would otherwise sit on a
+    # dark card and there is nothing left to scan.
     segno.make(payload, error="m").save(
         buffer,
         kind="svg",

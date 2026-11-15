@@ -1,0 +1,862 @@
+"""Task handlers for add-component, add-component-to-deployment, and add-service.
+
+These handlers are called by TaskWorker. Each receives a payload dict and a
+PersistentTaskProgressManager instance, and returns a result dict.
+
+They have NO dependency on FastAPI Request objects.
+"""
+
+import logging
+from typing import Any
+
+from opi.services.tasks import progress_steps as steps
+from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+
+logger = logging.getLogger(__name__)
+
+
+async def handle_add_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Handle async add-component task.
+
+    Adds a new component definition to a project and processes all affected
+    deployments.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.naming import sanitize_kubernetes_name
+    from opi.utils.project_names import validate_project_name
+
+    project_name: str = payload["project_name"]
+    component_name: str = payload["name"]
+    deployment_names: list[str] = payload["deployment_names"]
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task(steps.NAMES_CHECK)
+
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
+
+        sanitized_name = sanitize_kubernetes_name(component_name)
+        if sanitized_name != component_name.lower():
+            error_msg = (
+                f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
+
+        progress.complete_task(validate_task)
+
+        add_task = progress.add_task(steps.COMPONENT_ADD, subject=component_name)
+
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.add_component(
+            name=component_name,
+            description=payload.get("description"),
+            component_type=payload.get("type", "single"),
+            image=payload["image"],
+            deployment_names=deployment_names,
+            port=payload.get("port"),
+            ports=payload.get("ports"),
+            path=payload.get("path", "/"),
+            rewrite=payload.get("rewrite"),
+            services=payload.get("services"),
+            cpu_limit=payload.get("cpu_limit"),
+            memory_limit=payload.get("memory_limit"),
+            env_vars=payload.get("env_vars"),
+            aliases=payload.get("aliases"),
+            root=payload.get("root", False),
+        )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error adding component")
+            progress.fail_task(add_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+
+        progress.complete_task(add_task)
+
+        urls: dict[str, dict[str, Any]] = {}
+
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
+        else:
+            # Scope the reprocess to the deployments the component was added to, so it
+            # doesn't regenerate (and re-commit) every other deployment's manifests.
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=deployment_names,
+            )
+
+            # Collect URLs from deployment results
+            for dep_name in result.get("deployments_updated", []):
+                deployment_results = project_manager.get_deployment_results(dep_name)
+                for name, dep_result in deployment_results.items():
+                    urls[name] = {
+                        "cluster": dep_result.cluster,
+                        "urls": dep_result.urls,
+                    }
+
+            if not processing_success:
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
+
+        response: dict[str, Any] = {
+            "status": "success" if succeeded else "failed",
+            "message": (
+                f"Component '{component_name}' added successfully"
+                if succeeded
+                else (project_manager.get_processing_error() or f"Component '{component_name}' processing failed")
+            ),
+            "component": result.get("component"),
+            "deployments_updated": result.get("deployments_updated", []),
+            "urls": urls,
+            "processing": processing,
+        }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
+        return response
+
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error adding component: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {
+            "component_name": component_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+async def handle_update_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Handle async update-component task.
+
+    Applies a partial update to an existing component and reprocesses the project so the
+    new manifests are generated. Mirrors handle_add_component's shape.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_names import validate_project_name
+
+    project_name: str = payload["project_name"]
+    component_name: str = payload["name"]
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
+        progress.complete_task(validate_task)
+
+        update_task = progress.add_task(steps.COMPONENT_UPDATE, subject=component_name)
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.update_component(
+            name=component_name,
+            description=payload.get("description"),
+            image=payload.get("image"),
+            port=payload.get("port"),
+            ports=payload.get("ports"),
+            path=payload.get("path"),
+            rewrite=payload.get("rewrite"),
+            services=payload.get("services"),
+            add_services=payload.get("add_services"),
+            remove_services=payload.get("remove_services"),
+            cpu_limit=payload.get("cpu_limit"),
+            memory_limit=payload.get("memory_limit"),
+        )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error updating component")
+            progress.fail_task(update_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+        progress.complete_task(update_task)
+
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
+        else:
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
+            )
+
+            if not processing_success:
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
+
+        response: dict[str, Any] = {
+            "status": "success" if succeeded else "failed",
+            "message": (
+                f"Component '{component_name}' updated successfully"
+                if succeeded
+                else (project_manager.get_processing_error() or f"Component '{component_name}' processing failed")
+            ),
+            "component": result.get("component"),
+            "processing": processing,
+        }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
+        return response
+
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error updating component: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {
+            "component_name": component_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+async def handle_add_component_to_deployment(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Handle async add-component-to-deployment task.
+
+    Adds an existing component to a deployment that doesn't yet include it.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.naming import sanitize_kubernetes_name
+    from opi.utils.project_names import validate_project_name
+
+    project_name: str = payload["project_name"]
+    deployment_name: str = payload["deployment_name"]
+    component_name: str = payload["component_name"]
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task(steps.NAMES_CHECK)
+
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
+
+        sanitized_name = sanitize_kubernetes_name(component_name)
+        if sanitized_name != component_name.lower():
+            error_msg = (
+                f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "validation_error",
+            }
+
+        progress.complete_task(validate_task)
+
+        add_task = progress.add_task(
+            steps.COMPONENT_ADD_TO_DEPLOYMENT, subject=f"{component_name} aan {deployment_name}"
+        )
+
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.add_component_to_deployment(
+            deployment_name=deployment_name,
+            component_name=component_name,
+            image=payload["image"],
+        )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error adding component to deployment")
+            progress.fail_task(add_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "deployment_name": deployment_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+
+        progress.complete_task(add_task)
+
+        urls: dict[str, dict[str, Any]] = {}
+
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
+        else:
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_name=deployment_name,
+            )
+
+            # Collect URLs from deployment results
+            deployment_results = project_manager.get_deployment_results(deployment_name)
+            for name, dep_result in deployment_results.items():
+                urls[name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+
+            if not processing_success:
+                processing_error = project_manager.get_processing_error() or "Deployment processing failed"
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
+
+        response: dict[str, Any] = {
+            "status": "success" if succeeded else "failed",
+            "message": (
+                f"Component '{component_name}' added to deployment '{deployment_name}'"
+                if succeeded
+                else (
+                    project_manager.get_processing_error()
+                    or f"Component '{component_name}' deployment processing failed"
+                )
+            ),
+            "deployment": deployment_name,
+            "component_reference": result.get("component_reference"),
+            "urls": urls,
+            "processing": processing,
+        }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
+        return response
+
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error adding component to deployment: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {
+            "component_name": component_name,
+            "deployment_name": deployment_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+async def handle_add_service(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Handle async add-service task.
+
+    Adds a service to a project and processes affected deployments.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_names import validate_project_name
+
+    project_name: str = payload["project_name"]
+    service_name: str = payload["service"]
+    component_names: list[str] | None = payload.get("components")
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
+
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "service": service_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": "invalid_project_name",
+            }
+
+        progress.complete_task(validate_task)
+
+        add_task = progress.add_task(steps.SERVICE_ADD, subject=service_name)
+
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.add_service(
+            service_name=service_name,
+            component_names=component_names,
+        )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error adding service")
+            progress.fail_task(add_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "service": service_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+
+        progress.complete_task(add_task)
+
+        # Nothing added AND nothing bound means nothing to reconcile; a newly bound
+        # component needs its manifests just as much as a newly selected service does.
+        # A deferred rollout says "skipped" for a different reason, and the reason
+        # travels with the status.
+        processing: dict[str, Any] = {"status": "skipped"}
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            processing = skipped_processing()
+        elif result.get("services_added") or result.get("components_updated"):
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
+            )
+
+            if processing_success:
+                processing = {"status": "completed"}
+            else:
+                processing = {"status": "failed"}
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_project(processing_error)
+
+        succeeded = processing["status"] != "failed"
+        response: dict[str, Any] = {
+            "status": "success" if succeeded else "failed",
+            "message": f"Service '{service_name}' added successfully"
+            if succeeded
+            else (project_manager.get_processing_error() or "Project processing failed"),
+            "services_added": result.get("services_added", []),
+            "services_skipped": result.get("services_skipped", []),
+            "components_updated": result.get("components_updated", []),
+            "processing": {
+                **processing,
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            },
+        }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
+        return response
+
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error adding service: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {"service": service_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+async def handle_configure_service(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Run a service-config write as a task: translate the payload, report the outcome.
+
+    Expected payload keys:
+        project_name, service, target, operation, component, deployment, config, add,
+        remove, list_field, deployment_names, rollout
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.manager.service.configure import ConfigOperation, ServiceConfigChange, configure_service
+    from opi.manager.service.errors import ServiceChangeError
+
+    service_name: str = payload["service"]
+    target: str = payload["target"]
+    project_manager: ProjectManager | None = None
+
+    try:
+        change = ServiceConfigChange(
+            project_name=payload["project_name"],
+            service_name=service_name,
+            target=target,
+            operation=ConfigOperation(payload.get("operation", "upsert")),
+            config=payload.get("config"),
+            add=payload.get("add") or [],
+            remove=payload.get("remove") or [],
+            list_field=payload.get("list_field"),
+            component_name=payload.get("component"),
+            deployment_name=payload.get("deployment"),
+            rollout=rollout_requested(payload),
+            deployment_names=payload.get("deployment_names"),
+        )
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{change.project_name}.yaml")
+        result = await configure_service(change, project_manager, progress)
+    except ServiceChangeError as refusal:
+        return {
+            "service": service_name,
+            "target": target,
+            "status": "failed",
+            "error": str(refusal),
+            "error_type": refusal.error_type,
+        }
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error configuring service: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {
+            "service": service_name,
+            "target": target,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "internal_error",
+        }
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+    return {
+        "status": "success" if result.succeeded else "failed",
+        "service": service_name,
+        "target": target,
+        **result.counts,
+        # What the platform filled in because the caller left it empty. This is the only
+        # place where it gets to see an invitation key it did not choose itself, and
+        # without that key the invitation cannot be sent.
+        "generated": result.generated,
+        # What is still waiting on an administrator. Without this, a client only notices
+        # its domain was not approved because no ingress appears on that address.
+        "approvals": result.approvals,
+        # What waits on nobody and still does not work: a field that became required by
+        # a setting elsewhere and stayed empty. Without this a client only finds out when
+        # somebody tries to use the invitation.
+        "warnings": result.warnings,
+        "processing": result.processing,
+    }
+
+
+async def handle_configure_service_values(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Run a values write as a task: translate the payload, report the outcome.
+
+    Expected payload keys:
+        project_name, service, target, operation, component, deployment, values, keys,
+        deployment_names, rollout
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.manager.service.errors import ServiceChangeError
+    from opi.manager.service.values import ComponentValuesChange, set_component_values
+    from opi.services.catalog.base import ConfigLayer
+    from opi.services.component_values import ValuesOperation
+
+    service_name: str = payload["service"]
+    target: str = payload["target"]
+    operation: str = payload["operation"]
+    component_name: str = payload["component"]
+    deployment_name: str | None = payload.get("deployment")
+    project_manager: ProjectManager | None = None
+
+    def answer(extra: dict[str, Any]) -> dict:
+        return {
+            "service": service_name,
+            "target": target,
+            "component": component_name,
+            "deployment": deployment_name,
+            "operation": operation,
+            **extra,
+        }
+
+    try:
+        change = ComponentValuesChange(
+            project_name=payload["project_name"],
+            service_name=service_name,
+            layer=ConfigLayer(target),
+            operation=ValuesOperation(operation),
+            component_name=component_name,
+            deployment_name=deployment_name,
+            values=payload.get("values"),
+            keys=payload.get("keys"),
+            rollout=rollout_requested(payload),
+            deployment_names=payload.get("deployment_names"),
+        )
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{change.project_name}.yaml")
+        result = await set_component_values(change, project_manager, progress)
+    except ServiceChangeError as refusal:
+        return answer({"status": "failed", "error": str(refusal), "error_type": refusal.error_type})
+    except Exception:
+        # Never the exception's own text: a failure in this path can carry a decrypted
+        # value, and this message reaches the caller and the log.
+        logger.exception(
+            "Error applying %s of '%s' values in project '%s'", operation, service_name, payload["project_name"]
+        )
+        progress.fail_project("An internal error occurred")
+        return answer({"status": "failed", "error": "An internal error occurred", "error_type": "internal_error"})
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+    return answer(
+        {
+            "status": "success" if result.succeeded else "failed",
+            "changed": result.changed,
+            "processing": result.processing,
+        }
+    )
+
+
+async def handle_manage_database_schemas(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Add or remove one extra database schema (RC-59).
+
+    Write first, then reconcile, like its two siblings above -- and skip the reconcile
+    when the write changed nothing, which here is a removal of a schema that was already
+    marked. The reconcile is what creates the schema in every deployment's database and
+    exposes its ``DATABASE_SCHEMA_{POSTFIX}`` variable, so it is not optional for an add.
+
+    Expected payload keys:
+        project_name, operation, postfix, description, forget, rollout
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_names import validate_project_name
+
+    project_name: str = payload["project_name"]
+    operation: str = payload["operation"]
+    postfix: str = payload["postfix"]
+    description: str = payload.get("description", "")
+    forget: bool = bool(payload.get("forget", False))
+    project_manager: ProjectManager | None = None
+
+    def failure(message: str, error_type: str = "unknown") -> dict:
+        return {
+            "status": "failed",
+            "postfix": postfix,
+            "operation": operation,
+            "error": message,
+            "error_type": error_type,
+        }
+
+    try:
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return failure(error_msg, "invalid_project_name")
+        progress.complete_task(validate_task)
+
+        write_task = progress.add_task(steps.DATABASE_SCHEMAS_UPDATE, subject=f"{operation} van {postfix}")
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.manage_database_schemas(
+            operation, postfix, description=description, forget=forget
+        )
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error managing database schema")
+            progress.fail_task(write_task, error_msg)
+            progress.fail_project(error_msg)
+            return failure(error_msg, result.get("error_type", "unknown"))
+        progress.complete_task(write_task)
+
+        changed = bool(result.get("changed"))
+        processing: dict[str, Any] = {"status": "skipped"}
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            processing = skipped_processing()
+        elif changed:
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path, task_progress_manager=progress
+            )
+            if processing_success:
+                processing = {"status": "completed"}
+            else:
+                processing = {"status": "failed"}
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_project(processing_error)
+
+        succeeded = processing["status"] != "failed"
+        return {
+            "status": "success" if succeeded else "failed",
+            "postfix": postfix,
+            "operation": operation,
+            "changed": changed,
+            "created": result.get("created"),
+            "restored": result.get("restored"),
+            "marked": result.get("marked"),
+            "forgotten": result.get("forgotten"),
+            "processing": {
+                **processing,
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+            },
+        }
+
+    except Exception as exc:  # noqa: BLE001  # the outer boundary of this task; it writes the task failure
+        error_msg = f"Error managing database schema: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return failure(error_msg, "internal_error")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+async def handle_delete_component(payload: dict, progress: PersistentTaskProgressManager) -> dict:
+    """Handle async component deletion task.
+
+    Two steps that belong together: remove the component from the project file, then
+    reprocess the project so the deletion lands in the cluster. Splitting them over a
+    request and a task makes the dialog report success before the real work has started.
+
+    Expected payload keys:
+        project_name: Name of the project
+        component_name: Name of the component to remove
+        confirm_in_use: Optional; remove the deployment entries and dependency declarations
+            naming this component along with it. Absent means no, and a component that is
+            still referenced then fails the task instead of being deleted.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
+
+    project_name: str = payload["project_name"]
+    component_name: str = payload["component_name"]
+    confirm_in_use: bool = bool(payload.get("confirm_in_use", False))
+
+    logger.info(f"Task: deleting component {component_name} from {project_name}")
+
+    remove_task = progress.add_task(steps.COMPONENT_REMOVE, subject=component_name)
+    # Mutate through the single ProjectManager path: it reads fresh contents from Git,
+    # then saves and commits, so a lagging read cache can never overwrite newer Git state.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        result = await project_manager.delete_component(component_name, confirm_in_use=confirm_in_use)
+    finally:
+        await project_manager.close()
+
+    if not result["success"]:
+        error_msg = result["error"]
+        progress.fail_task(remove_task, error_msg)
+        progress.fail_project(error_msg)
+        raise RuntimeError(error_msg)
+
+    progress.complete_task(remove_task)
+
+    # delete_component already refreshed the read cache via save_and_commit_project;
+    # reprocess from Git to apply the deletion.
+    # reset_running_sync deliberately ON: a deletion has to land, and a sync on the old state
+    # should not delay that.
+    refresh_result = await handle_refresh_project(
+        {"project_name": project_name, "force_clone": True, "reset_running_sync": True}, progress
+    )
+
+    # A reprocess that failed must stay visible: it reports failure by returning, not by
+    # raising, so wrapping it in a fixed "completed" would swallow it.
+    failed = isinstance(refresh_result, dict) and refresh_result.get("status") == "failed"
+    return {
+        "status": "failed" if failed else "completed",
+        "message": (
+            refresh_result.get("message", "Herverwerken mislukt")
+            if failed
+            else f"Component '{component_name}' succesvol verwijderd"
+        ),
+        "project": project_name,
+        "component": component_name,
+        # What went with it, so a caller who confirmed the deletion learns which deployments
+        # and dependency declarations were changed instead of only that the component is gone.
+        "uncoupled_from": result.get("uncoupled_from", []),
+        "processing": refresh_result.get("processing") if isinstance(refresh_result, dict) else None,
+        # The reason comes from the reprocessing that failed, not from here: this is the same
+        # failure, passed on, and without it a client cannot attribute the failure.
+        **({"error_type": refresh_result.get("error_type", "processing_failed")} if failed else {}),
+        # And the category along with it, or _with_error_category derives it from
+        # "processing_failed" and an unreachable mail relay arrives as "not attributable".
+        **(
+            {"error_category": refresh_result["error_category"]}
+            if failed and refresh_result.get("error_category")
+            else {}
+        ),
+    }

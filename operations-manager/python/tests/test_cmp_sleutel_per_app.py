@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.manager.project.infrastructure import Infrastructure
 from ruamel.yaml import YAML
 from tests.cmp_plugin import plugin, render_script
 from tests.programma import echt_programma
@@ -249,9 +250,9 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         from opi.manager.project_manager import ProjectManager
 
         pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
-        monkeypatch.setattr("opi.manager.project_manager.get_project_public_key", lambda _: "age1demo")
+        monkeypatch.setattr("opi.manager.project.infrastructure.get_project_public_key", lambda _: "age1demo")
         monkeypatch.setattr(
-            "opi.manager.project_manager.get_decoded_project_private_key",
+            "opi.manager.project.infrastructure.get_decoded_project_private_key",
             AsyncMock(return_value="AGE-SECRET-KEY-1DEMO"),
         )
         return pm
@@ -264,7 +265,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager, "_kubectl_connector", kubectl)
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
-        await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+        await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
         sjablonen = [call.args[0] for call in kubectl.apply_manifest.await_args_list]
         assert sjablonen == ["manifests/cmp-sops-key-reader.yaml.jinja"]
@@ -281,7 +282,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
         with pytest.raises(RuntimeError, match="rig-demo"):
-            await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+            await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
     async def test_een_ontbrekend_secret_levert_het_secret_en_de_rol_op(
         self, manager: Any, monkeypatch: pytest.MonkeyPatch
@@ -291,7 +292,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager, "_kubectl_connector", kubectl)
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
-        await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+        await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
         sjablonen = [call.args[0] for call in kubectl.apply_manifest.await_args_list]
         assert sjablonen == [
@@ -317,13 +318,13 @@ class TestDeOpstartronde:
 
         store = AsyncMock()
         store.get_all = lambda: [maak("zonder-rol", "zonder-rol"), maak("met-rol", "met-rol"), maak("leeg", "leeg")]
-        monkeypatch.setattr("opi.core.startup.get_project_store", lambda: store)
-        monkeypatch.setattr("opi.core.startup.settings.CLUSTER_MANAGER", "odcn-production")
+        monkeypatch.setattr("opi.runtime.startup.startup.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.runtime.startup.startup.settings.CLUSTER_MANAGER", "odcn-production")
 
     async def test_de_ronde_zet_de_rol_waar_hij_ontbreekt_en_vat_samen(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         rollen = {"rig-prd-zonder-rol": False, "rig-prd-met-rol": True, "rig-prd-leeg": False}
         secrets = {"rig-prd-zonder-rol": True, "rig-prd-met-rol": True, "rig-prd-leeg": False}
@@ -343,7 +344,7 @@ class TestDeOpstartronde:
     async def test_een_namespace_die_niet_bestaat_telt_als_gefaald(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(return_value=False)
@@ -358,7 +359,7 @@ class TestDeOpstartronde:
     async def test_een_onleesbare_rol_telt_als_gefaald_en_de_ronde_gaat_door(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(side_effect=lambda _type, _naam, ns: None if ns.endswith("leeg") else False)
@@ -375,7 +376,7 @@ class TestDeOpstartronde:
     ) -> None:
         """De release controleert op de samenvatting, dus die moet er ook bij pech staan."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(side_effect=KubectlConnectionError("kubectl connection is not available"))
@@ -391,7 +392,7 @@ class TestDeOpstartronde:
         """Een traag of onbereikbaar cluster mag de opstartronde niet eindeloos ophouden."""
         import asyncio
 
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(startup, "CMP_KEY_READER_ROUND_TIMEOUT_SECONDS", 0.05)
 
@@ -422,11 +423,11 @@ class TestDeDeploymentNamespacesVanDitCluster:
         project = ProjectSummary(name="demo", api_key="", filename="demo.yaml", data={"deployments": deployments})
         store = AsyncMock()
         store.get_all = lambda: [project]
-        monkeypatch.setattr("opi.core.startup.get_project_store", lambda: store)
-        monkeypatch.setattr("opi.core.startup.settings.CLUSTER_MANAGER", "odcn-production")
+        monkeypatch.setattr("opi.runtime.startup.startup.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.runtime.startup.startup.settings.CLUSTER_MANAGER", "odcn-production")
 
     def test_een_deployment_op_een_ander_cluster_telt_niet_mee(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(
             monkeypatch,
@@ -439,7 +440,7 @@ class TestDeDeploymentNamespacesVanDitCluster:
         assert _cluster_deployment_namespaces() == {"rig-prd-hier": "demo"}
 
     def test_een_deployment_zonder_namespace_telt_niet_mee(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(monkeypatch, [{"name": "d1", "cluster": "odcn-production"}])
 
@@ -451,7 +452,7 @@ class TestDeDeploymentNamespacesVanDitCluster:
         Declareert een project 'operations', dan komt het uit op rig-prd-operations,
         waar 'sops-age-key' de platformsleutel is.
         """
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(
             monkeypatch,
@@ -469,10 +470,10 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_niet_in_een_platformnamespace(self) -> None:
-        from opi.handlers.sops import SopsHandler
+        from opi.services.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
-        handler = SopsHandler(kubectl)
+        handler = ProjectKeySecretHandler(kubectl)
 
         with pytest.raises(ValueError, match="platform"):
             await handler.ensure_cmp_key_reader("rig-prd-operations")
@@ -481,10 +482,10 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_wel_in_een_projectnamespace(self) -> None:
-        from opi.handlers.sops import SopsHandler
+        from opi.services.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
-        handler = SopsHandler(kubectl)
+        handler = ProjectKeySecretHandler(kubectl)
 
         await handler.ensure_cmp_key_reader("rig-prd-demo")
 

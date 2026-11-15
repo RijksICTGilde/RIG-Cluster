@@ -1,6 +1,6 @@
 """Tests for resource extraction from project YAML data."""
 
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     DEFAULT_RESOURCES,
     ProjectFileHandler,
     _parse_resources_block,

@@ -101,7 +101,7 @@ async def test_processing_an_existing_project_sets_the_three_labels(
 
 
 def test_the_namespace_labels_are_one_list_for_both_creation_paths() -> None:
-    """project_manager en git_monitor labelen namespaces, en delen deze lijst."""
+    """project_manager labelt de namespaces, en leest deze lijst."""
     labels = namespace_labels("sandboxed-local")
     assert labels["argocd.argoproj.io/managed-by"] == get_argo_namespace("sandboxed-local")
     assert labels[ENFORCE] == "baseline"

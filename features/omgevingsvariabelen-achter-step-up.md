@@ -15,7 +15,7 @@ voor een deployment die in ontwikkeling staat. De OTAP-markering versoepelt dit 
   bewerken" voor die scope. Geen namen en geen aantal overschrijvingen.
 - **Het venster**: na een verse step-up toont het de echte waarden als `KEY=value`-regels
   in dezelfde editor als de wizard kende. Leeg opslaan haalt de variabelen van die scope
-  weg. Na het opslaan wordt het project opnieuw verwerkt.
+  weg. Na het opslaan worden de deployments die dit component gebruiken opnieuw verwerkt.
 - **Wizard en component-modals**: het veld staat er niet meer in. Opslaan langs die
   wegen laat de opgeslagen waarde byte-gelijk staan (geen placeholder, geen
   terugzetstap: het veld wordt simpelweg niet aangeroerd). Één uitzondering: de
@@ -38,10 +38,12 @@ houdt dat vast.
 
 ## Hoe de techniek loopt
 
-- De step-up is die van RC-332: `StepUpAction.ENV_VARS_MANAGE` met
-  `@requires_step_up(vraagt_altijd_step_up, ...)` op de GET én de POST van
+- De step-up is die van RC-332: `StepUpAction.ENV_VARS_MANAGE` op de GET én de POST van
   `opi/web/router_env_vars.py`. De opslag toetst de stempel dus opnieuw, ook als het
-  venster al openstond. Het venster schuift niet mee.
+  venster al openstond. Het venster schuift niet mee. De GET leest de eis uit zijn grant;
+  de POST verklaart hem sinds RC-481 zelf (`_always_step_up`), omdat zijn actie
+  `service.write-values` die eis niet in zijn grants kan dragen: een grant met step-up
+  vraagt een mens, en het token van een service account is dat niet.
 - De herhaalstap van de step-up-dialoog kent sinds RC-388 ook een GET als methode: het
   verborgen veld `vervolg_methode` reist mee in `bg/_step-up.html.j2`,
   `router_step_up.py` normaliseert het naar GET/POST en `bg/_step-up-herhalen.html.j2`
@@ -50,10 +52,14 @@ houdt dat vast.
   `#edit-section-inner`). De inhoud die terugkomt opent de gedeelde modal zelf: de haak
   in `static/js/edit_modal.js` kijkt naar `data-step-up` (de dialoog) of
   `data-modal-fragment` (het venster, dat zijn titel meedraagt in `data-modal-title`).
-- Versleuteling blijft zoals die was: dezelfde `KeyValueConverter` en
-  `KeyValueValidator` als de editable van de dienst, dezelfde `read_user_env_vars` als
-  de lees-API, en `keep_existing_ciphertext_if_unchanged` zodat een ongewijzigde inhoud
-  geen nieuwe commit oplevert.
+- Schrijven loopt sinds RC-481 door dezelfde use case als de values-endpoints:
+  `set_component_values` met de operatie `replace`, want het venster stuurt de hele set.
+  Daarmee gelden dezelfde validatie (`validate_value_for_storage`), dezelfde canonieke
+  opslagvorm (`component_values.encode`) en hetzelfde opnieuw-toepassen bij een
+  gelijktijdige wijziging als op de API. Een ongewijzigde set levert geen commit op, nu uit
+  de vergelijking van de ONTSLEUTELDE waarden in plaats van uit
+  `keep_existing_ciphertext_if_unchanged`. Zie
+  [env-vars-en-service-values-een-pad.md](env-vars-en-service-values-een-pad.md).
 
 ## Grens en vervolg
 
@@ -61,12 +67,16 @@ houdt dat vast.
   (`/api/v2/projects/{p}/services/user-env-vars/values/...`) kunnen waarden zetten met
   het projecttoken en de leesroutes maskeren ze met `***` (zie
   [component-values-api.md](component-values-api.md)). Of die schrijfweg ook een step-up
-  moet dragen is een open punt.
-- De voorwaarde is een declaratie op de handeling (het `actie`-argument), zodat
+  moet dragen is een open punt: een service-accounttoken kan er geen antwoorden.
+- De voorwaarde is een declaratie op de handeling (het `action`-argument), zodat
   "alleen bepaalde rollen" later een wijziging van die declaratie is en geen ingreep in
-  generieke code. Sinds RC-392 is dat de regel `env-vars.manage` in
+  generieke code. Het venster OPENEN weegt de regel `env-vars.manage` in
   `opi/core/authz/rules.py`: `developer` plus een verse step-up voor een component dat
   niet in een productiedeployment zit, `ops` plus een verse step-up voor een component dat
-  daar wel in zit. Zie [rollen-en-rechten.md](rollen-en-rechten.md).
+  daar wel in zit. OPSLAAN weegt sinds RC-481 `service.write-values`, dezelfde actie als de
+  values-endpoints, en die kijkt naar het PROJECT: op een project met productie is
+  schrijven ops. De twee kunnen dus verschillen, en dan toont het venster de waarden
+  zonder opslaanknop in plaats van een 403 na het typen. Zie
+  [rollen-en-rechten.md](rollen-en-rechten.md).
 - `aliases` volgen hetzelfde patroon zodra dit bewezen is; dat is bewust buiten deze
   wijziging gehouden.

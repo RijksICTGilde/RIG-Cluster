@@ -1,13 +1,11 @@
-"""
-Authorization middleware for handling Keycloak SSO authentication.
+"""Authorization middleware for handling Keycloak SSO authentication.
 
-This middleware checks route annotations to determine if SSO is required
-and redirects unauthenticated users to the login page.
+Checks route annotations to determine if SSO is required and redirects
+unauthenticated users to the login page.
 """
 
 import logging
 import typing
-from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -15,10 +13,10 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
-from opi.core.session_guard import drop_refused_session, valid_session_user
-from opi.core.step_up import has_fresh_step_up, step_up_fresh
+from opi.core.logging_redact import redact_invite_key_in_path
+from opi.http.auth.session_guard import drop_refused_session, get_user
+from opi.services.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
-from opi.utils.logging_redact import redact_invite_key_in_path
 
 if typing.TYPE_CHECKING:
     from fastapi import FastAPI
@@ -28,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Exact paths that skip authorization checks. These MUST be exact matches and not
 # prefixes, otherwise they would also match longer authenticated routes (e.g. the
 # "/metrics" Prometheus scrape endpoint must not match the "/metrics-explorer" page).
-# Prometheus heeft geen SSO-sessie, dus /metrics wordt in de route zelf afgeschermd met
+# Prometheus has no SSO session, so /metrics is guarded in the route itself with
 # PROMETHEUS_METRICS_AUTH_TOKEN (validate_metrics_scrape_token).
 SKIP_AUTH_EXACT = ("/metrics",)
 
@@ -43,97 +41,45 @@ SKIP_AUTH_PREFIXES = (
 RequestResponseEndpoint = typing.Callable[[Request], typing.Awaitable[Response]]
 
 
-def get_user(request: Request) -> dict[str, Any] | None:
-    """
-    Extract user information from the session.
-
-    A session past its absolute lifetime, or one revoked by a logout elsewhere, counts
-    as unauthenticated (see opi/core/session_guard.py).
-
-    Args:
-        request: The incoming HTTP request
-
-    Returns:
-        User information dictionary if authenticated, None otherwise
-    """
-    if not hasattr(request, "session"):
-        logger.debug("No session available in request")
-        return None
-
-    user = valid_session_user(request.session)
-    if user:
-        logger.debug(f"Found authenticated user: {user.get('email', 'unknown')}")
-    else:
-        logger.debug("No valid user found in session")
-    return user
-
-
 class AuthorizationMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware to handle SSO authentication based on route annotations.
-
-    This middleware:
-    1. Checks if the route requires SSO authentication
-    2. Verifies user authentication status
-    3. Redirects to login if authentication is required but not present
-    4. Stores user information in the user service
-    """
+    """Requires SSO on routes that are annotated for it, and redirects when it is missing."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """
-        Process the request and handle authentication logic.
-
-        Args:
-            request: The incoming HTTP request
-            call_next: The next middleware/handler in the chain
-
-        Returns:
-            HTTP response, potentially a redirect to login
-        """
         path = request.url.path
         step_up_fresh.set(False)
 
-        # Skip auth checks and logging for infrastructure endpoints
         if path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES):
             return await call_next(request)
 
-        # API routes use X-API-Key authentication enforced inside the
-        # handlers; the middleware does not enforce SSO/session auth here.
-        # Browser-context JSON endpoints (polled from JavaScript) live under
-        # /ui/, not /api/.
+        # /api/ authenticates with X-API-Key in the routes themselves, so no SSO or
+        # session check here. Browser-context JSON endpoints live under /ui/, not /api/.
         if path.startswith("/api/"):
             request.state.user = None
             return await call_next(request)
 
-        # Get user from session
         user = get_user(request)
         if not user and hasattr(request, "session"):
             drop_refused_session(request.session)
 
-        # Check if the route requires SSO by examining route metadata
         route_requires_sso = self._route_requires_sso(request)
 
         if route_requires_sso and not user:
             logger.info(f"Redirecting unauthenticated user to login from: {redact_invite_key_in_path(path)}")
             return RedirectResponse(url="/auth/login", status_code=302)
 
-        # Store/update user information in the user service if authenticated
         if user:
             user_email = user.get("email")
             if user_email:
                 user_service = get_user_service()
                 user_service.store_user(user)
 
-                # Check if user's email is allowed access
                 if route_requires_sso and not user_service.is_email_allowed(user_email):
                     logger.warning(f"Access denied for user {user_email} - not in allowlist")
-                    # Redirect to permission denied page instead of login
                     return RedirectResponse(url="/permission-denied", status_code=302)
 
-        # Add user to request state for use in handlers
         request.state.user = user
-        # Voor call_next, want een contextvar reist mee naar de taak die call_next start,
-        # niet terug naar deze middleware.
+        # Before call_next: a contextvar travels into the task call_next starts, not back
+        # into this middleware.
         if user and user.get("email"):
             set_actor(user_actor(user["email"]))
             step_up_fresh.set(has_fresh_step_up(request))
@@ -141,37 +87,21 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _route_requires_sso(self, request: Request) -> bool:
-        """
-        Determine if the current route requires SSO authentication.
-
-        This method finds the matching route and checks its endpoint for
-        the _requires_sso annotation.
-
-        Args:
-            request: The incoming HTTP request
-
-        Returns:
-            True if SSO is required, False otherwise
-        """
-        # Get the FastAPI app from the request
+        """Read the ``_requires_sso`` annotation off the matching route; True when no route matches."""
         app: FastAPI = request.app
 
-        # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
-        # bearer-geheim, en deze twee regels draaien op elk verzoek.
-        gelogd_pad = redact_invite_key_in_path(request.url.path)
+        # An invite key sits in the path and is a bearer secret, and these two lines run
+        # on every request.
+        logged_path = redact_invite_key_in_path(request.url.path)
 
-        # Find the matching route by iterating through routes
         for route in app.router.routes:
             match, _ = route.matches({"type": "http", "path": request.url.path, "method": request.method})
             if match == Match.FULL:
-                # Found the matching route
                 endpoint = getattr(route, "endpoint", None)
                 if endpoint:
-                    # Check for our custom SSO requirement attribute
-                    requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to False
-                    logger.debug(f"Route {gelogd_pad} SSO requirement: {requires_sso}")
+                    requires_sso = getattr(endpoint, "_requires_sso", False)
+                    logger.debug(f"Route {logged_path} SSO requirement: {requires_sso}")
                     return requires_sso
 
-        # Default behavior for unmatched routes or routes without annotations
-        logger.debug(f"Could not determine SSO requirement for {gelogd_pad}, defaulting to require SSO")
+        logger.debug(f"Could not determine SSO requirement for {logged_path}, defaulting to require SSO")
         return True

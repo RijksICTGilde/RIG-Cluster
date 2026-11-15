@@ -11,7 +11,7 @@ must stay free of).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import (
     ConfigLayer,
@@ -50,7 +50,6 @@ class SleepModeService(Service):
     config_section_id = "sleep-mode-config"
     modal_flow_id = "modal-edit-sleep-mode-config"
 
-    # --- config field ownership (project level) ---------------------------------
     # sleep-mode owns its project-level config fields; the wizard/edit layer sources
     # this section from here. Forms building blocks are imported lazily so the catalog
     # stays forms-free at import time (avoids the forms -> registry -> catalog cycle).
@@ -64,7 +63,7 @@ class SleepModeService(Service):
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.sleep_mode.editables import SLEEP_MODE_EDITABLES
@@ -76,10 +75,9 @@ class SleepModeService(Service):
 
         It says which deployment is asleep and holds that deployment's wake token, so it
         describes the deployment it sits on and nothing else. Copying it onto a second
-        deployment (the clone behind a PR preview) made a brand-new preview arrive at
-        ``replicas: 0`` -- rolled out asleep, before anyone could look at it -- carrying
-        the source's wake token as well, which quietly widened that token's blast radius
-        from the one deployment it is documented to cover.
+        deployment (the clone behind a PR preview) rolls that preview out asleep, at
+        ``replicas: 0``, carrying the source's wake token as well -- which widens that
+        token's blast radius beyond the one deployment it is documented to cover.
         """
         from opi.services.catalog.sleep_mode.state import DEPLOYMENT_KEY
 
@@ -87,11 +85,11 @@ class SleepModeService(Service):
 
     @on(UIEvent.DEPLOYMENT_STATE)
     def report_sleep_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
-        """Report that this deployment is asleep, or on its way back (RC-28).
+        """Report that this deployment is asleep, or on its way back.
 
-        Sleep-mode is the reason this event exists: it scales the application to zero and
-        parks a waker in front of it, and nothing outside the service knew. The health
-        check and the deployment page read the situation from here.
+        Sleep-mode scales the application to zero and parks a waker in front of it, and
+        nothing outside the service can see that. The health check and the deployment page
+        read the situation from here.
 
         Facts, not verdicts:
 
@@ -116,8 +114,8 @@ class SleepModeService(Service):
                         "gewekt bij het eerste bezoek."
                     ),
                     expects_no_application_pods=True,
-                    # Sleeping and switched off must never collapse into one word (RC-35):
-                    # a sleeping deployment comes back by itself on the first visit, a
+                    # Sleeping and switched off must never collapse into one word: a
+                    # sleeping deployment comes back by itself on the first visit, a
                     # switched-off one waits for someone to turn it on.
                     badge="Slaapstand",
                     details={"state": sleep.state},
@@ -138,7 +136,7 @@ class SleepModeService(Service):
 
     @on(ActionEvent.REDEPLOY)
     async def wake_on_rollout(self, ctx: RedeployContext) -> list[str]:
-        """Wake the deployment and start the sleep clock again (RC-37).
+        """Wake the deployment and start the sleep clock again.
 
         Somebody rolling something out is the strongest activity signal there is, so the
         deadline goes back to ``now + sleep-after-deploy``: a preview under active
@@ -148,9 +146,8 @@ class SleepModeService(Service):
         A SLEEPING deployment does not just get a later deadline, it wakes up. New content
         that stays scaled to zero is not rolled out at all -- the pods never start, so
         nothing picks it up, and the person who pushed it sees a task that succeeded and a
-        deployment that still runs the old thing. That was the report this work started
-        from. Waking costs a cold start on a deployment somebody just touched, which is
-        the moment they are least likely to mind.
+        deployment that still runs the old thing. Waking costs a cold start on a deployment
+        somebody just touched, which is the moment they are least likely to mind.
 
         The WAKING applies to every deployment sleep-mode is on for; the DEADLINE only to
         the ones ``match`` selects. Those are two different questions. New content that
@@ -160,9 +157,7 @@ class SleepModeService(Service):
         anyway leaves a deadline that is long past by the time somebody adds a matching
         pattern, and the deployment drops asleep on the sweeper's first look.
 
-        No-op when sleep-mode is off for this cluster/project. Until RC-37 this lived as
-        ``project_manager._reset_sleep_deadline_on_activity`` -- generic code reaching into
-        one named service, which is what the event removes.
+        No-op when sleep-mode is off for this cluster/project.
         """
         from datetime import UTC, datetime
 
@@ -187,7 +182,7 @@ class SleepModeService(Service):
             return []
         return ["Deze deployment sliep en is gewekt, want er is nieuwe inhoud uitgerold."]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         # Built once and cached so consumers comparing section identity keep one object.
@@ -215,6 +210,10 @@ class SleepModeService(Service):
 # The wake button lives in actions.py, which imports this package for its config and
 # state helpers -- so it cannot be imported before the class exists. The definition is a
 # mutable dataclass and the registry imports this module at startup, before any request.
-from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402
+from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402  # bound after the class, see above
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 SleepModeService.definition.actions_provider = sleep_actions

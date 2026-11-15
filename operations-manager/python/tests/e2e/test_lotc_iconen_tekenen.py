@@ -1,7 +1,7 @@
 """Tekent elk icoon ook echt iets, in een echte browser.
 
 Waarom dit naast tests/test_lotc_icon_mapping.py bestaat, dat dezelfde vraag lijkt te
-stellen: die poort leest een LIJST (opi/web/nldd_iconen.py, de namen uit de geleverde
+stellen: die poort leest een LIJST (opi/utils/nldd_iconen.py, de namen uit de geleverde
 bundel) en vergelijkt daarmee. Zo'n lijst is een aanname over de browser, en juist die
 aanname is hier twee keer misgegaan - eerst met icons.json (de bedoelde woordenschat, 56
 namen die nergens getekend worden) en daarna met de aliaslaag die een bestaande naam naar
@@ -27,8 +27,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.web.lotc_switch import project_tab_url
-from opi.web.navigation_lotc import to_nldd_icon
+from opi.http.render.lotc_switch import project_tab_url
+from opi.utils.nldd_iconen import to_nldd_icon
 from tests.test_lotc_icon_mapping import (
     _gerenderde_naam,
     _iconen_als_macroargument,

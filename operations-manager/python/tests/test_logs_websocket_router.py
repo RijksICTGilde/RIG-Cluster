@@ -19,6 +19,7 @@ from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 
 
 class TestSendMessage(unittest.IsolatedAsyncioTestCase):
@@ -124,7 +125,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_valid(self):
         """Test user extraction from valid session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         session = {"user": {"email": "test@example.com", "name": "Test User", "login_at": time.time()}}
         result = valid_session_user(session)
@@ -134,7 +135,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_no_user(self):
         """Test user extraction when no user in session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         session = {"other_data": "value"}
         result = valid_session_user(session)
@@ -143,7 +144,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_none(self):
         """Test user extraction from None session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         result = valid_session_user(None)
 
@@ -388,10 +389,11 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", True):
+        with patch.object(KubectlConnector, "is_connected", True):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
                 lines=100,
             )
 
@@ -446,10 +448,11 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", True):
+        with patch.object(KubectlConnector, "is_connected", True):
             await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
                 lines=100,
                 **kwargs,
             )
@@ -470,10 +473,11 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
             connector._retry_task.cancel()
             connector._retry_task = None
 
-        with patch.object(KubectlConnector, "isConnected", False):
+        with patch.object(KubectlConnector, "is_connected", False):
             result = await connector.stream_deployment_logs(
                 deployment_name="test-deployment",
                 namespace="test-namespace",
+                container=APPLICATION_CONTAINER_NAME,
             )
 
         self.assertIsNone(result)

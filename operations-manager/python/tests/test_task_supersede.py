@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.task_models import SupersededByResponse, task_response_from_dict
-from opi.core.task_supersede import (
+from opi.runtime.tasks.task_worker import TaskWorker
+from opi.services.tasks.task_supersede import (
     RunningTask,
     TaskSuperseded,
     covers,
@@ -27,7 +28,6 @@ from opi.core.task_supersede import (
     scope_of,
     set_current_task,
 )
-from opi.core.task_worker import TaskWorker
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -49,6 +49,16 @@ def test_scope_add_component_reads_payload_deployments() -> None:
     """add_component's column is NULL but its scope is the payload's deployment list."""
     scope = scope_of("add_component", None, {"deployment_names": ["productie", "acceptatie"]})
     assert scope == frozenset({"productie", "acceptatie"})
+
+
+def test_scope_rollout_project_reads_payload_deployments() -> None:
+    """RC-481: the rollout task's scope is the same payload list the saver resolved."""
+    scope = scope_of("rollout_project", None, {"deployment_names": ["productie"]})
+    assert scope == frozenset({"productie"})
+
+
+def test_scope_rollout_project_without_a_list_is_project_wide() -> None:
+    assert scope_of("rollout_project", None, {}) is None
 
 
 def test_scope_update_component_is_project_wide() -> None:
@@ -229,7 +239,7 @@ def _worker_service(task: dict, candidates: list[dict]) -> AsyncMock:
 
 async def _run_until_completed(service: AsyncMock, handler: Callable[..., Awaitable[Any]]) -> dict:
     """Run a worker over one task with `handler`, return the result it completed with."""
-    with patch("opi.core.task_worker.settings") as s:
+    with patch("opi.runtime.tasks.task_worker.settings") as s:
         s.TASK_WORKER_POLL_INTERVAL = 0.05
         s.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         s.TASK_WORKER_STALE_THRESHOLD = 120
@@ -238,10 +248,8 @@ async def _run_until_completed(service: AsyncMock, handler: Callable[..., Awaita
         s.TASK_WORKER_CONCURRENCY = 1
         s.TASK_WORKER_MAX_DURATION = 30
 
-        with patch("opi.core.persistent_task_progress.PersistentTaskProgressManager") as progress_cls:
+        with patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager") as progress_cls:
             progress = AsyncMock()
-            progress.mark_legacy_completed = MagicMock()
-            progress.mark_legacy_failed = MagicMock()
             progress_cls.return_value = progress
 
             worker = TaskWorker(task_service=service, cluster="test-cluster")

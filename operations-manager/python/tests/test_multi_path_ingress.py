@@ -5,7 +5,7 @@ Tests the ability to define multiple paths for a component, each generating
 its own Kubernetes Ingress resource.
 """
 
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.naming import generate_ingress_name_from_path
 
 

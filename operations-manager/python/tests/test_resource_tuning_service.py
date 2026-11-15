@@ -6,6 +6,7 @@ import pytest
 from opi.services.resource_tuning_service import (
     TuneResult,
     get_project_data,
+    trigger_reprocessing,
     tune_deployment_resources,
 )
 
@@ -45,6 +46,25 @@ class TestGetProjectData:
         data, filename = get_project_data("my-project")
         assert data["name"] == "my-project"
         assert filename == "my-project.yaml"
+
+
+class TestTriggerReprocessing:
+    """deployment_names is a pass-through to process_project_from_git, which already scopes
+    render/sync/healthy-wait by it; the sweep (scheduler.py) relies on it reaching there."""
+
+    @patch("opi.services.resource_tuning_service.create_project_manager")
+    @pytest.mark.asyncio
+    async def test_deployment_names_reaches_process_project_from_git(self, mock_create_pm):
+        manager = AsyncMock()
+        manager.process_project_from_git.return_value = True
+        mock_create_pm.return_value = manager
+
+        result = await trigger_reprocessing("my-project", "my-project.yaml", deployment_names=["dev", "pr-690"])
+
+        assert result is True
+        manager.process_project_from_git.assert_awaited_once()
+        assert manager.process_project_from_git.await_args.kwargs["deployment_names"] == ["dev", "pr-690"]
+        manager.close.assert_awaited_once()
 
 
 class TestTuneDeploymentResources:
@@ -96,7 +116,7 @@ class TestTuneDeploymentResources:
         mock_pm_cls.return_value = AsyncMock()
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.side_effect = [
+        mock_connector.query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
             [{"value": [0, "1"]}],  # OOM kill detected
@@ -135,7 +155,7 @@ class TestTuneDeploymentResources:
         mock_get_from_git.return_value = (project_data, "my-project.yaml")
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         result = await tune_deployment_resources("my-project")
@@ -219,7 +239,7 @@ class TestGrowthCeiling:
         baseline. The ceiling bounds it; it must not disable it.
         """
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
             [{"value": [0, "1"]}],  # OOM kill detected
@@ -242,8 +262,8 @@ class TestGrowthCeiling:
         The override starts with the margin intact (request 64Mi under the limit), so
         the only thing that could produce a change here is the refused bump itself.
         """
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.resource_tuning.config import resource_tuning_config
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.resource_tuning_service import describe_growth_ceiling_block
 
         factor = resource_tuning_config().max_growth_factor
@@ -327,7 +347,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(900 * 1024 * 1024)]}],  # max: 900Mi
             [{"value": [0, str(850 * 1024 * 1024)]}],  # avg: 850Mi
             [],  # no OOM kills
@@ -371,7 +391,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(3000 * 1024 * 1024)]}],  # max: 3000Mi
             [{"value": [0, str(2900 * 1024 * 1024)]}],  # avg: 2900Mi
             [],  # no OOM kills
@@ -410,7 +430,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(100 * 1024 * 1024)]}],  # max: 100Mi
             [{"value": [0, str(80 * 1024 * 1024)]}],  # avg: 80Mi
             [],  # no OOM kills

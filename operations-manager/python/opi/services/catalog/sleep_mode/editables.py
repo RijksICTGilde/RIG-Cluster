@@ -35,8 +35,8 @@ SLEEP_ENABLED_EDITABLE = Editable(
 SLEEP_WAKE_MODE_EDITABLE = Editable(
     yaml_path=_path("wake-mode"),
     values_provider="WakeModeOptionsProvider",
-    # Gelijk aan de default van het configmodel; wijken die twee af, dan krijgt wie het
-    # formulier gebruikt iets anders dan wie de API gebruikt.
+    # Equal to the config model's default; if the two differ, whoever uses the form gets
+    # something other than whoever uses the API.
     default="confirm",
     virtualize=SERVICE_VIRTUALIZE,
 )

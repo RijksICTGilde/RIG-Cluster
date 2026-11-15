@@ -1,22 +1,16 @@
 """Authorization decisions derived from project files.
 
-Split out of ProjectService, which had grown three unrelated jobs in one class: the
-project cache, these authorization checks, and a platform-admin allowlist. The cache
-now lives in ProjectStore and the admin allowlist in UserService, so what is left here
-is only the question "may this user touch this project", answered from the project's
-``users`` list.
-
-These read through ProjectStore like everything else, so there is exactly one way to
-reach a project file.
+One question only: "may this user touch this project", answered from the project's
+``users`` list, read through ProjectStore like everything else.
 """
 
 import logging
 from typing import TYPE_CHECKING
 
-from opi.core.step_up import is_elevated_admin
-from opi.services.project_leden import human_members
+from opi.services.project_members import human_members
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES
 from opi.services.project_store import get_project_store
+from opi.services.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
@@ -26,31 +20,31 @@ logger = logging.getLogger(__name__)
 
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
-    """De MENSEN in een project, of None als het project onbekend is.
+    """The HUMANS in a project, or None when the project is unknown.
 
-    Alleen de mensen: deze twee functies beantwoorden "mag deze aanmelding dit project
-    openen", en een service account meldt zich nergens aan. Wat een service account mag
-    loopt langs :mod:`opi.api.principal`, dat de hele ledenlijst leest.
+    Humans only: these two functions answer "may this sign-in open this project", and a
+    service account signs in nowhere. What a service account may do runs through
+    :mod:`opi.http.auth.principal`, which reads the whole member list.
     """
     project = get_project_store().get(project_name)
     if project is None:
         logger.debug(f"No project found: {project_name}")
         return None
-    mensen = human_members(project)
-    logger.debug(f"Retrieved {len(mensen)} users for project: {project_name}")
-    return mensen
+    humans = human_members(project)
+    logger.debug(f"Retrieved {len(humans)} users for project: {project_name}")
+    return humans
 
 
 def is_user_authorized_for_project(project_name: str, user_email: str, audit: bool = True) -> bool:
     """Check whether a user may access a project. An elevated platform admin always may.
 
-    Geef ``audit=False`` mee in een lijst die dit per project vraagt: de INFO-regel moet
-    het spoor zijn van een geopend project, niet van elk project op het platform.
+    Pass ``audit=False`` in a listing that asks this per project: the INFO line has to be the
+    trace of an OPENED project, not of every project on the platform.
     """
     if is_elevated_admin(get_user_service(), user_email):
         if audit:
-            # INFO, anders is er met LOG_LEVEL=INFO in productie geen spoor van een
-            # platformbeheerder die een project opent waar hij geen lid van is.
+            # INFO, or with LOG_LEVEL=INFO in production there is no trace of a platform
+            # admin opening a project they are not a member of.
             logger.info(f"User {user_email} authorized for project {project_name} (admin)")
         return True
 
@@ -69,13 +63,13 @@ def is_user_authorized_for_project(project_name: str, user_email: str, audit: bo
 
 
 def get_user_roles_for_project(project_name: str, user_email: str) -> list[str]:
-    """De rollen van deze gebruiker op dit project; een platformbeheerder krijgt die van B6.
+    """This user's roles on this project; a platform admin gets PLATFORM_ADMIN_ROLES.
 
-    Leeg betekent "geen rol hier". Voor een beslissing: gebruik
-    :func:`opi.web.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
+    Empty means "no role here". For a DECISION use
+    :func:`opi.http.auth.authz.authorize`; this is the reading a page puts in its context.
     """
     if is_elevated_admin(get_user_service(), user_email):
-        return sorted(rol.value for rol in PLATFORM_ADMIN_ROLES)
+        return sorted(role.value for role in PLATFORM_ADMIN_ROLES)
 
     users = get_project_users(project_name)
     for user in users or []:

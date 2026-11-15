@@ -149,14 +149,17 @@ async def test_een_blijvende_deployment_houdt_de_namespace_tegen(monkeypatch: py
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_deployment = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
     argo.application_exists = AsyncMock(return_value=False)
     monkeypatch.setattr("opi.manager.delete_project_manager.create_argo_connector", lambda: argo)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.create_argo_connector", lambda: argo)
 
     with patch("os.path.exists", side_effect=_niets_bestaat), patch("shutil.rmtree", MagicMock()):
         resultaat = await manager.delete_deployment("test-project", "productie")
@@ -230,14 +233,17 @@ def _verloop_van_een_projectverwijdering(
 
     argo.wait_for_application_deletion = AsyncMock(side_effect=_wait)
     monkeypatch.setattr("opi.manager.delete_project_manager.create_argo_connector", lambda: argo)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.create_argo_connector", lambda: argo)
 
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     monkeypatch.setattr(
         manager, "delete_deployment", AsyncMock(return_value={"success": True, "operations": [], "errors": []})
@@ -298,6 +304,7 @@ async def test_een_onleesbaar_applicatiebestand_houdt_het_appproject_in_de_map(
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
     monkeypatch.setattr("opi.manager.delete_project_manager.create_argo_connector", lambda: argo)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.create_argo_connector", lambda: argo)
 
     resultaat: dict[str, Any] = {"operations": [], "errors": [], "success": True}
     verder = await manager._release_project_applications("test-project", "local", resultaat)
@@ -459,10 +466,13 @@ async def _verwijder_deployment(
 
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=_niets_bestaat),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
     ):
         return await manager.delete_deployment("test-project", "pr-42"), pm
 
@@ -564,10 +574,13 @@ async def test_een_onbevestigde_app_houdt_de_entry_ook_als_de_hermeting_schoon_i
 
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=_niets_bestaat),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
     ):
         resultaat = await manager.delete_deployment("test-project", "pr-42", force=True)
 
@@ -597,14 +610,17 @@ async def test_een_zuster_die_deze_ronde_weggaat_houdt_de_namespace_niet_tegen(
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_deployment = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
     argo.application_exists = AsyncMock(return_value=False)
     monkeypatch.setattr("opi.manager.delete_project_manager.create_argo_connector", lambda: argo)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.create_argo_connector", lambda: argo)
 
     with patch("os.path.exists", side_effect=_niets_bestaat), patch("shutil.rmtree", MagicMock()):
         resultaat = await manager.delete_deployment("test-project", "productie", leaving={"productie", "acceptatie"})
@@ -640,10 +656,12 @@ async def _verwijder_project(
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     monkeypatch.setattr(
         manager, "delete_deployment", AsyncMock(return_value={"success": True, "operations": [], "errors": []})
@@ -787,10 +805,13 @@ def _delete_deployment_met_stappen(
     async def _run() -> dict[str, Any]:
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
             patch("os.path.exists", side_effect=_niets_bestaat),
             patch("shutil.rmtree", MagicMock()),
             patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+            patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
         ):
             return await manager.delete_deployment("test-project", "pr-42")
 
@@ -805,8 +826,8 @@ async def test_een_deployment_verwijderen_meldt_elke_stap_met_de_deployment_als_
     assert resultaat["success"] is True, resultaat["errors"]
     assert _stappen_van(progress) == [
         ("ArgoCD-toepassing verwijderen", "pr-42"),
-        ("Namespace verwijderen", "pr-42"),
         ("Services opruimen", "pr-42"),
+        ("Namespace verwijderen", "pr-42"),
         ("Manifesten verwijderen", "pr-42"),
         ("Deployment uit het projectbestand verwijderen", "pr-42"),
         ("Subdomein opruimen", "pr-42"),
@@ -859,8 +880,8 @@ async def test_een_stap_met_nieuwe_fouten_sluit_als_mislukt() -> None:
     assert "rig-test-project" in fout
     assert [naam for naam, _ in _stappen_van(progress)] == [
         "ArgoCD-toepassing verwijderen",
-        "Namespace verwijderen",
         "Services opruimen",
+        "Namespace verwijderen",
         "Manifesten verwijderen",
         "Deployment uit het projectbestand verwijderen",
         "Subdomein opruimen",
@@ -893,10 +914,12 @@ def _project_delete_met_stappen(
     store = MagicMock()
     store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
     monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
     subdomain = MagicMock()
     subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
     monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+    monkeypatch.setattr("opi.manager.project.deployment_removal.SubdomainConnector", subdomain)
 
     monkeypatch.setattr(
         manager, "delete_deployment", AsyncMock(return_value={"success": True, "operations": [], "errors": []})

@@ -101,3 +101,19 @@ def test_niets_gewijzigd_geen_herstart(taakshell: str, tmp_path: Path) -> None:
     )
 
     assert acties == []
+
+
+def test_large_apply_output_still_restarts(taakshell: str, tmp_path: Path) -> None:
+    """`grep -q` stops at the match on line 1 and closes its end of the pipe; when `kubectl apply`
+    keeps sending after that (here well above the 64KiB pipe buffer), its write breaks with SIGPIPE
+    and `pipefail` turns the whole condition non-zero. Without `-q` grep reads on and that does not
+    happen. Forces it, rather than hoping for the race."""
+    padding = "x" * 200_000
+    acties = _draai(
+        _render(taakshell, "odcn-staging"),
+        tmp_path,
+        template_wijzigt=False,
+        apply_uitvoer=f"secret/operations-manager-env-secrets configured\n{padding}\n",
+    )
+
+    assert acties == ["rollout restart deployment operations-manager -n rig-staging-operations"]

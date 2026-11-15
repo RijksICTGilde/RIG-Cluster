@@ -18,17 +18,15 @@ class UserService:
     Includes email-based access control with an allowlist of permitted users.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the in-memory user store and email allowlist."""
         self._users: dict[str, dict[str, Any]] = {}
         self._allowed_emails: set[str] = set()
-        # Platform administrators: authorized for every project regardless of its
-        # members list. Moved here from ProjectService, which held it alongside the
-        # project cache -- an allowlist of emails belongs with the other user state.
+        #: Platform administrators, authorized for every project whatever its member list says.
         self._platform_admin_emails: set[str] = set()
-        # Sessies van voor dit tijdstip (epochseconden) gelden niet meer. Gevuld uit de
-        # tabel session_revocations bij het opstarten en bij elk intrekken, zodat de
-        # controle per verzoek geen database raakt. Dit leunt op een pod per cluster.
+        #: Sessions from before this moment (epoch seconds) no longer count. Filled from the
+        #: session_revocations table at startup and on every revocation, so the per-request
+        #: check touches no database. That leans on one pod per cluster.
         self._sessions_revoked_after: dict[str, float] = {}
         logger.info("UserService initialized with in-memory storage and email access control")
 
@@ -128,26 +126,6 @@ class UserService:
 
         return "Unknown User"
 
-    def get_users_by_organization(self, organization_name: str) -> dict[str, dict[str, Any]]:
-        """
-        Get all users belonging to a specific organization.
-
-        Args:
-            organization_name: Name of the organization
-
-        Returns:
-            Dictionary mapping email addresses to user information for users in the organization
-        """
-        matching_users = {}
-
-        for email, user_info in self._users.items():
-            org_info = user_info.get("organization", {})
-            if org_info.get("name") == organization_name:
-                matching_users[email] = user_info
-
-        logger.debug(f"Found {len(matching_users)} users in organization '{organization_name}'")
-        return matching_users
-
     def get_organization_stats(self) -> dict[str, Any]:
         """
         Get statistics about organizations and users.
@@ -239,22 +217,6 @@ class UserService:
         logger.info(f"Removed user: {email}")
         return True
 
-    def get_all_users(self) -> dict[str, dict[str, Any]]:
-        """
-        Get all stored users.
-
-        Returns:
-            Dictionary mapping email addresses to user information
-        """
-        logger.debug(f"Retrieved all users - count: {len(self._users)}")
-        return self._users.copy()
-
-    def clear_all_users(self) -> None:
-        """Clear all stored users (mainly for testing purposes)."""
-        user_count = len(self._users)
-        self._users.clear()
-        logger.info(f"Cleared all users from memory - removed {user_count} users")
-
     # Email Access Control Methods
 
     def add_allowed_email(self, email: str) -> None:
@@ -285,12 +247,12 @@ class UserService:
         return bool(email) and email.lower().strip() in self._platform_admin_emails
 
     def set_sessions_revoked_after(self, email: str, revoked_after: float) -> None:
-        """Elke sessie van dit e-mailadres die voor ``revoked_after`` begon, vervalt."""
+        """Every session of this email address that started before ``revoked_after`` expires."""
         self._sessions_revoked_after[email.lower().strip()] = revoked_after
         logger.info(f"Sessies van {email} ingetrokken vanaf {revoked_after}")
 
     def are_sessions_revoked(self, email: str, login_at: float) -> bool:
-        """Of een sessie die op ``login_at`` is begonnen, is ingetrokken."""
+        """Whether a session that started at ``login_at`` has been revoked."""
         revoked_after = self._sessions_revoked_after.get(email.lower().strip())
         return revoked_after is not None and login_at < revoked_after
 
@@ -355,12 +317,6 @@ class UserService:
             List of allowed email addresses
         """
         return sorted(self._allowed_emails)
-
-    def clear_allowed_emails(self) -> None:
-        """Clear all allowed emails (mainly for testing purposes)."""
-        email_count = len(self._allowed_emails)
-        self._allowed_emails.clear()
-        logger.info(f"Cleared all allowed emails - removed {email_count} emails")
 
     def get_access_stats(self) -> dict[str, Any]:
         """

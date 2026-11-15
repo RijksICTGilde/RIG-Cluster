@@ -6,10 +6,10 @@ from the account name. Mail leaves over the
 Rijksoverheid server carrying their domain; SPF alignment via DMARC is the only control
 that passes, so a self-chosen domain breaks it. See docs/operations/ron-koppeling.md.
 
-The same three fields exist per deployment (RC-401), with the SAME validation: the form and
-the API judge an override exactly as they judge the project value, so a value that cannot
-go into a mail header is refused wherever it is written. An empty field means "inherit",
-which is why every one of them removes its key instead of writing a null.
+The same three fields exist per deployment, with the SAME validation: the form and the API
+judge an override exactly as they judge the project value, so a value that cannot go into a
+mail header is refused wherever it is written. An empty field means "inherit", which is why
+every one of them removes its key instead of writing a null.
 """
 
 from __future__ import annotations
@@ -43,11 +43,11 @@ SEND_EMAIL_FROM_NAME_EDITABLE = Editable(
 
 SEND_EMAIL_FROM_ADDRESS_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.SEND_EMAIL, "config", "from-address"),
-    # Dezelfde regel als de connector toetst, via het model: wat het formulier aanneemt mag
-    # de verwerking niet halverwege laten struikelen.
+    # The same rule the connector checks, through the model: what the form accepts must not
+    # trip up the processing halfway.
     validator=ModelFieldValidator(SendEmailConfig, "from_address", FROM_ADDRESS_MESSAGE),
-    # Leeg betekent "het afgeleide adres", en dat is een geldige uitkomst. Het veld
-    # leegmaken trekt daarmee ook de aanvraag in (zie ``config_value_approval``).
+    # Empty means "the derived address", and that is a valid outcome. Clearing the field
+    # therefore also withdraws the request (see ``config_value_approval``).
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
@@ -55,9 +55,9 @@ SEND_EMAIL_FROM_ADDRESS_EDITABLE = Editable(
 SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.SEND_EMAIL, "config", "messages-per-day"),
     converter=IntegerConverter(),
-    # Het schemaplafond en niet de platformstandaard: een hoger getal is sinds RC-400 een
-    # AANVRAAG en geen fout, dus het formulier moet hem aannemen. Wat er daadwerkelijk naar
-    # de relay gaat, beslist ``effective_messages_per_day``.
+    # The schema ceiling and not the platform default: a higher number is a REQUEST and not an
+    # error, so the form has to accept it. What actually reaches the relay is decided by
+    # ``effective_messages_per_day``.
     validator=RangeValidator(min_value=1, max_value=MAX_MESSAGES_PER_DAY),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
@@ -75,7 +75,7 @@ def _deployment_editable(field: str, project_editable: Editable) -> Editable:
         yaml_path=config_path(ConfigLayer.DEPLOYMENT, ServiceType.SEND_EMAIL, "config", field),
         validator=project_editable.validator,
         converter=project_editable.converter,
-        # Leeg betekent "neem de waarde van het project", en dat is de normale situatie.
+        # Empty means "take the project's value", which is the normal situation.
         remove_when_none=True,
         virtualize=SERVICE_VIRTUALIZE,
     )
@@ -87,7 +87,7 @@ SEND_EMAIL_DEPLOYMENT_MESSAGES_PER_DAY_EDITABLE = _deployment_editable(
     "messages-per-day", SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE
 )
 
-#: In formulierorde: wie schrijft, kiest eerst een naam, dan een adres, dan een budget.
+#: In form order: a writer picks a name first, then an address, then a budget.
 SEND_EMAIL_DEPLOYMENT_EDITABLES = (
     SEND_EMAIL_DEPLOYMENT_FROM_NAME_EDITABLE,
     SEND_EMAIL_DEPLOYMENT_FROM_ADDRESS_EDITABLE,

@@ -10,33 +10,29 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
-from opi.core.step_up import StepUpAction
-from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso, requires_step_up
+from opi.http.auth.step_up_conditions import always_requires_step_up
+from opi.http.render.menu import get_menu_items
 from opi.services.session_revocation_service import revoke_sessions
-from opi.services.step_up_conditions import vraagt_altijd_step_up
+from opi.services.step_up import StepUpAction
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
 user_admin_router = APIRouter(prefix="/admin/users", tags=["user-admin"])
 
-#: De velden die de step-up-dialoog voor dit formulier moet herhalen: de dialoog neemt de
-#: plaats van het formulier in. Uit de formulierdefinitie, zodat een veld erbij meekomt.
-_FORMULIERVELDEN = tuple(visualizer.editable.yaml_path for visualizer in USER_SECTION.editables)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+#: The fields the step-up dialog has to repeat for this form, because the dialog takes the
+#: place of the form. Read from the form definition, so an added field comes along.
+_FORM_FIELDS = tuple(visualizer.editable.yaml_path for visualizer in USER_SECTION.editables)
 
 
 def _get_service() -> UserAdminService:
@@ -59,11 +55,10 @@ def _render_form_html(
     errors: dict | None = None,
     edit_mode: bool = False,
 ) -> str:
-    """Render the user form fields HTML from editables.
+    """Render the user form fields HTML from the editables.
 
-    De adapter rendert meteen af, ook de stapel eromheen (``render_flow``), dus die string
-    mag NIET nog een keer door een sjabloonrender: hij draagt wat iemand in het formulier
-    heeft getypt, en dat hoort geen Jinja te worden.
+    The adapter renders the whole stack at once, so the result must NOT go through a template
+    render again: it carries what someone typed into the form, and that is not to become Jinja.
     """
     renderer = _create_renderer()
 
@@ -77,14 +72,14 @@ def _render_form_html(
     return html
 
 
-def _terug(request: Request, melding: str) -> Response:
-    """Terug naar de lijst, en onder htmx als volledige navigatie.
+def _back_to_list(request: Request, message: str) -> Response:
+    """Back to the list, as a full navigation under htmx.
 
-    De formulieren posten met htmx omdat de step-up een dialoog in de plaats van het
-    formulier zet. Een 303 zou htmx de hele pagina in die dialoog laten hangen, dus gaat
-    de verversing als HX-Redirect; dezelfde weg als ``router_tokens._terug``.
+    The forms post with htmx because the step-up puts a dialog in the place of the form. A 303
+    would leave htmx hanging the whole page in that dialog, so the refresh goes as HX-Redirect,
+    the same road as ``router_tokens._back_to_team``.
     """
-    url = f"/admin/users?success={quote_plus(melding)}"
+    url = f"/admin/users?success={quote_plus(message)}"
     if request.headers.get("HX-Request"):
         return HTMLResponse(content="", headers={"HX-Redirect": url})
     return RedirectResponse(url=url, status_code=303)
@@ -99,42 +94,33 @@ def _user_form_response(
     errors: dict | None = None,
     edit_mode: bool = False,
 ) -> Response:
-    """Het gebruikersformulier, in de weergave die dit verzoek krijgt.
+    """The user form, in the shape this request gets.
 
-    Alle vijf de plekken die dit formulier tonen (aanmaken, bewerken, en de drie keer dat
-    het met fouten terugkomt) lopen hierlangs, zodat de keuze tussen de twee weergaven op
-    een plek staat en niet vijf keer meegeschreven hoeft te worden.
-
-    Een htmx-verzoek krijgt alleen het formulier terug, en dat vervangt zichzelf waar het
-    staat: op de pagina, of in de dialoog als het daar na de step-up terechtkwam. Een hele
-    pagina past in die dialoog niet.
+    An htmx request gets the form only, and it replaces itself where it stands: on the page, or
+    in the dialog when it ended up there after the step-up. A whole page does not fit in that
+    dialog.
     """
-    from opi.web.lotc_switch import build_lotc_admin, render, render_fragment
+    from opi.http.render.lotc_switch import build_lotc_admin, render, render_fragment
 
-    velden = {
+    fields = {
         "request": request,
         "form_action": form_action,
         "form_html": _render_form_html(data=data, errors=errors, edit_mode=edit_mode),
         "csrf_token": ensure_csrf_token(request),
     }
     if request.headers.get("HX-Request"):
-        return HTMLResponse(content=render_fragment(request, template="bg/_admin-user-form.html.j2", context=velden))
+        return HTMLResponse(content=render_fragment(request, template="bg/_admin-user-form.html.j2", context=fields))
 
     return render(
         request,
         template="bg/admin-user-form.html.j2",
         context={
-            **velden,
+            **fields,
             "menu_items": get_menu_items(user),
             "page_heading": page_heading,
             **build_lotc_admin(user=user, current_path="/admin/users"),
         },
     )
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 
 @user_admin_router.get("", response_class=HTMLResponse)
@@ -150,8 +136,7 @@ async def list_users(request: Request) -> Response:
 
     success_message = request.query_params.get("success")
 
-    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py.
-    from opi.web.lotc_switch import build_lotc_admin, render
+    from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(
         request,
@@ -186,14 +171,13 @@ async def create_user_form(request: Request) -> Response:
 @user_admin_router.post("/create", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_CREATE, velden=_FORMULIERVELDEN)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_CREATE, fields=_FORM_FIELDS)
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
     user = require_platform_admin(request)
     form_data = await request.form()
     submitted = dict(form_data)
 
-    # Validate via processor
     processor = EditableFormProcessor()
     result, errors = await processor.process_json_submission(
         submitted=submitted,
@@ -230,10 +214,9 @@ async def create_user_submit(request: Request) -> Response:
             errors=errors,
         )
 
-    # Sync: add new email to the in-memory allowlist
     get_user_service().add_allowed_email(new_email)
 
-    return _terug(request, "Gebruiker aangemaakt")
+    return _back_to_list(request, "Gebruiker aangemaakt")
 
 
 @user_admin_router.get("/{user_id}/edit", response_class=HTMLResponse)
@@ -260,7 +243,7 @@ async def edit_user_form(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/edit", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_EDIT, velden=_FORMULIERVELDEN)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_EDIT, fields=_FORM_FIELDS)
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
     user = require_platform_admin(request)
@@ -314,21 +297,20 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
     if not updated:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
-    # Sync: if email changed, update the allowlist
     user_service = get_user_service()
     if old_email.lower() != new_email.lower():
         user_service.remove_allowed_email(old_email)
     user_service.add_allowed_email(new_email)
 
-    return _terug(request, "Gebruiker bijgewerkt")
+    return _back_to_list(request, "Gebruiker bijgewerkt")
 
 
 @user_admin_router.post("/{user_id}/revoke-sessions", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_SESSIONS_REVOKE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_SESSIONS_REVOKE)
 async def revoke_user_sessions(request: Request, user_id: str) -> Response:
-    """Beëindig elke lopende portaalsessie van deze gebruiker."""
+    """End every running portal session of this user."""
     admin = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
@@ -336,8 +318,7 @@ async def revoke_user_sessions(request: Request, user_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
     revoked_after = await revoke_sessions(existing["email"])
-    # Deze handeling hoort in de gebeurtenissentabel zodra die er is; tot die tijd staat
-    # hij hier, met wie, voor wie en vanaf wanneer.
+    # Logged here with who, for whom and from when, until there is an events table.
     logger.info(
         "Platformbeheerder %s beëindigde de sessies van %s vanaf %s",
         admin.get("email", "onbekend"),
@@ -345,19 +326,18 @@ async def revoke_user_sessions(request: Request, user_id: str) -> Response:
         revoked_after.isoformat(),
     )
 
-    return _terug(request, "Sessies beëindigd")
+    return _back_to_list(request, "Sessies beëindigd")
 
 
 @user_admin_router.post("/{user_id}/delete", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_DELETE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_DELETE)
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
     require_platform_admin(request)
     service = _get_service()
 
-    # Get email before deleting so we can remove from allowlist
     existing = await service.get_user(user_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
@@ -366,36 +346,34 @@ async def delete_user(request: Request, user_id: str) -> Response:
     if not deleted:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
-    # Sync: remove email from the allowlist
     get_user_service().remove_allowed_email(existing["email"])
 
-    return _terug(request, "Gebruiker verwijderd")
+    return _back_to_list(request, "Gebruiker verwijderd")
 
 
 @user_admin_router.post("/{user_id}/otp-reset", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_OTP_RESET)
+@requires_step_up(always_requires_step_up, action=StepUpAction.USER_OTP_RESET)
 async def reset_user_otp(request: Request, user_id: str) -> Response:
-    """Maak de tweede factor van een ANDERE gebruiker leeg.
+    """Clear the second factor of ANOTHER user, for someone who can no longer get a code.
 
-    Voor wie geen code meer uit zijn app kan halen. Welke kolommen dit leegmaakt
-    staat in ``features/otp-op-de-zad-gebruiker.md``, zodat een handmatige ingreep
-    hetzelfde doet.
+    Which columns this clears is written down in "features/otp-op-de-zad-gebruiker.md", so a
+    manual intervention does the same.
 
-    Niet voor jezelf: je eigen factor leegmaken zonder tweede factor zou van elke
-    overgenomen beheerderssessie een weg om die factor heen maken. Vervangen kan wel, op
-    /account/otp, en dat vraagt een code van de bestaande factor.
+    Never for yourself: clearing your own factor without a second factor would turn any
+    hijacked admin session into a way around that factor. Replacing it is possible on
+    /account/otp, and that asks for a code from the existing factor.
     """
-    beheerder = require_platform_admin(request)
+    admin = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
 
-    door = str(beheerder.get("email", "")).lower()
-    if existing["email"].lower() == door:
+    by_email = str(admin.get("email", "")).lower()
+    if existing["email"].lower() == by_email:
         raise HTTPException(status_code=403, detail="Je eigen 2-factor reset je op /account/otp")
 
-    await _get_otp_service().reset(existing["email"], by=door)
-    return _terug(request, "Tweede factor gereset")
+    await _get_otp_service().reset(existing["email"], by=by_email)
+    return _back_to_list(request, "Tweede factor gereset")

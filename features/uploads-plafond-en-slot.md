@@ -96,7 +96,7 @@ en doet daarom voor een pad dat eindigt op `/images/push` drie dingen meer:
 1. **De projectsleutel.** De `X-API-Key` moet de sleutel zijn van het project in het pad.
    Zonder header of met de sleutel van een ander project volgt een 401 voordat er een byte
    body gelezen is. Het bewijsmiddel gaat door `recognise_principal`
-   (`opi/api/principal.py`), dezelfde functie die de poort op de route gebruikt, dus er is
+   (`opi/http/auth/principal.py`), dezelfde functie die de poort op de route gebruikt, dus er is
    geen tweede vergelijking die uiteen kan lopen.
 2. **De rol** (`image.push`). Een token dat `image.push` niet mag krijgt zijn 403 ook
    vóór de parser, zodat de voorcontrole en de route daarna niet uiteen kunnen lopen. Dit

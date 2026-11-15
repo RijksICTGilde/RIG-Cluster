@@ -20,7 +20,7 @@
    "Domein" zei. Wat een aanvraag IS staat nu in de groepskop (de dienst, met haar naam en
    icoon uit de registry) en wat er gevraagd wordt in item.subject, geschreven door de
    dienst die het weet. Dezelfde vorm als bg/admin-approvals.html.j2; die twee horen niet
-   uiteen te lopen. De groepen komen uit groepeer_per_dienst() in router_approvals.py. #}
+   uiteen te lopen. De groepen komen uit group_by_service() in router_approvals.py. #}
 {% if projects_data %}
     {% for project in projects_data %}
     <c-card outline="true" padding="none" background-color="wit">

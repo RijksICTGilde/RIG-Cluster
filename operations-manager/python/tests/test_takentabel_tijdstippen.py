@@ -21,7 +21,7 @@ tests/test_dates_go_through_one_filter.py.
 
 from __future__ import annotations
 
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.web.router_tasks import _normalize_run, _normalize_task
 
 

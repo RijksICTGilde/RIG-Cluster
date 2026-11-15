@@ -1,87 +1,52 @@
-"""
-Database pool management for the application.
+"""The asyncpg pools of the application, created and closed with its lifecycle."""
 
-This module provides centralized database pool management with application lifecycle integration.
-"""
-
-import asyncio
 import logging
 
 import asyncpg
-from tenacity import (
-    after_log,
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.database_pool import DatabasePool, DatabasePoolError
 
 logger = logging.getLogger(__name__)
 
-#: Het plafond van de hoofdpool (samen met SQLAlchemy-engine: max 10 verbindingen).
+#: The ceiling of the main pool (with the SQLAlchemy engine: 10 connections at most).
 MAIN_POOL_MAX_SIZE = 5
 
-# Global registry of database pools
+#: What a database that does not accept connections raises. PostgresError is in it for the
+#: "starting up" and "too many connections" answers, and so also covers a wrong password,
+#: which is therefore retried just as long (tests/test_database_pool_retry.py).
+_CONNECT_ERRORS = (
+    asyncpg.exceptions.PostgresError,
+    asyncpg.exceptions.InterfaceError,
+    OSError,
+    TimeoutError,
+)
+
+#: Seven minutes, long enough for a CNPG failover and a cluster that is still starting.
+_CONNECT_BUDGET_SECONDS = 420.0
+
 _pools: dict[str, DatabasePool] = {}
 
 
-@retry(
-    stop=stop_after_attempt(12),  # Try up to 12 times (about 8 minutes total)
-    wait=wait_exponential(multiplier=2, min=2, max=60),  # 2s, 4s, 8s, 16s, 32s, 60s, 60s...
-    retry=retry_if_exception_type(
-        (
-            asyncpg.exceptions.PostgresError,
-            asyncpg.exceptions.InterfaceError,
-            asyncpg.exceptions.InvalidAuthorizationSpecificationError,
-            asyncpg.exceptions.ConnectionDoesNotExistError,
-            asyncpg.exceptions.ConnectionFailureError,
-            ConnectionError,
-            OSError,
-            DatabasePoolError,
-            asyncio.TimeoutError,
-        )
-    ),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
-)
 async def _initialize_database_pool_with_retry(pool: DatabasePool, name: str) -> None:
-    """Initialize a single database pool with retry logic.
+    """``name`` only names the pool in the log."""
 
-    Args:
-        pool: The DatabasePool instance to initialize
-        name: The name of the pool for logging
-    """
-    logger.info(f"Attempting to initialize database pool '{name}' (host: {pool.host}:{pool.port})")
-    await pool.initialize()
-    logger.info(f"Successfully initialized database pool '{name}'")
+    async def _initialize() -> None:
+        logger.info(f"Attempting to initialize database pool '{name}' (host: {pool.host}:{pool.port})")
+        await pool.initialize()
+        logger.info(f"Successfully initialized database pool '{name}'")
+
+    await retry_on_connect_error(
+        _initialize,
+        _CONNECT_BUDGET_SECONDS,
+        f"database pool '{name}' at {pool.host}:{pool.port}",
+        retry_on=(*_CONNECT_ERRORS, DatabasePoolError),
+    )
 
 
-@retry(
-    stop=stop_after_attempt(12),
-    wait=wait_exponential(multiplier=2, min=2, max=60),
-    retry=retry_if_exception_type(
-        (
-            asyncpg.exceptions.PostgresError,
-            asyncpg.exceptions.InterfaceError,
-            asyncpg.exceptions.ConnectionDoesNotExistError,
-            asyncpg.exceptions.ConnectionFailureError,
-            ConnectionError,
-            OSError,
-            asyncio.TimeoutError,
-        )
-    ),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
-)
-async def _ensure_database_exists() -> None:
-    """Ensure the operations_manager database exists, creating it if necessary.
-
-    Connects to the default 'postgres' database to check/create our application database.
-    """
+async def _create_database_if_missing() -> None:
+    """Connects to the default 'postgres' database to check or create our own."""
     database_name = settings.DATABASE_NAME
     logger.info(f"Ensuring database '{database_name}' exists...")
 
@@ -95,7 +60,6 @@ async def _ensure_database_exists() -> None:
     )
 
     try:
-        # Check if database exists
         exists = await conn.fetchval(
             "SELECT 1 FROM pg_database WHERE datname = $1",
             database_name,
@@ -112,47 +76,52 @@ async def _ensure_database_exists() -> None:
         await conn.close()
 
 
+async def _ensure_database_exists() -> None:
+    await retry_on_connect_error(
+        _create_database_if_missing,
+        _CONNECT_BUDGET_SECONDS,
+        f"database '{settings.DATABASE_NAME}' on {settings.DATABASE_HOST}",
+        retry_on=_CONNECT_ERRORS,
+    )
+
+
 async def _verify_app_role(pool: DatabasePool) -> None:
-    """Weiger te starten als de rol superuser of create* rechten heeft."""
+    """Refuse to start when the role holds superuser or create* privileges."""
     conn = await pool.acquire()
     try:
-        rol = await conn.fetchrow(
+        role = await conn.fetchrow(
             "SELECT current_user AS naam, rolsuper, rolcreaterole, rolcreatedb "
             "FROM pg_roles WHERE rolname = current_user"
         )
     finally:
         await pool.release(conn)
 
-    if rol is None:  # pragma: no cover -- current_user staat altijd in pg_roles
+    if role is None:  # pragma: no cover  # current_user is always in pg_roles
         return
 
-    te_veel = [recht for recht in ("rolsuper", "rolcreaterole", "rolcreatedb") if rol[recht]]
-    if rol["naam"] == settings.DATABASE_ADMIN_NAME:
-        te_veel.append("is de admin-rol zelf")
-    if not te_veel:
+    too_many = [privilege for privilege in ("rolsuper", "rolcreaterole", "rolcreatedb") if role[privilege]]
+    if role["naam"] == settings.DATABASE_ADMIN_NAME:
+        too_many.append("is de admin-rol zelf")
+    if not too_many:
         return
 
-    melding = (
-        f"DATABASE_APP_USER '{rol['naam']}' heeft rechten die OPI's eigen database niet nodig heeft "
-        f"({', '.join(te_veel)}). Zet DATABASE_APP_USER/DATABASE_APP_PASSWORD op de rol "
+    message = (
+        f"DATABASE_APP_USER '{role['naam']}' heeft rechten die OPI's eigen database niet nodig heeft "
+        f"({', '.join(too_many)}). Zet DATABASE_APP_USER/DATABASE_APP_PASSWORD op de rol "
         f"'{settings.DATABASE_APP_USER}' uit het secret operations-manager-db-credentials."
     )
     if settings.is_development_environment:
-        logger.warning(melding)
+        logger.warning(message)
         return
-    raise DatabasePoolError(melding)
+    raise DatabasePoolError(message)
 
 
 async def initialize_database_pools() -> None:
-    """Initialize all database pools used by the application with robust retry logic.
-
-    This function is critical for application startup and will retry multiple times
-    with exponential backoff if the database is not available. The application
-    cannot function without database connectivity.
+    """Retries with exponential backoff: the application cannot function without a database,
+    so a database that is not up yet may not fail the startup either.
     """
     logger.info("Starting database pool initialization with retry logic...")
 
-    # First ensure our application database exists
     try:
         await _ensure_database_exists()
     except Exception as e:
@@ -182,23 +151,21 @@ async def initialize_database_pools() -> None:
             f"CRITICAL: Failed to initialize database pools after all retries. "
             f"Application cannot function without database connectivity. Error: {e}"
         )
-        # Re-raise to fail application startup
         raise DatabasePoolError(f"Database pool initialization failed after all retries: {e}") from e
 
-    # Buiten de try hierboven, zodat deze weigering zijn eigen melding houdt en niet als
-    # "mislukt na alle pogingen" leest.
+    # Outside the try above, so this refusal keeps its own message instead of reading as
+    # "failed after all retries".
     await _verify_app_role(main_pool)
 
 
 async def close_database_pools() -> None:
-    """Close all database pools."""
     logger.info("Closing database pools...")
 
     for name, pool in _pools.items():
         try:
             await pool.close()
             logger.info(f"Closed database pool: {name}")
-        except Exception as e:
+        except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
             logger.error(f"Error closing database pool {name}: {e}")
 
     _pools.clear()
@@ -206,18 +173,7 @@ async def close_database_pools() -> None:
 
 
 def get_database_pool(name: str = "main") -> DatabasePool:
-    """Get a database pool by name.
-
-    Args:
-        name: Name of the pool to retrieve
-
-    Returns:
-        DatabasePool instance
-
-    Raises:
-        KeyError: If the pool doesn't exist
-        ValueError: If the pool is not initialized
-    """
+    """Raises ``KeyError`` for an unknown pool, ``ValueError`` for one that is not up."""
     if name not in _pools:
         raise KeyError(f"Database pool '{name}' not found. Available pools: {list(_pools.keys())}")
 
@@ -228,59 +184,13 @@ def get_database_pool(name: str = "main") -> DatabasePool:
     return pool
 
 
-def list_database_pools() -> dict[str, bool]:
-    """List all database pools and their initialization status.
-
-    Returns:
-        Dictionary mapping pool names to their initialization status
-    """
-    return {name: pool.is_initialized for name, pool in _pools.items()}
-
-
-def get_pool_stats(name: str = "main") -> dict[str, any]:
-    """Get detailed statistics for a specific database pool.
-
-    Args:
-        name: Name of the pool to get stats for
-
-    Returns:
-        Dictionary containing pool statistics
-    """
-    if name not in _pools:
-        return {"error": f"Pool '{name}' not found. Available pools: {list(_pools.keys())}"}
-
-    pool = _pools[name]
-    return pool.get_connection_stats()
-
-
 def get_all_pool_stats() -> dict[str, dict[str, any]]:
-    """Get statistics for all database pools.
-
-    Returns:
-        Dictionary mapping pool names to their statistics
-    """
+    """Per pool name its statistics."""
     return {name: pool.get_connection_stats() for name, pool in _pools.items()}
 
 
-def log_active_connections_for_all_pools() -> None:
-    """Log active connection information for all pools."""
-    if not _pools:
-        logger.info("No database pools available")
-        return
-
-    logger.info("=== ACTIVE CONNECTION REPORT FOR ALL POOLS ===")
-    for name, pool in _pools.items():
-        logger.info(f"Pool '{name}':")
-        pool.log_active_connections()
-    logger.info("=== END ACTIVE CONNECTION REPORT ===")
-
-
 def log_active_connections(name: str = "main") -> None:
-    """Log active connection information for a specific pool.
-
-    Args:
-        name: Name of the pool to log connections for
-    """
+    """Log the active connections of one pool."""
     if name not in _pools:
         logger.error(f"Pool '{name}' not found. Available pools: {list(_pools.keys())}")
         return
@@ -290,16 +200,9 @@ def log_active_connections(name: str = "main") -> None:
 
 
 async def recover_database_pool(name: str = "main") -> bool:
-    """Recover a specific database pool if it has failed.
+    """Reinitialize one pool, with the same retry logic as the startup.
 
-    This function can be called during runtime if database operations start failing.
-    It will attempt to reinitialize the pool with retry logic.
-
-    Args:
-        name: Name of the pool to recover
-
-    Returns:
-        True if recovery successful, False otherwise
+    Meant to be called at runtime, once database operations start failing.
     """
     if name not in _pools:
         logger.error(f"Cannot recover database pool '{name}' - pool not found. Available pools: {list(_pools.keys())}")
@@ -309,30 +212,24 @@ async def recover_database_pool(name: str = "main") -> bool:
     logger.warning(f"🔄 Attempting to recover database pool '{name}' (host: {pool.host}:{pool.port})")
 
     try:
-        # First try to close the existing pool gracefully
         if pool.is_initialized:
             try:
                 await pool.close()
                 logger.info(f"Closed existing pool '{name}' for recovery")
-            except Exception as e:
+            except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
                 logger.warning(f"Error closing pool '{name}' during recovery: {e}")
 
-        # Attempt to reinitialize with retry logic
         await _initialize_database_pool_with_retry(pool, name)
         logger.info(f"Successfully recovered database pool '{name}'")
         return True
 
-    except Exception as e:
+    except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
         logger.error(f"Failed to recover database pool '{name}': {e}")
         return False
 
 
 async def check_and_recover_all_pools() -> dict[str, bool]:
-    """Check health of all pools and attempt recovery for any that are unhealthy.
-
-    Returns:
-        Dictionary mapping pool names to recovery success status
-    """
+    """Per pool name whether it is healthy, or whether recovering it worked."""
     if not _pools:
         logger.warning("No database pools to check for recovery")
         return {}
@@ -341,7 +238,6 @@ async def check_and_recover_all_pools() -> dict[str, bool]:
 
     for name, pool in _pools.items():
         try:
-            # Simple health check - try to get pool stats
             stats = pool.get_connection_stats()
             if "error" in stats:
                 logger.warning(f"Database pool '{name}' appears unhealthy: {stats['error']}")
@@ -350,7 +246,7 @@ async def check_and_recover_all_pools() -> dict[str, bool]:
                 logger.debug(f"Database pool '{name}' is healthy")
                 recovery_results[name] = True
 
-        except Exception as e:
+        except (DatabasePoolError, OSError, asyncpg.PostgresError) as e:
             logger.error(f"Health check failed for pool '{name}': {e}")
             recovery_results[name] = await recover_database_pool(name)
 
@@ -358,11 +254,7 @@ async def check_and_recover_all_pools() -> dict[str, bool]:
 
 
 def is_database_available() -> bool:
-    """Quick check if any database pools are available and initialized.
-
-    Returns:
-        True if at least one pool is available, False otherwise
-    """
+    """True when at least one pool is up."""
     if not _pools:
         return False
 

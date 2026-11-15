@@ -1,1 +1,1 @@
-"""Gereedschap dat uit repo-data een gegenereerd artefact maakt, buiten de draaiende app om."""
+"""Tools that turn repo data into a generated artifact, outside the running app."""

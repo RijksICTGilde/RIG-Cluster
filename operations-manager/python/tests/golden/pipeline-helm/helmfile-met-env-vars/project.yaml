@@ -1,0 +1,51 @@
+schema-version: '2.17'
+name: golden-helmfile
+display-name: Golden helmfile
+description: Een deployment uit een helmfile met env-vars voor de CMP-plugin
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-helmfile.git
+    branch: main
+    path: infra
+
+helmfile:
+  - name: docs
+    url: https://example.test/helmfiles.git
+    ref: main
+    path: deploy
+    entry: helmfile.yaml
+    files:
+      extra-values.yaml: |
+        extra: waarde
+    helm-values:
+      hostname: $PUBLIC_HOSTNAME
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-helmfile
+    repository: main-repo
+    services:
+      - reference: publish-on-web
+        config:
+          subdomain: docs
+          base-domain: voorbeeld.nl
+          issuer: letsencrypt
+    helmfile:
+      - reference: docs
+        helm-values:
+          replicaCount: 3
+        env-vars:
+          LOG_LEVEL: debug
+          DB_PASSWORD: ENCRYPT:helmfile-geheim

@@ -37,14 +37,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import validate_project_schema
-from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.manager.clone_validation import build_restore_target_deployment
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.catalog.sleep_mode import service as sleep_service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode import token as sleep_token
+from opi.services.clone_validation import build_restore_target_deployment
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_service_configs
 from opi.services.resource_tuning_service import apply_resource_tuning
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.services_enums import ServiceType
@@ -125,7 +125,7 @@ async def test_de_tuner_laat_een_geldig_projectbestand_achter() -> None:
     connector = AsyncMock()
     # max, avg, oom-kills: geen meetdata plus een OOM-kill, de weg die de tuner de limiet
     # laat verdubbelen en dus zowel limits als requests laat schrijven.
-    connector.custom_query.side_effect = [[], [], [{"value": [0, "1"]}]]
+    connector.query.side_effect = [[], [], [{"value": [0, "1"]}]]
     kubectl = MagicMock(
         get_deployment_status=AsyncMock(return_value=None), get_vpa_recommendation=AsyncMock(return_value=None)
     )
@@ -256,7 +256,7 @@ def test_de_wortelcomponent_bijstellen_blijft_geldig() -> None:
 
 def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
     """Verwijderen is ook schrijven: wat achterblijft moet geldig zijn, niet alleen wat weggaat."""
-    from opi.handlers.project_file_handler import remove_attachment_references, remove_component_references
+    from opi.services.project_file_handler import remove_attachment_references, remove_component_references
 
     project = _basis_project()
     project["deployments"][0]["components"].append({"reference": "api", "image": "nginx:1.25"})
@@ -273,7 +273,7 @@ def test_een_component_verwijderen_laat_een_geldig_bestand_achter() -> None:
     Blijft er een verwijzing staan naar een component dat niet meer bestaat, dan is het
     bestand ongeldig, en dat is precies wat deze poort meet.
     """
-    from opi.handlers.project_file_handler import remove_component
+    from opi.services.project_file_handler import remove_component
 
     project = _basis_project()
     project["components"].append(
@@ -447,7 +447,7 @@ def _manager() -> Any:
     """Een ProjectManager zonder connectors, zoals tests/test_database_schemas_api.py doet."""
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -499,7 +499,7 @@ async def test_een_registry_met_inloggegevens_blijft_geldig() -> None:
     """Het versleutelde wachtwoord moet ook door de AGE-patroonregel komen."""
     manager, save = _bedraad(_basis_project())
 
-    with patch("opi.manager.project_manager.encrypt_age_content", new=AsyncMock(return_value=AGE_BLOCK)):
+    with patch("opi.manager.project.registry_mutations.encrypt_age_content", new=AsyncMock(return_value=AGE_BLOCK)):
         result = await manager.upsert_registry_by_credentials("ghcr", "ghcr.io/rijksictgilde", "robot", "geheim")
 
     assert result["success"]
@@ -511,7 +511,7 @@ async def test_een_bijlage_blijft_geldig() -> None:
     """Bijlagen schrijven op twee plekken: de catalogus onder de dienst en het gebruik op de component."""
     manager, save = _bedraad(_basis_project())
 
-    with patch("opi.manager.project_manager.encrypt_file_to_age_block_sync", return_value=AGE_BLOCK):
+    with patch("opi.manager.project.attachment_mutations.encrypt_file_to_age_block_sync", return_value=AGE_BLOCK):
         result = await manager.upsert_attachment(
             attachment_id="ca-bundle",
             filename="ca-bundle.crt",
@@ -602,50 +602,126 @@ def test_de_migratie_van_een_oud_bestand_levert_iets_geldigs_op() -> None:
 async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> None:
     """De route uit RC-388 is een schrijver naar het projectbestand.
 
-    De echte route, niet een handgeschreven blok: de converter versleutelt daar met de
-    projectsleutel uit het bestand, en juist die blokstring met zijn patroonregel is wat
-    het schema kent. Zowel de component- als de deployment-override-houder wordt gemeten,
-    want dat zijn twee definities in het schema.
+    De echte route, niet een handgeschreven blok: sinds RC-481 loopt dat schrijven via de
+    values-use case naar ``ServiceConfigMutations.set_component_values``, die zelf
+    ``mutate_and_commit_project`` aanroept -- dus die laag wordt hier nagemaakt, niet
+    ``save_and_commit_project`` zoals de oude route direct deed. De echte encoder
+    versleutelt met de projectsleutel uit het bestand, en juist die blokstring met zijn
+    patroonregel is wat het schema kent. Zowel de component- als de
+    deployment-override-houder wordt gemeten, want dat zijn twee definities in het schema.
     """
     from types import SimpleNamespace
 
-    from opi.core.step_up import STEP_UP_SESSION_KEY
+    from opi.services.project_store import MutationResult
+    from opi.services.step_up import STEP_UP_SESSION_KEY
     from opi.web.router_env_vars import save_env_vars
 
     project = _basis_project()
     verzoek = SimpleNamespace(
-        state=SimpleNamespace(user={"email": "admin@rijksoverheid.nl"}, csrf_token="csrf"),
+        state=SimpleNamespace(
+            user={"email": "admin@rijksoverheid.nl"},
+            csrf_token="csrf",
+            # Without this decision ``authorized_project`` refuses with a 500: only the
+            # guard that hangs the route sets it, and that guard does not run here.
+            authz_project=SimpleNamespace(data=project),
+        ),
         session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
         url=SimpleNamespace(path="/projects/schrijvers/componenten/api/env-vars"),
         method="POST",
         headers={"HX-Request": "true"},
         form=AsyncMock(return_value={"vars": "API_TOKEN=bewijsbaar\nTWEEDE=twee"}),
     )
-    manager = SimpleNamespace(
-        get_contents=AsyncMock(return_value=project),
-        save_and_commit_project=AsyncMock(),
-        close=AsyncMock(),
-    )
+
+    aangeboden: dict[str, Any] = {}
+
+    async def mutate(name: str, mutator: Any, **_kwargs: Any) -> MutationResult:
+        nonlocal aangeboden
+        result = mutator(copy.deepcopy(project))
+        if result is None:
+            return MutationResult(before=project, after=project, ref="test", committed=False)
+        aangeboden = result
+        return MutationResult(before=project, after=result, ref="test")
+
+    manager = _manager()
+    manager.get_contents = AsyncMock(return_value=project)
     with (
         patch.multiple(
-            "opi.web.authz",
+            "opi.http.auth.authz",
             get_project_store=lambda: SimpleNamespace(
                 get=lambda naam: SimpleNamespace(name=naam, data=project, users=[])
             ),
             get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: True),
+        ),
+        patch(
+            "opi.manager.project_manager.get_project_store",
+            lambda: SimpleNamespace(mutate=mutate),
         ),
         patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
         patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()),
     ):
         await save_env_vars(verzoek, "schrijvers", "api", "productie" if met_deployment else None)
 
-    aangeboden = _aangeboden(manager.save_and_commit_project)
+    assert aangeboden, "de schrijver heeft niets opgeslagen; dan meet deze test niets"
     if met_deployment:
         blok = aangeboden["deployments"][0]["components"][0]["user-env-vars"]
     else:
         blok = aangeboden["components"][0]["user-env-vars"]
     assert "BEGIN AGE ENCRYPTED FILE" in blok, "zonder echt AGE-blok raakt deze test de patroonregel niet"
     poorten(aangeboden)
+
+
+# ---------------------------------------------------------------------------
+# A project change from the portal: what update_project writes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_project_change_writes_a_valid_file() -> None:
+    """Since RC-483 the wizard, the edit modal and the approval route all write here.
+
+    The real use case, with the merge the edit wizard uses: the flow's write paths on a
+    fresh read. The guards ``update_project`` runs are part of the result, so they run too;
+    only the weighing of the caller is stubbed.
+    """
+    from types import SimpleNamespace
+
+    from opi.forms.wizard.write_set import apply_write_paths
+    from opi.manager.project.update import ProjectChange, update_project
+
+    project = _basis_project()
+    submitted = {
+        "display-name": "Andere naam",
+        "description": "Een andere omschrijving",
+        "components": copy.deepcopy(project["components"]),
+    }
+    submitted["components"][0]["description"] = "De api van dit project"
+
+    offered: dict[str, Any] = {}
+
+    async def save(project_data: dict[str, Any], _message: str, **_kwargs: Any) -> None:
+        nonlocal offered
+        offered = project_data
+
+    manager = _manager()
+    manager.get_contents = AsyncMock(side_effect=lambda **_kw: copy.deepcopy(project))
+    manager.save_and_commit_project = AsyncMock(side_effect=save)
+
+    change = ProjectChange(
+        project_name=project["name"],
+        apply=lambda stored: apply_write_paths(stored, submitted, ["display-name", "description", "components"]),
+        commit_message="Update via de wizard",
+    )
+    authority = SimpleNamespace(
+        require=lambda *_a, **_k: None,
+        step_up_is_fresh=lambda: True,
+        actor="admin@rijksoverheid.nl",
+    )
+
+    await update_project(change, authority, manager)
+
+    assert offered, "the writer saved nothing, so this test measures nothing"
+    assert offered["display-name"] == "Andere naam"
+    poorten(offered)
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +740,7 @@ async def test_de_mailmanager_schrijft_niets_in_het_projectbestand() -> None:
     weer iets worden weggeschreven, dan valt deze test om en gaat het blok langs de poorten.
     """
     from opi.manager.mail_manager import MailManager
-    from opi.utils.secrets import SendEmailSecret
+    from opi.services.secrets import SendEmailSecret
 
     project = _basis_project()
     project["services"].append(

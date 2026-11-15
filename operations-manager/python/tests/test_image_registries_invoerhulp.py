@@ -13,27 +13,28 @@ from typing import Any
 import pytest
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries import _section_description
 from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, RegistryEntry
+from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import registry_slug
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.upstream import normalize_upstream, upstream_from_project_images
 from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE, REGISTRY_UPSTREAM
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
-from opi.utils import age
 from opi.web.router_wizard import _empty_sequence_item
 from pydantic import ValidationError
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
-CREDS = {"username": "u", "password": "plain:een-token"}
+#: A token in its encrypted stored form. Since schema version 2.18 a project file may not
+#: carry ``plain:``, and these tests are about something other than the token.
+CREDS = {"username": "u", "password": "base64+age:ZWVuLXRva2Vu"}
 
 _SVC = ServiceType.IMAGE_REGISTRIES.value
 
@@ -282,7 +283,9 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
         processor = EditableFormProcessor()
         processor._yaml_data = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
         assert processor._effective_value(REGISTRY_UPSTREAM, "ghcr.io/anders") == "ghcr.io/anders"
-        assert processor._effective_value(REGISTRY_UPSTREAM, "") == "code.overheid.nl/team"
+        assert processor._effective_value(REGISTRY_UPSTREAM, None) == "code.overheid.nl/team"
+        # An emptied field is the user's input, not a gap; the required check catches it.
+        assert processor._effective_value(REGISTRY_UPSTREAM, "") == ""
 
     def test_added_row_gets_the_upstream_not_the_function(self) -> None:
         """The wizard stores its state as JSON; the function itself in the row made "add item" a 500."""
@@ -297,39 +300,31 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
         json.dumps(item)
 
 
-class TestCreateWizardEncryptsTheToken:
-    """In the create wizard the project has no AGE key yet, so the converter leaves the
-    token as typed. The final submit must encrypt it once the key exists, as it does for
-    user-env-vars; otherwise the save refuses the project on the password pattern."""
-
-    @pytest.fixture(autouse=True)
-    def _wrapping_key(self, monkeypatch: pytest.MonkeyPatch, age_keypair: tuple[str, str]) -> None:
-        """The generated project key is wrapped with a platform key, which a bare test run lacks."""
-        monkeypatch.setattr(age.settings, "SOPS_AGE_PUBLIC_KEY", age_keypair[1], raising=False)
-        monkeypatch.setattr(age.settings, "PROJECT_KEK_PUBLIC_KEY", None, raising=False)
+class TestTheTokenIsStoredAsAnAgeBlock:
+    """The create wizard owns a project AGE key from its first step (RC-463), so the
+    converter encrypts a typed token right there; nothing downstream has to repair it."""
 
     @staticmethod
-    def _final_data(registry: dict[str, Any]) -> dict[str, Any]:
-        merged = {
+    def _written(password: str, public_key: str) -> dict[str, Any]:
+        """One registry as the converter stores it, inside a project file."""
+        registry = {"name": "ghcr", "upstream": "ghcr.io/org", "username": "u"}
+        registry["password"] = ProjectAgeSecretConverter().write(password, {"config": {"age-public-key": public_key}})
+        return {
             "display-name": "Registry Project",
             "users": [{"email": "test@example.com", "roles": ["admin"]}],
             "components": [{"name": "web", "image": "ghcr.io/org/app:1"}],
             "services": [{"name": "image-registries", "config": {"registries": [registry]}}],
         }
-        flow = get_flow("create-project")
-        return EditableFormProcessor().apply_generators(flow.generated_editables, merged)
 
-    def test_a_typed_token_is_stored_as_an_age_block(self) -> None:
-        data = self._final_data(
-            {"name": "ghcr", "upstream": "ghcr.io/org", "username": "u", "password": "secret-token"}
-        )
+    def test_a_typed_token_is_stored_as_an_age_block(self, age_keypair: tuple[str, str]) -> None:
+        data = self._written("secret-token", age_keypair[1])
         (registry,) = project_registries(data)
         assert registry["password"].startswith("-----BEGIN AGE ENCRYPTED FILE-----")
         validate_service_configs(data)
 
-    def test_an_already_encrypted_token_is_left_alone(self) -> None:
+    def test_an_already_encrypted_token_is_left_alone(self, age_keypair: tuple[str, str]) -> None:
         stored = "base64+age:YWdl"
-        data = self._final_data({"name": "ghcr", "upstream": "ghcr.io/org", "username": "u", "password": stored})
+        data = self._written(stored, age_keypair[1])
         (registry,) = project_registries(data)
         assert registry["password"] == stored
 

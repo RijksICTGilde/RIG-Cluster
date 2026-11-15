@@ -4,7 +4,7 @@ Both entrypoints call ``run_cycle`` here so their logic never diverges:
 
   - the standalone CLI at ``scripts/log_watch/watch.py`` injects Claude triage
     (``triage_fn``), a SOPS-decrypted token, and file-based dedup state; and
-  - the in-app ``LogwatcherScheduler`` (``opi/core/logwatcher_scheduler.py``)
+  - the in-app ``LogwatcherScheduler`` (``opi/runtime/periodic/logwatcher_scheduler.py``)
     runs it every ``LOGWATCHER_INTERVAL_SECONDS`` with no triage_fn (deterministic
     grouped body) and an in-memory dedup dict.
 
@@ -33,6 +33,8 @@ from pathlib import Path
 
 import httpx
 
+from opi.connectors.ntfy import NtfyMessage, NtfyTarget, send_ntfy
+
 logger = logging.getLogger(__name__)
 
 # Ignore-list ships inside the package so both entrypoints read the same file.
@@ -59,7 +61,7 @@ _FLOW_ID_RE = re.compile(r"\[((?:req|task)-[^\]]+)\]")
 # The watcher scans the OPI container's own logs, which include the watcher's own
 # output. Exclude those logger names at query time or it alerts on itself - a loop
 # that grows every cycle (its "RESULT: N NEW issue(s)" WARNING lines get re-picked).
-SELF_LOG_EXCLUDE = ("opi.services.log_watcher", "opi.core.logwatcher_scheduler")
+SELF_LOG_EXCLUDE = ("opi.services.log_watcher", "opi.runtime.periodic.logwatcher_scheduler")
 
 # Only a genuine Python-logging record is a distinct "issue". Loki stores each line
 # of a multi-line message (a traceback, or our own multi-line ntfy body) as its own
@@ -96,9 +98,7 @@ class LogWatchConfig:
     ignore_file: Path = DEFAULT_IGNORE_FILE
 
 
-# --- Loki query plumbing (httpx; mirrors scripts/grafana_loki_logs.py) -------
-
-
+# The Loki query plumbing below mirrors scripts/grafana_loki_logs.py.
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -194,9 +194,6 @@ def parse_frames(result: dict) -> list[tuple[int, dict, str]]:
                         row_labels.update(raw)
                 rows.append((int(times[j]), row_labels, lines[j]))
     return rows
-
-
-# --- message parsing / classification / formatting ---------------------------
 
 
 def load_ignore_patterns(ignore_file: Path) -> list[re.Pattern]:
@@ -378,27 +375,6 @@ def group_by_flow(entries: list[dict]) -> list[dict]:
     return problems
 
 
-def send_ntfy(client: httpx.Client, cfg: LogWatchConfig, title: str, body: str, priority: str, tags: str) -> bool:
-    server = cfg.ntfy_server.rstrip("/")
-    # NEVER log the multi-line body: each body line lands in Loki as its own
-    # detected_level=error entry that lacks this module name, so it escapes both the
-    # error-only query and the self-exclusion - and the watcher re-ingests its own
-    # alert next cycle (a growing "ERR ERR ERR" feedback loop). Log a one-line summary.
-    logger.info("ntfy push [%s] %s (%d problem line(s))", priority, title, body.count("\n\n") + 1 if body else 0)
-    try:
-        client.post(
-            f"{server}/{cfg.ntfy_topic}",
-            content=body.encode("utf-8"),
-            headers={"Title": title.encode("ascii", "ignore").decode(), "Priority": priority, "Tags": tags},
-            timeout=15,
-        )
-        logger.info("ntfy sent to %s/%s (priority %s)", server, cfg.ntfy_topic, priority)
-        return True
-    except httpx.HTTPError as e:
-        logger.error("ntfy POST failed: %s", e)
-        return False
-
-
 def _effective_window(cfg: LogWatchConfig) -> str:
     """Widen to the morning catch-up window for early runs, when configured."""
     if cfg.morning_before_hour is None or cfg.morning_window is None:
@@ -550,7 +526,7 @@ def run_cycle(
         title = f"OPI log-watch: {len(problems)} issue(s)"
 
         if send_notification:
-            send_ntfy(client, cfg, title, body, priority, "mag")
+            send_ntfy(NtfyTarget(cfg.ntfy_server, cfg.ntfy_topic), NtfyMessage(title, body, priority, "mag"))
         else:
             logger.info("notification disabled - would have sent to %s/%s", cfg.ntfy_server, cfg.ntfy_topic)
 

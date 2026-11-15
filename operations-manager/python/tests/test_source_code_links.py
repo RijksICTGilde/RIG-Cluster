@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.invite_routes import invite_router
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.forms.models.project_file import ProjectFileModel, SourceCodeLinkModel
 from opi.forms.visualizers.wizard_sections import IDENTITY_EDIT_SECTION, IDENTITY_SECTION
 from opi.web.lotc_router import router as lotc_router
@@ -124,7 +124,7 @@ async def _opslaan(project: dict[str, Any], links: list[dict[str, Any]]) -> dict
         "display-name": project["display-name"],
         "description": project["description"],
         "source-code": copy.deepcopy(links),
-        GERENDERDE_REEKSEN_VELD: ["source-code"],
+        RENDERED_SEQUENCES_FIELD: ["source-code"],
     }
     result, errors = await EditableFormProcessor().process_json_submission(
         submitted,

@@ -29,7 +29,7 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.web.lotc_router import router as lotc_router
 from starlette.middleware.sessions import SessionMiddleware
 

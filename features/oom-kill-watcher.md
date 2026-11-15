@@ -150,8 +150,8 @@ The OOM watcher is scheduled at the end of:
 | `opi/services/resource_tuning_service.py` | Extracted tune logic (shared by HTTP endpoint and watcher) |
 | `opi/api/resource_router.py` | HTTP endpoint (thin wrapper over service) |
 | `opi/core/config.py` | OOM watcher settings |
-| `opi/core/task_handlers_operations.py` | Refresh handler integration |
-| `opi/core/task_handlers_project.py` | Create/upsert handler integration |
+| `opi/runtime/tasks/task_handlers_operations.py` | Refresh handler integration |
+| `opi/runtime/tasks/task_handlers_project.py` | Create/upsert handler integration |
 | `opi/services/catalog/resource_tuning/config.py` | `max_growth_factor`: the growth ceiling |
 | `scripts/oom_growth_report.py` | Read-only report on components an earlier, unbounded escalation left above the ceiling (`PROJECTS=... task oom-growth-report`) |
 

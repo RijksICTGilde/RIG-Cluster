@@ -44,16 +44,16 @@ import uvicorn
 import yaml
 from itsdangerous import TimestampSigner
 from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
-from opi.core.async_task_service import AsyncTaskService, TaskType
 from opi.core.cluster_config import CLUSTER_CONFIG, get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.backup import BackupManager, group_snapshots_into_runs
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.server import create_app
 from opi.services.catalog.sleep_mode.manifests import WAKER_ROLE_LABEL
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_utils import generate_self_service_project_yaml
 from opi.services.session_store import get_session_store
-from opi.utils.project_utils import generate_self_service_project_yaml
+from opi.services.tasks.async_task_service import AsyncTaskService, TaskType
 from opi.utils.totp import TOTP_PERIOD, totp_now
 from tests.image_pins import REPO_ROOT
 from tests.integration import (
@@ -207,7 +207,6 @@ def patch_settings(
         patch, forgejo, platform_private_key=platform_private_key, platform_public_key=platform_public_key
     )
     patch.setattr(settings, "DATABASE_NAME", OWN_DATABASE)
-    patch.setattr(settings, "GIT_PROJECTS_SERVER_FILE_PATH", f"projects/{PROJECT}.yaml")
     patch.setattr(settings, "ALLOWED_EMAILS", ADMIN_EMAIL)
     patch.setattr(settings, "ADMIN_EMAILS", ADMIN_EMAIL)
     patch.setattr(settings, "FIXED_PROJECT_POSTFIX", POSTFIX)
@@ -804,6 +803,23 @@ async def roles_with_prefix(prefix: str = DATABASE_PREFIX) -> set[str]:
 async def databases_of(deployment: str) -> set[str]:
     """De databases waarvan de naam deze deployment noemt."""
     return {name for name in await databases_with_prefix() if deployment.replace("-", "_") in name}
+
+
+async def marks_of(deployment: str) -> set[tuple[str, str]]:
+    """The marks OPI recorded for this deployment, as (type, name).
+
+    Since RC-484 a removal no longer wipes the persistent data at once: it marks, and the
+    purge in ``opi/jobs/reconciliation.py`` takes it after the grace period. "Gone" is
+    therefore measured here and not in Postgres or MinIO.
+    """
+    conn = await postgres_live.admin_connection(settings.DATABASE_NAME)
+    try:
+        rows = await conn.fetch(
+            "SELECT resource_type, resource_name FROM marked_for_deletion WHERE deployment_name = $1", deployment
+        )
+        return {(row["resource_type"], row["resource_name"]) for row in rows}
+    finally:
+        await conn.close()
 
 
 def clone_generation(forgejo: forgejo_live.ForgejoApi, service: str) -> int | None:

@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.task_handlers_deployment import handle_delete_deployment
+from opi.manager.project.deployment_removal import DeploymentRemovalResult
+from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 
 
 def _progress() -> MagicMock:
@@ -23,7 +24,7 @@ def _progress() -> MagicMock:
 
 def _pm_with_result(result: dict) -> MagicMock:
     pm = MagicMock()
-    pm.delete_deployment = AsyncMock(return_value=result)
+    pm.delete_deployment = AsyncMock(return_value=DeploymentRemovalResult(result))
     pm.close = AsyncMock()
     return pm
 
@@ -78,7 +79,7 @@ class TestTheManagerMarksIt:
         store = MagicMock()
         store.get.return_value = MagicMock(filename="demo.yaml")
 
-        with patch("opi.manager.delete_project_manager.get_project_store", return_value=store):
+        with patch("opi.manager.project.deployment_removal.get_project_store", return_value=store):
             result = await manager.delete_deployment("demo", "bestaat-niet", force=True)
 
         assert result["success"] is True
@@ -92,7 +93,7 @@ class TestTheManagerMarksIt:
         store = MagicMock()
         store.get.return_value = MagicMock(filename="demo.yaml")
 
-        with patch("opi.manager.delete_project_manager.get_project_store", return_value=store):
+        with patch("opi.manager.project.deployment_removal.get_project_store", return_value=store):
             result = await manager.delete_deployment("demo", "d", force=True)
 
         assert result["success"] is False

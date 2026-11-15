@@ -1,7 +1,7 @@
 """The localized texts of an invite, as the invite pages read them."""
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 @pytest.fixture

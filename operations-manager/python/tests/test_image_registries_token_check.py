@@ -14,14 +14,14 @@ import pytest
 from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
 from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
-from opi.utils.age import encrypt_age_content_sync
+from opi.utils.age import AgeEncryptionError, encrypt_age_content_sync
 
 REGISTRY = {
     "name": "code-overheid",
@@ -333,10 +333,11 @@ class TestDeTokenConverter:
         assert self._converter().view(self.AGE) == "Versleuteld opgeslagen"
         assert self._converter().view("") == "Niet ingevuld"
 
-    def test_zonder_publieke_sleutel_blijft_de_waarde_leesbaar_maar_bewaard(self) -> None:
-        """Een token weggooien omdat we hem niet kunnen versleutelen is erger dan hem
-        opslaan zoals hij is; de opslag zelf is SOPS-versleuteld."""
-        assert self._converter().write("geheim", context_data={}) == "geheim"
+    def test_zonder_publieke_sleutel_weigert_de_schrijfkant(self) -> None:
+        """Sinds RC-463: een token dat niet versleuteld kan worden gaat niet leesbaar naar
+        de projects-repo, dus de opslag stopt in plaats van hem op te schrijven."""
+        with pytest.raises(AgeEncryptionError):
+            self._converter().write("geheim", context_data={})
 
 
 def _keypair() -> tuple[str, str]:
@@ -472,7 +473,7 @@ class TestDeToetsLangsDeOpslagroute:
                     }
                 }
             },
-            GERENDERDE_REEKSEN_VELD: [self.REEKS],
+            RENDERED_SEQUENCES_FIELD: [self.REEKS],
         }
         processor = EditableFormProcessor()
         submitted_yaml, errors = await processor.process_json_submission(

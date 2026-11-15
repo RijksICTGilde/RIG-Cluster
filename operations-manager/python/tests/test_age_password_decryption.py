@@ -99,7 +99,7 @@ class TestAgePasswordDecryption:
     def test_decrypt_password_smart_sync_failure(self, andere_prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
         """Test handling of decryption failure."""
         # API now raises ValueError on decryption failure
-        with pytest.raises(ValueError, match="Failed to decrypt"):
+        with pytest.raises(ValueError, match="Age decryption failed"):
             decrypt_password_smart_sync(versleuteld_wachtwoord, andere_prive_sleutel)
 
     def test_decrypt_password_smart_sync_no_key(self, versleuteld_wachtwoord: str) -> None:

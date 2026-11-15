@@ -49,7 +49,7 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
-    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+    with patch("opi.http.auth.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
         test_project = ProjectSummary(
             name="test-project",
@@ -82,6 +82,19 @@ def mock_router_project_service() -> Any:
         mock_service.get.return_value = test_project
         mock_get_service.return_value = mock_service
         yield mock_service
+
+
+@pytest.fixture(autouse=True)
+def removable_deployments() -> Any:
+    """The store the removal guard reads: ``test-project`` has a ``staging`` on this cluster."""
+    store = MagicMock(spec=GitProjectStore)
+    store.get.return_value = ProjectSummary(
+        name="test-project",
+        filename="test-project.yaml",
+        data={"name": "test-project", "deployments": [{"name": "staging", "cluster": "local"}]},
+    )
+    with patch("opi.http.task_helpers.get_project_store", return_value=store):
+        yield store
 
 
 @pytest.fixture
@@ -174,6 +187,36 @@ class TestV1AsyncUpsertDeployment:
 
         assert response.status_code == 403
         assert response.json()["action"] == "marking-set"
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_unknown_component_returns_400_before_a_task_exists(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """P10: v1 now gets the same pre-check as v2, instead of a task that fails later.
+
+        Before RC-483 this reference check ran only in the v2 route; v1 queued the task
+        regardless and the mismatch surfaced as a failed task afterwards.
+        """
+        store = MagicMock(spec=GitProjectStore)
+        store.get = lambda name: ProjectSummary(
+            name=name,
+            api_key=API_KEY,
+            filename=f"{name}.yaml",
+            data={"name": name, "components": [{"name": "web"}]},
+        )
+
+        with patch("opi.api.router.get_project_store", return_value=store):
+            response = client.post(
+                "/api/projects/test-project/:upsert-deployment",
+                headers={"X-API-Key": API_KEY},
+                json={
+                    "deploymentName": "production",
+                    "components": [{"reference": "onbekend", "image": "nginx:1.21"}],
+                },
+            )
+
+        assert response.status_code == 400
+        assert "onbekend" in response.json()["detail"]
         mock_task_service.create_task.assert_not_awaited()
 
     def test_environment_defaults_to_none_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
@@ -424,20 +467,45 @@ def _create_mock_project_manager(
 
 
 class TestV1SyncUpsertDeployment:
-    """V1 upsert deployment with sync=true (blocking)."""
+    """V1 upsert deployment with sync=true: the same task, waited out in the request.
 
-    def test_sync_creates_deployment_returns_201(self, client: TestClient, mock_auth_project_service: Any) -> None:
-        mock_pm = _create_mock_project_manager(upsert_result={"success": True, "created": True})
+    Since RC-483 ``sync=true`` no longer runs the upsert next to the queue: it enqueues the
+    ordinary ``upsert_deployment`` task and waits for it, so the task ordering, the dedup,
+    the drain guard and the federation routing hold for it as well. The answer shape is
+    unchanged.
+    """
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": API_KEY},
-                json={
-                    "deploymentName": "production",
-                    "components": [{"reference": "web", "image": "nginx:1.21"}],
-                },
-            )
+    def _finished(self, mock_task_service: AsyncMock, answer: dict[str, Any]) -> None:
+        """Let the queued task read as finished, with the handler's answer on it."""
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+        mock_task_service.get_task.return_value = {
+            **_make_task(task_type="upsert_deployment", status="completed"),
+            "result": answer,
+        }
+
+    def test_sync_creates_deployment_returns_201(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        self._finished(
+            mock_task_service,
+            {
+                "status": "success",
+                "message": "Deployment 'production' created successfully",
+                "deployment": {"name": "production", "project": "test-project", "created": True},
+                "urls": {},
+                "approvals": [],
+                "processing": {"status": "completed"},
+            },
+        )
+
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "production",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
 
         assert response.status_code == 201
         data = response.json()
@@ -445,45 +513,184 @@ class TestV1SyncUpsertDeployment:
         assert data["deployment"]["name"] == "production"
         assert data["deployment"]["created"] is True
 
-    def test_sync_updates_deployment_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
-        mock_pm = _create_mock_project_manager(upsert_result={"success": True, "created": False})
+    def test_sync_updates_deployment_returns_200(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        self._finished(
+            mock_task_service,
+            {
+                "status": "success",
+                "message": "Deployment 'main' updated successfully",
+                "deployment": {"name": "main", "project": "test-project", "created": False},
+                "urls": {},
+                "approvals": [],
+                "processing": {"status": "completed"},
+            },
+        )
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": API_KEY},
-                json={
-                    "deploymentName": "main",
-                    "components": [{"reference": "web", "image": "nginx:1.22"}],
-                },
-            )
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.22"}],
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
         assert data["deployment"]["created"] is False
 
-    def test_sync_failure_returns_400(self, client: TestClient, mock_auth_project_service: Any) -> None:
-        mock_pm = _create_mock_project_manager(
-            upsert_result={
-                "success": False,
+    def test_sync_failure_returns_400(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        self._finished(
+            mock_task_service,
+            {
+                "status": "failed",
+                "deployment_name": "main",
                 "error": "Invalid component references",
                 "error_type": "invalid_component_references",
-            }
+            },
         )
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": API_KEY},
-                json={
-                    "deploymentName": "main",
-                    "components": [{"reference": "nonexistent", "image": "nginx:latest"}],
-                },
-            )
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "nonexistent", "image": "nginx:latest"}],
+            },
+        )
 
         assert response.status_code == 400
         assert response.json()["status"] == "failed"
+
+    def test_sync_unattributable_failure_keeps_its_own_dutch_sentence(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        """The old inline path answered this sentence for a failure nobody could explain.
+
+        Moving the upsert through the task queue (RC-483) once lost it to the generic
+        "onbekende fout" whenever the finished task carries neither an answer error nor an
+        ``error_message``.
+        """
+        self._finished(
+            mock_task_service,
+            {"status": "failed", "deployment_name": "main"},
+        )
+
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        assert (
+            response.json()["error"] == "De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+        )
+
+    def test_sync_conflict_returns_409(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        """A concurrent edit the store could not merge is the caller's to retry.
+
+        The old status map knew neither ``conflict`` nor ``domain_validation`` and answered
+        400 for both; now every type the upsert can refuse on has its own code.
+        """
+        self._finished(
+            mock_task_service,
+            {
+                "status": "failed",
+                "deployment_name": "main",
+                "error": "iemand anders schreef ondertussen",
+                "error_type": "conflict",
+            },
+        )
+
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        assert response.status_code == 409
+
+    def test_sync_superseded_task_returns_202_with_who_took_over(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        """A hand-over is not a failure: the project file is committed, the rollout moved.
+
+        Only reachable since the upsert waits on the queue (RC-483): a project-wide task
+        queued behind it covers its scope, and the worker completes it with status
+        'superseded'. That answer carries no deployment and no urls, so the route cannot
+        claim success either.
+        """
+        self._finished(
+            mock_task_service,
+            {
+                "status": "superseded",
+                "message": "Superseded while waiting for ArgoCD application to sync",
+                "superseded_by": {
+                    "task_id": "newer-task-id",
+                    "task_type": "refresh_project",
+                    "project_name": "test-project",
+                },
+            },
+        )
+
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["status"] == "accepted"
+        assert data["superseded_by"]["task_id"] == "newer-task-id"
+        assert data["superseded_by"]["task_type"] == "refresh_project"
+        assert data["poll_url"] == f"/api/tasks/{data['task_id']}"
+
+    def test_sync_still_enqueues_the_ordinary_task(
+        self, client: TestClient, mock_task_service: AsyncMock, mock_auth_project_service: Any
+    ) -> None:
+        """The blocking route owes the queue the same task, with the same payload."""
+        self._finished(
+            mock_task_service,
+            {
+                "status": "success",
+                "message": "ok",
+                "deployment": {"name": "main", "created": False},
+                "urls": {},
+                "approvals": [],
+                "processing": {"status": "completed"},
+            },
+        )
+
+        client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "upsert_deployment"
+        assert call_kwargs["deployment_name"] == "main"
+        assert call_kwargs["payload"]["rollout"] is True
 
 
 class TestV1SyncUpdateImage:
@@ -670,20 +877,84 @@ class TestV1RefreshProject:
 
 
 class TestV1SyncDeleteDeployment:
-    """V1 delete deployment with sync=true (blocking)."""
+    """V1 delete deployment with sync=true: the same task, waited out in the request.
 
-    def test_sync_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
-        mock_pm = _create_mock_project_manager()
+    Since RC-484 ``sync=true`` no longer runs the delete next to the queue: it enqueues the
+    ordinary ``delete_deployment`` task and waits for it, so the task ordering, the dedup,
+    the drain guard and the guard against a rollout that puts the app back hold for it too.
+    The answer shape is unchanged.
+    """
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": API_KEY},
-            )
+    def _finished(self, mock_task_service: AsyncMock, status: str, answer: dict[str, Any]) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+        mock_task_service.get_task.return_value = {
+            **_make_task(task_type="delete_deployment", status=status),
+            "result": answer,
+        }
+
+    def test_sync_returns_200(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        self._finished(
+            mock_task_service,
+            "completed",
+            {"status": "completed", "message": "weg", "deletion_results": {"success": True}},
+        )
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "completed" or data.get("deletion_results", {}).get("success") is True
+        assert data["status"] == "completed"
+        assert data["deletion_results"] == {"success": True}
+        assert mock_task_service.create_task.call_args[1]["task_type"] == "delete_deployment"
+
+    def test_sync_returns_207_on_a_partial_delete(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        self._finished(
+            mock_task_service,
+            "failed",
+            {"status": "failed", "deletion_results": {"success": False, "errors": ["namespace bleef staan"]}},
+        )
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 207
+        assert response.json()["status"] == "partial"
+
+    def test_an_unknown_deployment_is_a_404_and_queues_nothing(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        response = client.delete("/api/projects/test-project/bestaat-niet", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 404
+        mock_task_service.create_task.assert_not_called()
+
+    def test_sync_times_out_while_waiting_answers_504(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """The task keeps going; only this blocking call stops waiting for it."""
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+
+        with patch("opi.api.router.wait_for_task_answer", AsyncMock(side_effect=TimeoutError("te lang"))):
+            response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 504, response.text
+        mock_task_service.create_task.assert_called_once()
+
+    def test_sync_folds_the_task_error_into_deletion_results_when_the_handler_wrote_none(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """A task that failed on an exception never reaches the step that writes its own
+        ``deletion_results``, so the task's ``error_message`` is the only error there is."""
+        mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
+        mock_task_service.get_task.return_value = {
+            **_make_task(task_type="delete_deployment", status="failed"),
+            "result": {"status": "failed"},
+            "error_message": "Critical error during deployment deletion: netwerk weg",
+        }
+
+        response = client.delete("/api/projects/test-project/staging?sync=true", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 207
+        assert response.json()["deletion_results"]["errors"] == [
+            "Critical error during deployment deletion: netwerk weg"
+        ]
 
 
 # ---------------------------------------------------------------------------

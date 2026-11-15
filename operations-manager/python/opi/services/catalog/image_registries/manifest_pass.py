@@ -1,12 +1,12 @@
-"""De manifestpas: los elke image in een podspec op en hang er het juiste secret aan.
+"""The manifest pass: resolve every image in a pod spec and attach the right secret.
 
-Een wandeling en geen tweede mechanisme: sidecars, backup-, restore-, db-console- en
-jobpods lopen niet door de componentlus, maar gebruiken hier dezelfde regels en dezelfde
-``resolve_image()``. Idempotent, want een al opgeloste image staat al op zijn bestemming.
+A walk and not a second mechanism: sidecars, backup, restore, db-console and job pods do not
+go through the component loop, but use the same rules and the same ``resolve_image()`` here.
+Idempotent, because an already resolved image is at its destination.
 
-Lezen en schrijven gaat door ``opi/utils/yaml_util.py``, de enige schrijver: die houdt
-commentaar en meerregelige strings (een literal block) in stand. Een manifest waaraan
-niets is opgelost wordt niet aangeraakt.
+Reading and writing go through ``opi/utils/yaml_util.py``, the only writer: it keeps comments
+and multi-line strings (a literal block) intact. A manifest where nothing resolved is left
+untouched.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Kinds die een podspec op ``spec.template.spec`` dragen.
+#: Kinds that carry a pod spec at ``spec.template.spec``.
 _POD_TEMPLATE_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job"}
 _CRONJOB_KIND = "CronJob"
 
@@ -36,7 +36,7 @@ _SKIP_NAMES = ("kustomization.yaml", "decrypt-sops.yaml")
 
 
 def pod_spec_of(manifest: dict[str, Any]) -> dict[str, Any] | None:
-    """De podspec in dit manifest, of None als het er geen draagt."""
+    """The pod spec in this manifest, or None when it carries none."""
     kind = manifest.get("kind", "")
     if kind == "Pod":
         spec = manifest.get("spec")
@@ -51,16 +51,16 @@ def pod_spec_of(manifest: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict[str, Any]:
-    """Los elke container-image in dit manifest op en zet zijn secret erbij.
+    """Resolve every container image in this manifest and add its secret.
 
-    Muteert en retourneert hetzelfde manifest.
+    Mutates and returns the same manifest.
     """
     _apply_rules(manifest, rules)
     return manifest
 
 
 def _apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> bool:
-    """De pas zelf. True als er aan dit manifest iets is veranderd."""
+    """The pass itself. True when anything in this manifest changed."""
     pod_spec = pod_spec_of(manifest)
     if pod_spec is None or not rules:
         return False
@@ -88,7 +88,7 @@ def _apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> boo
 
 
 def _resolve_documents(documents: list[Any], rules: Sequence[RegistryRule]) -> bool:
-    """Draai de pas over elk document uit een bestand. True als er iets is veranderd."""
+    """Run the pass over every document in a file. True when anything changed."""
     changed = False
     for document in documents:
         if isinstance(document, dict) and _apply_rules(document, rules):
@@ -97,9 +97,9 @@ def _resolve_documents(documents: list[Any], rules: Sequence[RegistryRule]) -> b
 
 
 def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) -> None:
-    """Draai de pas over elk gewoon YAML-manifest in een map.
+    """Run the pass over every plain YAML manifest in a directory.
 
-    Versleutelde secrets en kustomize-bestanden blijven ongemoeid.
+    Encrypted secrets and kustomize files are left alone.
     """
     if not rules:
         return
@@ -115,17 +115,17 @@ def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) ->
             continue
         if not _resolve_documents(documents, rules):
             continue
-        # Eerst volledig in het geheugen serialiseren, dan pas het bestand aanraken: een
-        # dumper die halverwege blaast mag geen afgekapt manifest achterlaten.
+        # Serialise fully in memory first and only then touch the file: a dumper that blows
+        # up halfway must not leave a truncated manifest behind.
         rewritten = dump_yaml_documents_to_string(documents)
         with open(file_path, "w", encoding="utf-8") as handle:
             handle.write(rewritten)
 
 
 def apply_rules_to_document(document: str, rules: Sequence[RegistryRule]) -> str:
-    """Draai de pas over een YAML-tekst, voor een kale pod die los wordt toegepast.
+    """Run the pass over a YAML text, for a bare pod applied on its own.
 
-    Een tekst met meer dan een document telt mee.
+    A text with more than one document counts too.
     """
     if not rules or not document.strip():
         return document
@@ -136,9 +136,9 @@ def apply_rules_to_document(document: str, rules: Sequence[RegistryRule]) -> str
 
 
 def _ensure_pull_secrets(pod_spec: dict[str, Any], secrets: Sequence[str]) -> bool:
-    """Voeg de pull-secrets toe die er nog niet staan, met behoud van wat er al stond.
+    """Add the pull secrets that are not there yet, keeping what was already present.
 
-    True als er iets is bijgekomen.
+    True when anything was added.
     """
     existing = pod_spec.get("imagePullSecrets") or []
     present = {entry.get("name") for entry in existing if isinstance(entry, dict)}

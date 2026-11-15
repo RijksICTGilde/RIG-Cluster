@@ -15,8 +15,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.argo_manager import ArgoManager
-from opi.manager.project_manager import ProjectManager
+from opi.manager.argo_manager import (
+    UMBRELLA_REFRESH_MAX_ATTEMPTS,
+    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS,
+    ArgoManager,
+)
+from opi.manager.project.argocd_sync import ArgoCDSync
 
 RECONCILED_AT = "2026-08-19T12:00:00Z"
 
@@ -63,7 +67,7 @@ async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
     zelf = _watcher_self()
 
-    await ProjectManager._keep_umbrella_refreshed(zelf, connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(zelf)._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     # Eerste ronde plus twee herhalingen; daarna stopt hij, want de umbrella heeft onze
     # commit vergeleken en nog een refresh zou circa 90 child-apps hertekenen.
@@ -75,40 +79,36 @@ async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -
 async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(sleeps: list[float]) -> None:
     connector = FakeArgoConnector(["onze-commit"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert connector.refreshes == 1, "alleen de eerste ronde"
 
 
 async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[float]) -> None:
     """De lus loopt op het antwoord van de refresh; de ondergrens is alleen een rem."""
-    from opi.manager.project_manager import UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
-
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert len(sleeps) == connector.refreshes - 1, "alleen tússen twee refreshes wordt gewacht"
-    assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN for wachttijd in sleeps), (
+    assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS for wachttijd in sleeps), (
         "nooit langer dan de ondergrens, want de refresh wachtte zelf al op een reconcile"
     )
 
 
 async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None:
     """Blijft de revisie verkeerd, dan is er iets anders aan de hand dan een verloren wekker."""
-    from opi.manager.project_manager import UMBRELLA_REFRESH_MAX_POGINGEN
-
     connector = FakeArgoConnector(["oude-revisie"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
-    assert connector.refreshes == UMBRELLA_REFRESH_MAX_POGINGEN, "niet eindeloos doorprikken"
+    assert connector.refreshes == UMBRELLA_REFRESH_MAX_ATTEMPTS, "niet eindeloos doorprikken"
 
 
 async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[float]) -> None:
     connector = FakeArgoConnector(["oude-revisie"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, None)  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, None)  # type: ignore[arg-type]
 
     assert connector.refreshes == 1
     assert connector.status_calls == 0, "zonder bewijs niet gokken"
@@ -118,7 +118,7 @@ async def test_drie_wachtende_applicaties_delen_een_bewaker(sleeps: list[float])
     """Eén bewaker naast de wachters, niet één per applicatie."""
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
     watcher = asyncio.create_task(
-        ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+        ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
     )
 
     async def _wacht_op_applicatie(_naam: str) -> None:
@@ -150,3 +150,19 @@ async def test_timeoutmelding_noemt_de_commit_en_de_gelezen_revisie() -> None:
     assert "abc123def456" in melding
     assert "oude-revisie" in melding
     assert RECONCILED_AT in melding
+
+
+async def test_a_runtime_error_while_polling_is_retried() -> None:
+    """A 401 from ``application_exists`` is a RuntimeError; one of them must not end the wait."""
+    manager = ArgoManager(MagicMock())
+
+    connector = AsyncMock()
+    connector.login = AsyncMock(return_value=True)
+    connector.application_exists = AsyncMock(
+        side_effect=[RuntimeError("Failed to get application status: HTTP 401"), True]
+    )
+
+    with patch("opi.connectors.argo.ArgoConnector", return_value=connector), patch("asyncio.sleep", AsyncMock()):
+        assert await manager.wait_for_application_created("rig-x-main", timeout=10, poll_interval=1) is True
+
+    assert connector.application_exists.await_count == 2

@@ -2,13 +2,24 @@
 
 import os
 import tempfile
+from pathlib import Path
 
+import pytest
+from opi.core.config import settings
 from opi.utils.yaml_util import (
+    YAMLError,
+    _create_yaml_writer,
     dump_yaml_documents_to_string,
+    dump_yaml_double_quoted_scalar,
+    dump_yaml_for_go,
+    dump_yaml_for_go_unfolded,
     dump_yaml_to_string,
     find_value_by_jsonpath,
     load_yaml_documents_from_string,
+    load_yaml_documents_safe,
     load_yaml_from_string,
+    load_yaml_round_trip,
+    load_yaml_safe,
     save_yaml_to_path,
     update_value_by_jsonpath,
 )
@@ -239,3 +250,196 @@ class TestMultiDocumentRoundTrip:
         output = dump_yaml_documents_to_string(load_yaml_documents_from_string("kind: Pod\nspec: {}\n---\n"))
         assert output == "kind: Pod\nspec: {}\n"
         assert "null" not in output
+
+
+_GO_FIXTURE = {
+    "image": "ghcr.io/example/app:1.2.3",
+    "replicas": 1,
+    "truthy": "yes",
+    "switch": "on",
+    "falsy": "no",
+    "mode": "0755",
+    "version": "1.10",
+    "stamp": "2026-11-09",
+    "unicode": "café €",
+    "long": "x" * 120,
+    "spaced": "a" + " " * 30 + "b" + " " * 40 + "c",
+    "sentence": " ".join(["token"] * 30),
+    "env": {"KEY": "value", "A_LONG_SECRET": "s" * 100},
+    "list": ["one", "two", {"nested": True}],
+    "empty": None,
+}
+
+_GO_HEAD = (
+    "image: ghcr.io/example/app:1.2.3\n"
+    "replicas: 1\n"
+    "truthy: yes\n"
+    "switch: on\n"
+    "falsy: no\n"
+    "mode: '0755'\n"
+    "version: '1.10'\n"
+    "stamp: '2026-11-09'\n"
+    "unicode: café €\n"
+)
+_GO_TAIL = "list:\n- one\n- two\n- nested: true\nempty:\n"
+
+
+class TestGoProfileIsByteExact:
+    """The bytes of a file a Go consumer reads must not move: a changed byte in a
+    to-sops file re-encrypts across the whole fleet and changes what Helm sees."""
+
+    def test_folding_writer_matches_the_emitter_default(self):
+        assert dump_yaml_for_go(_GO_FIXTURE) == (
+            _GO_HEAD + "long: \n  " + "x" * 120 + "\n"
+            "spaced: a" + " " * 30 + "b" + " " * 40 + "\n  c\n"
+            "sentence: token token token token token token token token token token token \n"
+            "  token token token token token token token token token token token token token \n"
+            "  token token token token token token\n"
+            "env:\n  KEY: value\n  A_LONG_SECRET: \n    " + "s" * 100 + "\n" + _GO_TAIL
+        )
+
+    def test_unfolded_writer_keeps_every_scalar_on_one_line(self):
+        assert dump_yaml_for_go_unfolded(_GO_FIXTURE) == (
+            _GO_HEAD + "long: " + "x" * 120 + "\n"
+            "spaced: a" + " " * 30 + "b" + " " * 40 + "c\n"
+            "sentence: " + " ".join(["token"] * 30) + "\n"
+            "env:\n  KEY: value\n  A_LONG_SECRET: " + "s" * 100 + "\n" + _GO_TAIL
+        )
+
+    def test_folding_loses_whitespace_that_the_unfolded_writer_keeps(self):
+        # Known gap, kept on purpose: the helm-values and Chart.yaml writers fold, so a
+        # value with runs of spaces comes back changed. Only the CMP-env writer is unfolded.
+        folded = load_yaml_safe(dump_yaml_for_go(_GO_FIXTURE))
+        unfolded = load_yaml_safe(dump_yaml_for_go_unfolded(_GO_FIXTURE))
+        assert folded["spaced"] != _GO_FIXTURE["spaced"]
+        assert unfolded["spaced"] == _GO_FIXTURE["spaced"]
+
+    def test_a_string_a_go_parser_reads_as_a_bool_stays_unquoted(self):
+        # Known gap, kept on purpose: ruamel emits YAML 1.2, Helm and kubectl parse 1.1.
+        assert dump_yaml_for_go({"switch": "on"}) == "switch: on\n"
+
+
+class TestGoProfileRoundTrip:
+    """A file that is read, changed and written back keeps its comments and styles."""
+
+    def test_a_literal_block_stays_a_literal_block(self):
+        # decrypt-sops.yaml.jinja carries the ksops exec config as a | block; emitted as a
+        # quoted one-liner kustomize no longer reads it.
+        source = "annotations:\n  config.kubernetes.io/function: |\n    exec:\n      path: ksops\nfiles: []\n"
+        data = load_yaml_round_trip(source)
+        data["files"] = ["a.sops.yaml"]
+        assert dump_yaml_for_go(data) == source.replace("files: []", "files:\n- a.sops.yaml")
+
+    def test_a_comment_survives_a_rewrite(self):
+        source = "# keep me\nname: chart\ndependencies:\n- name: common\n  repository: file://../common\n"
+        data = load_yaml_round_trip(source)
+        data["dependencies"][0]["repository"] = "file://../renamed"
+        assert dump_yaml_for_go(data) == source.replace("file://../common", "file://../renamed")
+
+    def test_the_real_kustomization_template_emits_the_committed_bytes(self):
+        data = load_yaml_round_trip((Path(settings.MANIFESTS_PATH) / "kustomization.yaml.jinja").read_text())
+        data["namespace"] = "rig-demo"
+        data["resources"] = ["deployment.yaml"]
+        assert dump_yaml_for_go(data) == (
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "generators:\n"
+            "- decrypt-sops.yaml\n"
+            "kind: Kustomization\n"
+            "namespace: rig-demo\n"
+            "resources:\n"
+            "- deployment.yaml\n"
+        )
+
+    def test_the_real_decrypt_sops_template_emits_the_committed_bytes(self):
+        data = load_yaml_round_trip((Path(settings.MANIFESTS_PATH) / "decrypt-sops.yaml.jinja").read_text())
+        data["files"] = ["db.sops.yaml"]
+        assert dump_yaml_for_go(data) == (
+            "apiVersion: viaduct.ai/v1\n"
+            "kind: ksops\n"
+            "metadata:\n"
+            "  name: secret-generator\n"
+            "  annotations:\n"
+            "    config.kubernetes.io/function: |\n"
+            "      exec:\n"
+            "        path: ksops\n"
+            "files:\n"
+            "- db.sops.yaml\n"
+        )
+
+
+class TestProjectFileWriterLeaksIntoEveryEmitter:
+    """Known gap, pinned on purpose: ruamel's ``add_representer`` is a classmethod, so the
+    project-file writer rewires every round-trip emitter in the process. Whether a
+    generated manifest writes a multi-line value as a | block therefore depends on whether
+    a project file was written earlier in the same process."""
+
+    def test_building_the_project_file_writer_changes_the_go_writer(self):
+        _create_yaml_writer()
+        assert dump_yaml_for_go({"text": "a\nb\n"}) == "text: |\n  a\n  b\n"
+
+
+class TestLoadYamlSafe:
+    """The read-only loader: plain types, and a parse error the caller can act on."""
+
+    def test_it_returns_plain_types(self):
+        data = load_yaml_safe("a:\n  b: [1, 2]\n")
+        assert data == {"a": {"b": [1, 2]}}
+        assert type(data) is dict
+
+    def test_it_resolves_scalars_as_yaml_1_2(self):
+        # PyYAML reads 1.1, where these are a bool and an octal int.
+        assert load_yaml_safe("a: yes\nb: 0755\nc: on\n") == {"a": "yes", "b": 755, "c": "on"}
+
+    def test_it_raises_on_broken_yaml(self):
+        with pytest.raises(YAMLError):
+            load_yaml_safe("a: [1\nb: 2\n")
+
+    def test_empty_text_is_none(self):
+        assert load_yaml_safe("") is None
+
+    def test_documents_are_returned_in_order(self):
+        assert load_yaml_documents_safe("kind: Pod\n---\nkind: Service\n") == [
+            {"kind": "Pod"},
+            {"kind": "Service"},
+        ]
+
+    def test_documents_raise_on_broken_yaml(self):
+        with pytest.raises(YAMLError):
+            load_yaml_documents_safe("kind: Pod\n---\na: [1\n")
+
+
+class TestDumpYamlDoubleQuotedScalar:
+    """The Jinja filter's emitter: one double-quoted scalar, nothing else."""
+
+    def test_a_plain_value_is_quoted(self):
+        assert dump_yaml_double_quoted_scalar("plain") == '"plain"'
+
+    def test_a_quote_and_a_backslash_are_escaped(self):
+        assert dump_yaml_double_quoted_scalar('he said "hi" \\ ok') == '"he said \\"hi\\" \\\\ ok"'
+
+    def test_unicode_is_not_escaped(self):
+        assert dump_yaml_double_quoted_scalar("café") == '"café"'
+
+    def test_a_long_value_stays_on_one_line(self):
+        value = "a" + " " * 40 + "b" * 200
+        assert dump_yaml_double_quoted_scalar(value) == f'"{value}"'
+
+
+class TestRoundTripLoaderKeepsTheSourceForm:
+    """A value that is parsed and emitted again comes out as it went in.
+
+    The pair loader+writer is what makes a rewrite byte-identical, and a to-sops file
+    re-encrypts on any changed byte. It also decides what Helm sees: go-yaml parses 1.1,
+    where ``0755`` is 493 and ``755`` is 755."""
+
+    SOURCE = "defaultMode: 0755\ntag: 1.10\nreplicas: 1\nname: chart\n"
+
+    def test_a_numeric_scalar_keeps_the_form_it_had(self):
+        assert dump_yaml_for_go(load_yaml_round_trip(self.SOURCE)) == self.SOURCE
+
+    def test_the_safe_loader_is_not_a_substitute(self):
+        # Pinned so the loader cannot be swapped back: the safe loader resolves a scalar
+        # to a Python number and the writer then emits its repr.
+        assert dump_yaml_for_go(load_yaml_safe(self.SOURCE)) == (
+            "defaultMode: 755\ntag: 1.1\nreplicas: 1\nname: chart\n"
+        )

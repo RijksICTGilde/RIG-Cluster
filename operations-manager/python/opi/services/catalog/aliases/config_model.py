@@ -1,20 +1,19 @@
-"""Typed config model for the ``aliases`` system service (RC-25).
+"""Typed config model for the ``aliases`` system service.
 
 An alias maps a name the application expects onto a variable the platform exposes:
-``POSTGRES_HOST: $DATABASE_SERVER_HOST``. Since RC-106 it is stored exactly like
-``user-env-vars``: ONE AGE block whose plaintext is ``KEY=value`` lines. Three shapes are
-therefore legal, and the model accepts all three:
+``POSTGRES_HOST: $DATABASE_SERVER_HOST``. It is stored exactly like ``user-env-vars``: ONE
+AGE block whose plaintext is ``KEY=value`` lines. Three shapes are therefore legal, and the
+model accepts all three:
 
 * an AGE-encrypted **block** -- the normal stored shape, opaque and accepted as is;
 * a plain ``KEY=value`` / YAML text block -- what the form posts before encryption;
 * a mapping -- the unencrypted shape, which stays valid in the project schema.
 
-What it checks is the key: an alias becomes an environment variable, so its name
-must be a valid one. The "an alias value should reference something" rule deliberately
-lives in the form validator (``AliasReferenceValidator``) and not here -- a stored alias
-without a reference is harmless at deploy time (``substitute_variables`` passes it
-through untouched), so turning it into a hard file-level error would reject existing,
-working projects. The form is where the author still has the value in front of them.
+What it checks is the key: an alias becomes an environment variable, so its name must be a
+valid one. The "an alias value should reference something" rule belongs in the form
+validator (``AliasReferenceValidator``) and not here: a stored alias without a reference is
+harmless at deploy time (``substitute_variables`` passes it through untouched), so a hard
+file-level error here rejects existing, working projects.
 """
 
 from __future__ import annotations

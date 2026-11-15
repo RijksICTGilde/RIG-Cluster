@@ -1,11 +1,11 @@
-"""De tweede factor van een ZAD-gebruiker: registreren, verifieren en herstellen (RC-329).
+"""A ZAD user's second factor: register it, verify it and recover it.
 
-Dit is de ENIGE plek die de ``otp_*``-kolommen op ``users`` leest of schrijft.
-``tests/test_otp_kolommen_eigenaar.py`` bewaakt dat.
+The ONLY place that reads or writes the ``otp_*`` columns on ``users``;
+``tests/test_otp_kolommen_eigenaar.py`` guards that.
 
-Niet te verwarren met de OTP op de gedeelde realm-admin van een projectrealm
-(``features/keycloak-realm-admin-otp.md``): die beschermt de Keycloak-console en hangt
-aan een service-account, deze hangt aan een persoon.
+Not to be confused with the OTP on the shared realm admin of a project realm
+(``features/keycloak-realm-admin-otp.md``): that one protects the Keycloak console and hangs
+off a service account, this one hangs off a person.
 """
 
 from __future__ import annotations
@@ -32,24 +32,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Vijf fouten achter elkaar levert een blokkade van een kwartier. Een mislukte code is
-# een beveiligingssignaal; dit remt het raden zonder iemand buiten te sluiten.
+# A failed code is a security signal; this slows guessing down without locking anyone out.
 OTP_MAX_FAILED_ATTEMPTS = 5
 OTP_LOCK_DURATION = timedelta(minutes=15)
 
-#: De sleutel waarmee ``otp_secret`` is versleuteld. Een kolom ernaast houdt roteren
-#: later mogelijk zonder te moeten raden waarmee een rij ooit is versleuteld.
+#: The key ``otp_secret`` is encrypted with. A column next to it keeps rotating possible
+#: later, without having to guess what a row was once encrypted with.
 OTP_KEY_VERSION = 1
 
-#: Hoe lang een gestarte registratie zijn bevestiging accepteert.
+#: How long a started registration accepts its confirmation.
 PENDING_TTL = timedelta(minutes=10)
 
-#: De absolute levensduur van een gestarte registratie, verlengingen meegerekend. Zonder
-#: deze grens blijft een achtergelaten registratiepagina te bevestigen (RC-394).
+#: The absolute lifetime of a started registration, renewals included. Without this limit an
+#: abandoned registration page stays confirmable.
 PENDING_MAX_AGE = 2 * PENDING_TTL
 
-#: De kolommen die een reset leegmaakt. Ook de feature-documentatie noemt ze, voor wie
-#: een gebruiker met de hand moet helpen.
+#: The columns a reset empties. The feature documentation names them too, for whoever has to
+#: help a user by hand.
 OTP_COLUMNS_CLEARED_BY_RESET = (
     "otp_secret",
     "otp_key_version",
@@ -61,7 +60,7 @@ OTP_COLUMNS_CLEARED_BY_RESET = (
 
 
 class OtpVerification(StrEnum):
-    """De uitkomst van :meth:`UserOtpService.verify`."""
+    """The outcome of :meth:`UserOtpService.verify`."""
 
     OK = "ok"
     INVALID = "invalid"
@@ -71,7 +70,7 @@ class OtpVerification(StrEnum):
 
 @dataclass(frozen=True)
 class OtpStatus:
-    """Wat een pagina over de factor van een gebruiker mag weten."""
+    """What a page may know about a user's factor."""
 
     registered: bool
     confirmed_at: datetime | None = None
@@ -84,10 +83,10 @@ class OtpStatus:
 
 @dataclass(frozen=True)
 class OtpRegistration:
-    """Een nog niet bevestigde registratie.
+    """A registration that has not been confirmed yet.
 
-    ``secret`` en ``otpauth_uri`` zijn voor de pagina die ze eenmalig toont;
-    ``encrypted_secret`` is wat het formulier meedraagt tot de bevestiging.
+    ``secret`` and ``otpauth_uri`` are for the page that shows them once; ``encrypted_secret``
+    is what the form carries along until the confirmation.
     """
 
     secret: str
@@ -97,10 +96,10 @@ class OtpRegistration:
 
 
 class UserOtpService:
-    """De tweede factor van een ZAD-gebruiker."""
+    """A ZAD user's second factor."""
 
     async def status(self, email: str) -> OtpStatus:
-        """Of deze gebruiker een bevestigde factor heeft, en of hij geblokkeerd is."""
+        """Whether this user has a confirmed factor, and whether it is locked."""
         async with session_scope() as session:
             row = await self._row(session, email)
             if row is None or row.otp_confirmed_at is None:
@@ -112,11 +111,11 @@ class UserOtpService:
             )
 
     async def start_registration(self, email: str) -> OtpRegistration:
-        """Maak een zaad voor een nieuwe factor. Schrijft niets.
+        """Make a seed for a new factor. Writes nothing.
 
-        De database houdt alleen een BEVESTIGDE factor: zo vervangt een nieuwe
-        registratie de oude pas als de gebruiker een geldige code van de nieuwe heeft
-        ingevoerd. Waar het zaad tot dat moment staat: ``opi/web/router_otp.py``.
+        The database holds only a CONFIRMED factor, so a new registration replaces the old one
+        only once the user has entered a valid code from the new one. Where the seed sits until
+        that moment: ``opi/web/router_otp.py``.
         """
         secret = generate_totp_secret()
         encrypted = await encrypt_age_content(secret, settings.SOPS_AGE_PUBLIC_KEY)
@@ -124,7 +123,7 @@ class UserOtpService:
         return self._registration(email, secret, encrypted)
 
     async def resume_registration(self, email: str, encrypted_secret: str) -> OtpRegistration:
-        """Dezelfde registratie opnieuw tonen, uit het meegestuurde versleutelde zaad."""
+        """Show the same registration again, out of the encrypted seed that came along."""
         secret = await decrypt_age_content(encrypted_secret, get_global_private_key())
         return self._registration(email, secret, encrypted_secret)
 
@@ -135,10 +134,10 @@ class UserOtpService:
         encrypted_secret: str,
         full_name: str = "",
     ) -> bool:
-        """Bevestig een registratie met een code van het nieuwe zaad.
+        """Confirm a registration with a code from the new seed.
 
-        ``encrypted_secret`` komt uit :meth:`start_registration`. Pas hier wordt de
-        factor opgeslagen, en vervangt hij een eventuele vorige.
+        ``encrypted_secret`` comes from :meth:`start_registration`. Only here is the factor
+        stored, and only here does it replace any previous one.
         """
         secret = await decrypt_age_content(encrypted_secret, get_global_private_key())
         step = verify_totp(secret, code)
@@ -158,10 +157,10 @@ class UserOtpService:
         return True
 
     async def verify(self, email: str, code: str) -> OtpVerification:
-        """Toets een code van de bevestigde factor van deze gebruiker.
+        """Check a code from this user's confirmed factor.
 
-        Telt mislukte pogingen en blokkeert na :data:`OTP_MAX_FAILED_ATTEMPTS` fouten;
-        een geslaagde poging zet de teller op nul.
+        Counts failed attempts and locks after :data:`OTP_MAX_FAILED_ATTEMPTS` of them; a
+        successful attempt sets the counter back to zero.
         """
         async with session_scope() as session:
             row = await self._row(session, email)
@@ -201,7 +200,7 @@ class UserOtpService:
             return OtpVerification.OK
 
     async def reset(self, email: str, by: str) -> bool:
-        """Maak de factor van deze gebruiker leeg. Daarna registreert hij opnieuw."""
+        """Empty this user's factor. They register again afterwards."""
         async with session_scope() as session:
             row = await self._row(session, email)
             if row is None:
@@ -215,13 +214,10 @@ class UserOtpService:
         logger.info("OTP gereset voor %s door %s", email, by)
         return True
 
-    # ---- Lopende registraties (server-side, eigen tabel) -------------------------------------
-
     async def note_pending_registration(self, email: str, fingerprint: str) -> None:
-        """Leg vast dat /start voor deze gebruiker draaide, met het zaad als afdruk.
+        """Record that /start ran for this user, with the seed as a fingerprint.
 
-        Tot 27-10-2026 zat die afdruk in de sessiecookie (zie router_otp.py). Nu in de
-        tabel ``otp_pending_registrations``, met verloop, volgens het patroon van AMT/TAD.
+        In the ``otp_pending_registrations`` table, with an expiry.
         """
         now = datetime.now(UTC)
         async with session_scope() as session:
@@ -240,11 +236,11 @@ class UserOtpService:
                 row.expires_at = now + PENDING_TTL
 
     async def consume_pending_registration(self, email: str, fingerprint: str) -> bool:
-        """True als deze gebruiker een lopende registratie heeft die bij deze afdruk hoort.
+        """True when this user has a running registration that belongs to this fingerprint.
 
-        Een verlopen of afwezige registratie geeft False. De rij blijft staan voor een
-        nieuwe poging (de code uit de app komt dertig seconden later weer); het schrijven
-        van de factor zelf is de bevestiging.
+        An expired or absent registration gives False. The row STAYS for another attempt (the
+        code from the app comes round again thirty seconds later); writing the factor itself is
+        the confirmation.
         """
         async with session_scope() as session:
             row = (
@@ -255,14 +251,14 @@ class UserOtpService:
             return hmac.compare_digest(row.fingerprint, fingerprint)
 
     async def renew_expired_pending_registration(self, email: str, fingerprint: str) -> bool:
-        """Geef een VERLOPEN registratie nog een termijn, als de afdruk bij de rij hoort.
+        """Give an EXPIRED registration another term, when the fingerprint belongs to the row.
 
-        Alleen een rij van een echte /start kan dat: een eigen seed heeft een andere afdruk,
-        dus de controle op de huidige 2-factor in /start blijft niet te omzeilen.
+        Only a row from a real /start can do that: an own seed has a different fingerprint, so
+        the check on the current second factor in /start stays impossible to bypass.
 
-        De verlenging loopt nooit voorbij :data:`PENDING_MAX_AGE` na de /start. Onbegrensd
-        verlengen houdt een achtergelaten registratiepagina bevestigbaar, en dat is precies
-        de open sessie op de ontgrendelde computer waar de herlogin op /start tegen is.
+        The renewal never runs past :data:`PENDING_MAX_AGE` after the /start. Renewing without
+        a limit keeps an abandoned registration page confirmable, which is exactly the open
+        session on the unlocked computer the herlogin on /start guards against.
         """
         now = datetime.now(UTC)
         async with session_scope() as session:
@@ -271,10 +267,10 @@ class UserOtpService:
             ).scalar_one_or_none()
             if row is None or row.expires_at > now or not hmac.compare_digest(row.fingerprint, fingerprint):
                 return False
-            uiterlijk = row.created_at + PENDING_MAX_AGE
-            if uiterlijk <= now:
+            latest = row.created_at + PENDING_MAX_AGE
+            if latest <= now:
                 return False
-            row.expires_at = min(now + PENDING_TTL, uiterlijk)
+            row.expires_at = min(now + PENDING_TTL, latest)
             return True
 
     async def discard_pending_registration(self, email: str) -> None:
@@ -286,7 +282,7 @@ class UserOtpService:
                 await session.delete(row)
 
     async def purge_expired_pending_registrations(self) -> int:
-        """Ruim verlopen registraties op; de cleanup-lus van de taakwerker roept dit."""
+        """Sweep expired registrations; the task worker's cleanup loop calls this."""
         async with session_scope() as session:
             result = await session.execute(
                 delete(OtpPendingRegistration).where(OtpPendingRegistration.expires_at <= datetime.now(UTC))
@@ -295,7 +291,7 @@ class UserOtpService:
 
     @staticmethod
     def _registration(email: str, secret: str, encrypted_secret: str) -> OtpRegistration:
-        """Wat de registratiepagina van een zaad nodig heeft."""
+        """What the registration page needs from a seed."""
         return OtpRegistration(
             secret=secret,
             encrypted_secret=encrypted_secret,
@@ -305,10 +301,10 @@ class UserOtpService:
 
     @staticmethod
     async def _row(session: AsyncSession, email: str) -> User | None:
-        """De rij van dit adres, hoofdletterongevoelig.
+        """The row of this address, case-insensitively.
 
-        Een beheerder typt het adres zoals hij het kent, de inlogdienst levert het
-        kleingeletterd. Zonder deze normalisatie krijgt dezelfde persoon twee rijen.
+        An admin types the address as they know it, the login service delivers it lower case.
+        Without this normalisation the same person gets two rows.
         """
         return (
             await session.execute(select(User).where(func.lower(User.email) == email.strip().lower()))
@@ -316,11 +312,11 @@ class UserOtpService:
 
     @staticmethod
     async def _row_or_create(session: AsyncSession, email: str, full_name: str) -> User:
-        """De rij van deze gebruiker, aangemaakt als hij er nog niet is.
+        """This user's row, created when it is not there yet.
 
-        Een ingelogde gebruiker staat niet per se in ``users``: de allowlist komt ook uit
-        ``ALLOWED_EMAILS``. Zonder rij zou zelfbediening alleen werken voor wie een
-        beheerder eerder heeft ingevoerd.
+        A signed-in user is not necessarily in ``users``: the allowlist also comes from
+        ``ALLOWED_EMAILS``. Without a row, self-service would only work for whoever an admin
+        entered beforehand.
         """
         row = await UserOtpService._row(session, email)
         if row is not None:

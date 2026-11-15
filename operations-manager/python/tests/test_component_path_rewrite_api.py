@@ -21,8 +21,8 @@ from opi.api.validation import (
 )
 from opi.forms.editables.fields.components import COMPONENT_PATH_REWRITE_EDITABLE
 from opi.generation.manifests import render_template
-from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.utils.project_utils import build_component_config
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_utils import build_component_config
 
 
 async def _component_and_ingress(rewrite: str | None) -> tuple[dict[str, Any], str]:

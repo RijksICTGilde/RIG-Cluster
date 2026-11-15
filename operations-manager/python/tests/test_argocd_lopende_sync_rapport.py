@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.responses import HTMLResponse
 from opi.api.v2.models import DeploymentStatus
 from opi.api.v2.router import _build_deployment_detail, _extract_live_status
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.deployment_diagnostics import gather_sync_deviations
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.services import ServiceAdapter

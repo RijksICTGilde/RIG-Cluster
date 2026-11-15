@@ -209,7 +209,7 @@ BACKUP_TEMPLATE = "shared/_backup-snapshots.html.j2"
 
 
 def _render(naam: str, context: dict[str, Any]) -> str:
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     return templates_lotc.env.get_template(naam).render(**context)
 

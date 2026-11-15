@@ -1,4 +1,4 @@
-"""De GPG-sleutel waarmee OPI zijn commits in de GitOps-repo's ondertekent."""
+"""The GPG key OPI signs its commits in the GitOps repos with."""
 
 import logging
 import os
@@ -8,28 +8,28 @@ import tempfile
 from dataclasses import dataclass
 
 from opi.core.config import settings
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
-#: Keyring-map in TMPDIR (vluchtig), niet in settings.TEMP_DIR (PVC op sandbox).
+#: Keyring directory in TMPDIR (volatile), not in settings.TEMP_DIR (a PVC on the sandbox).
 GNUPG_HOME_NAME = "opi-gnupg"
 
 
 class GitSigningKeyError(RuntimeError):
-    """De geconfigureerde signing key kon niet worden ingelezen."""
+    """The configured signing key could not be read."""
 
 
 @dataclass(frozen=True)
 class GitSigningIdentity:
-    """De fingerprint waarmee git ondertekent, en de GNUPGHOME waarin die sleutel staat."""
+    """The fingerprint git signs with, and the GNUPGHOME holding that key."""
 
     fingerprint: str
     gnupg_home: str
 
     @property
     def key_id(self) -> str:
-        """De long key ID: de vorm die ArgoCD in ``signatureKeys`` eist, een fingerprint weigert het."""
+        """The long key ID: the shape ArgoCD demands in ``signatureKeys``, it refuses a fingerprint."""
         return self.fingerprint[-16:]
 
 
@@ -37,15 +37,15 @@ _identity: GitSigningIdentity | None = None
 
 
 def get_git_signing_identity() -> GitSigningIdentity | None:
-    """De ingelezen signing identity, of None zolang er geen sleutel is geconfigureerd."""
+    """The loaded signing identity, or None as long as no key is configured."""
     return _identity
 
 
 def load_git_signing_identity() -> GitSigningIdentity | None:
-    """Lees de geconfigureerde sleutel in en onthoud hem voor de git-connector.
+    """Read the configured key and remember it for the git connector.
 
-    Zonder geconfigureerd of bestaand bestand blijft OPI werken zonder te ondertekenen.
-    Een bestand dat gpg niet kan importeren is een configuratiefout en stopt de opstart.
+    Without a configured or existing file OPI keeps working without signing. A file gpg
+    cannot import is a configuration error and stops the startup.
     """
     global _identity
 
@@ -76,7 +76,6 @@ def _import_key(key_file: str, gnupg_home: str) -> None:
 
 
 def _secret_key_fingerprint(key_file: str, gnupg_home: str) -> str:
-    """De fingerprint van de geïmporteerde privésleutel, uit de machineleesbare uitvoer van gpg."""
     result = _run_gpg(["--list-secret-keys", "--with-colons"], gnupg_home)
     if result.returncode != 0:
         raise GitSigningKeyError(f"Kon de sleutels in {gnupg_home} niet uitlezen: {result.stderr.strip()}")
@@ -94,12 +93,12 @@ def _secret_key_fingerprint(key_file: str, gnupg_home: str) -> str:
 
 def _run_gpg(args: list[str], gnupg_home: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-            ["gpg", "--homedir", gnupg_home, "--batch", "--no-tty", *args],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+        return subprocess.run(  # noqa: S603  # no shell; the variable parts are separate argv elements
+            ["gpg", "--homedir", gnupg_home, "--batch", "--no-tty", *args],  # noqa: S607  # a tool from the image's PATH, not a fixed path
             capture_output=True,
             text=True,
             check=False,
             env=child_env(),
         )
-    except FileNotFoundError as fout:
-        raise GitSigningKeyError("gpg staat niet in dit image, dus er kan niet ondertekend worden") from fout
+    except FileNotFoundError as e:
+        raise GitSigningKeyError("gpg staat niet in dit image, dus er kan niet ondertekend worden") from e

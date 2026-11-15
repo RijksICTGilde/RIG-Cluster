@@ -87,7 +87,7 @@ laag met config *ergens* bewerkbaar is, is een aparte, al bestaande garantie:
 
 - `opi/services/config_location.py` -- `project_step_config_hint`, `config_hint_for_value`,
   `selection_labels`
-- `opi/forms/widgets/roos.py` -- `render_service_cards` hangt de regel aan een aangevinkte kaart
+- `opi/forms/widgets/fields.py` -- `render_service_cards` hangt de regel aan een aangevinkte kaart
 - `opi/templates/widgets/service_cards.html.j2` -- rendert hem
 - `opi/templates_lotc/bg/project-tabs.html.j2` -- detailkaart: selectielabels + regel
 - `tests/test_service_config_location.py` -- bron van waarheid, de zeven diensten, de kaarten

@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from opi.core.project_schema import validate_project_schema
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, apply_virtualize
 from opi.services.catalog.publish_on_web.domain_config import (
     DOMAIN_SETTING_KEYS,
@@ -33,6 +32,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     domain_setting_path,
     get_domain_setting,
 )
+from opi.services.project_schema import validate_project_schema
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
@@ -62,7 +62,7 @@ def captured_yaml(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Het projectbestand dat de wizard aan de aanmaaktaak geeft -- het artefact, niet de pagina."""
     captured: list[str] = []
 
-    import opi.core.task_helpers as task_helpers
+    import opi.http.task_helpers as task_helpers
 
     async def _fake_create_async_task(**kwargs: Any) -> dict[str, Any]:
         captured.append(kwargs["payload"]["yaml_content"])

@@ -1,9 +1,9 @@
 """vlam service: reach the VLAM-API from inside the cluster, without a VPN.
 
-VLAM is the language-model API SSC-ICT offers over the RON. Since RC-142 the vlam project
-runs a second, INTERNAL proxy next to the VPN gateway: it accepts plain HTTP and sets up
-the verified TLS session towards ``vlam-api.overheid-i.nl`` itself. Since RC-167 that same
-proxy also offers a DOORLUS on a second port: it passes the TLS session through instead of
+VLAM is the language-model API SSC-ICT offers over the RON. The vlam project runs a second,
+INTERNAL proxy next to the VPN gateway: it accepts plain HTTP and sets up the verified TLS
+session towards ``vlam-api.overheid-i.nl`` itself. That same proxy also offers a DOORLUS on
+a second port: it passes the TLS session through instead of
 terminating it, so the consumer speaks to VLAM itself. This service is the thin ZAD side
 of both: it hands a consumer the addresses of that proxy, opens the network path to them,
 and for the doorlus adds the one thing that path needs to work at all: a hosts entry
@@ -19,7 +19,7 @@ Three things are deliberately the way they are:
   entry (``opi/core/cluster_config.py``); what it does not have is the service.
 * **This service writes the EGRESS half only.** The ingress half lives once in
   ``vlam-wt8``: a ``cross-domain-access`` inbound rule with the WILDCARD peer
-  (``from: {project: "*"}``, RC-142) that opens port 8081 of the proxy to every source. So
+  (``from: {project: "*"}``) that opens port 8081 of the proxy to every source. So
   taking the service is enough for a consumer, and the owner of a shared facility is not
   made the gatekeeper of a self-service platform. What the caller may then DO is authorized
   by VLAM itself, on its API key -- the network rule decides reachability, not identity.
@@ -32,9 +32,8 @@ Deliberately absent, so the next reader does not go looking:
   generic service-manifest prune removes the policy file when the service is switched off.
 * ``manifest_secret_class`` / ``build_secret_files``: neither address is a secret, so
   both are plain env vars. Encrypting a public cluster address would only hide from its
-  owner what their pod was told. Until RC-414 the doorlus also mounted a CA bundle as a
-  Secret; the certificate of VLAM is publicly trusted since SSC-ICT moved to DigiCert, so
-  there is nothing left to deliver.
+  owner what their pod was told. The certificate of VLAM is publicly trusted, so there is
+  no CA bundle to deliver either.
 * ``config_approvals``: there is nothing per project to judge: the VLAM side is open to
   the cluster and VLAM authorizes its own callers. An approval here would gate reachability
   while the thing that actually protects VLAM is its API key.
@@ -78,7 +77,7 @@ class VlamService(Service):
         variables=[var.value for var in VlamVariables],
         cleanup_strategy=CleanupStrategy.NONE,
     )
-    #: After the existing contributors, so no already-rendered manifest changes order.
+    #: After the existing contributors.
     manifest_order = 80
 
     def available_on_cluster(self, cluster: str) -> bool:
@@ -94,9 +93,9 @@ class VlamService(Service):
     def vlam_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         """The two paths to VLAM side by side.
 
-        Only on a cluster that offers the doorlus: without it there is no second address,
-        and a block that shows one address the user already has in an env var would be a
-        page telling them nothing.
+        Only on a cluster that offers the doorlus: without it there is no second address, and a
+        block showing one address the user already has in an env var would be a page that says
+        nothing.
         """
         endpoint = vlam_endpoint(settings.CLUSTER_MANAGER)
         if endpoint is None or endpoint.passthrough is None:
@@ -117,16 +116,16 @@ class VlamService(Service):
         contributed -- the save-time validation refuses that combination, and generation
         must not fail on a project that slipped through.
 
-        On a cluster that also offers the DOORLUS (RC-167), two more things, and they go
-        together or not at all:
+        On a cluster that also offers the DOORLUS, two more things, and they go together
+        or not at all:
 
         * ``VLAM_API_URL_DIRECT`` -- the address of the passthrough port;
         * a ``hostAliases`` entry -- because that address carries the VLAM hostname (TLS
           compares it against the certificate) while the traffic must reach our proxy.
 
         Either on its own is useless, which is why ``VlamEndpoint.passthrough`` is one
-        object. Trust material is NOT among them (RC-414): the certificate of VLAM comes
-        from DigiCert, so the standard trust store of the consumer's runtime verifies it.
+        object. Trust material is NOT among them: the certificate of VLAM comes from
+        DigiCert, so the standard trust store of the consumer's runtime verifies it.
         """
         endpoint = vlam_endpoint(ctx.cluster)
         if endpoint is None:
@@ -154,10 +153,10 @@ class VlamService(Service):
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """One egress NetworkPolicy per component that ticked the service.
 
-        Per component and not per deployment: a policy selecting the whole deployment
-        opened the way to VLAM for pods whose owner never asked for it. Egress only --
-        this opens the way OUT; whether a pod actually gets through is decided by the
-        inbound rule at the VLAM side.
+        Per component and not per deployment: a policy selecting the whole deployment would
+        open the way to VLAM for pods whose owner never asked for it. Egress only -- this
+        opens the way OUT; whether a pod actually gets through is decided by the inbound
+        rule at the VLAM side.
         """
         endpoint = vlam_endpoint(ctx.cluster)
         if endpoint is None:

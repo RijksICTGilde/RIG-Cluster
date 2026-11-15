@@ -1,10 +1,4 @@
-"""
-Kopia connector for backup repository operations.
-
-This module provides functionality to interact with Kopia backup repositories
-for listing snapshots and querying backup metadata directly, without needing
-to spawn Kubernetes pods.
-"""
+"""Read and prune Kopia backup repositories through the kopia CLI, without a backup pod."""
 
 import asyncio
 import json
@@ -15,7 +9,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
-from opi.manager.backup.base import ResourceType
+from opi.core.backup_constants import ResourceType
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +26,15 @@ def _is_missing_repository(stderr: str) -> bool:
 
 
 class KopiaConnectionError(Exception):
-    """Exception raised when Kopia connection is not available."""
+    """The kopia CLI is missing, or the repository could not be reached."""
 
 
 class KopiaExecutionError(Exception):
-    """Exception raised when Kopia command execution fails."""
+    """A kopia command exited non-zero or timed out."""
 
 
-# Wat kopia uit de omgeving van OPI mag overnemen. De S3-sleutels en het
-# repository-wachtwoord komen per aanroep uit de KopiaRepositoryConfig.
+# What kopia may take over from OPI's environment. The S3 keys and the repository password
+# come per call out of the KopiaRepositoryConfig.
 _KOPIA_ENV_PASSTHROUGH = (
     "PATH",
     "TMPDIR",
@@ -58,67 +52,56 @@ _KOPIA_ENV_PASSTHROUGH = (
 
 @dataclass
 class KopiaSnapshot:
-    """Information about a Kopia snapshot."""
-
     snapshot_id: str
     source_path: str
     timestamp: str
     size_bytes: int | None = None
     tags: dict[str, str] | None = None
-    # Kopia source identity (user@host). Snapshots written with the intended
-    # stable identity have user "opi-backup"; anything else is debris from
-    # runs where the identity override was not applied.
+    # Kopia source identity (user@host). A snapshot written with the intended stable
+    # identity has user "opi-backup"; anything else is debris.
     source_user: str | None = None
     source_host: str | None = None
 
     def _get_tag(self, key: str) -> str | None:
-        """Get a tag value, handling Kopia's 'tag:' prefix."""
+        """One tag's value. Kopia prefixes its tags with ``tag:`` in JSON output."""
         if not self.tags:
             return None
-        # Kopia stores tags with 'tag:' prefix in JSON output
         value = self.tags.get(f"tag:{key}") or self.tags.get(key)
-        # Treat string "None" as actual None
+        # kopia writes the literal strings "None" and "unknown" for an absent tag.
         if value == "None" or value == "unknown":
             return None
         return value
 
     @property
     def pvc_name(self) -> str:
-        """Extract PVC name from tags or source path."""
+        """The ``pvc`` tag, or the last segment of the source path, or "unknown"."""
         value = self._get_tag("pvc")
         if value:
             return value
-        # Fallback: extract from source path (e.g., /data -> data)
         return self.source_path.strip("/").split("/")[-1] if self.source_path else "unknown"
 
     @property
     def cluster(self) -> str | None:
-        """Extract cluster from tags."""
         return self._get_tag("cluster")
 
     @property
     def namespace(self) -> str | None:
-        """Extract namespace from tags."""
         return self._get_tag("namespace")
 
     @property
     def project_name(self) -> str | None:
-        """Extract project name from tags."""
         return self._get_tag("project")
 
     @property
     def deployment_name(self) -> str | None:
-        """Extract deployment name from tags."""
         return self._get_tag("deployment")
 
     @property
     def component_name(self) -> str | None:
-        """Extract component name from tags."""
         return self._get_tag("component")
 
     @property
     def storage_name(self) -> str | None:
-        """Extract storage name from tags."""
         return self._get_tag("storage")
 
     @property
@@ -128,7 +111,6 @@ class KopiaSnapshot:
 
     @property
     def generation(self) -> int | None:
-        """Extract generation from tags."""
         value = self._get_tag("generation")
         if value:
             try:
@@ -139,33 +121,25 @@ class KopiaSnapshot:
 
     @property
     def backup_run_id(self) -> str | None:
-        """Extract backup run ID from tags (groups PVCs from same backup run)."""
+        """The tag that groups the PVCs of one backup run."""
         return self._get_tag("backup_run")
 
     @property
     def resource_type(self) -> ResourceType:
-        """Extract resource type from tags."""
         return ResourceType.from_string(self._get_tag("resource_type"))
 
     @property
     def trigger(self) -> str:
         """Whether the backup was created by the scheduler or a manual action.
 
-        Returns "scheduled" or "manual". Legacy snapshots without the tag are
-        treated as scheduled (the historical default before this field existed).
+        Returns "scheduled" or "manual". A snapshot without the tag counts as scheduled.
         """
         value = self._get_tag("trigger")
         return value if value in {"scheduled", "manual"} else "scheduled"
 
     @property
     def reference_name(self) -> str | None:
-        """Extract reference name based on resource type.
-
-        Different resource types store reference names in different tags:
-        - pvc: uses 'storage' tag
-        - database: uses 'database' tag
-        - bucket: uses 'bucket' tag
-        """
+        """The reference name, which each resource type stores in a tag of its own."""
         tag_map = {
             ResourceType.PVC: "storage",
             ResourceType.DATABASE: "database",
@@ -177,13 +151,10 @@ class KopiaSnapshot:
     def restore_reference(self) -> str:
         """The name the restore endpoints accept for this snapshot.
 
-        A database or bucket snapshot carries no ``pvc`` tag, so ``pvc_name`` fell
-        back to the last segment of the source path -- "backup" for a database dump
-        and "bucket-backup" for a mirrored bucket. Both listings published that
-        basename while the restore route wants the reference the backup was
-        registered under, which is why every name a caller could read was refused
-        (RC-95). Those two kinds are named by their own tag; a PVC keeps its
-        ``pvc`` tag, because that is what the PVC restore route takes.
+        A database or bucket snapshot carries no ``pvc`` tag, so ``pvc_name`` falls back to
+        the last segment of the source path, which is not what the restore route takes: those
+        two are named by their own tag. A PVC keeps its ``pvc`` tag, because that is what the
+        PVC restore route takes.
         """
         if self.resource_type in (ResourceType.DATABASE, ResourceType.BUCKET):
             return self.reference_name or self.pvc_name
@@ -192,8 +163,6 @@ class KopiaSnapshot:
 
 @dataclass
 class KopiaRepositoryConfig:
-    """Configuration for connecting to a Kopia S3 repository."""
-
     s3_endpoint: str
     s3_bucket: str
     s3_access_key: str
@@ -203,7 +172,7 @@ class KopiaRepositoryConfig:
     use_tls: bool = False
 
     def credential_env(self) -> dict[str, str]:
-        """De geheimen die kopia uit de omgeving leest, nooit via de commandoregel."""
+        """The secrets kopia reads from the environment, never from the command line."""
         return {
             "KOPIA_PASSWORD": self.password,
             "AWS_ACCESS_KEY_ID": self.s3_access_key,
@@ -212,14 +181,11 @@ class KopiaRepositoryConfig:
 
 
 class KopiaConnector:
-    """Connector for interacting with Kopia backup repositories."""
-
     _instance = None
     _lock = threading.Lock()
     is_kopia_available = False
 
     def __new__(cls) -> KopiaConnector:
-        """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -228,22 +194,20 @@ class KopiaConnector:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the Kopia connector."""
         if self._initialized:
             return
 
         logger.debug("Initializing KopiaConnector")
 
-        # Een allow-list in plaats van child_env(), want kopia heeft een korte,
-        # bekende lijst nodig: dat laat ook een variabele weg die nog geen geheim is.
-        # HOME op /tmp omdat kopia anders naar het niet-bestaande /home/appuser schrijft.
+        # An allow-list instead of child_env(), because kopia needs a short, known list: that
+        # also leaves out a variable that is not a secret yet. HOME on /tmp, because kopia
+        # otherwise writes to the non-existent /home/appuser.
         self.env = {name: os.environ[name] for name in _KOPIA_ENV_PASSTHROUGH if name in os.environ}
         self.env["HOME"] = os.environ.get("TMPDIR", "/tmp")
 
-        # Test Kopia CLI availability synchronously during initialization
         try:
             result = subprocess.run(
-                ["kopia", "--version"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                ["kopia", "--version"],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                 capture_output=True,
                 text=True,
                 env=self.env,
@@ -259,7 +223,7 @@ class KopiaConnector:
         except FileNotFoundError:
             logger.warning("Kopia CLI not found in PATH")
             KopiaConnector.is_kopia_available = False
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             logger.error(f"Error testing Kopia CLI availability: {e}")
             KopiaConnector.is_kopia_available = False
 
@@ -274,35 +238,26 @@ class KopiaConnector:
         credentials: KopiaRepositoryConfig | None = None,
         extra_env: dict[str, str] | None = None,
     ) -> tuple[str, str, int]:
-        """
-        Run a Kopia command asynchronously.
+        """One kopia command; returns (stdout, stderr, exit code) without raising on non-zero.
 
-        Args:
-            args: Command arguments (without 'kopia' prefix)
-            config_file: Optional path to config file
-            timeout: Command timeout in seconds
-            credentials: Repository credentials, passed to kopia via the environment
-            extra_env: Extra secrets kopia reads from the environment, such as KOPIA_NEW_PASSWORD
-
-        Returns:
-            Tuple of (stdout, stderr, return_code)
+        ``args`` leaves out the ``kopia`` itself. ``credentials`` and ``extra_env`` (such as
+        KOPIA_NEW_PASSWORD) reach kopia through the environment, never through the argv.
 
         Raises:
-            KopiaConnectionError: If Kopia CLI is not available
-            KopiaExecutionError: If command execution fails
+            KopiaConnectionError: when the kopia CLI is not available.
+            KopiaExecutionError: on a timeout or a failure to start the process.
         """
         if not KopiaConnector.is_kopia_available:
             raise KopiaConnectionError("Kopia CLI is not available")
 
         cmd = ["kopia"]
 
-        # Add config file if provided
         if config_file:
             cmd.extend(["--config-file", config_file])
 
         cmd.extend(args)
 
-        # Log command (redact sensitive info - also redact values after sensitive flags)
+        # Redact the value that follows a flag whose name holds "password" or "secret".
         safe_cmd = []
         redact_next = False
         for arg in cmd:
@@ -352,9 +307,9 @@ class KopiaConnector:
 
     @staticmethod
     def _connect_args(config: KopiaRepositoryConfig, cache_dir: str) -> list[str]:
-        """Argumenten voor ``kopia repository connect s3`` tegen ``config``.
+        """The arguments for ``kopia repository connect s3`` against ``config``.
 
-        Zonder de S3-sleutels en het wachtwoord: die gaan via ``credential_env``.
+        Without the S3 keys and the password: those go through ``credential_env``.
         """
         return [
             "repository",
@@ -380,7 +335,7 @@ class KopiaConnector:
                 config_file=config_file,
                 timeout=10,
             )
-        except Exception as e:
+        except (OSError, ValueError, KopiaConnectionError, KopiaExecutionError) as e:
             logger.debug(f"Failed to disconnect from repository (non-fatal): {e}")
 
     async def list_snapshots(
@@ -388,29 +343,19 @@ class KopiaConnector:
         config: KopiaRepositoryConfig,
         resource_type: str | None = None,
     ) -> list[KopiaSnapshot]:
-        """
-        List all snapshots in a Kopia repository.
+        """Every snapshot in the repository, empty when the storage holds none yet.
 
-        Args:
-            config: Repository connection configuration
-            resource_type: Optional filter by resource type ('pvc', 'database', 'bucket').
-                          If None, returns all snapshots.
-
-        Returns:
-            List of KopiaSnapshot objects, optionally filtered by resource_type.
-            Empty when the storage holds no repository yet.
+        ``resource_type`` filters on 'pvc', 'database' or 'bucket'; None keeps all of them.
 
         Raises:
-            KopiaConnectionError: the repository could not be reached
-            KopiaExecutionError: the repository answered but the listing failed
+            KopiaConnectionError: the repository could not be reached.
+            KopiaExecutionError: the repository answered but the listing failed.
         """
-        # Create a temporary config file for this connection
         with tempfile.TemporaryDirectory() as temp_dir:
             config_file = os.path.join(temp_dir, "repository.config")
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Connect to repository
             connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -424,12 +369,11 @@ class KopiaConnector:
                 if _is_missing_repository(stderr):
                     logger.debug(f"No repository found at {config.s3_prefix}")
                     return []
-                # "Could not reach the repository" is not "there are no snapshots". Returning
-                # [] here made an unreachable destination read as "no backups exist", which
-                # the schedule monitoring cannot tell from a backup that never ran.
+                # "Could not reach the repository" is not "there are no snapshots": the
+                # schedule monitoring cannot tell an unreachable destination from a backup
+                # that never ran.
                 raise KopiaConnectionError(f"Failed to connect to Kopia repository: {stderr}")
 
-            # List snapshots as JSON
             list_args = ["snapshot", "list", "--json", "--all"]
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -442,13 +386,9 @@ class KopiaConnector:
             if code != 0:
                 raise KopiaExecutionError(f"Failed to list snapshots: {stderr}")
 
-            # Parse JSON output
             snapshots = self._parse_snapshot_list(stdout)
-
-            # Disconnect from repository
             await self._disconnect_from_repository(config_file)
 
-            # Apply resource_type filter if provided
             if resource_type:
                 snapshots = [s for s in snapshots if s.resource_type == resource_type]
                 logger.debug(f"Filtered to {len(snapshots)} snapshots with resource_type={resource_type}")
@@ -460,9 +400,9 @@ class KopiaConnector:
         config: KopiaRepositoryConfig,
         new_password: str,
     ) -> bool:
-        """Zet het wachtwoord van de repository op ``config.s3_prefix`` om naar ``new_password``.
+        """Move the password of the repository at ``config.s3_prefix`` over to ``new_password``.
 
-        False betekent: op die prefix staat nog geen repository, dus er is niets over te zetten.
+        False means there is no repository on that prefix yet, so there is nothing to move.
         """
         with tempfile.TemporaryDirectory() as temp_dir:
             config_file = os.path.join(temp_dir, "repository.config")
@@ -505,23 +445,12 @@ class KopiaConnector:
         config: KopiaRepositoryConfig,
         snapshot_id: str,
     ) -> bool:
-        """
-        Delete a snapshot from a Kopia repository.
-
-        Args:
-            config: Repository connection configuration
-            snapshot_id: The ID of the snapshot to delete
-
-        Returns:
-            True if deletion was successful, False otherwise
-        """
-        # Create a temporary config file for this connection
+        """Delete one snapshot; False when it could not be reached or not be deleted."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_file = os.path.join(temp_dir, "repository.config")
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Connect to repository
             connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -538,7 +467,6 @@ class KopiaConnector:
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
                 return False
 
-            # Delete the snapshot
             delete_args = ["snapshot", "delete", snapshot_id, "--delete"]
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -550,13 +478,10 @@ class KopiaConnector:
 
             if code != 0:
                 logger.warning(f"Failed to delete snapshot {snapshot_id}: {stderr}")
-                # Try to disconnect anyway (ignore errors)
                 await self._disconnect_from_repository(config_file)
                 return False
 
             logger.info(f"Successfully deleted snapshot {snapshot_id}")
-
-            # Disconnect from repository
             await self._disconnect_from_repository(config_file)
 
             return True
@@ -566,16 +491,7 @@ class KopiaConnector:
         config: KopiaRepositoryConfig,
         snapshot_ids: list[str],
     ) -> dict[str, bool]:
-        """
-        Delete multiple snapshots using a single repository connection.
-
-        Args:
-            config: Repository connection configuration
-            snapshot_ids: IDs of the snapshots to delete
-
-        Returns:
-            Mapping of snapshot_id -> deletion success
-        """
+        """Delete several snapshots over one repository connection; per id whether it worked."""
         if not snapshot_ids:
             return {}
 
@@ -620,23 +536,12 @@ class KopiaConnector:
         config: KopiaRepositoryConfig,
         snapshot_id: str,
     ) -> KopiaSnapshot | None:
-        """
-        Get a single snapshot by ID.
-
-        Args:
-            config: Repository connection configuration
-            snapshot_id: The ID of the snapshot to retrieve
-
-        Returns:
-            KopiaSnapshot if found, None otherwise
-        """
-        # Create a temporary config file for this connection
+        """One snapshot by id, or None when it is not there and when the listing failed."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_file = os.path.join(temp_dir, "repository.config")
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Connect to repository
             connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -653,7 +558,6 @@ class KopiaConnector:
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
                 return None
 
-            # Get snapshot info as JSON
             show_args = ["snapshot", "list", "--json", "--all"]
 
             stdout, stderr, code = await self._run_kopia_command(
@@ -663,14 +567,12 @@ class KopiaConnector:
                 credentials=config,
             )
 
-            # Disconnect from repository
             await self._disconnect_from_repository(config_file)
 
             if code != 0:
                 logger.warning(f"Failed to list snapshots: {stderr}")
                 return None
 
-            # Parse and find the specific snapshot
             snapshots = self._parse_snapshot_list(stdout)
             for snapshot in snapshots:
                 if snapshot.snapshot_id == snapshot_id:
@@ -679,15 +581,7 @@ class KopiaConnector:
             return None
 
     def _parse_snapshot_list(self, json_output: str) -> list[KopiaSnapshot]:
-        """
-        Parse Kopia snapshot list JSON output.
-
-        Args:
-            json_output: JSON output from 'kopia snapshot list --json'
-
-        Returns:
-            List of KopiaSnapshot objects
-        """
+        """Parse the output of ``kopia snapshot list --json``; an unparseable item is skipped."""
         snapshots: list[KopiaSnapshot] = []
 
         if not json_output.strip():
@@ -696,21 +590,19 @@ class KopiaConnector:
         try:
             data = json.loads(json_output)
 
-            # Kopia returns an array of snapshot objects
             if isinstance(data, list):
                 for item in data:
                     snapshot = self._parse_snapshot_item(item)
                     if snapshot:
                         snapshots.append(snapshot)
             elif isinstance(data, dict):
-                # Single snapshot
                 snapshot = self._parse_snapshot_item(data)
                 if snapshot:
                     snapshots.append(snapshot)
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse Kopia snapshot list JSON: {e}")
-            # Try line-by-line parsing (some Kopia versions output JSONL)
+            # Some kopia versions answer JSONL instead of one JSON array.
             for line in json_output.strip().split("\n"):
                 if line.strip().startswith("{"):
                     try:
@@ -724,21 +616,12 @@ class KopiaConnector:
         return snapshots
 
     def _parse_snapshot_item(self, item: dict) -> KopiaSnapshot | None:
-        """
-        Parse a single snapshot item from Kopia JSON output.
-
-        Args:
-            item: Dictionary from Kopia JSON output
-
-        Returns:
-            KopiaSnapshot object or None if parsing fails
-        """
+        """One snapshot out of kopia's JSON, or None when it cannot be read."""
         try:
             snapshot_id = item.get("id", "")
             if not snapshot_id:
                 return None
 
-            # Get source path and identity
             source = item.get("source", {})
             if isinstance(source, dict):
                 source_path = source.get("path", "")
@@ -749,16 +632,14 @@ class KopiaConnector:
                 source_user = None
                 source_host = None
 
-            # Get timestamp
             timestamp = item.get("startTime", item.get("time", ""))
 
-            # Get size from stats or rootEntry (Kopia stores size in different places)
+            # kopia keeps the size in stats on one version and in rootEntry.summ on another.
             size_bytes = None
             stats = item.get("stats", {})
             if isinstance(stats, dict):
                 size_bytes = stats.get("totalSize") or stats.get("size")
 
-            # Fallback to rootEntry.summ.size if stats doesn't have it
             if size_bytes is None:
                 root_entry = item.get("rootEntry", {})
                 if isinstance(root_entry, dict):
@@ -766,7 +647,6 @@ class KopiaConnector:
                     if isinstance(summ, dict):
                         size_bytes = summ.get("size")
 
-            # Get tags
             tags = item.get("tags", {})
 
             return KopiaSnapshot(
@@ -779,11 +659,11 @@ class KopiaConnector:
                 source_host=source_host,
             )
 
-        except Exception as e:
+        except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to parse snapshot item: {e}")
             return None
 
 
 def create_kopia_connector() -> KopiaConnector:
-    """Factory function to create a Kopia connector."""
+    """The KopiaConnector singleton."""
     return KopiaConnector()

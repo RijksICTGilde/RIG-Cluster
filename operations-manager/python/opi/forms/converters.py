@@ -1,109 +1,54 @@
-"""
-Value converters for form field transformation.
-
-Converters handle bidirectional transformation between form values
-and storage/display formats. Common use cases:
-- AGE encryption/decryption for sensitive fields
-- Date/time format conversion
-- JSON serialization/deserialization
-"""
+"""Value converters between the format a form field shows and the format that is stored."""
 
 from typing import Any, Protocol
 
+from opi.utils.yaml_util import YAMLError, dump_yaml_to_string, load_yaml_safe
+
 
 class Converter(Protocol):
-    """
-    Protocol for value converters.
+    """``to_form`` goes from storage to the form, ``from_form`` back from a submission to storage."""
 
-    Converters transform values between form display format
-    and storage/processing format.
-    """
+    async def to_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
-    async def to_form(self, value: Any) -> Any:
-        """
-        Convert value for form display.
-
-        Args:
-            value: Value from storage/model
-
-        Returns:
-            Value suitable for form display
-        """
-        ...
-
-    async def from_form(self, value: Any) -> Any:
-        """
-        Convert form value back to storage format.
-
-        Args:
-            value: Value from form submission
-
-        Returns:
-            Value suitable for storage/model
-        """
-        ...
+    async def from_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
 
 class IdentityConverter:
-    """
-    Identity converter that returns values unchanged.
+    """The default converter, for a field that needs no transformation."""
 
-    Used as the default converter when no transformation is needed.
-    """
-
-    async def to_form(self, value: Any) -> Any:
-        """Return value unchanged."""
+    async def to_form(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
-    async def from_form(self, value: Any) -> Any:
-        """Return value unchanged."""
+    async def from_form(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         return value
 
 
 class StringConverter:
-    """
-    Converter that ensures values are strings.
+    """``None`` becomes the empty string; ``from_form`` also strips the submitted value."""
 
-    Converts None to empty string and other types to their string representation.
-    """
-
-    async def to_form(self, value: Any) -> str:
-        """Convert value to string for form display."""
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    async def from_form(self, value: Any) -> str:
-        """Convert form value to string."""
+    async def from_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value).strip()
 
 
 class IntegerConverter:
-    """
-    Converter for integer values.
-
-    Handles string-to-int conversion for form submissions.
-    """
+    """``default`` answers for an empty or unparseable submission."""
 
     def __init__(self, default: int = 0) -> None:
-        """
-        Initialize with default value for empty/invalid input.
-
-        Args:
-            default: Default value if conversion fails
-        """
         self.default = default
 
-    async def to_form(self, value: Any) -> str:
-        """Convert integer to string for form display."""
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         return str(value)
 
-    async def from_form(self, value: Any) -> int:
-        """Convert form value to integer."""
+    async def from_form(self, value: Any) -> int:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return self.default
         try:
@@ -113,14 +58,9 @@ class IntegerConverter:
 
 
 class BooleanConverter:
-    """
-    Converter for boolean values.
+    """A string counts as true when it reads ``true``, ``1``, ``yes`` or ``on``."""
 
-    Handles checkbox/boolean field conversions.
-    """
-
-    async def to_form(self, value: Any) -> bool:
-        """Convert value to boolean for form display."""
+    async def to_form(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if value is None:
             return False
         if isinstance(value, bool):
@@ -129,8 +69,7 @@ class BooleanConverter:
             return value.lower() in ("true", "1", "yes", "on")
         return bool(value)
 
-    async def from_form(self, value: Any) -> bool:
-        """Convert form value to boolean."""
+    async def from_form(self, value: Any) -> bool:  # noqa: ANN401  # a project-file value
         if value is None:
             return False
         if isinstance(value, bool):
@@ -141,14 +80,9 @@ class BooleanConverter:
 
 
 class ListConverter:
-    """
-    Converter for list/multi-select values.
+    """A comma-separated string is split, anything else becomes a one-item list."""
 
-    Handles conversion between list and form array formats.
-    """
-
-    async def to_form(self, value: Any) -> list[str]:
-        """Convert value to list for form display."""
+    async def to_form(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return []
         if isinstance(value, list):
@@ -157,8 +91,7 @@ class ListConverter:
             return [v.strip() for v in value.split(",") if v.strip()]
         return [str(value)]
 
-    async def from_form(self, value: Any) -> list[str]:
-        """Convert form value to list."""
+    async def from_form(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return []
         if isinstance(value, list):
@@ -169,15 +102,9 @@ class ListConverter:
 
 
 class IntegerListConverter:
-    """
-    Converter for comma-separated integer lists.
+    """Comma-separated on the form, ``list[int]`` in storage; an unparseable entry is skipped."""
 
-    Handles conversion between list[int] and comma-separated string format.
-    Used for port numbers and similar integer list fields.
-    """
-
-    def to_form(self, value: Any) -> str:
-        """Convert list[int] to comma-separated string for form display."""
+    def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, list):
@@ -186,8 +113,7 @@ class IntegerListConverter:
             return value
         return str(value)
 
-    def from_form(self, value: Any) -> list[int]:
-        """Convert comma-separated string from form to list[int]."""
+    def from_form(self, value: Any) -> list[int]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         if isinstance(value, list):
@@ -197,15 +123,14 @@ class IntegerListConverter:
         return self._try_parse_single_int(value)
 
     def _parse_int_list(self, values: list[Any]) -> list[int]:
-        """Parse a list of values to integers, skipping invalid ones."""
         result: list[int] = []
         for v in values:
             parsed = self._try_parse_single_int(v)
             result.extend(parsed)
         return result
 
-    def _try_parse_single_int(self, value: Any) -> list[int]:
-        """Try to parse a single value as an integer, return empty list on failure."""
+    def _try_parse_single_int(self, value: Any) -> list[int]:  # noqa: ANN401  # a project-file value
+        """One item, or nothing at all when the value is not an integer."""
         if isinstance(value, str):
             value = value.strip()
             if not value:
@@ -216,117 +141,32 @@ class IntegerListConverter:
             return []
 
 
-class AGEEncryptedConverter:
-    """
-    Converter for AGE-encrypted values.
-
-    Encrypts sensitive values for storage and decrypts for display.
-    Uses OPI's AGE encryption utilities.
-    """
-
-    def __init__(self, public_key: str | None = None) -> None:
-        """
-        Initialize with AGE public key.
-
-        Args:
-            public_key: AGE public key for encryption. If None, uses settings.
-        """
-        self.public_key = public_key
-
-    async def to_form(self, value: Any) -> str:
-        """
-        Convert AGE-encrypted value for form display.
-
-        For security, encrypted values are displayed as masked placeholders.
-        The actual decrypted value is not shown in the form.
-        """
-        if value is None:
-            return ""
-        if isinstance(value, str) and value.startswith("age:"):
-            # Return a placeholder to indicate encrypted value exists
-            return "********"
-        return str(value) if value else ""
-
-    async def from_form(self, value: Any) -> str:
-        """
-        Convert form value to AGE-encrypted format.
-
-        Encrypts the value using AGE if not already encrypted.
-        """
-        if value is None or value == "":
-            return ""
-
-        # If value is unchanged placeholder, return original (caller handles)
-        if value == "********":
-            return value
-
-        # Check if already encrypted
-        if isinstance(value, str) and value.startswith("age:"):
-            return value
-
-        # Encrypt the value
-        try:
-            from opi.core.config import get_settings
-            from opi.utils.age import encrypt_age_content
-
-            public_key = self.public_key
-            if public_key is None:
-                settings = get_settings()
-                public_key = settings.age_public_key
-
-            if public_key:
-                encrypted = await encrypt_age_content(str(value), public_key)
-                return f"age:{encrypted}"
-            return str(value)
-        except ImportError:
-            # AGE utilities not available, return as-is
-            return str(value)
-
-
 class YAMLConverter:
-    """
-    Converter for YAML-formatted values.
+    """YAML that does not parse comes back as the raw string, not as an error."""
 
-    Converts between YAML strings and Python dicts/lists.
-    """
-
-    async def to_form(self, value: Any) -> str:
-        """Convert value to YAML string for form display."""
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, str):
             return value
-        try:
-            import yaml
+        return dump_yaml_to_string(value)
 
-            return yaml.dump(value, default_flow_style=False)
-        except ImportError:
-            return str(value)
-
-    async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:
-        """Convert YAML string from form to Python object."""
+    async def from_form(self, value: Any) -> dict[str, Any] | list[Any] | str:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return {}
         if not isinstance(value, str):
             return value
         try:
-            import yaml
-
-            parsed = yaml.safe_load(value)
-            return parsed if parsed is not None else {}
-        except ImportError, yaml.YAMLError:
+            parsed = load_yaml_safe(value)
+        except YAMLError:
             return value
+        return parsed if parsed is not None else {}
 
 
 class KeyValueConverter:
-    """
-    Converter for KEY=VALUE formatted environment variables.
+    """Reads both ``KEY=VALUE`` and ``KEY: VALUE`` lines, and skips a line starting with ``#``."""
 
-    Converts between KEY=VALUE string format and dict.
-    """
-
-    async def to_form(self, value: Any) -> str:
-        """Convert dict to KEY=VALUE string for form display."""
+    async def to_form(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if value is None:
             return ""
         if isinstance(value, str):
@@ -336,8 +176,7 @@ class KeyValueConverter:
             return "\n".join(lines)
         return str(value)
 
-    async def from_form(self, value: Any) -> dict[str, str]:
-        """Convert KEY=VALUE string from form to dict."""
+    async def from_form(self, value: Any) -> dict[str, str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -352,14 +191,12 @@ class KeyValueConverter:
                     key, val = line.split("=", 1)
                     result[key.strip()] = val.strip()
                 elif ":" in line:
-                    # Also support YAML format
                     key, val = line.split(":", 1)
                     result[key.strip()] = val.strip()
             return result
         return {}
 
 
-# Registry of available converters
 CONVERTER_REGISTRY: dict[str, type[Converter]] = {
     "IdentityConverter": IdentityConverter,
     "StringConverter": StringConverter,
@@ -367,26 +204,12 @@ CONVERTER_REGISTRY: dict[str, type[Converter]] = {
     "BooleanConverter": BooleanConverter,
     "ListConverter": ListConverter,
     "IntegerListConverter": IntegerListConverter,
-    "AGEEncryptedConverter": AGEEncryptedConverter,
     "YAMLConverter": YAMLConverter,
     "KeyValueConverter": KeyValueConverter,
 }
 
 
-def get_converter(name: str, **kwargs: Any) -> Converter:
-    """
-    Get a converter instance by name.
-
-    Args:
-        name: Converter class name
-        **kwargs: Arguments to pass to converter constructor
-
-    Returns:
-        Converter instance
-
-    Raises:
-        KeyError: If converter not found in registry
-    """
+def get_converter(name: str, **kwargs: Any) -> Converter:  # noqa: ANN401  # a project-file value
     if name not in CONVERTER_REGISTRY:
         raise KeyError(f"Unknown converter: {name}")
     return CONVERTER_REGISTRY[name](**kwargs)

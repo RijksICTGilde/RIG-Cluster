@@ -1,22 +1,11 @@
-"""
-WebSocket endpoint for real-time log streaming.
+"""The WebSocket that streams the logs of a deployment, through ``kubectl logs -f``.
 
-This module provides a WebSocket endpoint that streams deployment logs
-in real-time using kubectl logs -f.
+What guards the socket: Origin validation against Cross-Site WebSocket Hijacking, the
+portal session, a project authorization check, connection limits, a rate limit on the
+messages, sanitization of every line, and a size limit on a client message.
 
-Security features:
-- CSRF protection via Origin header validation
-- Session-based authentication (same as web UI)
-- Project-level authorization check
-- Connection limits per user and globally
-- Rate limiting on log messages
-- Log content sanitization
-- Client message size limits
-
-Note on multi-worker deployments:
-Connection limits are per-worker. For true global limits across workers,
-use Redis or a shared state backend. Current implementation provides
-per-worker protection which is sufficient for most deployments.
+The connection limits are per worker: there is no shared state between workers, so a
+cluster-wide limit would need a backend of its own.
 """
 
 import asyncio
@@ -26,24 +15,34 @@ import logging
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from prometheus_client.core import GaugeMetricFamily
+from starlette.websockets import WebSocketState
+from websockets.exceptions import ConnectionClosed
+
 from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_component_pods
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.session_guard import valid_session_user
-from opi.core.step_up import session_step_up_until, step_up_fresh
+from opi.core.metrics import register_metric_source
+from opi.http.auth.session_guard import valid_session_user
 from opi.manager.run_support import LABEL_RUN
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
+from opi.services.project import Project
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
 from opi.services.project_store import get_project_store
+from opi.services.step_up import session_step_up_until, step_up_fresh
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
-from starlette.websockets import WebSocketState
-from websockets.exceptions import ConnectionClosed
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
+
+    from prometheus_client.core import Metric
 
 logger = logging.getLogger(__name__)
 
@@ -52,60 +51,47 @@ logs_websocket_router: APIRouter = APIRouter(
     tags=["logs-websocket"],
 )
 
-# Connection tracking for rate limiting
-# Note: This is per-worker state. In multi-worker deployments, limits are per-worker.
+# Per-worker state, so every limit below counts per worker.
 _active_connections: dict[str, set[WebSocket]] = defaultdict(set)  # user_email -> set of websockets
 _global_connections: set[WebSocket] = set()
-_connection_lock = asyncio.Lock()  # Protect concurrent access within a worker
+_connection_lock = asyncio.Lock()
 
-# Limits
 MAX_CONNECTIONS_PER_USER = 5
 MAX_GLOBAL_CONNECTIONS = 100
 MAX_MESSAGES_PER_SECOND = 100  # Rate limit for log messages
 MAX_CLIENT_MESSAGE_SIZE = 1024  # 1KB max for client messages (actions like pause/resume/switch)
 
-# Heartbeat interval
 HEARTBEAT_INTERVAL_SECONDS = 30
 
-# Bounded buffer sizes - caps memory usage from subprocess pipes
+# Bounded buffers, so a subprocess pipe cannot grow memory without a cap.
 LOG_BUFFER_SIZE = 200  # Max log lines held in memory (sliding window)
 STDERR_BUFFER_SIZE = 50  # Max stderr lines held in memory
 
 
 def _validate_origin(websocket: WebSocket) -> bool:
-    """
-    Validate the Origin header to prevent Cross-Site WebSocket Hijacking (CSWSH).
+    """Whether the Origin header is one of ours, against Cross-Site WebSocket Hijacking.
 
-    WebSocket connections are not subject to same-origin policy, so a malicious
-    website could attempt to open a WebSocket connection using the victim's cookies.
-    This validates that the Origin header matches our expected host.
-
-    Returns:
-        True if origin is valid or not provided (same-origin requests may omit it),
-        False if origin is provided but doesn't match expected hosts.
+    A WebSocket is not subject to the same-origin policy, so any site could open one with
+    the victim's cookies. True when the origin matches or is absent (a same-origin request
+    may omit it), False when an origin is given that is not ours.
     """
     origin = websocket.headers.get("origin", "")
 
-    # If no origin header, it's likely a same-origin request or non-browser client
-    # We allow this since authentication still applies
+    # No origin is a same-origin request or a non-browser client, and authentication still
+    # applies to it.
     if not origin:
         return True
 
-    # Get the expected host from settings or from the request
     expected_host = websocket.headers.get("host", "")
     if not expected_host:
-        # No host header - this shouldn't happen in valid HTTP
         logger.warning("WebSocket request missing Host header")
         return False
 
-    # Build allowed origins (both http and https)
-    # Note: In production, you may want to only allow https
     allowed_origins = [
         f"https://{expected_host}",
         f"http://{expected_host}",
     ]
 
-    # Also allow configured external URL if set
     if hasattr(settings, "EXTERNAL_URL") and settings.EXTERNAL_URL:
         allowed_origins.append(settings.EXTERNAL_URL.rstrip("/"))
 
@@ -116,23 +102,22 @@ def _validate_origin(websocket: WebSocket) -> bool:
     return True
 
 
-async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:
+async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:  # noqa: ANN401  # the JSON payload of the message
     """Send a JSON message over WebSocket. Returns False if connection is closed."""
     try:
         if websocket.client_state == WebSocketState.CONNECTED:
             message = {"type": msg_type, **kwargs}
             await websocket.send_text(json.dumps(message))
             return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a closed socket must not raise out of a send
         logger.debug(f"Failed to send WebSocket message: {e}")
     return False
 
 
-def _get_session_from_scope(websocket: WebSocket) -> Any:
-    """De sessie die de ServerSideSessionMiddleware al heeft geladen, uit de scope.
+def _get_session_from_scope(websocket: WebSocket) -> MutableMapping[str, Any] | None:
+    """The session the ServerSideSessionMiddleware already loaded, out of the scope.
 
-    Geen sessie (of een lege) geeft None, zoals een ontbrekende of ongeldige cookie dat
-    voorheen deed.
+    No session, or an empty one, answers None.
     """
     session = websocket.scope.get("session")
     if not session:
@@ -142,17 +127,12 @@ def _get_session_from_scope(websocket: WebSocket) -> Any:
 
 
 async def _register_connection(user_email: str, websocket: WebSocket) -> bool:
-    """
-    Register a new connection. Returns False if limits exceeded.
-    Thread-safe within a single worker.
-    """
+    """Register a new connection; False when a limit is reached. Safe within one worker."""
     async with _connection_lock:
-        # Check global limit
         if len(_global_connections) >= MAX_GLOBAL_CONNECTIONS:
             logger.warning(f"Global connection limit reached ({MAX_GLOBAL_CONNECTIONS})")
             return False
 
-        # Check per-user limit
         if len(_active_connections[user_email]) >= MAX_CONNECTIONS_PER_USER:
             logger.warning(f"User {user_email} connection limit reached ({MAX_CONNECTIONS_PER_USER})")
             return False
@@ -167,27 +147,24 @@ async def _register_connection(user_email: str, websocket: WebSocket) -> bool:
 
 
 async def _unregister_connection(user_email: str, websocket: WebSocket) -> None:
-    """Unregister a connection. Thread-safe within a single worker."""
+    """Unregister a connection. Safe within one worker."""
     async with _connection_lock:
         _global_connections.discard(websocket)
         _active_connections[user_email].discard(websocket)
-        # Clean up empty sets
         if user_email in _active_connections and not _active_connections[user_email]:
             del _active_connections[user_email]
         logger.debug(f"Unregistered connection for {user_email}")
 
 
 class RateLimiter:
-    """Token bucket rate limiter that paces (rather than drops) bursts.
+    """Token bucket rate limiter that paces a burst rather than dropping it.
 
-    Originally this dropped any line that exceeded the burst, which silently
-    truncated long startup tracebacks dumped in one go by ``kubectl logs``.
-    The bucket now blocks the caller until a token is available, so every
-    line is eventually delivered while sustained output is still capped at
-    ``rate`` messages/sec.
+    ``acquire`` blocks until a token is free, so every line is delivered eventually and a
+    long traceback that ``kubectl logs`` dumps in one go is not truncated, while sustained
+    output stays capped at ``rate`` messages per second.
     """
 
-    def __init__(self, rate: float, burst: int = 10):
+    def __init__(self, rate: float, burst: int = 10) -> None:
         self.rate = rate  # messages per second (sustained cap)
         self.burst = burst
         self.tokens = float(burst)
@@ -211,23 +188,15 @@ class RateLimiter:
 
 
 def _sanitize_log_line(line: str) -> str:
-    """
-    Sanitize log line to prevent injection attacks.
+    """Drop the control characters from a log line and cap its length.
 
-    - Removes control characters (except tab/newline)
-    - Limits line length
-    - Does NOT HTML-escape: the client uses textContent (safe) or escapeHtml() for highlighting
-
-    Note: HTML escaping is intentionally NOT done here because the JavaScript client
-    handles it safely using textContent for plain rendering or explicit escapeHtml()
-    when adding search highlights. Double-escaping would cause display issues.
+    Deliberately NO HTML escaping: the client renders with ``textContent`` and escapes by
+    hand where it adds search highlights, so escaping here would double-escape.
     """
-    # Limit line length to prevent memory issues
     max_length = 10000
     if len(line) > max_length:
         line = line[:max_length] + "... [truncated]"
 
-    # Remove control characters except newline and tab
     line = "".join(char if char >= " " or char in "\t\n" else "?" for char in line)
 
     return line
@@ -246,7 +215,7 @@ async def _pod_belongs_to_component(
     deployments of everyone on the team; without this check a member who guessed a pod name
     could tail any of them, because ``kubectl logs <pod>`` does not care which component the
     pod belongs to. Asked of ``resolve_component_pods`` so the answer is the same one the
-    pod-list endpoint gives -- a second implementation would be a second answer.
+    pod-list endpoint gives; a second implementation would be a second answer.
 
     Also applied on ``switch``, not only when the socket opens: a connection that switched
     component would otherwise keep a pod name that was validated against the previous one.
@@ -266,13 +235,12 @@ async def _pod_belongs_to_component(
 
 
 def _retrieve_done_task_exceptions(done: set[asyncio.Task[Any]]) -> None:
-    """Consume finished tasks' exceptions so asyncio does not later log
+    """Consume the exception of every finished task, so asyncio does not log
     "Future exception was never retrieved" when the Task is garbage-collected.
 
-    A dropped client socket (e.g. keepalive ping timeout, close code 1011) makes
-    the first task finish with ConnectionClosed / WebSocketDisconnect, which is a
-    normal disconnect. Anything else is a genuine failure and is logged with a
-    traceback.
+    A dropped client socket (a keepalive ping timeout, close code 1011) ends the first task
+    with ConnectionClosed or WebSocketDisconnect, which is a normal disconnect. Anything
+    else is a genuine failure and is logged with a traceback.
     """
     for task in done:
         if task.cancelled():
@@ -292,73 +260,53 @@ async def stream_logs(
     pod: str | None = Query(None, description="One specific pod to follow, instead of every matching pod"),
     previous: bool = Query(False, description="Read the pod's previous attempt instead of the running container"),
 ) -> None:
-    """
-    WebSocket endpoint for streaming deployment logs in real-time.
+    """Stream the logs of one deployment component, on the portal session.
 
-    Requires session-based authentication (same as web UI).
-    User must have access to the project.
+    The caller needs a valid session (the same one as the web UI) and access to the project.
 
-    Args:
-        project_name: Project name
-        deployment: Deployment name within the project
-        component: Component reference name
-        lines: Number of historical log lines to retrieve initially
-        pod: A single pod to follow. Without it the label selector is used and the lines
-            of EVERY matching pod arrive interleaved -- which is the behaviour that made a
-            crashing pod unreadable next to a serving one. Never trusted: the name is
-            checked against the pods of this project/deployment/component before it
-            reaches a kubectl command, because the namespace holds the deployments of the
-            whole team.
-        previous: Read the pod's previous attempt. Only with ``pod``.
+    Without ``pod`` the label selector is used and the lines of EVERY matching pod arrive
+    interleaved, which is what made a crashing pod unreadable next to a serving one. A pod
+    name from the client is never trusted: it is checked against the pods of this
+    project/deployment/component before it reaches a kubectl command, because the namespace
+    holds the deployments of the whole team. ``previous`` only works together with ``pod``.
     """
     user_email: str | None = None
     process: asyncio.subprocess.Process | None = None
     connection_registered = False
 
     try:
-        # === CSRF PROTECTION ===
-        # Validate Origin header to prevent Cross-Site WebSocket Hijacking
         if not _validate_origin(websocket):
             logger.warning(f"WebSocket rejected: CSRF check failed for {project_name}")
             await websocket.close(code=4003, reason="Access denied")
             return
 
-        # === AUTHENTICATION ===
-        # De sessie zoals de server-side middleware hem laadde (dezelfde als de web UI).
         session = _get_session_from_scope(websocket)
-        # Dezelfde controle als de HTTP-middleware: absolute levensduur en intrekken.
+        # The same check as the HTTP middleware: absolute lifetime and revocation.
         user = valid_session_user(session)
         user_email = user.get("email") if user else None
 
-        if not user_email:
-            # Generic error to prevent information leakage
+        if not session or not user_email:
             logger.warning(f"WebSocket auth failed: no valid session for {project_name}")
             await websocket.close(code=4001, reason="Authentication required")
             return
 
         logger.info(f"WebSocket auth: user {user_email} requesting logs for {project_name}/{deployment}/{component}")
 
-        # Check if user is in allowed list
         user_service = get_user_service()
         if not user_service.is_email_allowed(user_email):
-            # Generic error to prevent enumeration
+            # Generic error, so a refusal cannot be used to enumerate.
             logger.warning(f"WebSocket auth failed: user {user_email} not allowed")
             await websocket.close(code=4003, reason="Access denied")
             return
 
-        # === AUTHORIZATION ===
-
         # Checked once, on connecting: the stream outlives the window, like any open page.
         step_up_fresh.set(session_step_up_until(session) is not None)
 
-        # Check if user has access to this project
         if not is_user_authorized_for_project(project_name, user_email):
-            # Generic error to prevent project enumeration
             logger.warning(f"WebSocket auth failed: user {user_email} not authorized for {project_name}")
             await websocket.close(code=4003, reason="Access denied")
             return
 
-        # === CONNECTION LIMITS ===
         if not await _register_connection(user_email, websocket):
             logger.warning(f"WebSocket rejected: connection limit for {user_email}")
             await websocket.close(code=4029, reason="Too many connections")
@@ -366,11 +314,10 @@ async def stream_logs(
 
         connection_registered = True
 
-        # Accept the connection after all security checks pass
+        # Only once every check above passed.
         await websocket.accept()
         logger.info(f"WebSocket accepted for {user_email}: {project_name}/{deployment}/{component}")
 
-        # === VALIDATION ===
         kubectl = KubectlConnector()
         current_cluster = settings.CLUSTER_MANAGER
 
@@ -381,14 +328,7 @@ async def stream_logs(
             return
 
         project_data = project_info.data or {}
-        deployments_list = project_data.get("deployments", [])
-
-        # Find the deployment
-        target_deployment = None
-        for depl in deployments_list:
-            if depl.get("name") == deployment:
-                target_deployment = depl
-                break
+        target_deployment = Project(project_data).find("deployments", name=deployment)
 
         namespace = get_prefixed_namespace(current_cluster, project_name)
 
@@ -413,10 +353,10 @@ async def stream_logs(
 
             k8s_deployment_name = generate_unique_name(deployment, component)
 
-            # A pod name from the client only ever reaches kubectl after it has been
-            # found among THIS component's pods. Same function the pod-list endpoint
-            # uses, so the panel can never offer something the stream then refuses --
-            # and, more to the point, so a guessed name is never followed.
+            # A pod name from the client only ever reaches kubectl after it has been found
+            # among THIS component's pods. The same function the pod-list endpoint uses, so
+            # the panel cannot offer what the stream then refuses, and above all so a
+            # guessed name is never followed.
             if pod is not None and not await _pod_belongs_to_component(
                 kubectl, project_name, deployment, component, pod
             ):
@@ -449,11 +389,9 @@ async def stream_logs(
             component=component,
         )
 
-        # === START LOG STREAMING ===
-        # Rate limiter for outgoing messages
         rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=50)
 
-        # Shared state for tasks
+        # Shared between the tasks below.
         current_component = component
         current_k8s_name = k8s_deployment_name
         current_pod = pod
@@ -462,18 +400,17 @@ async def stream_logs(
         paused = False
         running = True
 
-        # Bounded queues act as sliding windows - drain tasks fill them,
-        # reader tasks consume them. This prevents unbounded memory growth
-        # from subprocess pipes when log volume exceeds WebSocket throughput.
+        # Bounded queues as sliding windows: the drain tasks fill them and the reader tasks
+        # consume them, so a log volume above the WebSocket throughput cannot grow memory.
         log_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=LOG_BUFFER_SIZE)
         stderr_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=STDERR_BUFFER_SIZE)
 
-        # Use a lock to coordinate process access between tasks
         process_lock = asyncio.Lock()
 
         process = await kubectl.stream_deployment_logs(
             deployment_name=current_k8s_name,
             namespace=namespace,
+            container=APPLICATION_CONTAINER_NAME,
             lines=lines,
             pod_name=current_pod,
             previous=current_previous,
@@ -486,24 +423,23 @@ async def stream_logs(
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
-        # Pace reattach attempts so a permanently-broken pod (CrashLoopBackOff
-        # where kubectl logs -f exits within milliseconds) doesn't have us
-        # spawning kubectl every few seconds in a tight loop. We back off
-        # exponentially up to a cap when consecutive attaches die immediately.
-        REATTACH_MIN_INTERVAL_SECONDS = 5.0
-        REATTACH_MAX_INTERVAL_SECONDS = 30.0
-        REATTACH_QUICK_EXIT_THRESHOLD_SECONDS = 1.0
+        # Reattach attempts are paced, so a permanently broken pod (CrashLoopBackOff, where
+        # kubectl logs -f exits within milliseconds) does not have us spawning kubectl in a
+        # tight loop. Consecutive attaches that die at once back off up to the cap.
+        reattach_min_interval_seconds = 5.0
+        reattach_max_interval_seconds = 30.0
+        reattach_quick_exit_threshold_seconds = 1.0
         last_reattach_at = 0.0
         consecutive_quick_exits = 0
 
         async def _restart_stream(*, tail: int) -> bool:
             """Stop the running follower and start a fresh one for the CURRENT selection.
 
-            One place that does the terminate-drain-restart sequence, so the three callers
-            -- a component switch, a pod switch, and the fall back out of the
-            previous-attempt stand -- cannot each get a different part of it wrong. Leaving
-            a queue unemptied bleeds the old pod's lines into the new one; leaving the old
-            process running leaves a kubectl per switch.
+            One place that does the terminate-drain-restart sequence, so the three callers (a
+            component switch, a pod switch, and the fall back out of the previous-attempt
+            stand) cannot each get a different part of it wrong. Leaving a queue unemptied
+            bleeds the old pod's lines into the new one; leaving the old process running
+            leaves a kubectl per switch.
 
             Returns whether a stream is running afterwards.
             """
@@ -522,7 +458,6 @@ async def stream_logs(
                             await asyncio.wait_for(process.wait(), timeout=5.0)
                     process = None
 
-                # Clear queues so the previous selection's logs don't bleed through
                 while not log_queue.empty():
                     try:
                         log_queue.get_nowait()
@@ -538,6 +473,7 @@ async def stream_logs(
                 process = await kubectl.stream_deployment_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
+                    container=APPLICATION_CONTAINER_NAME,
                     lines=tail,
                     pod_name=current_pod,
                     previous=current_previous,
@@ -546,13 +482,12 @@ async def stream_logs(
                 return bool(process and process.stdout)
 
         async def drain_stdout() -> None:
-            """Drain subprocess stdout into bounded queue, dropping oldest when full.
+            """Drain subprocess stdout into the bounded queue, dropping the oldest when full.
 
-            When the kubectl subprocess exits (which happens when a pod's last
-            container terminates, e.g. CrashLoopBackOff between restarts), we
-            reattach with a fresh `kubectl logs -f` instead of tearing down the
-            WebSocket — that way the user keeps seeing logs across pod
-            restarts, matching the Argo UI's behaviour.
+            When the kubectl subprocess exits, which happens when a pod's last container
+            terminates (CrashLoopBackOff between restarts), this reattaches with a fresh
+            ``kubectl logs -f`` instead of tearing down the WebSocket, so the user keeps
+            seeing logs across pod restarts.
             """
             nonlocal running, process, last_reattach_at, consecutive_quick_exits
             while running:
@@ -568,12 +503,11 @@ async def stream_logs(
                     line = await asyncio.wait_for(current_stdout.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
-                except Exception:
+                except Exception:  # noqa: BLE001  # the read loop must not stop on one line
                     await asyncio.sleep(1.0)
                     continue
 
                 if line:
-                    # Sliding window: drop oldest line when queue is full
                     if log_queue.full():
                         with contextlib.suppress(asyncio.QueueEmpty):
                             log_queue.get_nowait()
@@ -581,17 +515,15 @@ async def stream_logs(
                         log_queue.put_nowait(line)
                     continue
 
-                # EOF on stdout — decide whether to reattach or just keep
-                # looping (the snapshot may be a process that's already been
-                # replaced by a component-switch).
+                # EOF on stdout: reattach, or keep looping because the snapshot may be a
+                # process a component switch already replaced.
                 #
-                # NIET in de vorige-poging-stand. Daar valt niets te volgen: de container
-                # is al gestopt, de API levert het bewaarde logboek en kubectl eindigt
-                # meteen. Opnieuw aanhaken zou datzelfde afgesloten logboek elke paar
-                # seconden opnieuw dumpen. De lus blijft wel gewoon LEZEN -- deze
-                # voorwaarde stond eerst boven aan de lus en sloeg daarmee de readline
-                # zelf over, waardoor de vorige poging op de sandbox nul regels gaf
-                # terwijl kubectl er twee had (gemeten 28 augustus 2026).
+                # NOT in the previous-attempt stand. There is nothing to follow there: the
+                # container has stopped, the API hands over the stored log and kubectl ends
+                # at once, so reattaching would dump that same closed log every few seconds.
+                # The loop does keep READING, and this condition therefore sits here and not
+                # at the top of the loop, where it would skip the readline itself and the
+                # previous attempt would yield no lines at all.
                 should_reattach = False
                 exited_quickly = False
                 if current_previous:
@@ -599,11 +531,10 @@ async def stream_logs(
                     continue
                 async with process_lock:
                     if process is not None and process.returncode is not None:
-                        # If kubectl exited within ~1s the matched pod has no
-                        # active container (CrashLoopBackOff backoff window);
-                        # back off so we don't spawn a fresh kubectl every 5s
-                        # only to have it dump the same stored tail and exit.
-                        exited_quickly = (time.monotonic() - last_reattach_at) < REATTACH_QUICK_EXIT_THRESHOLD_SECONDS
+                        # kubectl exiting within ~1s means the matched pod has no active
+                        # container (a CrashLoopBackOff backoff window), so backing off keeps
+                        # a fresh kubectl from dumping the same stored tail every 5s.
+                        exited_quickly = (time.monotonic() - last_reattach_at) < reattach_quick_exit_threshold_seconds
                         logger.info(
                             f"kubectl log stream for {current_k8s_name} exited "
                             f"(code {process.returncode}); will reattach "
@@ -616,15 +547,13 @@ async def stream_logs(
                     await asyncio.sleep(0.5)
                     continue
 
-                # Exponential backoff when consecutive attaches die instantly
-                # (typically pod sitting in CrashLoopBackOff backoff window).
                 if exited_quickly:
                     consecutive_quick_exits += 1
                 else:
                     consecutive_quick_exits = 0
                 backoff = min(
-                    REATTACH_MIN_INTERVAL_SECONDS * (2 ** max(0, consecutive_quick_exits - 1)),
-                    REATTACH_MAX_INTERVAL_SECONDS,
+                    reattach_min_interval_seconds * (2 ** max(0, consecutive_quick_exits - 1)),
+                    reattach_max_interval_seconds,
                 )
                 now = time.monotonic()
                 wait = backoff - (now - last_reattach_at)
@@ -634,23 +563,22 @@ async def stream_logs(
                 if not running:
                     break
 
-                # Spawn the new follower OUTSIDE the lock so we don't block
-                # stderr draining or component-switching during the kubectl
-                # fork; then swap atomically. Use --tail=0 (no historical
-                # dump) so each reattach only streams *new* output. Without
-                # this, every backoff cycle would re-emit the same N lines
-                # of the stored tail, drowning the WebSocket in duplicates.
+                # The new follower is spawned OUTSIDE the lock, so the kubectl fork does not
+                # block stderr draining or a component switch, and is swapped in atomically.
+                # With lines=0, so each reattach streams only NEW output: otherwise every
+                # backoff cycle re-emits the same stored tail.
                 new_process = await kubectl.stream_deployment_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
+                    container=APPLICATION_CONTAINER_NAME,
                     lines=0,
                     pod_name=current_pod,
                 )
                 last_reattach_at = time.monotonic()
                 async with process_lock:
                     if not running or process is not None:
-                        # Either we are shutting down, or a component switch
-                        # already installed a fresh process — discard ours.
+                        # Either this is shutting down, or a component switch already
+                        # installed a fresh process, so ours is discarded.
                         if new_process is not None:
                             with contextlib.suppress(ProcessLookupError):
                                 new_process.terminate()
@@ -659,7 +587,7 @@ async def stream_logs(
                         logger.info(f"Reattached log stream for {current_k8s_name} (PID {new_process.pid})")
 
         async def drain_stderr() -> None:
-            """Drain subprocess stderr into bounded queue, dropping oldest when full."""
+            """Drain subprocess stderr into the bounded queue, dropping the oldest when full."""
             while running:
                 async with process_lock:
                     current_process = process
@@ -673,12 +601,11 @@ async def stream_logs(
                     line = await asyncio.wait_for(current_stderr.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
-                except Exception:
+                except Exception:  # noqa: BLE001  # the read loop must not stop on one line
                     await asyncio.sleep(1.0)
                     continue
 
                 if not line:
-                    # EOF on stderr pipe - check if subprocess has died
                     async with process_lock:
                         if process and process.returncode is not None:
                             logger.info(f"drain_stderr: subprocess exited with code {process.returncode}")
@@ -693,7 +620,6 @@ async def stream_logs(
                     stderr_queue.put_nowait(line)
 
         async def read_logs() -> None:
-            """Read logs from bounded queue and send to client."""
             nonlocal sequence, running
 
             while running:
@@ -705,9 +631,6 @@ async def stream_logs(
                 if paused:
                     continue
 
-                # Pace output without dropping. Bursty traceback dumps from
-                # ``kubectl logs`` are delivered in full; sustained output is
-                # still capped at ``rate`` messages/sec.
                 await rate_limiter.acquire()
 
                 decoded_line = line.decode("utf-8", errors="replace").rstrip()
@@ -729,20 +652,16 @@ async def stream_logs(
                     running = False
                     break
 
-        # Separate rate limiter for stderr to prevent stderr flooding bypass
+        # Its own limiter, so a flood on stderr cannot get around the one above.
         stderr_rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=20)
 
-        # kubectl emits these on stderr whenever the upstream container
-        # terminates while -f is following — which is expected (and frequent)
-        # for CrashLoopBackOff pods, where every reattach cycle ends this
-        # way. Forwarding them to the WebSocket added a "[STDERR] error:
-        # unexpected EOF" line to the panel every 5-30 seconds, which the
-        # user can't do anything about. Keep logging them server-side, but
-        # don't pollute the client view.
-        _BENIGN_KUBECTL_STDERR_SUBSTRINGS = ("unexpected EOF",)
+        # kubectl writes this on stderr whenever the upstream container terminates while -f
+        # is following, which is normal and frequent for a CrashLoopBackOff pod: every
+        # reattach cycle ends that way. It stays in the server log and out of the panel,
+        # where the user can do nothing with it.
+        benign_kubectl_stderr_substrings = ("unexpected EOF",)
 
         async def read_stderr() -> None:
-            """Read stderr from bounded queue and forward warnings."""
             nonlocal running, current_previous
 
             while running:
@@ -757,13 +676,13 @@ async def stream_logs(
                 sanitized_text = _sanitize_log_line(stderr_text)
                 logger.warning(f"kubectl stderr: {sanitized_text}")
 
-                if any(s in sanitized_text for s in _BENIGN_KUBECTL_STDERR_SUBSTRINGS):
+                if any(s in sanitized_text for s in benign_kubectl_stderr_substrings):
                     continue
 
-                # Er is geen vorige poging voor deze pod. Dat is geen storing en de rauwe
-                # kubectl-tekst ("Error from server (BadRequest): previous terminated
-                # container ... not found") leest wel als een. Zeg het in een zin en val
-                # terug op de gewone stroom, zodat het paneel niet leeg blijft.
+                # There is no previous attempt for this pod. That is not a failure, while the
+                # raw kubectl text ("Error from server (BadRequest): previous terminated
+                # container ... not found") reads like one, so this says it in a sentence and
+                # falls back on the ordinary stream rather than leaving the panel empty.
                 if current_previous and is_previous_attempt_missing(sanitized_text):
                     current_previous = False
                     await send_message(
@@ -788,7 +707,6 @@ async def stream_logs(
                 )
 
         async def handle_client_messages() -> None:
-            """Handle incoming messages from client."""
             nonlocal paused, current_component, process, sequence, current_k8s_name, running
             nonlocal current_pod, current_previous
 
@@ -796,7 +714,6 @@ async def stream_logs(
                 try:
                     message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
 
-                    # Validate message size to prevent memory exhaustion
                     if len(message) > MAX_CLIENT_MESSAGE_SIZE:
                         logger.warning(
                             f"Client message too large: {len(message)} bytes (max {MAX_CLIENT_MESSAGE_SIZE})"
@@ -818,14 +735,13 @@ async def stream_logs(
                     elif action == "switch":
                         new_component = data.get("component") or current_component
                         component_changes = new_component != current_component
-                        # De podkeuze en de vorige-poging-stand horen bij dezelfde
-                        # omschakeling: het paneel wisselt van pod zonder van component te
-                        # wisselen, en de schakelaar "vorige poging" doet dat ook.
-                        # Ontbreekt de sleutel, dan blijft de huidige stand staan -- BEHALVE
-                        # bij een componentwissel, want een pod hoort bij een component. Hem
-                        # daar laten staan zou een pod van het vorige component doorgeven,
-                        # die de toets hieronder terecht weigert, en de gebruiker krijgt een
-                        # foutmelding op een wissel die hij gewoon vroeg.
+                        # The pod choice and the previous-attempt stand belong to this same
+                        # switch: the panel changes pod without changing component, and so
+                        # does the "previous attempt" toggle. A missing key keeps the current
+                        # stand, EXCEPT on a component switch, because a pod belongs to a
+                        # component: keeping it there would pass on a pod of the previous
+                        # component, which the check below rightly refuses, and the user would
+                        # get an error on a switch they simply asked for.
                         if "pod" in data:
                             new_pod = data["pod"]
                         elif component_changes:
@@ -833,7 +749,6 @@ async def stream_logs(
                         else:
                             new_pod = current_pod
                         new_previous = bool(data.get("previous", current_previous))
-                        # Validate component name length to prevent memory issues
                         if new_component and len(new_component) > MAX_NAME_LENGTH:
                             logger.warning("Component name too long in switch request")
                             await send_message(websocket, "error", message="Invalid component name")
@@ -843,7 +758,6 @@ async def stream_logs(
                             continue
 
                         if component_changes:
-                            # Re-fetch project data to get current components
                             fresh_project = get_project_store().get(project_name)
                             if fresh_project is None:
                                 await send_message(websocket, "error", message="Project no longer exists")
@@ -851,13 +765,7 @@ async def stream_logs(
                                 break
 
                             fresh_data = fresh_project.data or {}
-                            fresh_deployments = fresh_data.get("deployments", [])
-
-                            fresh_deployment = None
-                            for depl in fresh_deployments:
-                                if depl.get("name") == deployment:
-                                    fresh_deployment = depl
-                                    break
+                            fresh_deployment = Project(fresh_data).find("deployments", name=deployment)
 
                             if not fresh_deployment:
                                 await send_message(websocket, "error", message="Deployment no longer exists")
@@ -876,12 +784,12 @@ async def stream_logs(
                                 continue
 
                         elif new_pod == current_pod and new_previous == current_previous:
-                            # Niets gewijzigd: geen omschakeling, geen leeg paneel.
+                            # Nothing changed: no switch, and no empty panel.
                             continue
 
-                        # Een podnaam van de client wordt ook HIER getoetst en niet alleen
-                        # bij het openen: zonder dit kan iemand met een verbinding op zijn
-                        # eigen component een pod van een collega noemen in een switch.
+                        # A pod name from the client is checked HERE as well and not only when
+                        # the socket opens: without it, someone with a connection on their own
+                        # component could name a colleague's pod in a switch.
                         if new_pod is not None and not await _pod_belongs_to_component(
                             kubectl, project_name, deployment, new_component, new_pod
                         ):
@@ -921,13 +829,13 @@ async def stream_logs(
                 except WebSocketDisconnect:
                     running = False
                     break
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this socket; it closes cleanly
                     logger.error(f"Error handling client message: {e}")
                     running = False
                     break
 
         async def heartbeat() -> None:
-            """Send periodic heartbeat to detect dead connections."""
+            """A dead connection shows up as a heartbeat that cannot be sent."""
             nonlocal running
 
             while running:
@@ -939,8 +847,6 @@ async def stream_logs(
                         running = False
                         break
 
-        # Run all tasks concurrently - drain tasks keep pipe buffers small,
-        # reader tasks consume from bounded queues
         conn_id = f"{deployment}/{current_component}"
         stdout_drain_task = asyncio.create_task(drain_stdout(), name=f"drain_stdout:{conn_id}")
         stderr_drain_task = asyncio.create_task(drain_stderr(), name=f"drain_stderr:{conn_id}")
@@ -962,7 +868,6 @@ async def stream_logs(
 
             _retrieve_done_task_exceptions(_done)
 
-            # Signal all tasks to stop
             running = False
 
             for task in pending:
@@ -989,7 +894,6 @@ async def stream_logs(
             await send_message(websocket, "error", message="Internal server error")
 
     finally:
-        # Clean up subprocess
         if process:
             logger.info(f"cleanup: terminating PID {process.pid}, returncode={process.returncode}")
             try:
@@ -1004,16 +908,32 @@ async def stream_logs(
                     logger.info("cleanup: process killed")
                 except TimeoutError:
                     logger.error(f"cleanup: KILL FAILED for PID {process.pid} - process may be stuck")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                 logger.error(f"cleanup: error terminating kubectl process: {e}")
 
-        # Unregister connection only if it was registered
         if connection_registered and user_email:
             await _unregister_connection(user_email, websocket)
 
-        # Close WebSocket if still open
         with contextlib.suppress(OSError, RuntimeError):
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.close()
 
         logger.info(f"WebSocket closed for {user_email}: {project_name}/{deployment}/{component}")
+
+
+def websocket_metrics() -> list[Metric]:
+    """The open log sockets of this worker, for the Prometheus scrape."""
+    ws_global = GaugeMetricFamily(
+        "opi_websocket_connections_global",
+        "Number of active global WebSocket connections",
+    )
+    ws_users = GaugeMetricFamily(
+        "opi_websocket_connections_users",
+        "Number of distinct users with active WebSocket connections",
+    )
+    ws_global.add_metric([], len(_global_connections))
+    ws_users.add_metric([], len(_active_connections))
+    return [ws_global, ws_users]
+
+
+register_metric_source(websocket_metrics)

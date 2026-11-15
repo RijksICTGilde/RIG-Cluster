@@ -4,7 +4,7 @@ Naast het ZAD-woordmerk staat een tag met de omgeving waarin je werkt: Sandbox, 
 
 ## Hoe het werkt
 
-Het label volgt uit `CLUSTER_MANAGER`, dat elke overlay al zet. Er is geen aparte instelling. De vertaling staat in `CLUSTER_TAGS` in `opi/core/template_helpers.py`. De Jinja-global `cluster_tag` levert het paar (label, kleur) aan `base_lotc.html.j2`. Daar staat de tag in de `action`-slot van `nldd-toolbar-title`, zodat NLDD hem naast het logo uitlijnt.
+Het label volgt uit `CLUSTER_MANAGER`, dat elke overlay al zet. Er is geen aparte instelling. De vertaling staat in `CLUSTER_TAGS` in `opi/http/render/template_helpers.py`. De Jinja-global `cluster_tag` levert het paar (label, kleur) aan `base_lotc.html.j2`. Daar staat de tag in de `action`-slot van `nldd-toolbar-title`, zodat NLDD hem naast het logo uitlijnt.
 
 | `CLUSTER_MANAGER` | Label | Kleur (`nldd-tag`) |
 |---|---|---|
@@ -21,4 +21,4 @@ Staging is de omgeving die je niet voor productie wilt aanzien, dus die valt op.
 
 ## Niet te verwarren met
 
-`environment_label` is de OTAP-markering van een deployment (Ontwikkeling, Test, ...), zie `opi/core/project_environment.py`. Dat gaat over het werk van een team, niet over het cluster waar het portaal draait.
+`environment_label` is de OTAP-markering van een deployment (Ontwikkeling, Test, ...), zie `opi/services/project_environment.py`. Dat gaat over het werk van een team, niet over het cluster waar het portaal draait.

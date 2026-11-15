@@ -1,7 +1,7 @@
-"""Toetst of het cluster naar een host mag verbinden.
+"""Whether the cluster may connect to a host.
 
-Meerdere connectoren hebben deze toets nodig; het staat centraal zodat een bestemming
-(registry, externe kloonbron) niet in privaat of cluster-intern adresruimte kan liggen.
+Several connectors need this check; it sits in one place so that a destination (a registry,
+an external clone source) cannot lie in private or cluster-internal address space.
 """
 
 import asyncio
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 async def host_is_allowed(host: str, allowed_networks: list[str] | None = None) -> bool:
-    """Resolvet ``host`` naar adressen die wij mogen benaderen?
+    """Does ``host`` resolve to addresses we are allowed to reach?
 
-    Elk adres moet globaal zijn, of in een van ``allowed_networks`` vallen. Een host die
-    niet resolvet is niet toegestaan: anders verklapt het verschil welke interne namen
-    bestaan.
+    Every address has to be global, or fall inside one of ``allowed_networks``. A host that
+    does not resolve is not allowed: the difference would otherwise give away which internal
+    names exist.
     """
     try:
         addresses = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
@@ -33,31 +33,67 @@ async def host_is_allowed(host: str, allowed_networks: list[str] | None = None) 
 
 
 async def host_is_public(host: str) -> bool:
-    """Resolvet ``host`` uitsluitend naar globale adressen?"""
+    """Does ``host`` resolve to global addresses only?"""
     return await host_is_allowed(host)
 
 
-#: Eén melding voor elke geweigerde kloonbron, anders is de weigering zelf een orakel.
+def has_direct_clone_source(host: str | None, port: int | None) -> bool:
+    """Is a direct clone source complete? Without a host or a port there is nothing to dial."""
+    return bool(host) and bool(port)
+
+
+#: One message for every refused clone source, otherwise the refusal is an oracle itself.
 REFUSED_CLONE_SOURCE_REASON = "de kloonbron moet op een publiek adres staan"
 
-#: Eén melding voor elke mislukte kloonbron-verbinding: onbereikbaar, onbekende bron,
-#: en fout wachtwoord mogen naar buiten niet te onderscheiden zijn.
+#: Same, for a destination the caller named for a restore.
+REFUSED_EXTERNAL_TARGET_REASON = "het doel moet op een publiek adres staan"
+
+#: One message for every failed clone source connection: unreachable, unknown source and
+#: wrong password must not be distinguishable from outside.
 UNREACHABLE_SOURCE_REASON = "de bron is niet bereikbaar of weigerde de verbinding"
 
 
 async def clone_source_refusal(direct_host: str | None, tunnel_server_url: str | None) -> str | None:
-    """De melding voor een externe kloonbron die wij niet mogen benaderen, anders None.
+    """The message for an external clone source we may not reach, otherwise None.
 
-    Getoetst wordt de host die ONZE pod aanspreekt: de chisel-server als er een tunnel is,
-    anders de bron zelf. Wat achter de tunnel ligt resolvet aan de kant van de server.
+    What is checked is the host OUR pod addresses: the chisel server when there is a tunnel,
+    otherwise the source itself. What lies behind the tunnel resolves on the server side.
     """
     if tunnel_server_url is None and direct_host is None:
         return None
 
     host = urlparse(tunnel_server_url).hostname if tunnel_server_url else direct_host
-    allowed = get_external_clone_allowed_private_networks(settings.CLUSTER_MANAGER)
-    # Geen host betekent geweigerd (veiliger dan doorlaten); str() omdat het schema integers toestaat.
-    if host and await host_is_allowed(str(host), allowed):
+    # No host means refused (safer than letting it through); str() because the schema allows integers.
+    if await _host_may_be_reached(str(host) if host else None):
         return None
     logger.warning("Externe kloonbron geweigerd: %r resolvet niet of niet naar een toegestaan adres", host)
     return REFUSED_CLONE_SOURCE_REASON
+
+
+async def external_target_refusal(endpoint: str | None) -> str | None:
+    """The message for an external destination we may not write to, otherwise None.
+
+    Same rule as for a clone source: the pod has to dial a public address, or one inside a
+    network this cluster allows. ``endpoint`` may be a URL, a host with a port, or a bare
+    host, which is how the restore endpoints take a target.
+    """
+    if endpoint is None:
+        return None
+
+    host = endpoint_host(endpoint)
+    if await _host_may_be_reached(host):
+        return None
+    logger.warning("Extern terugzetdoel geweigerd: %r resolvet niet of niet naar een toegestaan adres", host)
+    return REFUSED_EXTERNAL_TARGET_REASON
+
+
+def endpoint_host(endpoint: str) -> str | None:
+    """The hostname out of an endpoint: a URL, a host with a port, or a bare host."""
+    return urlparse(endpoint if "//" in endpoint else f"//{endpoint}").hostname
+
+
+async def _host_may_be_reached(host: str | None) -> bool:
+    """Whether this cluster may dial ``host``. No host at all is refused."""
+    if not host:
+        return False
+    return await host_is_allowed(host, get_external_clone_allowed_private_networks(settings.CLUSTER_MANAGER))

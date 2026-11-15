@@ -115,7 +115,7 @@ For paths into a service's config use `smart_get_value` / `smart_set_value`
 
 - `config_schema_version` is a quoted `major.minor` string, stored next to `config` in the
   file. MINOR counts up as a whole number, so the version after `1.9` is `1.10`, and every
-  comparison runs through `SchemaVersion` (`opi/core/project_schema.py`): as text or as a
+  comparison runs through `SchemaVersion` (`opi/services/project_schema.py`): as text or as a
   float `1.10` would land before `1.9`.
 - `migrate_config(config, from_version)` is forward-only: an old file is migrated to the
   current version before validation, because ZAD only ever reads a possibly-old file and
@@ -713,7 +713,7 @@ INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
   default would reject values the API legitimately takes. Set it only where the value is a
   *reference into this project*, i.e. on a provider that declares an `OptionsSource`.
 - **Enforced at the save chokepoint**, `validate_declared_choices` in
-  `opi/manager/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
+  `opi/services/project_validation.py`, as a `ProjectIntegrityError`. Not in the widget: a
   select can only show what it offers, while the API and hand-written YAML never pass one.
 - **An empty source is skipped**, on purpose. It means the project's values come from
   somewhere the provider cannot see (the four pre-service invite files name roles of a
@@ -825,7 +825,7 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
   are asked; sections render in registry order, in place of a hardcoded `{% include %}`.
 - Put the template **next to the service** under `opi/services/catalog/<svc>/` and address
   it as `<svc>/<file>` -- the catalog directory is on the Jinja search path (see
-  `opi/core/templates_lotc.py`). The include gets the `DetailPageSection` as `section`, so the
+  `opi/http/render/templates_lotc.py`). The include gets the `DetailPageSection` as `section`, so the
   template reads its data from `section.context`.
 
 ### Which of the two section events
@@ -849,11 +849,29 @@ return. A mixin that forgot to chain used to swallow the other one's block silen
 
 ### Endpoints belong with the block
 
+**Een service houdt bij elkaar wat bij hem hoort, ook als dat over lagen heen gaat.** Een
+catalogusservice is een eigen pakketje: wie hem leest of wijzigt vindt alles van die service
+in zijn map, inclusief zijn routes, taakhandlers en scheduler. Dat die ingangen boven de
+manager staan en `opi/http` gebruiken, is een bekende uitzondering op de lagen (hoofdstuk 5
+van `coding-rules.md`): het lagencontract is een hulpmiddel voor samenhang, geen doel, en
+waar het ermee botst wint samenhang.
+
 A block that lazy-loads (backups) or is a modal (the database console, the job runner)
 needs routes. Declare them on the service via `web_routers()` and they are mounted onto
 the web app, so the block and the endpoints that fill it travel together. Import the
 route module **inside** `web_routers()`: those modules import managers, which the catalog
 itself must not do.
+
+| Blok | Route | Waar hij hangt |
+|---|---|---|
+| backups | `catalog/shared/backups.py` | `BackupsPageMixin.web_routers()` |
+| image-registries | `catalog/image_registries/web.py` | `ImageRegistriesService.web_routers()` |
+| db-console, job runner | `catalog/shared/db_console.py`, `catalog/shared/jobs.py` | `DatabasePagesMixin.web_routers()` |
+
+`backups.py` is de ene uitzondering op de lazy import: het draagt ook `BackupsPageMixin`,
+dat de catalogus bij het importeren al nodig heeft, dus daar staan de zware imports IN de
+handler. Naast de hook staat per blok een toets die het pad op de gemonteerde `web_router`
+opzoekt: een blok mag de route die hem vult niet kwijtraken.
 
 A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
 `endpoint`; the shared modal shell loads that URL (`openServiceModal`). One or the other,
@@ -997,7 +1015,8 @@ async def provision(self, ctx: ProvisionContext) -> None:
 ## Manifests
 
 A service does not touch the manifest generator. It returns a declarative contribution and
-the generic component loop merges it (`opi/manager/project_manager.py:5108`).
+the generic component loop merges it (`ApplicationManifests._emit_component` in
+`opi/manager/project/manifests/application.py`).
 
 ```python
 def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
@@ -1029,8 +1048,8 @@ service that declares `selectable_per_component = False` has no per-component ch
 make and is switched on by the PROJECT's selection instead -- without that such a service
 never contributes at all, because no component ever ticks it. The two halves of that rule
 live in `collect_manifest_contributions` / `apply_manifest_contributions`
-(`opi/manager/project_manager.py`), module-level so they can be measured without building
-a whole deployment.
+(`opi/manager/project/manifests/contributions.py`), module-level so they can be measured
+without building a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
@@ -1044,11 +1063,12 @@ Two shortcuts for the common cases:
 - Contribute on behalf of another service? `manifest_activated_by` says which service types
   switch you on, so exactly one provider contributes per manager.
 
-`SecretFileSpec` declares *what* secret is needed; `ProjectManager._write_secret_file`
-(`project_manager.py:1584`) does the writing, alias resolution and prune bookkeeping. A
-random value that must survive a deploy sets `keep_existing_values=True`: the writer then
-takes it from the previous ciphertext (auth-wall's cookie secret, see
-`features/sops-skip-unchanged-reencryption.md`). Keep that writer service-agnostic.
+`SecretFileSpec` declares *what* secret is needed; `ApplicationManifests.write_secret_file`
+(`opi/manager/project/manifests/application.py`) does the writing, alias resolution and
+prune bookkeeping. A random value that must survive a deploy sets
+`keep_existing_values=True`: the writer then takes it from the previous ciphertext
+(auth-wall's cookie secret, see `features/sops-skip-unchanged-reencryption.md`). Keep that
+writer service-agnostic.
 
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
@@ -1071,7 +1091,7 @@ say), override `contribute_deployment_manifests(ctx: DeploymentManifestContext) 
 list[DeploymentManifestSpec]` instead. It runs once per deployment, after the component loop.
 Each `DeploymentManifestSpec` names a template + values + a `filename` that **must** start
 with `f"{deployment}-{service_type.value}-"` -- the symmetric prune
-(`project_manager._prune_obsolete_service_manifests`) keys on that prefix to remove a
+(`manifests.pruning.prune_obsolete_service_manifests`) keys on that prefix to remove a
 service's deployment manifests when it stops contributing (switched off, last rule removed,
 target gone). `registry.deployment_manifest_services()` collects the overriding services in
 `manifest_order`; the generic emitter in `create_application_manifests` writes the specs and
@@ -1104,11 +1124,11 @@ The verdict history (`{date, status, by, message}`) is appended by the spec's `r
 last status wins and the file is the audit trail. The *consequence* of a verdict is service
 knowledge: publish-on-web writes the sentence itself, because only it knows that an
 unapproved domain does not block the deployment but moves it to the cluster address
-(`apply_domain_approval_fallback` in `opi/utils/naming.py`).
+(`apply_domain_approval_fallback` in `opi/services/catalog/publish_on_web/hostnames.py`).
 
 **Een besluit komt alleen van de goedkeuringsroute.** De store weigert elke opslag die een
 status van je spec op `approved` of `denied` zet of laat ontstaan
-(`validate_approval_decisions` in `opi/manager/project_validation.py`), tenzij de opslag
+(`validate_approval_decisions` in `opi/services/project_validation.py`), tenzij de opslag
 zich als besluit meldt met `save_and_commit_project(..., approval_decision=True)`. Die
 markering staat op precies een plek, `opi/web/router_approvals.py`, en hoort daar te
 blijven. Je service hoeft er niets voor te doen: de regel leest je `list_items`, dus hij
@@ -1260,7 +1280,7 @@ its four wiring points are listed under "Forms and wizard screens".
 
 - **A filtered card is not validation.** A service that only some clusters can deliver
   answers `available_on_cluster`, and BOTH consumers matter: the wizard leaves the card
-  out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
+  out, and `validate_service_availability` (`opi/services/project_validation.py`) refuses
   the save. The API and a hand-written project file never pass a card at all. vlam is the
   first inhabitant.
 - **A replaced service is not an unavailable one.** `available_on_cluster` is all-or-nothing

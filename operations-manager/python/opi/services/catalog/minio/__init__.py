@@ -15,11 +15,13 @@ from opi.services.catalog.shared.noncurrent_versions import (
     NONCURRENT_VERSION_SETTINGS,
     noncurrent_deployment_section,
 )
+from opi.services.secrets import MinIOSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import MinIOSecret
 
 if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,7 @@ class MinioStorageService(BackupsPageMixin, Service):
         icon="map",
         color="rood",
         shared_per_deployment=True,
-        secret_class="MinIOSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="MinIOSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in MinIOVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="minio",
@@ -44,9 +46,9 @@ class MinioStorageService(BackupsPageMixin, Service):
     config_schema_version = "1.0"
     # Succeeded by SeaweedFS on clusters where it's available; see ``replaced_on_cluster``.
     replaced_by = ServiceType.SEAWEEDFS_STORAGE
-    # May enrol itself (RC-84): a bucket needs no project-level choice. enable-versioning
-    # falls back to the platform default and the rest of the model is clone state the
-    # platform writes itself.
+    # May enrol itself: a bucket needs no project-level choice. enable-versioning falls back
+    # to the platform default and the rest of the model is clone state the platform writes
+    # itself.
     allows_implicit_project_selection = True
     cleanup_manager_key = ManagerKey.MINIO
     provision_order = 20
@@ -62,12 +64,12 @@ class MinioStorageService(BackupsPageMixin, Service):
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         # minio carries the user setting enable-versioning at project level and OPI-managed
         # clone state (generation/revisions) at deployment level; both are fields of the one
-        # union model, so derive the accepted-field hint from it for those layers (checklist 3).
+        # union model, so the accepted-field hint for those layers comes from it.
         if layer in (ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT):
             return self.config_model_field_names()
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             from opi.services.catalog.minio.editables import MINIO_ENABLE_VERSIONING_EDITABLE
             from opi.services.catalog.minio.visualizers import (
@@ -92,7 +94,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             ]
         return []
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -126,9 +128,9 @@ class MinioStorageService(BackupsPageMixin, Service):
                             "worden opgeruimd, en met een leeftijdsgrens ook de versies die ouder zijn. "
                             "Je kunt dus niet verder terug dan wat hier staat."
                         ),
-                        # Het hele blok staat achter het vinkje: wie versiebeheer niet
-                        # aanvinkt ziet geen grenzen om in te stellen. De renderer
-                        # hertekent live (het vinkje draagt data-rerender).
+                        # The whole block sits behind the checkbox: whoever does not tick
+                        # versioning sees no limits to set. The renderer redraws live (the
+                        # checkbox carries data-rerender).
                         depends_on=config_path(ConfigLayer.PROJECT, self.service_type, "config", "enable-versioning"),
                         children=[
                             MAX_NONCURRENT_VERSIONS_FIELD.editable.yaml_path,
@@ -140,8 +142,8 @@ class MinioStorageService(BackupsPageMixin, Service):
             self._config_section_cache = cached
         return cached
 
-    def deployment_form_section(self, deployment_index: int | None = None):
-        """De grens op oude versies voor een bucket; zonder index beschrijft hij de laag."""
+    def deployment_form_section(self, deployment_index: int | None = None) -> FormSection:
+        """The limit on noncurrent versions for a bucket; without an index it describes the layer."""
         from opi.services.catalog.minio.visualizers import (
             DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD,
             DEPLOYMENT_NONCURRENT_EXPIRE_DAYS_FIELD,
@@ -187,7 +189,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             SecretFileSpec(
                 secret_name=MinIOSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="minio",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+                secret_type="minio",  # noqa: S106  # the name of the key or the secret class, not a secret
                 resolve_aliases=True,
             )
         ]

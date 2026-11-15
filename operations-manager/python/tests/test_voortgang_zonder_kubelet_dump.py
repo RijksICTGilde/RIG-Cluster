@@ -13,7 +13,7 @@ componentfouten voor het paneel eronder.
 
 from typing import Any, ClassVar
 
-from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
+from opi.runtime.tasks.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
 from opi.services.event_interpreter import group_component_failures
 from opi.services.oom_watcher import _describe_pod_waiting
 
@@ -178,7 +178,7 @@ class TestHetPaneelStaatErOokNaEenGeslaagdeVerwerking:
     """
 
     def _render(self, status: str) -> str:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc.get_template("partials/task_progress_fragment.html.j2").render(
             {
@@ -286,7 +286,7 @@ class TestDeLogboeklinkVolgtDePagina:
     }
 
     def _render(self, sjabloon: str) -> str:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc.get_template(sjabloon).render(self.CONTEXT)
 

@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.web.lotc_switch import PROJECT_TABS, TABS_MET_DEPLOYMENT, project_tab_url, tab_from_path
+from opi.http.render.lotc_switch import PROJECT_TABS, TABS_WITH_DEPLOYMENT, project_tab_url, tab_from_path
 from opi.web.router import web_router
 
 WORTEL = Path(__file__).resolve().parent.parent
@@ -60,7 +60,7 @@ def client() -> TestClient:
 
 def test_backups_is_een_tabblad_met_een_deployment_in_het_pad() -> None:
     assert PROJECT_TABS["backups"] == {"label": "Backups", "path": "backups", "icon": "backup-in-cloud"}
-    assert "backups" in TABS_MET_DEPLOYMENT
+    assert "backups" in TABS_WITH_DEPLOYMENT
     assert project_tab_url("demo", "backups", deployment="productie") == "/projects/demo/backups/productie"
     assert tab_from_path("/projects/demo/backups/productie") == "backups"
 

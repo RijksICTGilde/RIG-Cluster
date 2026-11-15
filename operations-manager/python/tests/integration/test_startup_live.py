@@ -32,7 +32,6 @@ import asyncpg
 import httpx
 import pytest
 import pytest_asyncio
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.connectors.git_repo import GitCredentials, get_git_repo, reset_git_repos
 from opi.connectors.mail import MAIL_LIMITER_PREFIX, MAIL_SENDER_NAME_PREFIX
 from opi.core import readiness as readiness_module
@@ -40,10 +39,11 @@ from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.core.readiness import get_readiness_state
-from opi.core.startup import check_minio_availability, run_startup_tasks
-from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
+from opi.runtime.startup.startup import check_minio_availability, run_startup_tasks
 from opi.server import create_app, lifespan
 from opi.services import project_store as project_store_module
+from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
 from opi.services.project_store import get_project_store, reset_project_store
 from tests.integration import forgejo_live, keycloak_image, kubernetes_live, postgres_live, startup_live
 from tests.integration.keycloak_image import assert_realm_consistent
@@ -343,7 +343,6 @@ def _assert_the_background_tasks_run(app: FastAPI, *, step: str) -> None:
         "db_console_reaper",
         "image_pull_observer",
         "sleep_mode_scheduler",
-        "git_monitor_tasks",
     ):
         assert getattr(app.state, name, None) is not None, f"{step}: {name} is niet gestart"
     # De reconcile-poll staat niet in app.state, maar in zijn eigen module.
@@ -415,7 +414,7 @@ async def test_the_boot_recovers_when_postgresql_and_the_relay_are_down_at_first
     # De vorige toets liet de accounts staan; zonder dit zou de mailtak van de lus niets
     # meer te doen hebben en zou deze toets hem niet meten.
     relay.drop_platform_accounts()
-    monkeypatch.setattr("opi.core.startup.STARTUP_RETRY_INTERVAL", 2)
+    monkeypatch.setattr("opi.runtime.startup.startup.STARTUP_RETRY_INTERVAL", 2)
     relay_url = settings.MAIL_RELAY_API_URL
     monkeypatch.setattr(settings, "MAIL_RELAY_API_URL", f"http://{NOWHERE}:8080")
 

@@ -8,7 +8,7 @@ weg is, wat er bewust blijft staan en waarom. Gemeten en uitgevoerd in RC-62.
 De LOTC-omgeving laadt drie design systems:
 
 ```python
-DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/core/templates_lotc.py
+DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/http/render/templates_lotc.py
 ```
 
 `lotc_rvo` staat wel geinstalleerd en definieert 7568 verschillende `.rvo-`-selectors, maar
@@ -129,8 +129,8 @@ als de grijstrap-vraag hierboven beantwoord is; en wat de pagina daarna nog is, 
 inline styles in een enkel blok. Dat is een pagina om opnieuw te bouwen op componenten, en
 dat is een eigen opdracht.
 
-Tot dat gebeurt staat hij als uitzondering in `tests/test_lotc_geen_rvo_resten.py`, met
-zijn aantallen erbij, zodat de uitzondering zichtbaar is en niet stilzwijgend.
+Met RC-441 is de pagina weggehaald in plaats van vervangen: ze hing aan geen enkele
+route. De uitzondering in `tests/test_lotc_geen_rvo_resten.py` is daarmee ook weg.
 
 ### De 41 onbereikbare templates
 
@@ -139,9 +139,11 @@ eigen besluit over dode templates. Ze staan hier op een lijst en zijn verder nie
 aangeraakt; hun aantallen staan in de guard-test, zodat een van deze bestanden niet
 stilletjes weer in gebruik genomen wordt met zijn rvo-klassen erin.
 
+Dat besluit is met RC-441 voor een deel genomen: vijftien van deze bestanden zijn
+weggehaald, en hun regels in de guard-test ermee.
+
 De zwaarste zijn `project-details/_argocd-deployment-card.html.j2` (27),
-`wizard/partials/approval_items.html.j2` (13), `formulier-template.html.j2` (13),
-`wizard/partials/backup_select_deployment.html.j2` (12)
+`wizard/partials/approval_items.html.j2` (13), `formulier-template.html.j2` (13)
 en `project-details/_resource-usage.html.j2` (12). De volledige lijst met aantallen staat
 in `NOG_MET_KLASSEN` in de guard-test.
 
@@ -152,7 +154,7 @@ Die is weg; de echte schil is `base_lotc.html.j2`.
 ## Wat de opruiming niet raakt
 
 **`opi/templates/`, de ROOS-boom.** Daar staan 603 voorkomens en die horen daar: dat is het
-stijlsysteem dat die templates gebruiken. De schakelaar (`opi/web/lotc_switch.py`) houdt
+stijlsysteem dat die templates gebruiken. De schakelaar (`opi/http/render/lotc_switch.py`) houdt
 beide wegen open met `?layout=roos`. (Sinds RC-67 bestaat die terugvalweg niet meer; de
 oude boom is weg.) Zolang die terugvalweg bestond bleef die boom
 staan zoals hij is.

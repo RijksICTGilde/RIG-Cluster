@@ -23,7 +23,12 @@ def _project(status: str | None) -> dict[str, Any]:
 def sent(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(approval_notifier.settings, "LOGWATCHER_NTFY_TOPIC", "topic-xyz")
-    monkeypatch.setattr(approval_notifier, "_post", lambda title, body: calls.append((title, body)))
+
+    def _record(title: str, body: str, priority: str, tags: str) -> bool:
+        calls.append((title, body))
+        return True
+
+    monkeypatch.setattr(approval_notifier, "notify", _record)
     return calls
 
 

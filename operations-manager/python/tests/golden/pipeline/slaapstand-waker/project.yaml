@@ -1,0 +1,50 @@
+schema-version: '2.17'
+name: golden-slaapstand
+display-name: Golden slaapstand
+description: Een slapende deployment met de waker ervoor
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+  - sleep-mode:
+      config:
+        enabled: true
+        waker: true
+        waker-component: web
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-slaapstand.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    services:
+      - publish-on-web
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-slaapstand
+    repository: main-repo
+    sleep:
+      state: sleeping
+      expires-at: '2026-01-03T00:00:00+00:00'
+      wake-token: ENCRYPT:wakker-worden-token
+    components:
+      - reference: web
+        image: nginx:1.27

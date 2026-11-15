@@ -18,18 +18,17 @@ from opi.connectors.postgres import (
     PostgresValidationError,
     create_postgres_connector,
 )
-from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
-from opi.manager.clone_validation import (
+from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
+from opi.services.catalog.shared.postgres import DedicatedPostgresFields
+from opi.services.clone_validation import (
     composite_name_collision,
     other_project_deployments,
     resolve_clone_source_deployment,
 )
-from opi.services import CloneFromType, ServiceType
-from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
-from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.postgres_scope import (
     database_generation_service_type,
     get_dedicated_postgres_config,
@@ -37,10 +36,11 @@ from opi.services.postgres_scope import (
     project_uses_dedicated_postgres,
 )
 from opi.services.project import Project
+from opi.services.secrets import DatabaseSecret
+from opi.services.tasks import progress_steps as steps
 from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +62,6 @@ class DatabaseManager:
     """
 
     def __init__(self, project_manager: ProjectManager, db_host: str, admin_username: str, admin_password: str) -> None:
-        """
-        Initialize the DatabaseManager bound to one PostgreSQL server.
-
-        Args:
-            project_manager: The main ProjectManager instance for accessing shared resources
-            db_host: Database host (e.g., shared or namespace-specific service endpoint)
-            admin_username: Admin username for database operations
-            admin_password: Admin password for database operations
-        """
         self.project_manager = project_manager
         self._db_host = db_host
         self._admin_username = admin_username
@@ -78,7 +69,6 @@ class DatabaseManager:
         self._postgres_connector: PostgresConnector | None = None
 
     def _ensure_connection(self) -> None:
-        """Ensure we have a PostgreSQL connector instance bound to our credentials."""
         if self._postgres_connector is None:
             self._postgres_connector = create_postgres_connector(
                 host=self._db_host, admin_username=self._admin_username, admin_password=self._admin_password
@@ -86,7 +76,6 @@ class DatabaseManager:
 
     @property
     def postgres_connector(self) -> PostgresConnector:
-        """Get the PostgreSQL connector. Ensures connection is initialized."""
         if self._postgres_connector is None:
             self._ensure_connection()
         if self._postgres_connector is None:
@@ -94,7 +83,6 @@ class DatabaseManager:
         return self._postgres_connector
 
     async def close(self) -> None:
-        """Close the PostgreSQL connection."""
         if self._postgres_connector is not None:
             await self._postgres_connector.close()
             self._postgres_connector = None
@@ -102,23 +90,13 @@ class DatabaseManager:
     def _get_deployment_database_generation(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str | None = None
     ) -> int | None:
-        """
-        Get the database generation for a deployment from the project file.
-
-        Reads from the deployment-level services block:
-        deployments[name].services.{service_type}.generation
+        """From ``deployments[name].services.{service_type}.generation``, or None when unset.
 
         Args:
-            project_data: The project configuration data
-            deployment_name: Name of the deployment
-            service_type: Service type (uses ServiceType enum values). If None, determines
-                          from project config (namespace-postgresql-database or postgresql-database)
-
-        Returns:
-            Generation number if set, None otherwise
+            service_type: None reads it from the project config, which names either
+                namespace-postgresql-database or postgresql-database.
         """
         if service_type is None:
-            # Determine service type from project configuration
             service_type = database_generation_service_type(project_data)
 
         project_file_handler = self.project_manager._project_file_handler
@@ -132,28 +110,18 @@ class DatabaseManager:
         clone_interrupted: bool = False,
         rotate_password: bool = False,
     ) -> None:
-        """
-        Create database resources for a deployment that has PostgreSQL service enabled.
+        """Create the database resources of a deployment that has the PostgreSQL service.
 
-        This method handles both shared and namespace-specific PostgreSQL databases:
-        - Shared: Creates database/user on shared cluster (settings.DATABASE_HOST)
-        - Namespace-specific: Creates database/user on project's dedicated cluster
-
-        Flow:
-        1. Check for existing credentials
-        2. Validate/create working credentials
-        3. Ensure database exists (handle clone-from/force-clone)
-        4. Ensure schema exists (unless cloned)
-        5. Store final credentials with correct service endpoint
-
-        On replay, the outcome should always be the same regardless of starting state.
+        Works for both placements: a shared cluster, and a project's own dedicated one. The
+        order is credentials, then the database (with its ``clone-from`` or force-clone), then
+        the schema, then the final credentials with the right service endpoint. Replay-safe:
+        the outcome is the same whatever the starting state.
 
         Args:
-            project_data: The project configuration data
-            deployment: The specific deployment configuration
-            force_clone: If True, force clone even if target already exists (runtime override)
-            clone_interrupted: A previous run started this deployment's clone and did not record it as completed
-            rotate_password: If True, replace the user's password instead of reusing the stored one
+            force_clone: Runtime override that clones even when the target exists.
+            clone_interrupted: A previous run started this clone and did not record it as
+                completed.
+            rotate_password: Replace the user's password instead of reusing the stored one.
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -162,13 +130,12 @@ class DatabaseManager:
         if not cluster_name:
             raise ValueError(f"Deployment {deployment_name} is missing required 'cluster' field")
 
-        # Check if this deployment has PostgreSQL service enabled
         if not await self._deployment_uses_postgresql(project_data, deployment_name):
             logger.debug(f"Deployment {deployment_name} does not use PostgreSQL service, skipping")
             return
 
-        # Tweede laag: een rol of database met deze naam kan van een ander project zijn,
-        # dus eerst vaststellen dat zij van dit project is voordat we het wachtwoord zetten.
+        # Second layer: a role or database with this name may belong to another project, so
+        # establish that it belongs to this one before setting its password.
         refusal = composite_name_collision(project_name, deployment_name, other_project_deployments(project_name))
         if refusal:
             raise ValueError(refusal)
@@ -186,14 +153,11 @@ class DatabaseManager:
             # scope: project mean "dedicated" (RC-17).
             uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
-            # Get appropriate configuration
             if uses_dedicated_postgresql:
-                # Dedicated-cluster configuration
                 cluster_config = self._get_database_cluster_config(project_data, cluster_name)
                 db_host = cluster_config["service_endpoint"]
                 infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
-                # Get superuser credentials from infrastructure namespace
                 logger.info(
                     f"Using dedicated PostgreSQL cluster for {project_name} "
                     f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
@@ -202,37 +166,29 @@ class DatabaseManager:
                     project_name, infrastructure_namespace
                 )
             else:
-                # Shared database configuration - use cluster-specific fully qualified hostname
-                # for cross-namespace DNS resolution (user pods are in different namespaces)
                 db_host = get_database_server(cluster_name)
                 admin_username = settings.DATABASE_ADMIN_NAME
                 admin_password = settings.DATABASE_ADMIN_PASSWORD
                 logger.info(f"Using shared PostgreSQL for {project_name} (host: {db_host})")
 
-            # Ensure we have a PostgreSQL connector for this deployment
             self._ensure_connection()
 
-            # Get database service config (includes privileges if specified)
             service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
             if database_privileges:
                 logger.info(f"Database privileges specified for {project_name}: {database_privileges}")
 
-            # Get the generation from project file if set (for versioned databases after restore)
             generation = self._get_deployment_database_generation(project_data, deployment_name)
             if generation is not None and generation > 0:
                 logger.info(f"Using database generation {generation} for {deployment_name}")
 
-            # Generate consistent database identifiers
-            # Username is never versioned (same user accesses all versions)
-            # Database and schema use generation if set (for versioned restore)
-            db_username = generate_database_name(project_name, deployment_name, None)  # Username never versioned
+            # The username is never versioned: one role reaches every generation.
+            db_username = generate_database_name(project_name, deployment_name, None)
             db_database = generate_database_name(project_name, deployment_name, generation)
-            db_schema = db_database  # Schema matches database name
+            db_schema = db_database
             connection_limit = deployment_connection_limit(project_data, deployment_name)
 
-            # PHASE 1: CREDENTIAL RESOLUTION - Determine working credentials
             logger.info(f"Phase 1: Resolving database credentials for {project_name}/{deployment_name}")
             db_password = await self._resolve_database_credentials(
                 project_name,
@@ -252,7 +208,6 @@ class DatabaseManager:
             # reaches it, and a limit change must not rotate credentials.
             await self._reconcile_connection_limit(db_username, connection_limit)
 
-            # PHASE 2: DATABASE STATE VERIFICATION - Ensure database exists with correct state
             logger.info(f"Phase 2: Verifying database state for {project_name}/{deployment_name}")
             db_state = await self._ensure_database_state(
                 project_name,
@@ -307,16 +262,15 @@ class DatabaseManager:
                 rotate_password=rotate_password,
             )
 
-            # Alleen deze twee rollen openen deze database. Staat hier en niet in
-            # create_database, omdat de rollen daar nog niet bekend zijn; en op elke
-            # verwerking, zodat een database van voor RC-285 ook wordt afgesloten.
+            # Only these two roles open this database. Here and not in create_database,
+            # because the roles are not known there yet, and on every processing round, so a
+            # database from before RC-285 is closed too.
             await self.postgres_connector.restrict_database_to_roles(db_database, [db_username, ro_username])
 
-            # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
             database_secret = DatabaseSecret(
-                host=db_host,  # Use namespace-specific or shared host
-                port=5432,  # Standard PostgreSQL port
+                host=db_host,
+                port=5432,
                 username=db_username,
                 password=final_password,
                 schema=db_schema,
@@ -344,19 +298,13 @@ class DatabaseManager:
         connection_limit: int,
         database_privileges: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Create or update a database user using the bound connector.
+        """Create or update a database user, and return (password, result).
 
         Args:
-            db_username: Username to create or update
-            postgres_conn: PostgresConnector instance (bound to server)
-            connection_limit: CONNECTION LIMIT for a newly created role
-            database_privileges: List of PostgreSQL privileges to grant (e.g., ["SUPERUSER", "CREATEDB"])
-
-        Returns:
-            Tuple of (password, result_dict)
+            connection_limit: CONNECTION LIMIT for a role this call creates.
+            database_privileges: PostgreSQL privileges to grant, e.g. ["SUPERUSER"].
         """
         db_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
-        # Try to create the user first
         create_result = await postgres_conn.create_user(
             username=db_username,
             password=db_password,
@@ -365,12 +313,10 @@ class DatabaseManager:
         )
 
         if create_result["status"] == "exists":
-            # User already exists, update password and privileges
             update_result = await postgres_conn.update_user_password(
                 username=db_username,
                 new_password=db_password,
             )
-            # Also ensure privileges are applied (idempotent)
             if database_privileges:
                 await postgres_conn.update_user_privileges(
                     username=db_username,
@@ -378,7 +324,6 @@ class DatabaseManager:
                 )
             return db_password, update_result
         else:
-            # User was created (or error occurred)
             return db_password, create_result
 
     async def _reconcile_connection_limit(self, username: str, connection_limit: int) -> None:
@@ -496,9 +441,9 @@ class DatabaseManager:
 
         Args:
             schemas: The deployment's schemas, primary first; must be non-empty.
-            rotate_password: Skip reuse of the stored password and set a new one. Deze rol leest
-                elk schema van de deployment, dus een rotatie die hem laat staan laat een
-                werkende oude waarde achter.
+            rotate_password: Skip reuse of the stored password and set a new one. This role
+                reads every schema of the deployment, so a rotation that leaves it alone
+                leaves a working old value behind.
 
         Returns:
             Tuple of (ro_username, ro_password).
@@ -569,28 +514,12 @@ class DatabaseManager:
         database_privileges: list[str] | None = None,
         rotate_password: bool = False,
     ) -> str:
-        """
-        Resolve working database credentials through the following steps:
-        1. Check for existing credentials in Kubernetes
-        2. Test credential validity if they exist
-        3. Create or update credentials if needed
+        """The working password of the database user: the stored one when it still logs in,
+        otherwise a fresh one on a created or updated role.
 
         Args:
-            project_name: Name of the project
-            deployment_name: Name of the deployment
-            deployment: Deployment configuration dict
-            db_username: Database username to create/verify
-            db_database: Database name
-            db_schema: Schema name
-            db_host: Database host (shared or namespace-specific service endpoint)
-            admin_username: Admin username for database operations
-            admin_password: Admin password for database operations
-            connection_limit: CONNECTION LIMIT for a role this call creates
-            database_privileges: List of PostgreSQL privileges to grant to created user
-            rotate_password: Skip reuse of the stored password and set a new one
-
-        Returns:
-            The working password for the database user
+            connection_limit: CONNECTION LIMIT for a role this call creates.
+            rotate_password: Skip reuse of the stored password and set a new one.
         """
 
         logger.info(f"Checking database credentials for {project_name}/{deployment_name} at host {db_host}")
@@ -599,7 +528,6 @@ class DatabaseManager:
             logger.info(f"Replacing database password for {project_name}/{deployment_name} on request")
             return await self._reset_user_password(db_username, connection_limit, database_privileges)
 
-        # Step 1: Check for existing credentials
         existing_credentials = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
 
         if existing_credentials:
@@ -610,7 +538,6 @@ class DatabaseManager:
                 logger.error(f"Database secret exists but has no password for {project_name}/{deployment_name}")
                 raise ValueError(f"Invalid database secret for {project_name}/{deployment_name}: missing password")
 
-            # Step 2: Test existing credentials
             logger.info(f"Testing existing database credentials for {project_name}/{deployment_name}")
             credentials_valid = await self._test_database_connection(
                 username=db_username, password=db_password, database=db_database, schema=db_schema, host=db_host
@@ -618,7 +545,6 @@ class DatabaseManager:
 
             if credentials_valid:
                 logger.info(f"Existing database credentials are valid for {project_name}/{deployment_name}")
-                # Ensure privileges are up-to-date (idempotent)
                 if database_privileges:
                     logger.info(f"Ensuring database privileges for {db_username}: {database_privileges}")
                     await self.postgres_connector.update_user_privileges(
@@ -627,7 +553,6 @@ class DatabaseManager:
                     )
                 return db_password
             else:
-                # Step 3a: Handle invalid existing credentials
                 if settings.RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE:
                     logger.warning(
                         f"Database credentials are invalid for {project_name}/{deployment_name}, updating password"
@@ -639,7 +564,6 @@ class DatabaseManager:
                         f"Manual intervention required to fix database user or update secret."
                     )
         else:
-            # Step 3b: No existing secret, create new credentials
             logger.info(f"No database secret found in Kubernetes for {project_name}/{deployment_name}")
             db_password, create_result = await self._create_or_update_user(
                 db_username=db_username,
@@ -653,7 +577,6 @@ class DatabaseManager:
                     f"Failed to create database user {db_username}: {create_result.get('message', 'Unknown error')}"
                 )
             elif create_result["status"] == "exists":
-                # User exists, but we don't have the password, update it
                 logger.info(f"Database user {db_username} already exists, updating password")
                 update_result = await self.postgres_connector.update_user_password(
                     username=db_username,
@@ -683,37 +606,24 @@ class DatabaseManager:
         generation: int | None = None,
         clone_interrupted: bool = False,
     ) -> DatabaseStateResult:
-        """
-        Ensure the database exists in the correct state, handling clone-from and force-clone logic.
-        This runs regardless of whether credentials existed initially.
+        """Bring the database into the right state, including its ``clone-from`` and force-clone.
 
-        Uses the DatabaseManager's bound credentials for all operations.
-        Handles both local deployment clones and remote-source clones with Chisel tunnels.
-
-        Clone modes:
-        - mode: "once" (default): Clone only if status.completed is not True
-        - mode: "always": Clone every sync, implies force_clone=True
-
-        After successful clone, updates the clone-from.status in project_data and saves the project file.
+        Runs whether or not credentials existed, covers both a local deployment clone and a
+        remote-source clone over a Chisel tunnel, and updates ``clone-from.status`` in
+        ``project_data`` after a successful clone. Mode ``once`` (the default) clones only
+        while ``status.completed`` is not True; mode ``always`` clones every sync and implies
+        force_clone.
 
         Args:
-            project_name: Name of the project
-            deployment_name: Name of the deployment
-            deployment: Deployment configuration dict
-            db_database: Database name to create
-            db_schema: Schema name to create
-            db_username: Owner username for the database
-            db_password: Password for the owner
-            project_data: Project configuration data (needed for remote-source clones)
-            force_clone_override: Runtime override for force_clone (from API)
-            clone_interrupted: A previous run started this clone and did not record it as completed
+            project_data: Needed for a remote-source clone.
+            force_clone_override: Runtime override of force_clone, from the API.
+            clone_interrupted: A previous run started this clone and did not record it as
+                completed.
 
-        Returns:
-            DatabaseStateResult with the final database, schema, and password.
-            These may differ from the input values if a generational failover occurred.
+        Returns the final database, schema and password, which differ from the input values
+        when a generational failover happened.
         """
         clone_from = deployment.get("clone-from")
-        # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
 
         # clone-from must be a dict with type/reference/mode keys
@@ -723,35 +633,29 @@ class DatabaseManager:
                 f"and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
             )
 
-        # Handle clone mode and status checking
         if clone_from:
             clone_mode = clone_from.get("mode", "once")
             status = clone_from.get("status", {})
             clone_status_completed = status.get("completed", False) if isinstance(status, dict) else False
 
-            # mode: "always" implies force_clone=True
             if clone_mode == "always":
                 force_clone = True
                 logger.info(f"Clone mode 'always' for {deployment_name}, forcing clone")
 
-            # mode: "once" with completed status - skip clone entirely (unless force_clone is True)
             if clone_mode == "once" and clone_status_completed and not force_clone:
                 logger.info(
                     f"Clone mode 'once' for {deployment_name} and clone already completed "
                     f"(timestamp: {status.get('timestamp', 'unknown')}), skipping clone"
                 )
-                # Still need to ensure database exists (in case cluster was rebuilt)
-                # but skip the clone operation
-                clone_from = None  # Set to None to skip clone logic but continue to normal flow
+                # None skips the clone logic and carries on with the normal flow.
+                clone_from = None
             elif clone_mode == "once" and clone_status_completed and force_clone:
                 logger.info(f"Clone mode 'once' for {deployment_name} but force_clone=True, proceeding with clone")
 
-        # Handle clone-from by type
         clone_source_ref: str | None = None
         if clone_from:
             clone_type = clone_from.get("type")
             if clone_type == CloneFromType.REMOTE_SOURCE.value:
-                # Handle remote source cloning directly
                 remote_source_name = clone_from.get("reference")
                 if not remote_source_name:
                     raise ValueError(f"remote-source clone without a reference: {deployment.get('name')}")
@@ -772,7 +676,6 @@ class DatabaseManager:
 
                 chisel_config = remote_source.get("chisel")
 
-                # Decrypt source password using project's AGE key
                 from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
 
                 project_private_key = await get_decoded_project_private_key(project_data)
@@ -800,12 +703,10 @@ class DatabaseManager:
                 if not result.get("success"):
                     raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
 
-                # Report clone to project_manager for status tracking
                 self.project_manager.report_clone_performed(
                     deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
                 )
 
-                # Return the final identifiers from the clone operation
                 target = result.get("target", {})
                 return DatabaseStateResult(
                     database=target.get("database", db_database),
@@ -813,10 +714,8 @@ class DatabaseManager:
                     password=result.get("resolved_password", db_password),
                 )
             elif clone_type == CloneFromType.DEPLOYMENT.value:
-                # Local deployment clone - extract reference name
                 clone_source_ref = clone_from.get("reference")
             elif clone_type == CloneFromType.BACKUP.value:
-                # Backup restore: restore database from Kopia backup
                 if project_data is None:
                     raise ValueError(f"project_data is required for backup clone: {deployment_name}")
                 backup_items = await clone_backup_items(project_data, project_name, deployment, clone_from)
@@ -833,7 +732,6 @@ class DatabaseManager:
                     from opi.core.config import settings
                     from opi.manager.backup.database_backup import create_database_backup_manager
 
-                    # Ensure the target database exists before restoring into it
                     self._ensure_connection()
                     await self.postgres_connector.create_database(
                         database_name=db_database,
@@ -890,7 +788,6 @@ class DatabaseManager:
                 raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
         if clone_source_ref:
-            # Handle local database cloning (type: deployment)
             if project_data is None:
                 msg = (
                     f"project_data is required to clone '{deployment_name}': without it the source cannot be "
@@ -898,9 +795,8 @@ class DatabaseManager:
                 )
                 raise ValueError(msg)
             resolve_clone_source_deployment(project_data, clone_source_ref, deployment_name)
-            # Source uses base name (None generation) - versioned sources would need explicit handling
             source_database = generate_database_name(project_name, clone_source_ref, None)
-            source_schema = source_database  # Schema matches database name
+            source_schema = source_database
             # Extra schemas (RC-17) live in the same database and must come along, or a
             # clone would lose their data. Their names embed the deployment, so the
             # source uses the source deployment and the target uses this deployment.
@@ -913,14 +809,12 @@ class DatabaseManager:
             ]
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
 
-            # Determine service type from project configuration
             service_type = (
                 ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                 if project_data and self._project_uses_namespace_postgresql(project_data)
                 else ServiceType.POSTGRESQL_DATABASE.value
             )
 
-            # STEP 1: Validate that source database and schema exist before cloning
             await self._validate_clone_source(source_database, source_schema)
 
             # Schemas the application created itself (RC-360) ride along too, or the clone
@@ -931,52 +825,47 @@ class DatabaseManager:
                 platform_targets={db_schema, *(target for _, target in extra_clone_pairs)},
             )
 
-            # Check if target database exists by attempting to create it
             database_result = await self.postgres_connector.create_database(
                 database_name=db_database,
                 owner=db_username,
             )
             target_db_exists = database_result["status"] == "exists"
 
-            # Track whether we created the database in this operation (for cleanup on failure)
             database_created_here = not target_db_exists
 
-            # Track the final generation used for this clone
             final_generation = generation
 
-            # De halve staat (een deel van de doelschema's) houdt de failover: verder klonen
-            # weigert op het bestaande doelschema (postgres.py:1842) en droppen is niet veilig.
+            # A half state (part of the target schemas) keeps the failover: cloning on refuses
+            # on the existing target schema (postgres.py:1842) and dropping is not safe.
             clone_finished = False
             resume_in_place = False
             leftover_source_schemas: set[str] = set()
             if target_db_exists and clone_interrupted and not force_clone:
                 clone_pairs = [(source_schema, db_schema), *extra_clone_pairs]
-                # Alleen de paren die hernoemen zeggen hoe ver de kloon kwam: een gelijknamig
-                # app-schema (RC-360) staat al na CREATE SCHEMA onder zijn doelnaam.
+                # Only the pairs that rename say how far the clone got: an app schema of the
+                # same name (RC-360) already sits under its target name after CREATE SCHEMA.
                 renamed_targets = {target for source, target in clone_pairs if source != target}
                 schemas_present = await self._schema_names(db_database)
                 clone_finished = renamed_targets <= schemas_present
                 resume_in_place = renamed_targets.isdisjoint(schemas_present)
                 if resume_in_place:
-                    # Harde stop laat bronschema's staan (pg_dump hernoemt pas aan het eind); droppen
-                    # is veilig want ze horen bij de brondeployment, niet live data.
+                    # A hard stop leaves source schemas behind, because pg_dump only renames at
+                    # the end; dropping them is safe, since they belong to the source deployment
+                    # and are not live data.
                     source_names = {source for source, _ in clone_pairs}
                     leftover_source_schemas = (source_names - renamed_targets) & schemas_present
 
             if target_db_exists and (
                 force_clone or (generation is None and not clone_finished and not resume_in_place)
             ):
-                # Generational failover: create a new versioned database instead of
-                # cloning into an existing (potentially broken/limbo) one.
-                # Triggers when:
-                # - force_clone=True: explicit user request
-                # - generation is None: database exists but no generation was ever recorded,
-                #   indicating a previous clone failed before recording its generation.
-                #   Not when an interrupted attempt left a state this run can continue.
+                # Generational failover: create a new versioned database instead of cloning
+                # into an existing, possibly half-finished one. On force_clone, or when the
+                # database exists while no generation was ever recorded, but not when an
+                # interrupted attempt left a state this run can continue.
                 new_generation = (generation or 0) + 1
 
-                # Find an available generation - previous failed attempts may have left
-                # orphaned versioned databases that were not cleaned up
+                # Previous failed attempts may have left orphaned versioned databases, so look
+                # for a generation that is free.
                 max_attempts = 5
                 for _attempt in range(max_attempts):
                     db_database = generate_database_name(project_name, deployment_name, new_generation)
@@ -1016,8 +905,6 @@ class DatabaseManager:
             else:
                 logger.info(f"Database already exists for cloning: {db_database}")
 
-            # Always execute postInitSQL before clone (idempotent - uses IF NOT EXISTS)
-            # Extensions must exist before schema clone to avoid dependency issues
             if project_data:
                 service_config = self._get_database_service_config(project_data)
                 post_init_sql = service_config.get("postInitSQL", [])
@@ -1032,7 +919,7 @@ class DatabaseManager:
                     else:
                         logger.warning(f"PostInitSQL execution issue: {init_result}")
 
-            # Na postInitSQL, zodat een tweede poging de extensies alsnog bijwerkt.
+            # After postInitSQL, so a second attempt still updates the extensions.
             if clone_finished:
                 logger.info(
                     f"Clone into {db_database} was finished by an interrupted run, recording it instead of cloning again"
@@ -1051,9 +938,6 @@ class DatabaseManager:
                 logger.info(f"Dropping schema {leftover} in {db_database}, left by an interrupted clone")
                 await self.postgres_connector.delete_schema(leftover, db_database, cascade=True)
 
-            # STEP 2: Perform the clone operation
-            # If clone fails and we created the database in this operation, clean it up
-            # to prevent a limbo state with a partially-created database
             schemas_before = set() if database_created_here else await self._schema_names(db_database)
             # The failover may have moved db_schema, so the target set is rebuilt here.
             target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
@@ -1061,10 +945,9 @@ class DatabaseManager:
             # clone can leave either name behind.
             clone_schemas = target_schemas | {source_schema, *(source for source, _ in extra_clone_pairs)}
             try:
-                # Geen vlag bij een nieuwe generatie (die staat pas bij de save aan het
-                # eind op schijf) en niet boven een schema dat er al stond: in beide gevallen
-                # zou een volgende run dat voor een afgeronde kloon aanzien
-                # (features/kloonpoging.md).
+                # No flag on a new generation (which only reaches disk at the save at the end)
+                # and none over a schema that was already there: in both cases a next run would
+                # take it for a finished clone (`features/kloonpoging.md`).
                 if final_generation == generation and target_schemas.isdisjoint(schemas_before):
                     await self.project_manager.mark_clone_started(deployment_name)
                 clone_result = await self.postgres_connector.clone_schema(
@@ -1087,7 +970,7 @@ class DatabaseManager:
                     try:
                         await self.postgres_connector.delete_database(db_database)
                         logger.info(f"Cleaned up database {db_database} after failed clone")
-                    except Exception as cleanup_err:
+                    except Exception as cleanup_err:  # noqa: BLE001  # best-effort cleanup; it must not hide the failure it follows
                         logger.error(f"Failed to clean up database {db_database} after failed clone: {cleanup_err}")
                 else:
                     await self._drop_schemas_created_since(db_database, schemas_before, clone_schemas)
@@ -1105,7 +988,6 @@ class DatabaseManager:
                 source=f"deployment:{clone_source_ref}",
             )
         else:
-            # Normal flow: ensure database and schema exist
             database_result = await self.postgres_connector.create_database(
                 database_name=db_database,
                 owner=db_username,
@@ -1121,8 +1003,6 @@ class DatabaseManager:
             else:
                 logger.info(f"Database already exists: {db_database}")
 
-            # Always execute postInitSQL if configured (idempotent - uses IF NOT EXISTS)
-            # This ensures extensions are present even on existing databases during refresh
             if project_data:
                 service_config = self._get_database_service_config(project_data)
                 post_init_sql = service_config.get("postInitSQL", [])
@@ -1137,7 +1017,6 @@ class DatabaseManager:
                     else:
                         logger.warning(f"PostInitSQL execution issue: {init_result}")
 
-            # Create or verify schema exists
             schema_result = await self.postgres_connector.create_schema(
                 schema_name=db_schema,
                 database=db_database,
@@ -1166,7 +1045,7 @@ class DatabaseManager:
         resource_name: str,
         source: str,
     ) -> None:
-        """Een kloon die een vorige run al afmaakte meldt zich zo precies als een verse."""
+        """A clone a previous run finished reports itself exactly like a fresh one."""
         if project_data:
             self.project_manager._revision_manager.record_clone(
                 project_data=project_data,
@@ -1204,21 +1083,11 @@ class DatabaseManager:
                 logger.error(f"Failed to drop schema {schema} in {database} after failed clone: {cleanup_err}")
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
-        """
-        Validate that the source database and schema exist before attempting to clone.
-
-        Uses the DatabaseManager's bound connector for validation.
-
-        Args:
-            source_database: Name of the source database
-            source_schema: Name of the source schema that should exist
-
-        Raises:
-            Exception: If source database or schema doesn't exist
+        """Raises:
+        Exception: the source database or the source schema does not exist.
         """
         logger.info(f"Validating clone source: database={source_database}, schema={source_schema}")
 
-        # Check if source database exists using postgres database connection
         conn = await self.postgres_connector._get_or_create_connection("postgres")
         source_db_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", source_database)
 
@@ -1228,10 +1097,8 @@ class DatabaseManager:
                 f"Ensure the source deployment has been created successfully first."
             )
 
-        # Connect to source database to check schema
         conn = await self.postgres_connector._get_or_create_connection(source_database)
 
-        # Check if source schema exists
         schema_exists = await conn.fetchval(
             "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1", source_schema
         )
@@ -1243,7 +1110,6 @@ class DatabaseManager:
                 f"Ensure the source deployment has been properly initialized with data."
             )
 
-        # Check if source schema has any tables (optional but recommended)
         table_count = await conn.fetchval(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = $1", source_schema
         )
@@ -1259,18 +1125,8 @@ class DatabaseManager:
     async def _get_database_config_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any]
     ) -> tuple[str, str, str]:
-        """
-        Get database configuration (host, admin username, admin password) for a deployment.
-
-        This method determines whether the project uses namespace-specific or shared PostgreSQL
-        and returns the appropriate credentials.
-
-        Args:
-            project_data: The project configuration data
-            deployment: The deployment configuration
-
-        Returns:
-            Tuple of (db_host, admin_username, admin_password)
+        """The (db_host, admin_username, admin_password) of a deployment's placement: its own
+        dedicated PostgreSQL, or the shared one.
         """
         project_name = await self.project_manager.get_name()
         cluster_name = deployment.get("cluster")
@@ -1282,12 +1138,10 @@ class DatabaseManager:
         uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
         if uses_dedicated_postgresql:
-            # Dedicated-cluster configuration
             cluster_config = self._get_database_cluster_config(project_data, cluster_name)
             db_host = cluster_config["service_endpoint"]
             infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
-            # Get superuser credentials from infrastructure namespace
             logger.info(
                 f"Using dedicated PostgreSQL cluster for {project_name} "
                 f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
@@ -1296,8 +1150,6 @@ class DatabaseManager:
                 project_name, infrastructure_namespace
             )
         else:
-            # Shared database configuration - use cluster-specific fully qualified hostname
-            # for cross-namespace DNS resolution (user pods are in different namespaces)
             db_host = get_database_server(cluster_name)
             admin_username = settings.DATABASE_ADMIN_NAME
             admin_password = settings.DATABASE_ADMIN_PASSWORD
@@ -1308,16 +1160,7 @@ class DatabaseManager:
     async def delete_resources_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any]
     ) -> dict[str, Any]:
-        """
-        Delete database resources for a deployment.
-
-        Args:
-            project_data: The project configuration data
-            deployment: The specific deployment configuration
-
-        Returns:
-            Dictionary containing deletion results and status
-        """
+        """Delete the database resources of a deployment, and report the result."""
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
 
@@ -1330,12 +1173,10 @@ class DatabaseManager:
         }
 
         # Deliberately NOT gated on "does this deployment use PostgreSQL": that asks the
-        # CURRENT project file, while the database was created under an EARLIER version of
-        # it. Rewiring a deployment to components that no longer declare the service made
-        # this check return False, the cleanup reported "skipped" as success, and the
-        # database outlived the project (mpfoa-e01, mpfoa-e2w on odcn-production, 2026).
-        # Existence is the evidence: delete_database is idempotent and returns not_found
-        # for a name that was never provisioned, so probing costs nothing.
+        # CURRENT project file, while the database was created under an earlier version of
+        # it, so a deployment rewired away from the service would outlive its database.
+        # Existence is the evidence: delete_database is idempotent and returns not_found for
+        # a name that was never provisioned, so probing costs nothing.
         declared = await self._deployment_uses_postgresql(project_data, deployment_name)
         logger.info(
             f"Deleting database resources for project: {project_name}, deployment: {deployment_name} "
@@ -1343,7 +1184,6 @@ class DatabaseManager:
         )
 
         try:
-            # Ensure we have a PostgreSQL connector for this deployment
             self._ensure_connection()
 
             db_username = generate_database_name(project_name, deployment_name, None)
@@ -1355,7 +1195,6 @@ class DatabaseManager:
             databases_to_delete = [base_db_name]
             current_generation = self._get_deployment_database_generation(project_data, deployment_name)
             max_gen = current_generation or 0
-            # Also discover versions that may exist beyond what the YAML records
             for gen in range(1, max_gen + 10):
                 versioned_name = generate_database_name(project_name, deployment_name, gen)
                 if versioned_name not in databases_to_delete:
@@ -1363,7 +1202,6 @@ class DatabaseManager:
             if len(databases_to_delete) > 1:
                 logger.info(f"Will attempt to delete {len(databases_to_delete)} database(s): {databases_to_delete}")
 
-            # Delete all databases (base + generational versions)
             for db_database in databases_to_delete:
                 try:
                     database_result = await self.postgres_connector.delete_database(
@@ -1402,7 +1240,6 @@ class DatabaseManager:
                     deletion_results["errors"].append(f"Error deleting database {db_database}: {e}")
                     logger.exception(f"Error deleting database {db_database}: {e}")
 
-            # Delete user (do this last since it owns the database)
             try:
                 update_result = await self.postgres_connector.delete_user(
                     username=db_username,
@@ -1469,7 +1306,6 @@ class DatabaseManager:
             deletion_results["errors"].append(f"Failed to connect to database: {e}")
             logger.exception(f"Error connecting to database for cleanup: {e}")
 
-        # Update success status based on errors
         deletion_results["success"] = len(deletion_results["errors"]) == 0
 
         return deletion_results
@@ -1482,22 +1318,14 @@ class DatabaseManager:
         project_data: dict[str, Any],
         marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
-        """Handle cleanup when PostgreSQL service is removed from a deployment.
-
-        If a ``MarkedForDeletionService`` is provided the database and user are
-        marked for deferred deletion (allowing recovery).  Otherwise they are
-        deleted immediately via ``delete_resources_for_deployment``.
+        """Clean up when the PostgreSQL service is removed from a deployment.
 
         Args:
-            project_name: Name of the project.
-            deployment_name: Name of the deployment losing the service.
-            deployment_data: The deployment dict from the *previous* YAML.
-            project_data: The *previous* project YAML (so internal service
-                checks still pass).
-            marked_for_deletion_service: Optional service for deferred deletion.
-
-        Returns:
-            Structured result dict with operations, errors, success.
+            deployment_data: The deployment dict from the PREVIOUS YAML.
+            project_data: The PREVIOUS project YAML, so the internal service checks
+                still pass.
+            marked_for_deletion_service: Given, the database and user are marked for deferred
+                deletion, which leaves room for recovery; left out, they are deleted at once.
         """
         cluster = deployment_data.get("cluster", "")
 
@@ -1545,18 +1373,8 @@ class DatabaseManager:
         return result
 
     def _project_uses_namespace_postgresql(self, project_data: dict[str, Any]) -> bool:
-        """
-        Check if project uses namespace-specific PostgreSQL database service.
-
-        This checks if the project-level services configuration includes
-        NAMESPACE_POSTGRESQL_DATABASE, which requires a dedicated database
-        cluster in the project's infrastructure namespace.
-
-        Args:
-            project_data: The project configuration data
-
-        Returns:
-            True if project uses namespace-specific PostgreSQL, False otherwise
+        """Whether the project selected NAMESPACE_POSTGRESQL_DATABASE, which needs a dedicated
+        database cluster in the project's infrastructure namespace.
         """
         # Form-agnostic (bare string / legacy name-as-key / new {name, config} record).
         return Project(project_data).uses_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value)
@@ -1578,39 +1396,18 @@ class DatabaseManager:
                   - CREATEDB
         ```
 
-        Configuration is merged with hardcoded defaults. All fields are required in final config.
-
-        Required config keys:
-        - image: PostgreSQL CNPG image (e.g., "ghcr.io/cloudnative-pg/postgresql:17")
-        - instances: Number of database instances (e.g., 1, 2, 3)
-        - storage: Storage size (e.g., "10Gi", "20Gi")
-        - resources: Resource limits and requests (nested dict)
-
-        Optional config keys:
-        - privileges: List of PostgreSQL privileges for created users
-          (e.g., ["SUPERUSER"], ["CREATEDB", "CREATEROLE"])
-        - postInitSQL: List of SQL statements to run after database initialization
-          (e.g., ["CREATE EXTENSION IF NOT EXISTS unaccent;"])
-        - registry: Name of the registry to use for pulling PostgreSQL image
-          (e.g., "github-packages", "docker-hub")
-
-        Args:
-            project_data: The project configuration data
-
-        Returns:
-            Dictionary with complete database configuration
+        The config is merged with the model defaults, and ``image``, ``instances``, ``storage``
+        and ``resources`` are required in the result. ``privileges``, ``postInitSQL`` and
+        ``registry`` are optional.
 
         Raises:
-            ValueError: If service configuration is invalid or missing required fields
+            ValueError: the service configuration is invalid, or misses a required field.
         """
-        # RC-5 Phase 2: defaults + validation live in the typed config model,
-        # replacing the previous hand-rolled DEFAULT_CONFIG merge and manual
-        # field/privilege checks. RC-17: the dedicated-cluster config can come from
-        # either service (namespace-postgresql-database, or postgresql-database with
-        # scope: project); get_dedicated_postgres_config reads whichever is present.
-        # For a shared database (no dedicated service) there is no CNPG cluster, so we
-        # return the model defaults -- same result the old namespace read produced when
-        # the service was absent, so postInitSQL/etc. stay empty.
+        # Defaults and validation live in the typed config model. The dedicated-cluster config
+        # can come from either service (namespace-postgresql-database, or postgresql-database
+        # with scope: project), and get_dedicated_postgres_config reads whichever is present
+        # (RC-17). A shared database has no CNPG cluster, so the model defaults come back and
+        # postInitSQL stays empty.
         if project_uses_dedicated_postgres(project_data):
             merged_config = get_dedicated_postgres_config(project_data)
         else:
@@ -1624,57 +1421,26 @@ class DatabaseManager:
         return merged_config
 
     def _get_database_cluster_config(self, project_data: dict[str, Any], cluster_name: str) -> dict[str, Any]:
+        """The service config plus the cluster settings, as the CNPG cluster template, the
+        database secret and the infrastructure resources all need it.
+
+        Returns ``database_config`` (image, instances, storage), ``infrastructure_namespace``,
+        ``service_endpoint`` (the fully qualified database service DNS name),
+        ``storage_class``, ``cluster_name`` and ``database_operator_namespace``.
         """
-        Build complete database cluster configuration combining service config and cluster settings.
-
-        This method merges user-specified database configuration with cluster-specific
-        settings to create a complete configuration dict for:
-        - PostgreSQL cluster template rendering
-        - Database secret creation with correct service endpoints
-        - Infrastructure resource creation
-
-        Args:
-            project_data: The project configuration data
-            cluster_name: Name of the cluster (e.g., "local", "odcn-production")
-
-        Returns:
-            Dictionary with complete database cluster configuration containing:
-            - database_config: User-specified config (image, instances, storage)
-            - infrastructure_namespace: Cluster-aware infrastructure namespace
-            - service_endpoint: Full qualified database service DNS name
-            - storage_class: Cluster-specific storage class
-            - cluster_name: Name of the cluster
-            - database_operator_namespace: Namespace of the CNPG operator
-
-        Example:
-            {
-                "database_config": {"image": "ghcr.io/cloudnative-pg/postgresql:17", "instances": 2, "storage": "20Gi"},
-                "infrastructure_namespace": "rig-myproject-infrastructure",
-                "service_endpoint": "myproject-db-rw.rig-myproject-infrastructure.svc.cluster.local",
-                "storage_class": "standard",
-                "cluster_name": "local"
-            }
-        """
-        from opi.core.cluster_config import (
-            get_database_cluster_service_endpoint,
-            get_database_operator_namespace,
-            get_infrastructure_namespace,
-            get_storage_class_name,
-        )
+        from opi.core.cluster_config import get_database_operator_namespace, get_storage_class_name
+        from opi.utils.naming import get_database_cluster_service_endpoint, get_infrastructure_namespace
 
         project_name = project_data.get("name")
         if not project_name:
             raise ValueError("Project name is required in project_data")
 
-        # Get user-specified database configuration
         database_config = self._get_database_service_config(project_data)
 
-        # Get cluster-specific settings
         infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
         service_endpoint = get_database_cluster_service_endpoint(cluster_name, project_name)
         storage_class = get_storage_class_name(cluster_name)
 
-        # Build complete configuration
         cluster_config = {
             "database_config": database_config,
             "infrastructure_namespace": infrastructure_namespace,
@@ -1696,39 +1462,22 @@ class DatabaseManager:
     async def _get_infrastructure_superuser_credentials(
         self, project_name: str, infrastructure_namespace: str
     ) -> tuple[str, str]:
-        """
-        Get superuser credentials from infrastructure namespace.
+        """The (username, password) of the superuser the CloudNativePG operator bootstraps the
+        cluster with, from the Secret in the infrastructure namespace.
 
-        These credentials are stored in the infrastructure namespace and used by
-        the CloudNativePG operator to bootstrap the database cluster. Applications
-        typically don't use these credentials directly - they use deployment-specific
-        credentials created by the database manager.
-
-        Args:
-            project_name: Name of the project
-            infrastructure_namespace: Infrastructure namespace where credentials are stored
-
-        Returns:
-            Tuple of (username, password) for the superuser account
+        An application uses its own deployment credentials, not these.
 
         Raises:
-            RuntimeError: If secret is not found or is invalid
-
-        Example:
-            username, password = await db_manager._get_infrastructure_superuser_credentials(
-                "myproject", "rig-myproject-infrastructure"
-            )
+            RuntimeError: the Secret is absent or invalid.
         """
         from opi.utils.naming import _sanitize_for_lowercase
 
-        # Secret name follows pattern: {project}-postgres-superuser
         project_clean = _sanitize_for_lowercase(project_name)
         secret_name = f"{project_clean}-postgres-superuser"
 
         logger.debug(f"Retrieving superuser credentials from {infrastructure_namespace}/{secret_name}")
 
         try:
-            # Get the secret from Kubernetes
             kubectl_connector = self.project_manager._kubectl_connector
             secret_data = await kubectl_connector.get_secret(secret_name, infrastructure_namespace)
 
@@ -1738,7 +1487,6 @@ class DatabaseManager:
                     f"Infrastructure resources may not be deployed yet."
                 )
 
-            # Extract credentials from secret data
             username = secret_data.get("username")
             password = secret_data.get("password")
 
@@ -1758,16 +1506,6 @@ class DatabaseManager:
             ) from e
 
     async def _deployment_uses_postgresql(self, project_data: dict[str, Any], deployment_name: str) -> bool:
-        """
-        Check if a deployment uses PostgreSQL service.
-
-        Args:
-            project_data: The project configuration data
-            deployment_name: Name of the deployment to check
-
-        Returns:
-            True if deployment uses PostgreSQL service, False otherwise
-        """
         return self.project_manager._project_file_handler.deployment_uses_service(
             project_data,
             deployment_name,
@@ -1775,16 +1513,6 @@ class DatabaseManager:
         )
 
     def _get_remote_source_config(self, project_data: dict[str, Any], remote_source_name: str) -> dict[str, Any] | None:
-        """
-        Get remote source configuration by name from project data.
-
-        Args:
-            project_data: Project configuration data
-            remote_source_name: Name of the remote source to find
-
-        Returns:
-            Remote source configuration dict or None if not found
-        """
         remote_sources = project_data.get("remote-sources", [])
         for source in remote_sources:
             if source.get("name") == remote_source_name:
@@ -1794,16 +1522,9 @@ class DatabaseManager:
     async def _get_existing_database_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]
     ) -> DatabaseSecret | None:
-        """
-        Get existing database credentials from Kubernetes secret.
+        """The deployment's stored DatabaseSecret, or None when it is absent.
 
-        Args:
-            deployment_name: Name of the deployment
-            deployment: The deployment configuration containing namespace info
-
-        Returns:
-            DatabaseSecret if the secret exists, None if it is absent. Re-raises on a
-            retrieval error (it does not swallow the failure into a None result).
+        A retrieval error is re-raised rather than swallowed into a None result.
         """
         try:
             from opi.core.cluster_config import get_prefixed_namespace
@@ -1812,10 +1533,8 @@ class DatabaseManager:
             secret_name = DatabaseSecret.get_secret_name(deployment_name)
             kubectl_connector = self.project_manager._kubectl_connector
 
-            # Calculate the namespace where the secret should be stored
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment["namespace"])
 
-            # Try to get the secret from Kubernetes
             secret_data = await kubectl_connector.get_secret(secret_name, namespace)
             if secret_data:
                 return DatabaseSecret.from_k8s_secret_data(secret_data)
@@ -1832,30 +1551,18 @@ class DatabaseManager:
         schema: str,
         host: str,
     ) -> bool:
-        """
-        Test if database credentials are valid by attempting a direct connection with user credentials.
+        """Whether the server accepts these credentials, on a connection of its own (the pool
+        holds the admin credentials).
 
-        This method creates its own connection since it needs to test with the user's credentials,
-        not the admin credentials used by the pooled connections.
-
-        Args:
-            username: Database username to test
-            password: Database password to test
-            database: Database name to connect to
-            schema: Schema name (for logging/context)
-            host: Database host (shared or namespace-specific service endpoint)
-
-        Returns:
-            True if the server accepts the credentials, False if it rejects them or the
-            database does not exist yet (a fresh generation reaches this before phase 2).
-            A missing CONNECT privilege also counts as True: PostgreSQL checks it only after
-            the password is accepted, and the read-only role gets its CONNECT later on a clone
-            target (RC-285).
+        False means the server rejected them, or the database does not exist yet, which a
+        fresh generation reaches before phase 2. A missing CONNECT privilege counts as True:
+        PostgreSQL checks it only after the password is accepted, and the read-only role gets
+        its CONNECT later on a clone target (RC-285).
 
         Raises:
-            Exception: Any other connection failure. De aanroeper leest False als
-                "authenticatie mislukt" en zet dan het wachtwoord opnieuw, dus een
-                onbereikbare host of een mislukte TLS-handshake mag daar niet in vallen.
+            Exception: any other connection failure. The caller reads False as "authentication
+                failed" and sets the password again, so an unreachable host or a failed TLS
+                handshake must not land there.
         """
         try:
             conn = await asyncpg.connect(
@@ -1885,31 +1592,17 @@ class DatabaseManager:
         source_database: str,
         source_schema: str,
     ) -> dict[str, Any]:
-        """
-        Validate external source database connectivity and schema existence.
+        """Connect to the external source and check that ``source_schema`` is there.
 
-        Single responsibility: Connect to external source and verify schema exists.
-
-        Args:
-            source_host: External source database host
-            source_port: External source database port
-            source_username: Username for external source connection
-            source_password: Password for external source connection
-            source_database: Source database name
-            source_schema: Source schema name
-
-        Returns:
-            Dictionary with validation results:
-                - table_count: int - Number of tables in source schema
+        Returns ``table_count``, the number of tables in that schema.
 
         Raises:
-            Exception: If connection or validation fails
+            Exception: the connection or the check itself failed.
         """
         logger.info(f"Validating external source: {source_host}:{source_port}/{source_database}.{source_schema}")
 
         source_conn = None
         try:
-            # Connect to external source database
             source_conn = await asyncpg.connect(
                 host=source_host,
                 port=source_port,
@@ -1918,7 +1611,6 @@ class DatabaseManager:
                 database=source_database,
             )
 
-            # Check if source schema exists
             schema_exists = await source_conn.fetchval(
                 "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1", source_schema
             )
@@ -1926,7 +1618,6 @@ class DatabaseManager:
             if not schema_exists:
                 raise Exception(f"Source schema '{source_schema}' does not exist in database '{source_database}'")
 
-            # Count tables in source schema
             table_count = await source_conn.fetchval(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = $1", source_schema
             )
@@ -1966,13 +1657,8 @@ class DatabaseManager:
         project_data: dict[str, Any] | None,
         clone_interrupted: bool = False,
     ) -> dict[str, Any]:
-        """
-        Clone database from external source via Chisel tunnel.
-
-        Internal method that handles tunnel setup/teardown and delegates the actual
-        clone operation to the direct clone implementation.
-        """
-        from opi.utils.chisel_helper import chisel_tunnel
+        """Set up and tear down the tunnel; the clone itself runs on the direct path."""
+        from opi.manager.chisel_helper import chisel_tunnel
 
         logger.info(
             f"Starting database clone via Chisel tunnel: {project_name}/{deployment_name} "
@@ -1983,7 +1669,6 @@ class DatabaseManager:
         async with chisel_tunnel(chisel_config, source_host, source_port, project_data) as endpoint:
             logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']} -> {source_host}:{source_port}")
 
-            # Call the direct clone method with tunneled connection
             result = await self._execute_external_clone(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -1997,7 +1682,6 @@ class DatabaseManager:
                 clone_interrupted=clone_interrupted,
             )
 
-            # Add tunnel info to result
             result["tunnel"] = {
                 "used": True,
                 "server": chisel_config["server-url"],
@@ -2022,47 +1706,17 @@ class DatabaseManager:
         project_data: dict[str, Any] | None = None,
         clone_interrupted: bool = False,
     ) -> dict[str, Any]:
-        """
-        Orchestrate cloning a database from an external source into a target deployment.
+        """Clone a database from an external source into a target deployment.
 
-        This orchestrator method validates, prepares, and executes cross-cluster database cloning
-        by calling existing single-responsibility methods in sequence.
-
-        If chisel_config is provided, a Chisel tunnel is automatically established to reach
-        the source database through the tunnel.
+        Validates, prepares and executes the cross-cluster clone in sequence.
 
         Args:
-            project_name: Name of the target project
-            deployment_name: Name of the target deployment
-            source_host: External source database host (e.g., localhost for port-forward)
-            source_port: External source database port (e.g., 15432)
-            source_username: Username for external source connection
-            source_password: Password for external source connection
-            source_database: Source database name
-            source_schema: Source schema name
-            force_clone: If True, drop existing target database before cloning
-            chisel_config: Optional Chisel tunnel configuration dict with keys:
-                - server-url: Chisel server URL
-                - username: Chisel auth username
-                - password: Chisel auth password (may be encrypted)
-            project_data: Optional project data for password decryption context
-            clone_interrupted: A previous run started this clone and did not record it as completed
-
-        Returns:
-            Dictionary containing operation results with status and operations list
-
-        Example:
-            >>> result = await db_manager.clone_database_from_external_source(
-            ...     project_name="amt",
-            ...     deployment_name="production",
-            ...     source_host="localhost",
-            ...     source_port=15432,
-            ...     source_username="postgres",
-            ...     source_password="password",
-            ...     source_database="amt_staging",
-            ...     source_schema="amt_staging",
-            ...     force_clone=True
-            ... )
+            force_clone: Drop the existing target database before cloning.
+            chisel_config: Given, a Chisel tunnel is established to reach the source database;
+                carries ``server-url``, ``username`` and ``password`` (possibly encrypted).
+            project_data: Needed to decrypt that password.
+            clone_interrupted: A previous run started this clone and did not record it as
+                completed.
         """
         refusal = await clone_source_refusal(source_host, chisel_config.get("server-url") if chisel_config else None)
         if refusal:
@@ -2081,7 +1735,6 @@ class DatabaseManager:
             }
 
         if chisel_config:
-            # Use Chisel tunnel for the connection
             return await self._clone_database_with_chisel_tunnel(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -2097,7 +1750,6 @@ class DatabaseManager:
                 clone_interrupted=clone_interrupted,
             )
 
-        # Direct connection (no tunnel)
         return await self._execute_external_clone(
             project_name=project_name,
             deployment_name=deployment_name,
@@ -2124,13 +1776,7 @@ class DatabaseManager:
         force_clone: bool,
         clone_interrupted: bool = False,
     ) -> dict[str, Any]:
-        """
-        Execute the actual database clone operation.
-
-        Internal method that performs the clone without tunnel handling.
-        Called by clone_database_from_external_source for direct connections
-        and by _clone_database_with_chisel_tunnel for tunneled connections.
-        """
+        """The clone itself, without any tunnel handling."""
         logger.info(
             f"Starting external database clone: {project_name}/{deployment_name} "
             f"<- {source_host}:{source_port}/{source_database}.{source_schema}"
@@ -2148,7 +1794,6 @@ class DatabaseManager:
         try:
             self._ensure_connection()
 
-            # STEP 1: Validate external source
             try:
                 validation = await self._validate_external_source(
                     source_host, source_port, source_username, source_password, source_database, source_schema
@@ -2160,20 +1805,17 @@ class DatabaseManager:
                         "table_count": validation["table_count"],
                     }
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Source validation failed: {e!s}")
                 result["operations"].append({"type": "source_validation", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 2: Validate target deployment
             try:
                 project_data = await self.project_manager.get_contents()
                 if not project_data:
                     raise Exception(f"Project '{project_name}' not found")
 
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if not deployment:
                     raise Exception(f"Deployment '{deployment_name}' not found")
 
@@ -2181,32 +1823,27 @@ class DatabaseManager:
                     raise Exception(f"Deployment '{deployment_name}' does not use PostgreSQL service")
 
                 result["operations"].append({"type": "target_validation", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Target validation failed: {e!s}")
                 result["operations"].append({"type": "target_validation", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 3: Get appropriate database configuration (namespace-specific or shared)
             db_host, admin_username, admin_password = await self._get_database_config_for_deployment(
                 project_data, deployment
             )
 
-            # Get database service config (includes privileges if specified). Placement
-            # (dedicated vs shared) decides whether there is a CNPG config to read;
-            # the revision service-name below is a separate question (which service the
-            # deployment entry is stored under), so keep both flags.
+            # Placement (dedicated or shared) decides whether there is a CNPG config to read;
+            # the revision service name below is the separate question of which service the
+            # deployment entry is stored under, so both flags are kept.
             uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
             uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
             service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
-            # Get current generation from project file (for generational versioning)
             generation = self._get_deployment_database_generation(project_data, deployment_name)
 
-            # STEP 4: Resolve target credentials (reuse existing method)
-            # Username is never versioned (same user accesses all versions)
             target_username = generate_database_name(project_name, deployment_name, None)
-            # Database/schema use current generation (may be updated in STEP 5 if force_clone)
+            # force_clone may move the generation further down.
             target_database = generate_database_name(project_name, deployment_name, generation)
             target_schema = target_database
             connection_limit = deployment_connection_limit(project_data, deployment_name)
@@ -2227,41 +1864,36 @@ class DatabaseManager:
                 )
                 await self._reconcile_connection_limit(target_username, connection_limit)
                 result["target"] = {"database": target_database, "schema": target_schema, "username": target_username}
-                result["resolved_password"] = target_password  # For callers that need the resolved password
+                result["resolved_password"] = target_password
                 result["operations"].append({"type": "credentials_resolved", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Credential resolution failed: {e!s}")
                 result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 5: Prepare target database (generational approach for force_clone)
             clone_already_finished = False
             new_generation_created = False
             try:
-                # Check if target database exists by attempting to create it
                 create_result = await self.postgres_connector.create_database(
                     database_name=target_database,
                     owner=target_username,
                 )
                 target_db_exists = create_result["status"] == "exists"
-                # Ook de handmatige kloon-API komt hier langs, buiten een verwerking om, dus
-                # sluit de database hier al af (RC-285). Alleen de eigenaar: de read-only rol
-                # krijgt zijn CONNECT bij de verwerking die deze database in gebruik neemt.
+                # The manual clone API comes past here too, outside a processing round, so the
+                # database is closed off here already (RC-285). Owner only: the read-only role
+                # gets its CONNECT from the round that puts this database to use.
                 await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
 
                 if force_clone and target_db_exists:
-                    # Generational approach: increment generation and create new versioned database
-                    # Instead of destroying the old database, create a new versioned one
                     new_generation = (generation or 0) + 1
                     target_database = generate_database_name(project_name, deployment_name, new_generation)
-                    target_schema = target_database  # Schema matches database name
+                    target_schema = target_database
 
                     logger.info(
                         f"force_clone=True: Using generational approach. "
                         f"Creating new database {target_database} (generation {generation} -> {new_generation})"
                     )
 
-                    # Create new versioned database (old database is preserved)
                     create_result = await self.postgres_connector.create_database(
                         database_name=target_database,
                         owner=target_username,
@@ -2274,7 +1906,6 @@ class DatabaseManager:
                     await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
                     new_generation_created = True
 
-                    # Update generation in project file
                     service_type = (
                         ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                         if uses_namespace_postgresql
@@ -2286,7 +1917,6 @@ class DatabaseManager:
                     )
                     logger.info(f"Updated database generation in project file: {new_generation}")
 
-                    # Record revision for the new generation
                     source_desc = f"external:{source_host}:{source_port}/{source_database}"
                     self.project_manager._revision_manager.record_clone(
                         project_data=project_data,
@@ -2305,14 +1935,12 @@ class DatabaseManager:
                             "database": target_database,
                         }
                     )
-                    # Update result target info with new database name
                     result["target"]["database"] = target_database
                     result["target"]["schema"] = target_schema
                 elif create_result["status"] == "created":
                     logger.info(f"Created database for cloning: {target_database}")
                     result["operations"].append({"type": "database_prepared", "status": "created"})
 
-                    # Record revision for initial creation
                     current_gen = generation if generation is not None else 0
                     service_type = (
                         ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
@@ -2332,25 +1960,24 @@ class DatabaseManager:
                     logger.info(f"Database already exists for cloning: {target_database}")
                     result["operations"].append({"type": "database_prepared", "status": "exists"})
                     if clone_interrupted and not force_clone:
-                        # Anders dan bij _ensure_database_state blijft een achtergebleven bronschema
-                        # hier liggen: die naam komt uit remote-sources en kan levende data van de
-                        # tenant zijn. De weigering van postgres.py:1809 blijft dus staan.
+                        # Unlike in _ensure_database_state a leftover source schema stays here:
+                        # that name comes from remote-sources and can be a tenant's live data, so
+                        # the refusal in postgres.py:1809 stands.
                         schemas_present = await self._schema_names(target_database)
                         clone_already_finished = target_schema in schemas_present
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 result["errors"].append(f"Database preparation failed: {e!s}")
                 result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 6: Execute clone (reuse existing connector method)
-            # Source credentials passed as parameters, target uses bound connector
             if clone_already_finished:
                 logger.info(f"Clone into {target_database} was finished by an interrupted run, not cloning again")
                 result["operations"].append({"type": "database_cloned", "status": "already_finished"})
             else:
                 schemas_before = await self._schema_names(target_database)
                 try:
-                    # Geen vlag boven een doelschema dat er al stond, zie _ensure_database_state.
+                    # No flag over a target schema that was already there, see
+                    # _ensure_database_state.
                     if not new_generation_created and target_schema not in schemas_before:
                         await self.project_manager.mark_clone_started(deployment_name)
                     clone_result = await self.postgres_connector.clone_schema_from_external(
@@ -2371,7 +1998,7 @@ class DatabaseManager:
                         raise Exception(f"Clone failed: {clone_result.get('message')}")
 
                     result["operations"].append({"type": "database_cloned", "status": "success"})
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     await self._drop_schemas_created_since(
                         target_database, schemas_before, {target_schema, source_schema}
                     )
@@ -2379,7 +2006,6 @@ class DatabaseManager:
                     result["operations"].append({"type": "database_cloned", "status": "failed", "error": str(e)})
                     return result
 
-            # STEP 7: Store credentials in memory map
             try:
                 # Extra schemas (RC-17) declared by the project, created empty on the
                 # clone target (the external source only populates the default schema),
@@ -2418,7 +2044,7 @@ class DatabaseManager:
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "database", database_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                 logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
                 result["operations"].append(
                     {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
@@ -2427,20 +2053,13 @@ class DatabaseManager:
             # Before the manifests below, so they are built on the recorded generation.
             await self.project_manager.commit_clone_state(project_data, deployment_name)
 
-            # STEP 8: Sync secrets to Git if credentials were updated
-            # Check if secrets were added to _secrets_to_create and need to be written to Git
             if deployment_name in self.project_manager._secrets_to_create:
                 logger.info(f"External clone updated secrets for {deployment_name}, syncing to Git for ArgoCD")
                 try:
-                    # Regenerate manifests for this deployment to write secrets to Git.
                     # This commits and pushes the manifests to the deployments repo itself.
-                    #
-                    # There used to be an extra commit_and_push here on the *project files*
-                    # connector, which was wrong twice over: the manifests do not live in
-                    # that repo, so it committed nothing of its own, and because that
-                    # connector is now the shared warm working copy, its `git add -A` would
-                    # sweep whatever unrelated state happened to be dirty there into a
-                    # commit labelled "Update database credentials".
+                    # Do not add a commit on the project-files connector here: that is the
+                    # shared warm working copy, and its ``git add -A`` would sweep whatever
+                    # is dirty there into this commit.
                     await self.project_manager._process_application_manifests(deployment_name)
 
                     result["operations"].append(
@@ -2451,7 +2070,7 @@ class DatabaseManager:
                         }
                     )
                     logger.info(f"Successfully synced updated secrets to Git for {deployment_name}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a step of this flow records its failure in the result
                     logger.warning(f"Failed to sync updated secrets to Git: {e}")
                     result["operations"].append(
                         {

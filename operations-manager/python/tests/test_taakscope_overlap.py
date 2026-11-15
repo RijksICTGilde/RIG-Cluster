@@ -17,9 +17,9 @@ alles over): een kolom, twee predicaten.
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
+from opi.services.tasks.async_task_service import AsyncTaskService
 
 NU = datetime(2026, 8, 31, 9, 21, 10, tzinfo=UTC)
 

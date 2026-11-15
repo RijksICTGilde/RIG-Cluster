@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentStateFact
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import DeploymentState, collect_deployment_state

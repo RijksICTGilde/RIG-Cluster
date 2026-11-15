@@ -1,162 +1,49 @@
-"""Server-side sessies achter een kleine cookie (RC-390).
+"""Server-side sessions behind a small cookie.
 
-De cookie draagt alleen een ondertekend sessie-id (itsdangerous); de inhoud woont in de
-tabel ``sessions`` via :class:`~opi.services.session_store.SessionStore`, met de
-hot-cache ervoor.
+The cookie carries only a signed session id (itsdangerous); the content lives in the
+``sessions`` table via :class:`~opi.services.session_store.SessionStore`, with the hot
+cache in front of it.
 
-``request.session`` gedraagt zich als bij Starlette's SessionMiddleware: een dict. Twee
-verschillen, beide bewust:
+``request.session`` behaves like Starlette's SessionMiddleware: a dict. Two differences,
+both deliberate:
 
-- een mutatie wordt direct weggeschreven (write-through), zodat een volgende lezer de
-  wijziging halverwege het request al ziet; de middleware wacht de lopende schrijfacties
-  af voordat het antwoord vertrekt;
-- statische paden en probes lezen de sessie helemaal niet (dezelfde uitsluitlijst als de
-  autorisatie-middleware): geen database- of cacheverkeer voor /health en /static.
+- a mutation is written out at once (write-through), so a later reader sees the change
+  halfway through the request; the middleware waits for the pending writes before the
+  response leaves;
+- static paths and probes do not read the session at all (the same exclusion list as the
+  authorization middleware): no database or cache traffic for /health and /static.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import secrets
-from collections.abc import MutableMapping
-from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal
 
 from itsdangerous import BadSignature, TimestampSigner
 from starlette.datastructures import MutableHeaders
 from starlette.requests import HTTPConnection
 
+from opi.http.session import ServerSideSession, SessionBackend
 from opi.middleware.authorization import SKIP_AUTH_EXACT, SKIP_AUTH_PREFIXES
 from opi.services.session_store import get_session_store
 
 if TYPE_CHECKING:
-    from concurrent.futures import Future
-
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
 
-class SessionBackend(Protocol):
-    """Wat de middleware van de sessie-opslag gebruikt.
-
-    Los van ``SessionStore`` zelf, zodat de unit-tests en het lokale e2e-harnas een
-    in-memory stand-in kunnen inpluggen zonder aan de klasse te erven.
-    """
-
-    async def get(self, session_id: str) -> dict[str, Any] | None: ...
-    async def set(self, session_id: str, data: dict[str, Any]) -> None: ...
-    async def delete(self, session_id: str) -> None: ...
-    async def touch(self, session_id: str) -> bool: ...
-
-
-class ServerSideSession(MutableMapping[str, Any]):
-    """De request-sessie als dict, met write-through naar de store.
-
-    Leest uit de bij de aanvang geladen data; elke mutatie werkt die data bij én plant
-    direct een ``store.set`` (de volledige dict, dus de rij volgt de laatste mutatie).
-    De schrijfacties draaien op de loop van de applicatie, ook vanuit een sync route die
-    op een threadpool draait. ``flush`` bij het verzenden van het antwoord wacht ze af.
-    """
-
-    def __init__(
-        self,
-        store: SessionBackend,
-        session_id: str,
-        data: dict[str, Any],
-        loop: asyncio.AbstractEventLoop,
-    ) -> None:
-        self._store = store
-        self.session_id = session_id
-        self._data = data
-        self._loop = loop
-        self._pending: set[Future[None]] = set()
-        self._last_write: Future[None] | None = None
-        self.accessed = False
-        self.modified = False
-
-    def __getitem__(self, key: str) -> Any:
-        self.accessed = True
-        return self._data[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.accessed = True
-        self.modified = True
-        self._data[key] = value
-        self._write_through()
-
-    def __delitem__(self, key: str) -> None:
-        self.accessed = True
-        self.modified = True
-        del self._data[key]
-        self._write_through()
-
-    def __iter__(self) -> Any:
-        self.accessed = True
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        self.accessed = True
-        return len(self._data)
-
-    def _write_through(self) -> None:
-        """Plan de persist van de huidige stand, zonder de aanroeper te laten wachten."""
-        snapshot = deepcopy(self._data)
-        session_id = self.session_id
-        previous = self._last_write
-        store = self._store
-
-        async def _persist() -> None:
-            # Each upsert is its own transaction; unchained, an earlier snapshot could commit
-            # last and the row would lose the later mutations (id_token after login). A failed
-            # predecessor is already logged by its own callback, and must not block this write.
-            if previous is not None:
-                with contextlib.suppress(Exception):
-                    await asyncio.wrap_future(previous)
-            await store.set(session_id, snapshot)
-
-        future = asyncio.run_coroutine_threadsafe(_persist(), self._loop)
-        self._last_write = future
-        self._pending.add(future)
-
-        def _log_failure(f: Future[None]) -> None:
-            if f.cancelled():
-                return
-            if exc := f.exception():
-                logger.error("Persisting session %s... failed: %s", self.session_id[:12], exc, exc_info=exc)
-
-        future.add_done_callback(_log_failure)
-        future.add_done_callback(self._pending.discard)
-
-    async def flush(self) -> None:
-        """Wacht de lopende schrijfacties af; fouten zijn al gelogd door de callback."""
-        while self._pending:
-            futures = [asyncio.wrap_future(f) for f in self._pending]
-            with contextlib.suppress(Exception):
-                await asyncio.gather(*futures)
-
-    async def regenerate(self) -> None:
-        """Nieuw sessie-id op een privilegescharnier: de rij en de cache-entry achter het
-        oude id vallen weg, en de mutatie laat het antwoord de cookie op het nieuwe id zetten."""
-        await self.flush()
-        await self._store.delete(self.session_id)
-        self.session_id = secrets.token_urlsafe(32)
-        self.modified = True
-        self._write_through()
-
-
 class ServerSideSessionMiddleware:
-    """Vervanger voor Starlette's SessionMiddleware: inhoud server-side, id in de cookie.
+    """Replaces Starlette's SessionMiddleware: content server-side, id in the cookie.
 
-    Dezelfde afspraken als bij Starlette: ``Vary: Cookie`` zodra de sessie gelezen is,
-    een verse cookie-ondertekening bij elke mutatie, en een expliciet vervallen van de
-    cookie als een gevulde sessie leeggemaakt wordt. Verschil: de cookie draagt geen data
-    maar het signede id, en de levensloop van de inhoud hoort bij de store
-    (uitloggen en intrekken verwijderen de rij en geven zo een harde weigering op de
-    volgende request). Het verloop van de rij schuift mee met activiteit via ``touch``,
-    dus het inactiviteitsvenster treft geen actieve gebruiker.
+    The same conventions as Starlette: ``Vary: Cookie`` once the session has been read, a fresh
+    cookie signature on every mutation, and an explicit expiry of the cookie when a filled
+    session is emptied. The difference: the cookie carries no data but the signed id, and the
+    lifetime of the content belongs to the store (a logout or a revocation deletes the row and
+    so gives a hard refusal on the next request). The row's expiry moves along with activity
+    via ``touch``, so the idle window does not hit an active user.
     """
 
     def __init__(
@@ -181,7 +68,7 @@ class ServerSideSessionMiddleware:
         self._store = store
 
     def _session_store(self) -> SessionBackend:
-        """Per request opgelost, zodat tests en het e2e-harnas de store kunnen patchen."""
+        """Resolved per request, so tests and the e2e harness can patch the store."""
         return self._store or get_session_store()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -194,9 +81,9 @@ class ServerSideSessionMiddleware:
 
         session_id: str | None = None
         if self._skip_session_read(scope):
-            # Statische paden en probes (AMT/TAD): geen store-verkeer, geen cookie-acties.
-            # Een schrijver hier schrijft in een wegwerp-dict - dezelfde stille leegstand
-            # als bij AMT, en bewust: er is op deze paden niets dat een sessie bevat.
+            # Static paths and probes (AMT/TAD): no store traffic, no cookie actions. A writer
+            # here writes into a throwaway dict, deliberately: nothing on these paths holds a
+            # session.
             scope["session"] = {}
             await self.app(scope, receive, send)
             return
@@ -214,7 +101,7 @@ class ServerSideSessionMiddleware:
         if session_id:
             data = await store.get(session_id) or {}
             if data and scope["type"] == "http":
-                # Het schuivende venster van de rij schuift mee met activiteit.
+                # The sliding window of the row moves along with activity.
                 await store.touch(session_id)
 
         session = ServerSideSession(store, session_id or secrets.token_urlsafe(32), data, loop)
@@ -222,8 +109,8 @@ class ServerSideSessionMiddleware:
         had_data = bool(data)
 
         if scope["type"] == "websocket":
-            # Een handshake kan geen cookie zetten of verversen; de sessie is hier
-            # alleen leesmateriaal voor de endpoint zelf.
+            # A handshake cannot set or refresh a cookie; the session is read-only material
+            # for the endpoint itself here.
             await self.app(scope, receive, send)
             return
 
@@ -234,8 +121,7 @@ class ServerSideSessionMiddleware:
                 if session.accessed:
                     headers.add_vary_header("Cookie")
                 if session.modified and len(session):
-                    # Alleen bij mutatie een verse ondertekening: de cookie staat dan weer
-                    # op "nu".
+                    # A fresh signature only on a mutation: the cookie is then back on "now".
                     signed = self.signer.sign(session.session_id.encode("utf-8"))
                     # No Max-Age: a session cookie, gone when the browser closes.
                     header_value = "{session_cookie}={data}; path={path}; {security_flags}".format(
@@ -246,7 +132,7 @@ class ServerSideSessionMiddleware:
                     )
                     headers.append("Set-Cookie", header_value)
                 elif session.modified and had_data:
-                    # De sessie is leeggemaakt: rij weg en de cookie in de browser ook.
+                    # The session was emptied: the row goes, and so does the browser cookie.
                     await store.delete(session.session_id)
                     header_value = "{session_cookie}={data}; path={path}; {expires}{security_flags}".format(
                         session_cookie=self.session_cookie,
@@ -262,10 +148,10 @@ class ServerSideSessionMiddleware:
 
     @staticmethod
     def _skip_session_read(scope: Scope) -> bool:
-        """Statische paden en probes lezen de sessie niet: geen store-verkeer.
+        """Static paths and probes do not read the session: no store traffic.
 
-        Dezelfde uitsluiting als de autorisatie-middleware: wat daar geen gebruikerscontext
-        heeft, heeft hier geen sessie-inhoud nodig.
+        The same exclusion as the authorization middleware: what has no user context there
+        needs no session content here.
         """
         path: str = scope.get("path", "")
         return path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES)

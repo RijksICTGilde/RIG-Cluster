@@ -16,7 +16,7 @@ import pathlib
 from inspect import signature
 
 import opi
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 
 OPI = pathlib.Path(opi.__file__).parent
 
@@ -66,7 +66,7 @@ def _aanroepers() -> tuple[set[str], set[str]]:
     uitzetters: set[str] = set()
     for pad in sorted(OPI.rglob("*.py")):
         naam = str(pad.relative_to(OPI))
-        if naam == "handlers/project_file_handler.py":
+        if naam == "services/project_file_handler.py":
             continue  # de definitie zelf
         for knoop in ast.walk(ast.parse(pad.read_text(encoding="utf-8"))):
             if not isinstance(knoop, ast.Call) or not isinstance(knoop.func, ast.Attribute):

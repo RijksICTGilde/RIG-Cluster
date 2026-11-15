@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.step_up import STEP_UP_SESSION_KEY
 
 if TYPE_CHECKING:
     from fastapi.responses import HTMLResponse
@@ -141,7 +141,7 @@ def test_the_wizard_progress_modal_shows_text_instead_of_executing_it() -> None:
     file ends up in it -- so running the rendered HTML through ``process_components``
     again executed that text as Jinja.
     """
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     rendered = templates_lotc.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(
         _wizard_progress_context()
@@ -310,7 +310,7 @@ async def _modal_progress(email: str, task: dict | None, *, member: bool) -> HTM
     task_service.get_task = AsyncMock(return_value=task)
 
     with (
-        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
         patch.object(router, "is_user_authorized_for_project", return_value=member),
     ):
         return await modal_wizard_progress_html(_request(email), "demo", "t-1")

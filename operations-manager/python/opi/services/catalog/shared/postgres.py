@@ -2,17 +2,12 @@
 
 These field types describe the configuration of a project-owned PostgreSQL cluster:
 image, registry, instances, storage, privileges, postInitSQL and resource
-requests/limits. They were introduced for ``namespace-postgresql-database`` and now
-also back ``postgresql-database``'s ``scope: project`` variant (see
-``postgresql_database/config_model.py``), so they live here rather than in either
-service package. ``namespace-postgresql-database`` is destined for removal once the
-projects that use it are migrated to ``scope: project`` (plan RC-17, decision 10.1);
-keeping these blocks in ``catalog/shared`` means that removal drops the old service
-without taking the field definitions with it.
+requests/limits. Both ``namespace-postgresql-database`` and ``postgresql-database``'s
+``scope: project`` variant (see ``postgresql_database/config_model.py``) use them, so they
+live here rather than in either service package.
 
-Defaults reproduce the historical ``DatabaseManager.DEFAULT_CONFIG`` so validating an
-existing (untyped) config through a model built on these types yields the same merged
-result the old ``dict.get()`` merge produced.
+Defaults reproduce ``DatabaseManager.DEFAULT_CONFIG``, so an existing untyped config
+validates to the same merged result.
 """
 
 from __future__ import annotations
@@ -25,39 +20,35 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from opi.utils.naming import CONTAINER_IMAGE_PATTERN
 
-#: Een identifier zoals PostgreSQL hem schrijft: kaal, of tussen dubbele aanhalingstekens
-#: omdat een extensienaam een streepje mag dragen (``"uuid-ossp"``, zie
-#: ``_precreate_extensions_for_clone`` in de postgres-connector).
+#: An identifier as PostgreSQL writes it: bare, or in double quotes because an extension name
+#: may carry a hyphen (``"uuid-ossp"``, see ``_precreate_extensions_for_clone`` in the postgres
+#: connector).
 #:
-#: De gequote vorm somt zijn tekens op in plaats van ze uit te sluiten. Een uitsluitende
-#: klasse liet een carriage return door, en ``postgresql-cluster.yaml.jinja`` zet deze
-#: waarde ongequote onder ``postInitApplicationSQL``: elke YAML-regelovergang in de naam
-#: wordt daar een eigen regel, dus een extra sleutel in de ``Cluster`` naast
-#: ``imageName``.
+#: The quoted shape lists its characters instead of excluding them: an excluding class lets a
+#: carriage return through, and ``postgresql-cluster.yaml.jinja`` puts this value unquoted under
+#: ``postInitApplicationSQL``, where every YAML line break in the name becomes a line of its
+#: own -- an extra key in the ``Cluster`` next to ``imageName``.
 _PG_NAME = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"[A-Za-z0-9_$-]+")'
 
-#: ``postInitSQL`` draait als SUPERUSER van het eigen CNPG-cluster, dus een vrije SQL-regel
-#: is daar een superuser-shell. Alleen de vorm die het veld bedoeld is: een extensie, met
-#: eventueel het schema erachter (RC-285).
+#: ``postInitSQL`` runs as SUPERUSER of the project's own CNPG cluster, so a free SQL line is a
+#: superuser shell there. Only the shape the field is meant for: an extension, optionally with
+#: the schema behind it.
 #:
-#: De sleutelwoorden in hoofdletters en niet case-insensitief: ``(?i:...)`` bestaat niet in
-#: de ECMA-262-regex die een JSON-schema belooft, en dit patroon komt in het
-#: schemafragment terecht dat clients lezen. Elk bekend gebruik schrijft ze al zo.
+#: The keywords in capitals and not case insensitive: ``(?i:...)`` does not exist in the
+#: ECMA-262 regex a JSON schema promises, and this pattern ends up in the schema fragment
+#: clients read. Every known use already writes them this way.
 #:
-#: ``$`` en niet ``\Z``: de rust-engine waar pydantic op draait kent ``\Z`` niet. In die
-#: engine laat ``$`` geen afsluitende newline door; wie dit patroon uit het schemafragment
-#: met de Python-engine gaat gebruiken, zet er ``\Z`` bij. Zelfde afweging als
-#: ``UPSTREAM_PATTERN`` in ``image_registries/config_model.py``.
+#: ``$`` and not ``\Z``: the rust engine pydantic runs on does not know ``\Z``. In that engine
+#: ``$`` lets no trailing newline through; whoever starts using this pattern from the schema
+#: fragment with the Python engine adds ``\Z``. Same weighing as ``UPSTREAM_PATTERN`` in
+#: ``image_registries/config_model.py``.
 POST_INIT_SQL_PATTERN = rf"^CREATE EXTENSION IF NOT EXISTS {_PG_NAME}(?: SCHEMA {_PG_NAME})?;?$"
 
 PostInitStatement = Annotated[str, Field(pattern=POST_INIT_SQL_PATTERN)]
 
 
 class DatabasePrivilege(StrEnum):
-    """PostgreSQL role privileges accepted for the dedicated database user.
-
-    Matches the allow-list previously enforced inline in DatabaseManager.
-    """
+    """PostgreSQL role privileges accepted for the dedicated database user."""
 
     SUPERUSER = "SUPERUSER"
     NOSUPERUSER = "NOSUPERUSER"
@@ -74,8 +65,8 @@ class DatabasePrivilege(StrEnum):
 
 
 class RequestsQuantities(BaseModel):
-    """CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a
-    config overriding only ``requests.memory`` keeps the default ``cpu``."""
+    """CPU/memory *requests*. Per-field defaults, so a config overriding only
+    ``requests.memory`` keeps the default ``cpu``."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -110,14 +101,14 @@ class DedicatedPostgresFields(BaseModel):
 
     Mixed into both ``NamespacePostgresConfig`` (the standalone service) and the
     ``scope: project`` member of ``postgresql-database``'s config. Field defaults
-    reproduce ``DatabaseManager.DEFAULT_CONFIG`` so an existing (untyped) config
-    validates to the same merged result the old ``dict.get()`` merge produced.
+    reproduce ``DatabaseManager.DEFAULT_CONFIG``, so an existing untyped config validates
+    to the same merged result.
     """
 
-    # Een gesloten lijst toegestane images (een ChoiceSetting) kan niet: productie draait
-    # een eigen CNPG-image met een eigen tag, en features/namespace-postgresql-database.md
-    # laat eigen images uitdrukkelijk toe. Dus de VORM, met de tekenset die een
-    # image-verwijzing in een projectbestand overal heeft.
+    # A closed list of allowed images (a ChoiceSetting) is impossible: production runs its own
+    # CNPG image with its own tag, and features/namespace-postgresql-database.md explicitly
+    # allows private images. So the SHAPE, with the character set an image reference has
+    # everywhere in a project file.
     image: str = Field(
         default="ghcr.io/cloudnative-pg/postgresql:17",
         min_length=1,
@@ -133,11 +124,11 @@ class DedicatedPostgresFields(BaseModel):
     instances: int = Field(
         default=1, ge=1, description="Number of PostgreSQL instances; more than one gives a replicated cluster."
     )
-    # De grenzen staan in POSTGRES_STORAGE (shared/postgres_settings.py), niet hier: een
-    # grens op een dienstveld is een declaratie, geen ``le=`` op het model (RC-168).
-    # 1Gi en niet 10Gi: de keuzelijst van het formulier (StorageSizeOptionsProvider) loopt tot
-    # 1Gi, dus de oude standaardwaarde stond niet in de lijst waaruit je hem kon kiezen. Dat is
-    # de bovenkant van de lijst, want een database is de plek waar ruimte het eerst opraakt.
+    # The bounds live in POSTGRES_STORAGE (shared/postgres_settings.py), not here: a bound on a
+    # service field is a declaration, not an ``le=`` on the model.
+    # 1Gi and not more: the form's option list (StorageSizeOptionsProvider) runs to 1Gi, and a
+    # default outside that list cannot be chosen. It is the top of the list, because a database
+    # is where space runs out first.
     storage: str = Field(default="1Gi", description="Size of the database volume as a Kubernetes quantity, e.g. 1Gi.")
     privileges: list[DatabasePrivilege] = Field(
         default_factory=list,
@@ -158,9 +149,8 @@ class DedicatedPostgresFields(BaseModel):
     @field_validator("image")
     @classmethod
     def _image_charset(cls, value: str) -> str:
-        # Een ``field_validator`` en geen ``pattern=``: pydantic toetst met de
-        # Rust-regexengine, die ``\Z`` niet kent, en dan zou deze tekenset twee teksten
-        # krijgen.
+        # A ``field_validator`` and not ``pattern=``: pydantic checks with the Rust regex
+        # engine, which does not know ``\Z``, and this character set would then get two texts.
         if not re.match(CONTAINER_IMAGE_PATTERN, value):
             raise ValueError(
                 "Image bevat niet-toegestane tekens: gebruik letters, cijfers en . _ : / @ -, "
@@ -171,8 +161,7 @@ class DedicatedPostgresFields(BaseModel):
     @field_validator("privileges", mode="before")
     @classmethod
     def _uppercase_privileges(cls, value: object) -> object:
-        # Preserve the old case-insensitive behaviour (privilege.upper()): SQL role
-        # keywords are case-insensitive, so a hand-edited lowercase value still
+        # SQL role keywords are case-insensitive, so a hand-edited lowercase value still
         # validates and is normalised to the canonical uppercase form.
         if isinstance(value, list):
             return [item.upper() if isinstance(item, str) else item for item in value]

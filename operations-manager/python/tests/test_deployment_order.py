@@ -122,4 +122,4 @@ class TestTheOrderingIsActuallyWiredIn:
         source = inspect.getsource(ProjectManager.get_deployments)
 
         assert source.index("cluster_filter") < source.index("order_deployments_by_clone_dependency")
-        assert source.index("_resolve_deployment_filter") < source.index("order_deployments_by_clone_dependency")
+        assert source.index("resolve_deployment_filter") < source.index("order_deployments_by_clone_dependency")

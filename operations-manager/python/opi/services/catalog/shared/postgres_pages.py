@@ -1,10 +1,8 @@
-"""The database-console and job-runner modals, owned by the PostgreSQL services (RC-24).
+"""The database-console and job-runner modals, owned by the PostgreSQL services.
 
 Both modals exist because the deployment has a database: the console attaches a tool to
 it, and a job Pod is launched wired with the deployment's database connection
-(migrations). They used to be hardcoded in ``section-deployment-actions.html.j2`` -- one
-of them behind ``'postgresql-database' in service_values or 'namespace-...' in ...``,
-service knowledge in the general page.
+(migrations).
 
 Both PostgreSQL services share this module: each returns the same buttons and the same
 routers, and the collectors keep one of each, so a project that has both does not get
@@ -32,9 +30,9 @@ def _uses_a_database(project_data: dict[str, Any]) -> bool:
 def database_actions(project_data: dict[str, Any], deployment_name: str) -> list[DeploymentAction]:
     """The console and job buttons for a deployment, or nothing without a database.
 
-    ``collect_deployment_actions`` asks every service with an ``actions_provider``, so
-    the check whether the project uses a database lives here -- which is the point: the
-    page no longer knows the two service names.
+    ``collect_deployment_actions`` asks every service with an ``actions_provider``, so the
+    check whether the project uses a database lives here and the page does not know the two
+    service names.
     """
     if not _uses_a_database(project_data):
         return []

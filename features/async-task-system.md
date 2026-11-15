@@ -6,7 +6,7 @@
 
 ## Problem
 
-Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts. The web portal has a working async pattern (`BackgroundTasks` + in-memory `TaskProgressManager`), but it is single-instance, in-memory, and not used by the REST API.
+Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts. The web portal has a working async pattern (`BackgroundTasks` plus an in-memory progress manager), but it is single-instance, in-memory, and not used by the REST API.
 
 | Endpoint | Method | Typical Duration |
 |----------|--------|-----------------|
@@ -30,7 +30,6 @@ Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts
 - `CLUSTER_MANAGER` setting -- each OPI manages exactly one cluster (`config.py`)
 - `validate_platform_admin_token` -- platform-admin auth already exists (`user_token_auth.py`)
 - `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
-- `TaskProgressManager` -- in-memory task tracking with subtasks (`core/task_manager.py`)
 - `simple_background.py` -- existing background project processing
 - Project YAML `cluster` field on deployments -- routing info already in data model
 
@@ -103,7 +102,7 @@ Phase 3 (future):  Federation routing        -- multiple clusters, HTTP between 
 
 **File**: `opi/core/async_task_schema.py` (new)
 
-Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL` in `connectors/subdomain.py`). Uses the local rig-db PostgreSQL.
+Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL` in `services/catalog/publish_on_web/subdomain.py`). Uses the local rig-db PostgreSQL.
 
 ```sql
 CREATE TABLE IF NOT EXISTS async_tasks (
@@ -160,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
 ### Design Decisions
 
 - **JSONB for payload**: Each task type has different request parameters. Storing as JSONB avoids schema proliferation.
-- **subtasks as JSONB array**: Mirrors the existing `TaskProgressManager.tasks` dict but stored persistently. At most ~15 subtasks per operation.
+- **subtasks as JSONB array**: The steps of one task, stored on its row. At most ~15 subtasks per operation.
 - **heartbeat_at**: Essential for stale task recovery when a pod dies mid-task.
 - **affects_deployments**: The deployments a task reprocesses, written once by `create_task()`
   from `scope_of()`. NULL means project-wide. Claiming compares these scopes for OVERLAP, so a
@@ -177,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
 
 ## 2. AsyncTaskService
 
-**File**: `opi/core/async_task_service.py` (new)
+**File**: `opi/services/tasks/async_task_service.py` (new)
 
 Service layer using the existing `DatabasePool` (from `opi/core/database_pool.py`). All database operations go through this service.
 
@@ -267,7 +266,7 @@ When creating a task, check if one already exists for the same `(project_name, d
 
 ## 3. Task Worker
 
-**File**: `opi/core/task_worker.py` (new)
+**File**: `opi/runtime/tasks/task_worker.py` (new)
 
 The worker is a standalone class that only needs a `DatabasePool` and the task handler functions. It has no dependency on FastAPI, HTTP, or the API layer. This is what makes it deployable both inside the API server process (combined mode) and as a separate worker process.
 
@@ -313,7 +312,7 @@ Processes 1 task at a time per worker instance. Scale by adding more worker pods
 
 ### Task Handlers
 
-Each handler extracts the logic currently inline in `opi/api/router.py` and `opi/core/simple_background.py`:
+Each handler extracts the logic currently inline in `opi/api/router.py` and `opi/runtime/tasks/simple_background.py`:
 
 | Handler Function | Current Source | Router Line |
 |-----------------|----------------|-------------|
@@ -335,7 +334,7 @@ Each handler calls the appropriate `ProjectManager` methods, exactly as the curr
 
 The task's `status` is the field a caller reads first, so it must say what happened. A
 handler signals failure in one of three ways, and `reported_failure()` in
-`opi/core/task_worker.py` reads all three:
+`opi/runtime/tasks/task_worker.py` reads all three:
 
 1. `{"success": False, "error": ...}` -- the backup and restore handlers;
 2. `{"status": "failed", "error": ..., "error_type": ...}` -- the component and service handlers;
@@ -368,9 +367,9 @@ In Kubernetes this is the pod name (e.g., `zad-operations-manager-7b8c5d-x4j2k`)
 
 ## 4. PersistentTaskProgressManager
 
-**File**: `opi/core/persistent_task_progress.py` (new)
+**File**: `opi/runtime/tasks/persistent_task_progress.py` (new)
 
-Drop-in replacement for the existing `TaskProgressManager` (`core/task_manager.py`) that writes to PostgreSQL instead of in-memory dicts.
+Replaces the in-memory progress manager the web portal used, and writes to PostgreSQL instead of to in-process dicts.
 
 ### Why DB-backed progress is needed
 
@@ -378,7 +377,7 @@ In the target architecture, workers are **separate processes** from the frontend
 
 The write frequency is modest: ~10-20 writes over a 5-30 minute task (at step boundaries like "creating namespace", "deploying Helm chart", etc.), not continuous streaming.
 
-### Interface (matches existing TaskProgressManager)
+### Interface
 
 ```python
 class PersistentTaskProgressManager:
@@ -400,15 +399,10 @@ class PersistentTaskProgressManager:
     def start_monitoring(self) -> None
 ```
 
-### Key differences from in-memory version
+### How it writes
 
 - Writes progress to PostgreSQL via `AsyncTaskService.update_progress()` using fire-and-forget `asyncio.create_task()` calls (non-blocking)
-- Also populates the legacy `_projects` dict for web portal backward compatibility when running in combined mode
 - Batches DB writes (coalesces rapid updates within a short window to avoid excessive DB round-trips)
-
-### Combined mode optimization
-
-When running in combined mode (worker inside the API server process), the `PersistentTaskProgressManager` also writes to the in-memory `_projects` dict. This means the web portal's existing progress page works without any changes -- it reads from memory for live updates, while the DB serves as the durable store. In standalone worker mode, only the DB path is used.
 
 ---
 
@@ -538,7 +532,7 @@ class TaskResponse(BaseModel):
 
 ## 6. API Endpoint Conversion
 
-Each blocking endpoint changes to return `202 Accepted` immediately. The `?sync=true` query param preserves old behavior during migration.
+Each blocking endpoint changes to return `202 Accepted` immediately. The `?sync=true` query param preserves old behavior during migration, except on the clone endpoints: there it creates the same task as without the flag and waits for it, so one path does the cloning (RC-482). The answer is unchanged, apart from a `504` when the clone outlasts what the request can wait for; the task keeps going.
 
 ### Before (blocks 5-30 min)
 
@@ -727,7 +721,7 @@ The implementation is structured so that multiple agents can work in parallel. D
 | Unit | File(s) | Description | Agent can start immediately |
 |------|---------|-------------|-|
 | **1A** | `opi/core/async_task_schema.py` | SQL schema string constant + table creation function | Yes |
-| **1B** | `opi/core/async_task_service.py` | AsyncTaskService class with all DB methods, TaskType and AsyncTaskStatus enums | Yes |
+| **1B** | `opi/services/tasks/async_task_service.py` | AsyncTaskService class with all DB methods, TaskType and AsyncTaskStatus enums | Yes |
 | **1C** | `opi/core/config.py` | Add TASK_WORKER_* settings to existing Settings class | Yes |
 | **1D** | `opi/api/task_router.py` + result models | Task status API endpoints + Pydantic response models | Yes |
 
@@ -737,18 +731,18 @@ The implementation is structured so that multiple agents can work in parallel. D
 
 | Unit | File(s) | Depends on | Description |
 |------|---------|------------|-------------|
-| **2A** | `opi/core/persistent_task_progress.py` | 1B | PersistentTaskProgressManager (drop-in replacement for TaskProgressManager) |
-| **2B** | `opi/core/task_worker.py` | 1B, 1C | Worker loop: claim, heartbeat, route to handler, stale recovery, cleanup |
+| **2A** | `opi/runtime/tasks/persistent_task_progress.py` | 1B | PersistentTaskProgressManager |
+| **2B** | `opi/runtime/tasks/task_worker.py` | 1B, 1C | Worker loop: claim, heartbeat, route to handler, stale recovery, cleanup |
 
-**2A and 2B can be built in parallel** -- they both depend on 1B (AsyncTaskService) but not on each other. The worker calls handlers that use PersistentTaskProgressManager, but that interface is defined by the existing TaskProgressManager which is already known.
+**2A and 2B can be built in parallel** -- they both depend on 1B (AsyncTaskService) but not on each other.
 
 ### Wave 3: Handler Extraction (depends on Wave 2A)
 
 | Unit | File(s) | Depends on | Description |
 |------|---------|------------|-------------|
-| **3A** | `opi/core/task_handlers_project.py` (create_project, upsert_deployment) | 2A | Extract handler logic from simple_background.py and router.py |
-| **3B** | `opi/core/task_handlers_deployment.py` (update_image, delete_deployment) | 2A | Extract handler logic from router.py |
-| **3C** | `opi/core/task_handlers_operations.py` (clone_database, clone_bucket, refresh) | 2A | Extract handler logic from router.py |
+| **3A** | `opi/runtime/tasks/task_handlers_project.py` (create_project, upsert_deployment) | 2A | Extract handler logic from simple_background.py and router.py |
+| **3B** | `opi/runtime/tasks/task_handlers_deployment.py` (update_image, delete_deployment) | 2A | Extract handler logic from router.py |
+| **3C** | `opi/runtime/tasks/task_handlers_operations.py` (clone_database, clone_bucket, refresh) | 2A | Extract handler logic from router.py |
 
 **3A, 3B, 3C can all be built in parallel.** Each extracts different endpoint handlers into separate files. Each handler function receives `(payload: dict, progress: PersistentTaskProgressManager)` and calls the existing `ProjectManager` methods.
 
@@ -757,7 +751,7 @@ The implementation is structured so that multiple agents can work in parallel. D
 | Unit | File(s) | Depends on | Description |
 |------|---------|------------|-------------|
 | **4A** | `opi/server.py` | 2B, 1D | Start worker in lifespan, register task_router |
-| **4B** | `opi/core/startup.py` | 1A | Add async_tasks table creation to startup |
+| **4B** | `opi/runtime/startup/startup.py` | 1A | Add async_tasks table creation to startup |
 | **4C** | `opi/api/router.py` | 1B, 1D | Convert 6 endpoints to return 202 + create task. Add `?sync=true` fallback |
 
 **4A and 4B can be parallel.** 4C can also be parallel but is the most sensitive change (modifies existing endpoints).
@@ -797,12 +791,12 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 | File | Purpose | Wave |
 |------|---------|------|
 | `opi/core/async_task_schema.py` | SQL schema constant + table creation | 1A |
-| `opi/core/async_task_service.py` | Task queue service layer + enums | 1B |
-| `opi/core/persistent_task_progress.py` | PostgreSQL-backed progress manager | 2A |
-| `opi/core/task_worker.py` | Worker loop + routing (no FastAPI dependency) | 2B |
-| `opi/core/task_handlers_project.py` | Handlers for create_project, upsert_deployment | 3A |
-| `opi/core/task_handlers_deployment.py` | Handlers for update_image, delete_deployment | 3B |
-| `opi/core/task_handlers_operations.py` | Handlers for clone_database, clone_bucket, refresh | 3C |
+| `opi/services/tasks/async_task_service.py` | Task queue service layer + enums | 1B |
+| `opi/runtime/tasks/persistent_task_progress.py` | PostgreSQL-backed progress manager | 2A |
+| `opi/runtime/tasks/task_worker.py` | Worker loop + routing (no FastAPI dependency) | 2B |
+| `opi/runtime/tasks/task_handlers_project.py` | Handlers for create_project, upsert_deployment | 3A |
+| `opi/runtime/tasks/task_handlers_deployment.py` | Handlers for update_image, delete_deployment | 3B |
+| `opi/runtime/tasks/task_handlers_operations.py` | Handlers for clone_database, clone_bucket, refresh | 3C |
 | `opi/api/task_router.py` | Task status API + Pydantic models | 1D |
 | `opi/worker_main.py` | Standalone worker entry point (Phase 2) | 4A |
 | `tests/test_async_task_service.py` | Service unit tests | 5A |
@@ -815,7 +809,7 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 | File | Change | Wave |
 |------|--------|------|
 | `opi/core/config.py` | Add TASK_WORKER_* settings | 1C |
-| `opi/core/startup.py` | Create async_tasks table at startup | 4B |
+| `opi/runtime/startup/startup.py` | Create async_tasks table at startup | 4B |
 | `opi/server.py` | Start worker in lifespan (combined mode), register task_router | 4A |
 | `opi/api/router.py` | Convert 6 endpoints to async task creation | 4C |
 
@@ -827,7 +821,7 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 1. **Single-instance async**: POST upsert-deployment returns 202; GET /api/tasks/{id} shows progress; task completes
 2. **Multi-replica**: Run 2 combined replicas, submit 4 tasks, each processes 2 (SKIP LOCKED)
 3. **Stale recovery**: Kill pod mid-task, other replica picks it up
-4. **Web portal**: `/projects/progress/{task_id}` still works via in-memory bridge in combined mode
+4. **Web portal**: `/projects/progress/{task_id}` still works, reading task state from the database
 5. **Sync fallback**: `?sync=true` on API endpoints preserves blocking behavior
 6. **Deduplication**: Submitting same deployment twice returns existing task ID
 7. **Image payloads**: Endpoints with binary data store references, not inline data

@@ -1,30 +1,25 @@
-"""
-Metrics Explorer web route for browsing Prometheus metrics by service.
-
-Provides a UI to select a monitored service, discover its available metrics,
-and view them in the Prometheus graph UI via an iframe.
+"""Browsing Prometheus metrics per service: pick a service, discover its metric names, and
+view them in the Prometheus graph UI through an iframe.
 """
 
 import asyncio
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.web.lotc_switch import render
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.lotc_switch import render
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 
 metrics_explorer_router = APIRouter()
 
-# Known services and how to find their metrics in Prometheus.
-# Each entry maps a display name to a PromQL match selector that identifies
-# the metrics belonging to that service.
+# Known services, each with the PromQL match selector that finds its metrics.
 MONITORED_SERVICES: list[dict[str, str]] = [
     {
         "id": "cloudnative-pg",
@@ -43,8 +38,8 @@ MONITORED_SERVICES: list[dict[str, str]] = [
     {
         "id": "seaweedfs",
         "name": "SeaweedFS",
-        # Het objectaantal per bucket bestaat niet in SeaweedFS, alleen de grootte; dat
-        # staat hier zodat een lezer niet naar een reeks zoekt die er niet is (RC-331, M1).
+        # SeaweedFS has no object count per bucket, only the size, so the description says so
+        # rather than leaving a reader hunting for a series that does not exist.
         "description": "Object storage metrics (scrape: 2h); bucketgrootte per collection, objectaantal niet beschikbaar",
         "match": '{job="seaweedfs"}',
         "range": "7d",
@@ -88,13 +83,8 @@ def _get_prometheus_external_url() -> str:
 @metrics_explorer_router.get("/metrics-explorer", response_class=HTMLResponse)
 @action(Action.PLATFORM_METRICS)
 @requires_sso
-async def metrics_explorer_page(request: Request):
-    """Serve the metrics explorer page.
-
-    Admins only. The verkenner queries across every project, so it is not a page a
-    project member should reach. Taking it out of the menu hides the door; this closes
-    it, which is the part that counts.
-    """
+async def metrics_explorer_page(request: Request) -> Response:
+    """Serve the metrics explorer page; admins only, because it queries across every project."""
     user = require_platform_admin(request)
 
     return render(
@@ -104,8 +94,7 @@ async def metrics_explorer_page(request: Request):
             "request": request,
             "title": "Metrics Explorer",
             "menu_items": get_menu_items(user),
-            # De navigatie van de nieuwe schil. Kost niets als de bestaande weergave
-            # gekozen is: dat sjabloon leest hem niet.
+            # The navigation of the new shell; the existing template does not read it.
             "navigation": get_navigation(user, current_path="/metrics-explorer"),
             "user": user,
             "services": MONITORED_SERVICES,
@@ -117,19 +106,14 @@ async def metrics_explorer_page(request: Request):
 @metrics_explorer_router.get("/ui/metrics-explorer/metrics/{service_id}", response_class=JSONResponse)
 @action(Action.PLATFORM_METRICS)
 @requires_sso
-async def get_service_metrics(request: Request, service_id: str):
-    """
-    Return the list of metric names available for a given service.
+async def get_service_metrics(request: Request, service_id: str) -> JSONResponse:
+    """The metric names available for one service; admins only, like the page it feeds.
 
-    Queries Prometheus /api/v1/series with the service's match selector,
-    then extracts unique __name__ values.
-
-    Admins only, like the page it feeds. Closing the page and leaving the endpoint that
-    serves its data open would move the door rather than shut it.
+    Queries Prometheus /api/v1/series with the service's match selector and extracts the unique
+    ``__name__`` values.
     """
     require_platform_admin(request)
 
-    # Find the service definition
     service = next((s for s in MONITORED_SERVICES if s["id"] == service_id), None)
     if not service:
         return JSONResponse(status_code=404, content={"error": f"Unknown service: {service_id}"})
@@ -143,6 +127,6 @@ async def get_service_metrics(request: Request, service_id: str):
         metric_names = await asyncio.to_thread(prom.discover_metric_names, service["match"])
         return JSONResponse(content={"metrics": metric_names, "count": len(metric_names)})
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
         logger.error(f"Failed to fetch metrics for service {service_id}: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch metrics"})

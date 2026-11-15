@@ -1,6 +1,6 @@
 """Tests for pruning obsolete per-component manifests from a deployment.
 
-Covers the pure selection helper ``_select_obsolete_component_manifests`` (a
+Covers the pure selection helper ``select_obsolete_component_manifests`` (a
 per-component file this run did not regenerate, covering both removed components and
 renamed/dropped files of surviving components) and a round-trip check that, once
 obsolete files are deleted, the kustomization rebuilt from the on-disk glob no longer
@@ -10,7 +10,7 @@ references them while current components remain.
 import os
 
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_manager import _select_obsolete_component_manifests
+from opi.manager.project.manifests.pruning import select_obsolete_component_manifests
 from ruamel.yaml import YAML
 
 
@@ -45,7 +45,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "acme-http-prod-network-policy.yaml")
         _write(directory, "prod-keycloak-secret.sops.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"profiel", "magazijna"},
             generated_files={"profiel-deployment.yaml", "profiel-service.yaml", "profiel-platform-secret.yaml"},
@@ -77,7 +77,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "fundament-deployment.yaml")
         _write(directory, "productie-fundament-oauth2-cookie-secret.to-sops.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"fundament"},
             generated_files={
@@ -97,7 +97,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "fundament-deployment.yaml")
         _write(directory, "productie-fundament-oauth2-cookie-secret.to-sops.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"fundament"},
             generated_files={"fundament-deployment.yaml"},
@@ -117,7 +117,7 @@ class TestSelectObsoleteComponentManifests:
         ):
             _write(directory, name)
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"fundament"},
             generated_files={
@@ -137,7 +137,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "magazijna-user-secret.sops.yaml")
         _write(directory, "magazijna-user-secret.to-sops.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"profiel", "magazijna"},
             generated_files={"profiel-user-secret.to-sops.yaml"},
@@ -155,7 +155,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "backend-ingress-api.yaml")  # stale (old path, not generated)
         _write(directory, "backend-service.yaml")  # generated
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"backend"},
             generated_files={"backend-ingress.yaml", "backend-service.yaml"},
@@ -170,7 +170,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "magazijn-deployment.yaml")
         _write(directory, "magazijna-deployment.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"magazijna", "magazijn"},
             generated_files={"magazijna-deployment.yaml"},
@@ -187,7 +187,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "magazijna-deployment.yaml")
         _write(directory, "magazijna-data-pvc.marked-for-deletion.yaml")
 
-        selected = _select_obsolete_component_manifests(
+        selected = select_obsolete_component_manifests(
             directory,
             component_names={"magazijna"},
             generated_files=set(),
@@ -201,7 +201,7 @@ class TestSelectObsoleteComponentManifests:
         directory = str(tmp_path)
         _write(directory, "profiel-deployment.yaml")
         assert (
-            _select_obsolete_component_manifests(
+            select_obsolete_component_manifests(
                 directory,
                 component_names={"profiel"},
                 generated_files={"profiel-deployment.yaml"},
@@ -217,7 +217,7 @@ class TestSelectObsoleteComponentManifests:
         _write(directory, "kustomization.yaml")
         _write(directory, "decrypt-sops.yaml")
         assert (
-            _select_obsolete_component_manifests(
+            select_obsolete_component_manifests(
                 directory, component_names={"profiel"}, generated_files=set(), deployment_name="prod"
             )
             == []
@@ -234,7 +234,7 @@ class TestKustomizationAfterPrune:
         _write(directory, "magazijna-deployment.yaml")
         _write(directory, "magazijna-service.yaml")
 
-        obsolete = _select_obsolete_component_manifests(
+        obsolete = select_obsolete_component_manifests(
             directory,
             component_names={"profiel", "magazijna"},
             generated_files={"profiel-deployment.yaml", "profiel-service.yaml"},

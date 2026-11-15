@@ -14,8 +14,8 @@ from io import StringIO
 from unittest.mock import MagicMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler, save_project_file
 from opi.manager.revision_manager import RevisionManager
+from opi.services.project_file_handler import ProjectFileHandler
 from ruamel.yaml import YAML
 
 # ============================================================================
@@ -968,59 +968,11 @@ class TestYamlNoAnchors:
     leading to revision history leaking across deployments.
     """
 
-    def test_save_project_file_no_anchors(self, tmp_path: Any) -> None:
-        """save_project_file must never write YAML anchors/aliases."""
-        shared_services = [
-            {"reference": "postgresql-database", "config": {"generation": 1}},
-        ]
-        project_data = {
-            "name": "test-project",
-            "deployments": [
-                {"name": "production", "services": shared_services},
-                {"name": "staging", "services": shared_services},  # same object
-            ],
-        }
-
-        file_path = str(tmp_path / "project.yaml")
-        save_project_file(file_path, project_data)
-
-        with open(file_path) as f:
-            content = f.read()
-
-        assert "&id" not in content, f"YAML anchors found in output:\n{content}"
-        assert "*id" not in content, f"YAML aliases found in output:\n{content}"
-
-    def test_save_project_file_preserves_data_for_both_deployments(self, tmp_path: Any) -> None:
-        """Both deployments must have full services data after save (no aliases)."""
-        shared_services = [
-            {"reference": "postgresql-database", "config": {"generation": 1}},
-        ]
-        project_data = {
-            "name": "test-project",
-            "deployments": [
-                {"name": "production", "services": shared_services},
-                {"name": "staging", "services": shared_services},
-            ],
-        }
-
-        file_path = str(tmp_path / "project.yaml")
-        save_project_file(file_path, project_data)
-
-        # Re-read and verify both deployments have independent services
-        yaml = YAML()
-        with open(file_path) as f:
-            reloaded = yaml.load(f)
-
-        for deployment in reloaded["deployments"]:
-            assert len(deployment["services"]) == 1
-            assert deployment["services"][0]["reference"] == "postgresql-database"
-            assert deployment["services"][0]["config"]["generation"] == 1
-
     def test_deepcopy_prevents_shared_references(self) -> None:
         """copy.deepcopy on clone properties prevents shared Python objects.
 
-        This replicates the fix in project_manager.clone_deployment where
-        source deployment values are deep-copied to the new deployment.
+        This replicates the fix where source deployment values are deep-copied
+        into the new deployment instead of being shared by reference.
         """
         source_deployment = {
             "name": "production",

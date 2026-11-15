@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import extract_attachment_catalog, extract_component_attachment_uses
+from opi.services.project_file_handler import extract_attachment_catalog, extract_component_attachment_uses
 
 PUBLIC_KEY = "age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq"
 
@@ -23,7 +23,7 @@ PUBLIC_KEY = "age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq"
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -68,7 +68,7 @@ def _wire(project_data: dict):
 def encrypt_call():
     """AGE encryption stubbed: it shells out, and what matters here is that it is called."""
     with patch(
-        "opi.manager.project_manager.encrypt_file_to_age_block_sync",
+        "opi.manager.project.attachment_mutations.encrypt_file_to_age_block_sync",
         side_effect=lambda raw, key: f"-----BEGIN AGE ENCRYPTED FILE-----\n{len(raw)}:{key[:8]}\n",
     ) as encrypt:
         yield encrypt
@@ -252,7 +252,7 @@ class TestDefiningAndBinding:
 
 class TestTheWriteGoesThroughTheValidatedPath:
     async def test_a_rejected_save_is_reported_as_a_validation_error(self) -> None:
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         project = _project(catalog=[])
         manager, save = _wire(project)

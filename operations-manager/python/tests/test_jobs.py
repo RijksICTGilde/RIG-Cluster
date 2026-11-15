@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
+from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobError, JobManager, JobRun
 from opi.manager.run_support import ANNOT_EXPIRES, ANNOT_OPENED_BY, LABEL_RUN, LABEL_RUN_DEPLOYMENT
 from opi.services.catalog.image_registries.naming import organization_name
@@ -565,3 +565,18 @@ class TestDeJobImageIsGeenVrijeKeuze:
     async def test_een_gedeelde_proxy_en_een_gewone_image_mogen(self) -> None:
         assert await self._begin("rcr.rijksapps.nl/ghcr-rig/library/alpine:3") is None
         assert await self._begin("ghcr.io/eigen/app:1") is None
+
+
+def test_the_block_routes_are_mounted_on_the_web_router() -> None:
+    """The service offers them through ``web_routers()``; forget that and the modal asks
+    for a path that does not exist."""
+    from opi.web.router import web_router
+
+    paths = {getattr(route, "path", "") for route in web_router.routes}
+    for path in (
+        "/projects/{project_name}/jobs",
+        "/projects/{project_name}/jobs/{deployment_name}/modal",
+        "/projects/{project_name}/jobs/{deployment_name}/status",
+        "/projects/{project_name}/jobs/{session_id}/stop",
+    ):
+        assert path in paths, f"{path} is not mounted"

@@ -11,8 +11,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from opi.core.actor import ActorKind, scheduler_actor
-from opi.core.audit_retention_scheduler import AuditRetentionScheduler
 from opi.core.db import session_scope
+from opi.runtime.periodic.audit_retention_scheduler import AuditRetentionScheduler
 from opi.services import (
     audit,
     persistence,  # noqa: F401  -- registreert de ORM-modellen op Base.metadata
@@ -156,7 +156,7 @@ async def test_start_zet_de_scheduler_actor_en_stop_annuleert_de_lus() -> None:
     """Patroon van ``test_reconciliation_scheduler.py``: de achtergrondtaak start en stopt."""
     scheduler = AuditRetentionScheduler()
 
-    with patch("opi.core.audit_retention_scheduler.set_actor") as mock_set_actor:
+    with patch("opi.runtime.periodic.audit_retention_scheduler.set_actor") as mock_set_actor:
         await scheduler.start()
         await asyncio.sleep(0)
         assert scheduler._task is not None

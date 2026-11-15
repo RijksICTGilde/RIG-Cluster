@@ -15,8 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import validate_project_schema
-from opi.manager.project_validation import validate_approval_decisions
+from fastapi.responses import HTMLResponse
 from opi.services.approvals import (
     apply_approval_verdicts,
     collect_approval_items,
@@ -28,6 +27,8 @@ from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.redis import APPROVAL as REDIS_APPROVAL
 from opi.services.catalog.redis import is_acl_key_prefix_approved
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
+from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_approval_decisions
 from opi.services.registry import SERVICES, approval_services
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION_VALUE,
@@ -527,7 +528,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=deepcopy(project))),
             patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
         ):
-            saved, response = await _process_and_save_modal_edit(
+            result = await _process_and_save_modal_edit(
                 request=MagicMock(),
                 project_manager=manager,
                 project_name="p1",
@@ -537,9 +538,9 @@ class TestDeSchrijfwegenVanHetFormulier:
                 active_sections=[],
                 state=MagicMock(),
             )
-        assert response is None
+        assert not isinstance(result, HTMLResponse)
         manager.save_and_commit_project.assert_awaited_once()
-        return saved
+        return result.after
 
     async def test_een_opt_out_in_de_bewerkdialoog_komt_op_de_beheerpagina(self) -> None:
         saved = await self._modal_save(_project({ACL_KEY_PREFIX_FIELD: False}))
@@ -577,7 +578,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             return {"task_id": "t1"}
 
         with (
-            patch("opi.core.task_helpers.create_async_task", new=_create_async_task),
+            patch("opi.http.task_helpers.create_async_task", new=_create_async_task),
             patch("opi.web.router_wizard.clear_wizard_state"),
         ):
             await _start_project_creation(MagicMock(), self._nieuw_project({ACL_KEY_PREFIX_FIELD: False}))
@@ -597,7 +598,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             return {"task_id": "t1"}
 
         with (
-            patch("opi.core.task_helpers.create_async_task", new=_create_async_task),
+            patch("opi.http.task_helpers.create_async_task", new=_create_async_task),
             patch("opi.web.router_wizard.clear_wizard_state"),
         ):
             await _start_project_creation(MagicMock(), self._nieuw_project({ACL_KEY_PREFIX_FIELD: True}))

@@ -267,7 +267,7 @@ aan het platform ligt; de stderr van git volgt na `Detail:`. "Dit ligt aan het p
 staat er alleen bij een netwerkstoring, een geweigerde inlog en een time-out: een git-fout
 die niet in te delen is kan net zo goed komen van wat het project liet schrijven. Een taak
 die op `GitRemoteUnavailableError` of `GitCommandTimeoutError` faalt zegt hetzelfde in zijn
-`error_category`: `InternalError`, via `PLATFORM_FAILURES` in `core/task_errors.py`.
+`error_category`: `InternalError`, via `PLATFORM_FAILURES` in `services/tasks/task_errors.py`.
 Bijvoorbeeld:
 
 ```

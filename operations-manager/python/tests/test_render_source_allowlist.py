@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.config import settings
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project.helm_deployment import clone_helm_chart, clone_helmfile_source
 from opi.utils.render_sources import (
     is_allowed_render_source,
     normalize_git_url,
@@ -90,17 +90,12 @@ def test_ssh_shorthand_normalizes_to_an_ssh_url() -> None:
     )
 
 
-def _manager() -> Any:
-    return MagicMock(spec=ProjectManager)
-
-
 @pytest.mark.asyncio
 async def test_clone_helm_chart_refuses_a_source_outside_the_allowlist(allowlist: None) -> None:
-    """De aanroep in project_manager.py zelf: geen enkele clone voor een afgewezen bron."""
-    with patch("opi.connectors.git.GitConnector") as git_connector_cls:
+    """De aanroep in de renderketen zelf: geen enkele clone voor een afgewezen bron."""
+    with patch("opi.manager.project.helm_deployment.GitConnector") as git_connector_cls:
         with pytest.raises(ValueError, match="niet-toegestane-bron"):
-            await ProjectManager._clone_helm_chart(
-                _manager(),
+            await clone_helm_chart(
                 {"name": "demo", "git-url": "https://github.com/MinBZK/niet-toegestane-bron.git"},
                 "/tmp/onbenut",
             )
@@ -109,12 +104,9 @@ async def test_clone_helm_chart_refuses_a_source_outside_the_allowlist(allowlist
 
 @pytest.mark.asyncio
 async def test_clone_helmfile_source_refuses_a_source_outside_the_allowlist(allowlist: None) -> None:
-    # Hier is GitConnector al op modulenaam gebonden (module-level import), in
-    # tegenstelling tot _clone_helm_chart dat hem lokaal opnieuw importeert.
-    with patch("opi.manager.project_manager.GitConnector") as git_connector_cls:
+    with patch("opi.manager.project.helm_deployment.GitConnector") as git_connector_cls:
         with pytest.raises(ValueError, match="niet-toegestane-bron"):
-            await ProjectManager._clone_helmfile_source(
-                _manager(),
+            await clone_helmfile_source(
                 {"name": "demo", "url": "https://github.com/MinBZK/niet-toegestane-bron.git"},
                 "/tmp/onbenut",
             )
@@ -138,11 +130,10 @@ async def test_a_file_dependency_outside_the_clone_is_refused(allowlist: None, t
         return connector
 
     with (
-        patch("opi.connectors.git.GitConnector", side_effect=_connector),
+        patch("opi.manager.project.helm_deployment.GitConnector", side_effect=_connector),
         pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
-        await ProjectManager._clone_helm_chart(
-            _manager(),
+        await clone_helm_chart(
             {"name": "demo", "git-url": _TOEGESTAAN, "chart-path": "chart"},
             str(tmp_path),
         )

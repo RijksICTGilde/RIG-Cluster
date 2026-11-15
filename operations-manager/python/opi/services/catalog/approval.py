@@ -1,17 +1,13 @@
-"""Generic approval capability for the service catalog (RC-5).
+"""Generic approval capability for the service catalog.
 
 A service declares -- as data -- that some value it manages needs approval before it
 takes effect ("dit heeft approval nodig"), and supplies the rule that reads the stored
-approval state back ("is dit veld approved?"). Generic code (a future catalog-driven
-approval interface, and the enforcers today) consumes these ``ApprovalSpec``s uniformly
-instead of hard-coding one subsystem per approvable thing.
+approval state back ("is dit veld approved?"). Generic code (the approver interface and
+the enforcers) consumes these ``ApprovalSpec``s uniformly.
 
-Grounded in the single real case today: publish-on-web's domain / subdomain approval,
-whose state lives in the project's ``domains:`` block and whose rules are the pure
-predicates in ``connectors/subdomain.py``. This module does NOT move that state or
-rewrite those rules -- it wraps them so the shape (declare + check) is visible and
-reusable. Moving the state under the service is a separate schema+data migration
-(see features/futures/service-vertical-slice.md).
+Publish-on-web's domain / subdomain approval is the exception to that shape: its state
+lives in the project's ``domains:`` block and its rules are the predicates in
+``services/catalog/publish_on_web/subdomain.py``, which the spec wraps rather than owns.
 """
 
 from __future__ import annotations
@@ -20,7 +16,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from opi.services.services import deployment_index, service_entry_config, service_entry_name
+from opi.services.project import Project
+from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,12 +40,11 @@ class ApprovalStatus(StrEnum):
 
 
 class ApproverScope(StrEnum):
-    """Who is entitled to approve a value -- what makes the capability reusable.
+    """Who is entitled to approve a value.
 
-    Domains are cross-project, so a PLATFORM_ADMIN approves them. A future service
-    granting e.g. cross-namespace access would be approved within the project
-    (PROJECT_ADMIN / PROJECT_MEMBER). The scope selects which approver a generic
-    approval interface routes a pending item to.
+    Domains are cross-project, so a PLATFORM_ADMIN approves them; something granted within
+    one project is approved by a PROJECT_ADMIN or PROJECT_MEMBER. The scope selects which
+    approver a generic approval interface routes a pending item to.
     """
 
     PLATFORM_ADMIN = "platform-admin"
@@ -58,9 +54,9 @@ class ApproverScope(StrEnum):
 
 #: Wire shape of an approval **item** -- one approvable thing found in a project, as
 #: the approver interface (listing + modal flow) consumes it. Transient: it is seeded
-#: into the wizard, never persisted (stripped before the project is saved). A plain
-#: dict, not a dataclass, because it is the established contract of the approval
-#: editables + ``approval_items.html.j2`` template. Keys:
+#: into the wizard, never persisted (stripped before the project is saved). A plain dict,
+#: not a dataclass: the approval editables and ``approval_items.html.j2`` read these keys.
+#: Keys:
 #:   ``service``        -- the ServiceType value of the owning service (routing)
 #:   ``type``           -- the owning ``ApprovalSpec.key`` (routing + display)
 #:   ``domain``/``name``-- display identity of the item
@@ -110,9 +106,9 @@ class ApprovalSpec:
             service's business (a domain string, a ``(domain, subdomain)`` pair, ...).
         list_items: The LIST ("wat staat er open voor deze aanvraag?"). Enumerates the
             approvable items this spec currently has in a project, as
-            :data:`ApprovalItem` dicts. The generic approver interface concatenates
-            these across the catalog instead of hard-coding one subsystem's shape.
-            ``None`` for a check-only spec that does not surface in the approver UI.
+            :data:`ApprovalItem` dicts. The generic approver interface concatenates these
+            across the catalog. ``None`` for a check-only spec that does not surface in the
+            approver UI.
         record: The RECORD ("leg het oordeel vast"). Applies one approver verdict --
             writes the new status + appends ``history_entry`` to the stored state for
             the given item. ``None`` if the spec is not approver-writable.
@@ -139,21 +135,21 @@ class ApprovalSpec:
     requires_approval_for: Callable[[Any], bool] | None = None
     approved_values: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
-    def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """The approval status of ``value`` given the current project state."""
         return self.status_of(project_data, value)
 
-    def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:
+    def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:  # noqa: ANN401  # a project-file value
         """Whether ``value`` is approved -- the common yes/no check for gating."""
         return self.status_of(project_data, value) is ApprovalStatus.APPROVED
 
-    def requires_approval(self, config: Any) -> bool:
-        """Of een dienst die zich met ``config`` aanmeldt hiervoor een aanvraag nodig heeft.
+    def requires_approval(self, config: Any) -> bool:  # noqa: ANN401  # a project-file value
+        """Whether a service enrolling with ``config`` needs a request for this.
 
-        Bepaalt of de dienst zich impliciet mag aanmelden (``implicit_project_entry``). De
-        standaard is ja: een goedkeuring over de dienst zelf geldt ongeacht de config. Een
-        goedkeuring over een WAARDE vult dit met zijn eigen predicaat, zodat alleen de
-        toestand die om een besluit vraagt de impliciete aanmelding tegenhoudt.
+        Decides whether the service may enrol implicitly (``implicit_project_entry``). The
+        default is yes: an approval about the service itself applies whatever the config. An
+        approval about a VALUE fills this with a predicate of its own, so only the state that
+        asks for a decision holds up the implicit enrolment.
         """
         return True if self.requires_approval_for is None else self.requires_approval_for(config)
 
@@ -173,10 +169,9 @@ class _ApprovalState:
     ) -> None:
         self.service = service
         self.config_key = config_key
-        #: Where the services list carrying the BLOCK lives. Defaults to the project itself; an
-        #: approval at the deployment layer passes the deployment here, so read and write hit its
-        #: own ``services``. The service SELECTION stays a query to the project: a deployment
-        #: does not pick the service.
+        #: Where the services list carrying the BLOCK lives; an approval at the deployment layer
+        #: passes the deployment, so read and write hit its own ``services``. The service
+        #: SELECTION stays a query to the project: a deployment does not pick the service.
         self._holder = holder or (lambda project_data: project_data)
 
     def selected(self, project_data: dict[str, Any]) -> bool:
@@ -254,10 +249,9 @@ class _ApprovalState:
 
         For record form (``{"name": "send-email", "config": ...}``) it is the entry itself;
         for legacy single-key form (``{"send-email": {"config": ...}}``) it is the inner dict.
-        Without that distinction, the writer puts the approval block BESIDE the service instead
-        of inside it: the reader does not find it, and the entry becomes a two-key dict that
-        ``service_entry_name`` warns of. Measured at deployment level, where the form creates
-        an entry in legacy form.
+        Without that distinction the writer puts the approval block BESIDE the service
+        instead of inside it: the reader does not find it, and the entry becomes a two-key
+        dict that ``service_entry_name`` warns of.
         """
         inner = entry.get(service)
         if service in entry and isinstance(inner, dict) and "name" not in entry and "reference" not in entry:
@@ -326,8 +320,7 @@ SERVICE_USE_SUBJECT = "Gebruik van de dienst"
 class ServiceUseApproval:
     """The complete form of 'yes, this project may use this service'.
 
-    What :func:`service_use_approval` returns. Three things, no more, because that is
-    exactly what a service with this form needs:
+    What :func:`service_use_approval` returns.
 
     Attributes:
         spec: the :class:`ApprovalSpec` for ``config_approvals()`` -- read, list, record
@@ -353,44 +346,41 @@ def service_use_approval(
 ) -> ServiceUseApproval:
     """The boolean approval: may this project use this service, yes or no.
 
-    This form appears more often than in one service, and hand-written is about ninety
-    lines: read status, item for approval page, record verdict, notice to requester, and
-    the request itself. The second service that needs it copies that, and from then on the
-    two drift apart. Hence a declaration.
+    One declaration produces the whole set: read status, item for the approval page, record
+    verdict, notice to the requester, and the request itself.
 
-    De toestand staat onder de dienst zelf, op ``services/[<dienst>]/config/approval``,
-    met ``status`` en ``history``. Er is er EEN per project: wat wordt goedgekeurd is
-    "dit project mag deze dienst gebruiken", niet een afzonderlijke waarde.
+    The state lives under the service itself, at ``services/[<service>]/config/approval``,
+    with ``status`` and ``history``. There is ONE per project: what gets approved is "this
+    project may use this service", not a separate value.
 
     Args:
-        service_type: de dienst waar de goedkeuring bij hoort.
-        label: het opschrift van de aanvraag in de beheerpagina.
-        activity: waar het besluit over gaat, als onderwerp van een zin -- bijvoorbeeld
-            "Het versturen van e-mail". De drie zinnen (afgewezen, aangevraagd, nog niet
-            aangevraagd) worden ermee gebouwd, zodat ze niet uit elkaar kunnen lopen.
-        consequence: wat het voor de deployment BETEKENT zolang er geen goedkeuring is.
-            Dit is de helft die je makkelijk overslaat en duur overslaat: een dienst die
-            aanstaat en stil niets doet is precies de storing die hier is uitgeroeid.
-        approver: wie mag beslissen.
+        service_type: the service the approval belongs to.
+        label: the heading of the request on the approver page.
+        activity: what the decision is about, as the subject of a sentence, for instance
+            "Het versturen van e-mail". The three sentences (denied, requested, not yet
+            requested) are built from it, so they cannot drift apart.
+        consequence: what it MEANS for the deployment while there is no approval, so a
+            service that is on and does nothing does not stay silent about it.
+        approver: who may decide.
     """
-    naam = service_type.value
-    state = _ApprovalState(naam, "approval")
+    name = service_type.value
+    state = _ApprovalState(name, "approval")
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
-        """De CHECK. ``value`` wordt niet gelezen: er is EEN goedkeuring per project."""
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
+        """THE CHECK. ``value`` is not read: there is ONE approval per project."""
         return state.status(project_data)
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
         return state.status(project_data) is ApprovalStatus.APPROVED
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-        """De LIJST. Een item per project dat het gevraagd heeft."""
+        """THE LIST. One item per project that asked for it."""
         approval = state.read(project_data)
         if approval is None:
             return []
         return [
             {
-                "type": naam,
+                "type": name,
                 "subject": SERVICE_USE_SUBJECT,
                 "domain": "",
                 "name": project_data.get("name", ""),
@@ -401,11 +391,11 @@ def service_use_approval(
         ]
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-        """De RECORD. Schrijft het oordeel in het configblok van de dienst zelf."""
+        """THE RECORD. Writes the verdict into the service's own config block."""
         state.write(project_data, {"status": item.get("status", "skip")}, history_entry)
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-        """De NOTICE. Wat de eigenaar te horen krijgt zolang er geen goedkeuring is."""
+        """THE NOTICE. What the owner is told while there is no approval."""
         if not state.selected(project_data):
             return []
         status = state.status(project_data)
@@ -422,11 +412,11 @@ def service_use_approval(
         ]
 
     def _ensure_requested(project_data: dict[str, Any]) -> None:
-        """De dienst aanzetten IS de aanvraag.
+        """Switching the service on IS the request.
 
-        Toestandsvormig en niet gebeurtenisvormig: lees het project zoals het staat en
-        vul aan wat ontbreekt. Zo landt een aanvraag via de API op dezelfde plek als een
-        vinkje in de wizard, en verandert een tweede keer draaien niets.
+        State shaped and not event shaped: read the project as it stands and fill in what is
+        missing. That way a request over the API lands in the same place as a tick in the
+        wizard, and running a second time changes nothing.
         """
         if not state.selected(project_data) or state.read(project_data) is not None:
             return
@@ -434,7 +424,7 @@ def service_use_approval(
 
     return ServiceUseApproval(
         spec=ApprovalSpec(
-            key=naam,
+            key=name,
             label=label,
             approver=approver,
             status_of=_status_of,
@@ -447,19 +437,19 @@ def service_use_approval(
     )
 
 
-#: Achtervoegsel van het goedkeuringsblok bij een waarde: ``from-address`` ->
-#: ``from-address-approval``. Een vaste vorm, zodat een lezer van een projectbestand bij
-#: elk aanvraagbaar veld weet waar het oordeel erover staat.
+#: Suffix of the approval block of a value: ``from-address`` -> ``from-address-approval``. A
+#: fixed shape, so a reader of a project file knows where the verdict on every approvable field
+#: lives.
 VALUE_APPROVAL_SUFFIX = "-approval"
 
-#: Sleutel waaronder het blok de LAATST goedgekeurde waarde onthoudt. Het oordeel hangt aan
-#: de waarde, dus een gewijzigde waarde is een nieuwe aanvraag; zonder dit geheugen zou een
-#: openstaande aanvraag ook weghalen wat er al gold.
+#: Key under which the block remembers the LAST approved value. The verdict hangs on the
+#: value, so a changed value is a new request; without this memory an open request would also
+#: take away what already held.
 LAST_APPROVED_KEY = "approved-value"
 
 
-def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) -> ApprovalStatus:
-    """DE CHECK op een waarde: een oordeel geldt alleen voor de waarde waarover het ging."""
+def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
+    """THE CHECK on a value: a verdict applies only to the value it was about."""
     block = state.read(data)
     if block is None:
         return ApprovalStatus.NONE
@@ -473,14 +463,14 @@ def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) ->
 def _record_value(
     state: _ApprovalState,
     data: dict[str, Any],
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
     item: ApprovalItem,
     history_entry: dict[str, Any],
 ) -> None:
-    """DE RECORD op een waarde: het oordeel landt bij de waarde waarover het ging.
+    """THE RECORD on a value: the verdict lands with the value it was about.
 
-    Een oordeel over een andere waarde dan er nu gevraagd wordt, schrijft niets: het
-    project kan het veld wijzigen tussen het renderen van de lijst en het insturen.
+    A verdict about a value other than the one now requested writes nothing: the project can
+    change the field between rendering the list and submitting it.
     """
     if value is None or item.get("domain", "") != str(value):
         return
@@ -490,18 +480,18 @@ def _record_value(
         fields[LAST_APPROVED_KEY] = value
     state.write(data, fields, history_entry)
     if status == ApprovalStatus.DENIED.value and (state.read(data) or {}).get(LAST_APPROVED_KEY) == value:
-        # Afwijzen van precies de staande goedkeuring neemt die terug. Zonder dit is een
-        # goedgekeurde waarde niet in te trekken. Een afwijzing van een ANDERE gevraagde
-        # waarde raakt de staande goedkeuring niet.
+        # Denying exactly the standing approval withdraws it. Without this an approved value
+        # cannot be withdrawn. A denial of ANOTHER requested value leaves the standing approval
+        # alone.
         (state.read(data) or {}).pop(LAST_APPROVED_KEY, None)
 
 
-def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: Any) -> None:
-    """DE AANVRAAG op een waarde: de waarde zetten IS de aanvraag."""
+def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: Any) -> None:  # noqa: ANN401  # a project-file value
+    """THE REQUEST on a value: setting the value IS the request."""
     if value is None:
-        # Een besluit geldt alleen voor de stand waarvoor het is gegeven. Blijft het blok
-        # staan als het veld terug naar de onschuldige stand gaat, dan geldt die
-        # goedkeuring later opnieuw zonder besluit.
+        # A decision applies only to the state it was given for. If the block stayed when the
+        # field goes back to the harmless state, that approval would apply again later without
+        # a decision.
         state.clear(data)
         return
     block = state.read(data)
@@ -511,9 +501,8 @@ def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: 
             return
         if "value" not in block and last == value:
             return
-    # Een nieuwe waarde begint met een lege geschiedenis: de vorige oordelen gingen over een
-    # andere waarde. De laatst goedgekeurde waarde gaat WEL mee: die geldt zolang deze
-    # aanvraag openstaat.
+    # A new value starts with an empty history: the previous verdicts were about another
+    # value. The last approved value DOES travel along: it applies while this request is open.
     state.clear(data)
     if last is not None and last == value:
         state.write(data, {LAST_APPROVED_KEY: last})
@@ -553,17 +542,17 @@ def _value_item(
     *,
     field: str,
     block: dict[str, Any],
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
     subject: str,
     name: str,
     extra: dict[str, Any] | None = None,
 ) -> ApprovalItem:
-    """Het item voor de beheerpagina, met de GEVRAAGDE WAARDE als deel van zijn identiteit.
+    """The item for the approver page, with the REQUESTED VALUE as part of its identity.
 
-    De bewaking op goedkeuringsbesluiten (``validate_approval_decisions``) paart items op
-    (dienst, type, domain, name), dus zo is een andere waarde een ander item en kan een
-    goedkeuring niet meeliften op een waarde die intussen veranderde. ``name`` draagt het
-    project, en op de deploymentlaag ook de deployment.
+    The guard on approval decisions (``validate_approval_decisions``) pairs items on (service,
+    type, domain, name), so another value is another item and an approval cannot ride along on
+    a value that changed meanwhile. ``name`` carries the project, and at the deployment layer
+    the deployment too.
     """
     return {
         "type": field,
@@ -579,21 +568,20 @@ def _value_item(
 
 @dataclass(frozen=True)
 class ConfigValueApproval:
-    """De complete vorm van "deze WAARDE mag pas gelden als iemand hem goedkeurt".
+    """The complete shape of "this VALUE only applies once somebody approves it".
 
-    Wat :func:`config_value_approval` teruggeeft. Het verschil met
-    :class:`ServiceUseApproval` zit in waar het besluit over gaat: niet over de dienst,
-    maar over een waarde in zijn config, en dus geldt een goedkeuring alleen voor de
-    waarde die is goedgekeurd.
+    What :func:`config_value_approval` returns. The difference with
+    :class:`ServiceUseApproval` is what the decision is about: not the service, but a value in
+    its config, so an approval applies only to the value that was approved.
 
     Attributes:
-        spec: de :class:`ApprovalSpec` voor ``config_approvals()``.
-        is_approved: DE POORT: vraagt de config een besluit, en is dat er?
-        approved_value: de gevraagde waarde als tekst als die is goedgekeurd, anders leeg.
-        last_approved_value: de laatste waarde waarover een beheerder "ja" zei, ook als het
-            project daarna iets anders vroeg. Leeg als er nooit iets is goedgekeurd.
-        ensure_requested: de waarde zetten IS de aanvraag; dit legt hem vast.
-            Toestandsvormig en dus idempotent.
+        spec: the :class:`ApprovalSpec` for ``config_approvals()``.
+        is_approved: THE GUARD: does the config ask for a decision, and is it there?
+        approved_value: the requested value as text when it is approved, else empty.
+        last_approved_value: the last value an administrator said "yes" to, also when the
+            project asked for something else afterwards. Empty when nothing was ever approved.
+        ensure_requested: setting the value IS the request; this records it. State shaped and
+            therefore idempotent.
     """
 
     spec: ApprovalSpec
@@ -615,70 +603,69 @@ def config_value_approval(
     subject: Callable[[dict[str, Any], str], str] | None = None,
     approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
 ) -> ConfigValueApproval:
-    """De goedkeuring op een configwaarde: deze stand van dit veld vraagt een besluit.
+    """The approval of a config value: this state of this field asks for a decision.
 
-    De tegenhanger van :func:`service_use_approval`. Daar is de dienst zelf het onderwerp
-    en is er een besluit per project; hier is een WAARDE het onderwerp, vraagt alleen een
-    gevraagde waarde een besluit, en geldt een goedkeuring voor die waarde. Verandert de
-    waarde, dan ontstaat een nieuwe aanvraag.
+    The counterpart of :func:`service_use_approval`. There the service itself is the subject
+    and there is one decision per project; here a VALUE is the subject, only a requested value
+    asks for a decision, and an approval applies to that value. Change the value and a new
+    request appears.
 
-    De toestand staat onder de dienst, op ``services/[<dienst>]/config/<veld>-approval``,
-    met ``status``, de gevraagde ``value``, de laatst goedgekeurde ``approved-value`` en
-    ``history``. Markeer dat veld als ``PLATFORM_MANAGED`` in het configmodel: een project
-    dat zijn eigen status mag zetten heeft geen goedkeuring.
+    The state lives under the service, at ``services/[<service>]/config/<field>-approval``,
+    with ``status``, the requested ``value``, the last approved ``approved-value`` and
+    ``history``. Mark that field as ``PLATFORM_MANAGED`` in the config model: a project that
+    may set its own status has no approval.
 
-    Twee manieren om te zeggen WAT er gevraagd is, precies een van beide:
+    Two ways to say WHAT is requested, exactly one of them:
 
-    - ``required_when``: een predicaat op de config. De waarde van ``field`` is de vraag
-      zolang het predicaat waar is. Redis (``acl-key-prefix`` uit) werkt zo.
-    - ``requested_value``: de gevraagde waarde als tekst, leeg als er niets gevraagd is. De
-      dienst bepaalt wat "niets gevraagd" is: een leeg veld, of een getal binnen wat het
-      project al mag. Send-email (afzenderadres, dagbudget) werkt zo.
+    - ``required_when``: a predicate on the config. The value of ``field`` is the question
+      while the predicate holds. Redis (``acl-key-prefix`` off) works that way.
+    - ``requested_value``: the requested value as text, empty when nothing is requested. The
+      service decides what "nothing requested" is: an empty field, or a number within what the
+      project is already allowed. Send-email (sender address, daily budget) works that way.
 
-    Terug naar de laatst goedgekeurde waarde is geen aanvraag: het blok houdt dan alleen
-    die waarde vast, zonder open aanvraag. De status wordt daarbij NIET op ``approved``
-    gezet, want een besluit komt alleen van de goedkeuringsroute
-    (``validate_approval_decisions``).
+    Going back to the last approved value is not a request: the block then holds only that
+    value, without an open request. The status is NOT set to ``approved`` in that case,
+    because a decision only comes from the approval route (``validate_approval_decisions``).
 
     Args:
-        service_type: de dienst waar het veld bij hoort.
-        field: de sleutel in de projectconfig van de dienst waar het besluit over gaat.
-        label: het opschrift van de aanvraag in de beheerpagina.
-        activity: waar het besluit over gaat, als onderwerp van een zin. Een functie van
-            de gevraagde waarde als die in de zin hoort ("Het afzenderadres ...").
-        consequence: wat er zolang gebeurt, in de woorden van de dienst. Een functie van
-            project en deployment als dat ervan afhangt; leeg mag.
-        required_when: of de config zoals hij er staat een besluit vraagt.
-        requested_value: de gevraagde waarde als tekst, leeg voor geen aanvraag.
-        subject: hoe de aanvraag in de beheerpagina heet; standaard ``activity``.
-        approver: wie mag beslissen.
+        service_type: the service the field belongs to.
+        field: the key in the service's project config the decision is about.
+        label: the heading of the request on the approver page.
+        activity: what the decision is about, as the subject of a sentence. A function of the
+            requested value when that belongs in the sentence ("Het afzenderadres ...").
+        consequence: what happens meanwhile, in the service's words. A function of project and
+            deployment when it depends on them; empty is allowed.
+        required_when: whether the config as it stands asks for a decision.
+        requested_value: the requested value as text, empty for no request.
+        subject: what the request is called on the approver page; ``activity`` by default.
+        approver: who may decide.
     """
     if (required_when is None) == (requested_value is None):
         raise TypeError("config_value_approval vraagt precies een van required_when en requested_value")
 
     state = _ApprovalState(service_type.value, f"{field}{VALUE_APPROVAL_SUFFIX}")
 
-    def _requested(project_data: dict[str, Any]) -> Any:
-        """De waarde waarover een besluit nodig is, of None als er niets gevraagd is."""
+    def _requested(project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
+        """The value a decision is needed about, or None when nothing is requested."""
         if requested_value is not None:
             return requested_value(project_data) or None
         config = state.service_config(project_data)
         return config.get(field) if required_when is not None and required_when(config) else None
 
-    def _activity(value: Any) -> str:
+    def _activity(value: Any) -> str:  # noqa: ANN401  # a project-file value
         return activity(value) if callable(activity) else activity
 
     def _consequence(project_data: dict[str, Any], deployment: dict[str, Any]) -> str:
         return consequence(project_data, deployment) if callable(consequence) else consequence
 
-    def _last_approved(project_data: dict[str, Any]) -> Any:
+    def _last_approved(project_data: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         return (state.read(project_data) or {}).get(LAST_APPROVED_KEY)
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         return _status_of_value(state, project_data, value)
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
-        """DE POORT: staat het veld in een stand die een besluit vraagt, en is dat er?"""
+        """THE GUARD: is the field in a state that asks for a decision, and is it there?"""
         value = _requested(project_data)
         return value is not None and _status_of(project_data, value) is ApprovalStatus.APPROVED
 
@@ -694,7 +681,7 @@ def config_value_approval(
         return _stored_approved_values([("", state)], project_data)
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-        """De LIJST. Een item zolang er een aanvraag open staat of is beoordeeld."""
+        """THE LIST. One item while a request is open or has been judged."""
         block = state.read(project_data)
         value = _requested(project_data)
         if block is None or "value" not in block or value is None:
@@ -710,11 +697,11 @@ def config_value_approval(
         ]
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-        """De RECORD. Het oordeel landt bij de waarde waarover het ging."""
+        """THE RECORD. The verdict lands with the value it was about."""
         _record_value(state, project_data, _requested(project_data), item, history_entry)
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-        """De NOTICE. Wat de eigenaar te horen krijgt zolang de waarde niet geldt."""
+        """THE NOTICE. What the owner is told while the value does not apply."""
         value = _requested(project_data)
         if not state.selected(project_data) or value is None:
             return []
@@ -732,7 +719,7 @@ def config_value_approval(
         ]
 
     def _ensure_requested(project_data: dict[str, Any]) -> None:
-        """De waarde zetten IS de aanvraag. Een andere waarde is een nieuwe aanvraag."""
+        """Setting the value IS the request. Another value is a new request."""
         if not state.selected(project_data):
             return
         _ensure_value_requested(state, project_data, _requested(project_data))
@@ -760,45 +747,43 @@ def config_value_approval(
     )
 
 
-#: Voorvoegsel van de spec-sleutel van een goedkeuring op de DEPLOYMENTlaag.
+#: Prefix of the spec key of an approval at the DEPLOYMENT layer.
 #:
-#: Een eigen sleutel en niet die van het veld, want ``Service.approval_specs`` ontdubbelt
-#: op sleutel: met dezelfde sleutel als de projectaanvraag zou de deploymentaanvraag
-#: nergens meer in de beheerpagina opduiken.
+#: A key of its own and not the field's, because ``Service.approval_specs`` deduplicates on
+#: key: with the same key as the project request the deployment request would no longer show up
+#: on the approver page at all.
 DEPLOYMENT_APPROVAL_KEY_PREFIX = "deployment-"
 
-#: Scheidingsteken tussen project en deployment in de identiteit van zo'n item.
+#: Separator between project and deployment in the identity of such an item.
 #:
-#: Een ``/`` komt in geen projectnaam en in geen deploymentnaam voor, dus een item van een
-#: deployment valt nooit samen met het projectitem of met dat van een andere deployment.
-#: Die identiteit is wat ``validate_approval_decisions`` paart, en wat de reseed in de
-#: beheerpagina overhoudt.
+#: A ``/`` occurs in no project name and in no deployment name, so a deployment's item never
+#: coincides with the project item or with another deployment's. That identity is what
+#: ``validate_approval_decisions`` pairs, and what the reseed on the approver page keeps.
 DEPLOYMENT_ITEM_SEPARATOR = "/"
 
 
 def deployment_item_name(project_name: str, deployment_name: str) -> str:
-    """De identiteit van een deploymentitem in de beheerpagina: ``<project>/<deployment>``."""
+    """The identity of a deployment item on the approver page: ``<project>/<deployment>``."""
     return f"{project_name}{DEPLOYMENT_ITEM_SEPARATOR}{deployment_name}"
 
 
 @dataclass(frozen=True)
 class DeploymentValueApproval:
-    """Hetzelfde als :class:`ConfigValueApproval`, maar per DEPLOYMENT.
+    """The same as :class:`ConfigValueApproval`, but per DEPLOYMENT.
 
-    Een eigen vorm en geen ``layer``-vlag op dezelfde dataclass, omdat de aanroepers een
-    andere vraag stellen: niet "mag dit project dit", maar "mag DEZE deployment dit". Dat
-    is een extra argument op elke poort, en een dataclass die beide signaturen moet dragen
-    typeert geen van beide. De REGELS zijn gedeeld: beide fabrieken gebruiken
-    ``_status_of_value``, ``_record_value`` en ``_ensure_value_requested``, dus een oordeel
-    over een waarde werkt op beide lagen hetzelfde.
+    A shape of its own and not a ``layer`` flag on that dataclass: every guard here takes the
+    deployment name as an extra argument, and one dataclass carrying both signatures types
+    neither. The RULES are shared: both factories use ``_status_of_value``, ``_record_value``
+    and ``_ensure_value_requested``, so a verdict about a value works the same on both
+    layers.
 
     Attributes:
-        spec: de :class:`ApprovalSpec` voor ``config_approvals(ConfigLayer.DEPLOYMENT)``.
-        is_approved: DE POORT: vraagt deze deployment een besluit, en is dat er?
-        approved_value: de gevraagde waarde van deze deployment als die is goedgekeurd.
-        last_approved_value: de laatste waarde waarover een beheerder voor deze deployment
-            "ja" zei, ook als zij daarna iets anders vroeg.
-        ensure_requested: legt de aanvraag van elke deployment vast. Toestandsvormig.
+        spec: the :class:`ApprovalSpec` for ``config_approvals(ConfigLayer.DEPLOYMENT)``.
+        is_approved: THE GUARD: does this deployment ask for a decision, and is it there?
+        approved_value: this deployment's requested value when it is approved.
+        last_approved_value: the last value an administrator said "yes" to for this deployment,
+            also when it asked for something else afterwards.
+        ensure_requested: records every deployment's request. State shaped.
     """
 
     spec: ApprovalSpec
@@ -819,45 +804,39 @@ def deployment_value_approval(
     subject: Callable[[dict[str, Any], str, str], str] | None = None,
     approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
 ) -> DeploymentValueApproval:
-    """De goedkeuring op een configwaarde die EEN DEPLOYMENT overschrijft (RC-401).
+    """The approval of a config value ONE DEPLOYMENT overrides.
 
-    De tegenhanger van :func:`config_value_approval` op de deploymentlaag. Een project zet
-    een waarde voor al zijn deployments; een deployment die daarvan afwijkt, vraagt een
-    eigen besluit, en dat besluit is van die deployment alleen. Daardoor blijft een
-    goedgekeurde afwijking staan als de projectwaarde later omlaag gaat, terwijl een
-    deployment die ERFT wel meegaat.
+    The counterpart of :func:`config_value_approval` at the deployment layer. A project sets a
+    value for all its deployments; a deployment deviating from it asks for a decision of its
+    own, and that decision belongs to that deployment alone. An approved deviation therefore
+    keeps standing when the project value goes down later, while a deployment that INHERITS
+    follows along.
 
-    De toestand staat op ``deployments[*].services[<dienst>].config/<veld>-approval``, in
-    dezelfde blokvorm als op het project: ``status``, de gevraagde ``value``, de laatst
-    goedgekeurde ``approved-value`` en ``history``.
+    The state lives at ``deployments[*].services[<service>].config/<field>-approval``, in the
+    same block shape as on the project: ``status``, the requested ``value``, the last approved
+    ``approved-value`` and ``history``.
 
     Args:
-        service_type: de dienst waar het veld bij hoort.
-        field: de sleutel in de deploymentconfig van de dienst waar het besluit over gaat.
-        label: het opschrift van de aanvraag in de beheerpagina.
-        activity: waar het besluit over gaat, als onderwerp van een zin.
-        consequence: wat er zolang gebeurt, in de woorden van de dienst.
-        requested_value: de gevraagde waarde van EEN deployment als tekst, leeg voor geen
-            aanvraag. De dienst bepaalt wat "niets gevraagd" is: een leeg veld, of een
-            waarde die het project al mocht.
-        subject: hoe de aanvraag heet in de beheerpagina, gegeven project, deployment en
-            waarde; standaard ``activity`` met de deployment erbij.
-        approver: wie mag beslissen.
+        service_type: the service the field belongs to.
+        field: the key in the service's deployment config the decision is about.
+        label: the heading of the request on the approver page.
+        activity: what the decision is about, as the subject of a sentence.
+        consequence: what happens meanwhile, in the service's words.
+        requested_value: ONE deployment's requested value as text, empty for no request. The
+            service decides what "nothing requested" is: an empty field, or a value the
+            project was already allowed.
+        subject: what the request is called on the approver page, given project, deployment
+            and value; by default ``activity`` with the deployment added.
+        approver: who may decide.
     """
     state_key = f"{field}{VALUE_APPROVAL_SUFFIX}"
     service = service_type.value
     selection = _ApprovalState(service, state_key)
 
-    def _deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
-        """De deployment met deze naam, of een leeg blok als het project hem niet kent."""
-        index = deployment_index(project_data, deployment_name)
-        if index is None:
-            return {}
-        deployment = project_data["deployments"][index]
-        return deployment if isinstance(deployment, dict) else {}
-
     def _state(deployment_name: str) -> _ApprovalState:
-        return _ApprovalState(service, state_key, holder=lambda pd: _deployment(pd, deployment_name))
+        return _ApprovalState(
+            service, state_key, holder=lambda pd: Project(pd).find("deployments", name=deployment_name) or {}
+        )
 
     def _deployment_names(project_data: dict[str, Any]) -> list[str]:
         return [
@@ -866,30 +845,29 @@ def deployment_value_approval(
             if isinstance(deployment, dict) and deployment.get("name")
         ]
 
-    def _requested(project_data: dict[str, Any], deployment_name: str) -> Any:
-        """De waarde waarover een besluit nodig is, of None als er niets gevraagd is."""
+    def _requested(project_data: dict[str, Any], deployment_name: str) -> Any:  # noqa: ANN401  # a project-file value
+        """The value a decision is needed about, or None when nothing is requested."""
         return requested_value(project_data, deployment_name) or None
 
-    def _activity(value: Any) -> str:
+    def _activity(value: Any) -> str:  # noqa: ANN401  # a project-file value
         return activity(value) if callable(activity) else activity
 
-    def _subject(project_data: dict[str, Any], deployment_name: str, value: Any) -> str:
+    def _subject(project_data: dict[str, Any], deployment_name: str, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if subject is not None:
             return subject(project_data, deployment_name, str(value))
         return f"{_activity(value)} voor deployment {deployment_name}"
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
-        """De CHECK, met de deployment in ``value``: generieke code kent de laag niet.
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
+        """THE CHECK, with the deployment inside ``value``: generic code does not know the layer.
 
-        ``value`` is hier het paar (deployment, waarde). De generieke laag behandelt het
-        als een ondoorzichtige waarde, precies zoals het domein/subdomein-paar van
-        publish-on-web.
+        ``value`` is the pair (deployment, value) here. The generic layer treats it as an
+        opaque value, exactly like publish-on-web's domain/subdomain pair.
         """
-        deployment_name, waarde = value
-        return _status_of_value(_state(deployment_name), project_data, waarde)
+        deployment_name, requested = value
+        return _status_of_value(_state(deployment_name), project_data, requested)
 
     def _is_approved(project_data: dict[str, Any], deployment_name: str) -> bool:
-        """DE POORT: vraagt deze deployment een besluit, en is dat er?"""
+        """THE GUARD: does this deployment ask for a decision, and is it there?"""
         value = _requested(project_data, deployment_name)
         return value is not None and _status_of(project_data, (deployment_name, value)) is ApprovalStatus.APPROVED
 
@@ -907,7 +885,7 @@ def deployment_value_approval(
         return _stored_approved_values([(name, _state(name)) for name in _deployment_names(project_data)], project_data)
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-        """De LIJST. Een item per deployment met een open of beoordeelde aanvraag."""
+        """THE LIST. One item per deployment with an open or judged request."""
         items: list[ApprovalItem] = []
         project_name = project_data.get("name", "")
         for deployment_name in _deployment_names(project_data):
@@ -928,11 +906,11 @@ def deployment_value_approval(
         return items
 
     def _deployment_of(item: ApprovalItem) -> str:
-        """Welke deployment dit item is, uit de identiteit die de reseed overleeft."""
+        """Which deployment this item is, from the identity that survives the reseed."""
         return str(item.get("name", "")).partition(DEPLOYMENT_ITEM_SEPARATOR)[2]
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-        """De RECORD. Het oordeel landt bij de deployment en de waarde waarover het ging."""
+        """THE RECORD. The verdict lands with the deployment and the value it was about."""
         deployment_name = _deployment_of(item)
         if not deployment_name:
             return
@@ -945,7 +923,7 @@ def deployment_value_approval(
         )
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-        """De NOTICE. Wat de eigenaar van DEZE deployment te horen krijgt."""
+        """THE NOTICE. What the owner of THIS deployment is told."""
         deployment_name = deployment.get("name") or ""
         value = _requested(project_data, deployment_name) if deployment_name else None
         if not selection.selected(project_data) or value is None:
@@ -965,7 +943,7 @@ def deployment_value_approval(
         ]
 
     def _ensure_requested(project_data: dict[str, Any]) -> None:
-        """De waarde zetten IS de aanvraag, per deployment."""
+        """Setting the value IS the request, per deployment."""
         if not selection.selected(project_data):
             return
         for deployment_name in _deployment_names(project_data):
@@ -1081,15 +1059,15 @@ def config_item_value_approval(
     def _state(item_name: str) -> _ItemApprovalState:
         return _ItemApprovalState(service, map_key, item_name)
 
-    def _requested(project_data: dict[str, Any], item_name: str) -> Any:
+    def _requested(project_data: dict[str, Any], item_name: str) -> Any:  # noqa: ANN401  # a project-file value
         return requested_value(project_data, item_name) or None
 
-    def _subject(project_data: dict[str, Any], item_name: str, value: Any) -> str:
+    def _subject(project_data: dict[str, Any], item_name: str, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if subject is not None:
             return subject(project_data, item_name, str(value))
         return activity(item_name, value)
 
-    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
         """The CHECK, with the item in ``value``: the pair (item, value), as per deployment."""
         item_name, item_value = value
         return _status_of_value(_state(item_name), project_data, item_value)

@@ -10,8 +10,9 @@ from opi.connectors.argo import ArgoTransportError
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.metrics import PHASE_ARGO_WAIT_HEALTHY, PHASE_ARGO_WAIT_SYNCED, observe_rollout_phase
-from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
+from opi.services.project_utils import project_level_deployment
+from opi.services.tasks.task_supersede import raise_if_superseded
 from opi.utils.age import decrypt_password_smart
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.naming import (
@@ -30,7 +31,6 @@ from opi.utils.naming import (
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
-from opi.utils.project_utils import project_level_deployment
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 
 if TYPE_CHECKING:
@@ -38,11 +38,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ArgoCD condition types that mean the application can never reach a healthy synced state
-# on its own - the desired manifests could not be generated or compared (this is where a
-# broken kustomization / CMP render surfaces), or the spec/sync is invalid. When ArgoCD
-# hits one of these it sets sync.status=Unknown and does NOT start a sync operation, so
-# there is no operationState.phase to key off; the message lives only in status.conditions.
+#: ArgoCD condition types that mean the application can never reach a healthy synced state
+#: on its own: the desired manifests could not be generated or compared (where a broken
+#: kustomization or CMP render surfaces), or the spec or sync is invalid. ArgoCD then sets
+#: sync.status=Unknown and starts NO sync operation, so there is no operationState.phase to
+#: key off and the message lives only in status.conditions.
 _TERMINAL_CONDITION_TYPES = frozenset({"ComparisonError", "InvalidSpecError", "SyncError", "UnknownError"})
 
 
@@ -62,111 +62,88 @@ def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
     return None
 
 
-#: Hoe vaak de wachtlussen ArgoCD bevragen. Stond op 5 (en op 10 bij de infrastructuur)
-#: uit de tijd dat een nieuw project door een ArgoCD-bug minuten kon duren; dan valt een
-#: interval van 5 seconden weg in het geheel. Gemeten op 14 augustus 2026 duurt het
-#: aanmaken van een heel project 42,9 seconden, waarvan 6 seconden wachten tot de
-#: applicatie bestaat -- en dan is tot 5 seconden niets doen bijna de helft van die fase.
-#:
-#: Twee seconden, want dit gaat over hoe snel de gebruiker het ZIET: de stap is al klaar,
-#: alleen wij weten het nog niet. Lager heeft geen zin, want de voortgang in de browser
-#: ververst zelf ook niet sneller, en het kost ArgoCD wel verzoeken.
-POLL_INTERVAL_SECONDEN = 2
+#: How often the wait loops ask ArgoCD. Two seconds, because this is about how fast the
+#: USER sees it: the step is already done and only we do not know yet. Lower buys nothing,
+#: because the progress in the browser does not refresh faster either, while it does cost
+#: ArgoCD requests.
+POLL_INTERVAL_SECONDS = 2
 
-#: De bewaker die `user-applications` blijft prikken loopt op het ANTWOORD van de refresh,
-#: niet op de klok: die call blijft hangen tot er een reconcile is afgerond (op productie
-#: zo'n tien seconden), en juist op dat moment is te zien of die reconcile onze revisie had.
-#: Deze ondergrens is er alleen voor het geval de call wél meteen terugkomt, zodat het geen
-#: hete lus wordt. Er zit dus een mens op te wachten en dat mag je merken.
-#:
-#: Een seconde en niet vijf (RC-418): een verloren refresh kostte gemeten ~18 seconden, en
-#: deze grens legde daar per ronde maximaal vier seconden wachten bovenop zonder dat er iets
-#: gebeurde. De storm die hij afhoudt is nog steeds afgehouden, want de refresh zelf blijft
-#: hangen tot een reconcile klaar is en komt alleen bij uitzondering meteen terug.
-UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 1
+#: The watcher that keeps poking `user-applications` runs on the ANSWER of the refresh and
+#: not on the clock: that call hangs until a reconcile has finished (about ten seconds on
+#: production), and exactly then it shows whether that reconcile carried our revision. This
+#: lower bound only exists for the case where the call does come straight back, so the loop
+#: cannot turn hot; a person is waiting on it.
+UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS = 1
 
-#: Hoe vaak we dat hoogstens proberen. Een refresh op de umbrella is duur, want de
-#: applicatie mist de `manifest-generate-paths`-annotatie (issue #130) en hertekent dus
-#: circa 90 child-apps. Staat de revisie na zoveel rondes nog niet goed, dan is er iets
-#: anders aan de hand dan een verloren wekker en helpt doorprikken niet meer.
-UMBRELLA_REFRESH_MAX_POGINGEN = 6
+#: How many times that is tried at most. A refresh on the umbrella is expensive, because the
+#: application lacks the `manifest-generate-paths` annotation (issue #130) and so redraws
+#: some 90 child apps. If the revision is still wrong after this many rounds, something other
+#: than a lost wake-up is going on and poking again does not help.
+UMBRELLA_REFRESH_MAX_ATTEMPTS = 6
 
-#: Hoe lang de aanmaak wacht tot het PROJECTNIVEAU gesynchroniseerd is. Die applicatie
-#: beheert namespace-brede resources zonder eigen rollout, dus dit is de tijd voor de
-#: umbrella plus een sync, niet voor een pod die opstart. Loopt hij hierin vast, dan
-#: haalt een deployment die zijn ServiceAccount mist zijn eigen sync-timeout ook niet.
-PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN = 240
+#: How long the create waits for the PROJECT LEVEL to be synced. That application manages
+#: namespace-wide resources with no rollout of its own, so this is the time for the umbrella
+#: plus a sync, not for a pod that starts. A deployment that misses its ServiceAccount does
+#: not make its own sync timeout either.
+PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS = 240
 
 #: Budget for login/refresh retries during ArgoCD recovery (seconds).
-ARGOCD_HERSTEL_BUDGET_SECONDEN = 600
+ARGOCD_RECOVERY_BUDGET_SECONDS = 600
 
 #: Minimum interval between retries (seconds).
-ARGOCD_HERSTEL_POLL_SECONDEN = 5
+ARGOCD_RECOVERY_POLL_SECONDS = 5
 
-#: Hoe lang een wacht op het BESTAAN van een kind-Application mag duren. Dat wachten gaat
-#: niet over de applicatie zelf maar over de umbrella die hem moet aanmaken, en een refresh
-#: daarvan hertekent circa 90 child-apps (issue #130), dus onder last kost dat minuten.
-#: Dezelfde grens voor de infrastructuur-, project- en deployment-applicaties: ze wachten
-#: alle drie op diezelfde umbrella.
-APPLICATIE_AANMAAK_TIMEOUT_SECONDEN = 360
+#: How long a wait for the EXISTENCE of a child Application may take. That wait is not about
+#: the application itself but about the umbrella that has to create it, and a refresh of that
+#: umbrella redraws some 90 child apps (issue #130), so under load it costs minutes. The same
+#: bound for the infrastructure, project and deployment applications: all three wait on that
+#: same umbrella.
+APPLICATION_CREATION_TIMEOUT_SECONDS = 360
 
-#: Hoe vaak we tijdens het wachten zelf een refresh vragen zolang de status op
-#: ``Progressing`` blijft staan. ArgoCD hertoetst een applicatie alleen op een watch-event
-#: van een beheerde resource, en anders pas na ``timeout.reconciliation`` (op productie 15
-#: minuten). Gaat zo'n event verloren, dan bevriest de health op de laatste waarneming en
-#: wachten wij 300 seconden onder een hertoetsing van 900: elk gemist event wordt dan
-#: automatisch een gebruikerszichtbare fout. Zelf om een refresh vragen trekt die ene
-#: applicatie los, zonder de clusterbrede knop lager te zetten.
-HERVERVERS_ELKE_SECONDEN = 60
+#: How often the wait asks for a refresh itself while the status stays ``Progressing``.
+#: ArgoCD re-evaluates an application only on a watch event of a managed resource, and
+#: otherwise not until ``timeout.reconciliation`` (15 minutes on production). If such an
+#: event is lost, the health freezes on the last observation and a missed event would turn
+#: into a user-visible error. Asking for a refresh pulls that one application loose, without
+#: lowering the cluster-wide knob.
+REFRESH_EVERY_SECONDS = 60
 
 
-def _verstreken_sinds(start: float) -> float:
-    """Verstreken wandkloktijd sinds ``start``, afgerond op 0,1 s.
+def _elapsed_since(start: float) -> float:
+    """Elapsed wall-clock time since ``start``, rounded to 0.1 s.
 
-    De wacht-lussen telden met ``elapsed_time += poll_interval``. Bij een trage loop of
-    een poll die op zijn timeout afloopt duurt een ronde veel langer dan dat, en dan
-    liegt de teller over de echte wachttijd en loopt de lus over zijn budget heen.
+    Not ``elapsed_time += poll_interval``: on a slow loop, or a poll that runs into its own
+    timeout, a round takes much longer than that, and the counter would then lie about the
+    real wait and run the loop past its budget.
     """
     return round(asyncio.get_running_loop().time() - start, 1)
 
 
-class ApplicationGone(RuntimeError):
-    """De Application bestond tijdens deze wacht en is er nu niet meer.
+class ApplicationGoneError(RuntimeError):
+    """The Application existed during this wait and is gone now.
 
-    Geen mislukking van de app zelf: iets anders heeft hem verwijderd, meestal een
-    delete_deployment voor dezelfde deployment. Doorwachten heeft geen zin, want er
-    komt niets meer terug om op te wachten.
+    Not a failure of the app itself: something else removed it, usually a delete_deployment
+    for the same deployment. Waiting on is pointless, because nothing is coming back.
     """
 
 
 class ArgoManager:
-    """Manager for ArgoCD-related operations and resources."""
-
     def __init__(self, project_manager: ProjectManager) -> None:
-        """
-        Initialize the ArgoManager with reference to ProjectManager.
-
-        Args:
-            project_manager: The main ProjectManager instance for accessing shared resources
-        """
         self.project_manager = project_manager
-        #: De commit die `_mutate_and_push_argo` als laatste naar de argo-applications
-        #: repo pushte. De wachters gebruiken hem als het enige harde bewijs dat de
-        #: umbrella onze wijziging gezien heeft: een tijdstempel zegt niets, een revisie
-        #: wel. None zolang er in deze taak niets gepusht is.
+        #: The commit `_mutate_and_push_argo` pushed last, which the waiters use as the only
+        #: hard proof that the umbrella has seen our change. None while nothing was pushed.
         self.last_pushed_argo_commit: str | None = None
-        #: Wat er als laatste van `user-applications` gelezen is, puur voor de diagnose in
-        #: de timeoutmelding hieronder.
+        #: Last read from `user-applications`, purely for the timeout diagnosis below.
         self.last_umbrella_revision: str | None = None
         self.last_umbrella_reconciled_at: str | None = None
 
     @staticmethod
     def _write_manifest_file(target_dir: str, filename: str, content: str) -> str:
-        """Schrijf een gerenderd manifest in de uitgecheckte repo en geef het pad terug.
+        """Write a rendered manifest into the checked-out repo and return its path.
 
-        Voor wat nog uit een template moet komen is ``ManifestGenerator`` de weg. Niet
-        committen: ``create_argocd_resources`` beslist wanneer er gepusht wordt, en dat is
-        per fase (projectniveau, dan de deployment-applicaties).
+        For anything that still has to come out of a template, ``ManifestGenerator`` is the
+        way. Does not commit: ``create_argocd_resources`` decides when a push happens, and it
+        does that per phase (project level, then the deployment applications).
         """
         os.makedirs(target_dir, exist_ok=True)
         path = os.path.join(target_dir, filename)
@@ -190,34 +167,30 @@ class ArgoManager:
                 op from regenerating every deployment's ArgoCD manifests (which would
                 rewrite unrelated deployments and collide with a concurrent delete).
 
-        Dit gaat in TWEE commits: eerst het projectniveau, dan de deployment-applicaties.
-        De grendel ertussen wacht tot de ServiceAccount van het projectniveau er staat; in
-        een commit zou er niets meer te wachten vallen.
+        This goes in TWO commits: the project level first, then the deployment applications.
+        The gate in between waits until the project level's ServiceAccount is there; in one
+        commit there would be nothing left to wait for.
+
+        Both exceptions below travel OUT of here, and that is deliberate: ``process_project``
+        turns them into ``return False`` and rolls out nothing at all. A Deployment that
+        misses its ServiceAccount does not make its own sync timeout either, so carrying on
+        degraded would be a failure presenting itself as a success, and the damage stays with
+        this one project.
 
         Raises:
-            TimeoutError: Als het projectniveau niet binnen
-                ``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN`` synchroniseert.
-            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
-
-        Die twee laten we DOOR, en dat is een gedragskeuze van RC-229. De oude wacht in
-        ``process_project_from_git`` ving ze af met een ``logger.warning`` en liep degraded
-        door; nu vertaalt de ``except Exception`` van ``process_project`` ze naar
-        ``return False`` en rolt het project helemaal niets uit. Dat is met opzet: mist de
-        ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen sync-timeout toch
-        niet, en dan is "degraded doorlopen" een mislukking die zich als succes voordoet.
-        De schade blijft bij dit ene project. De afgewezen health-override in
-        ``docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`` deed hetzelfde
-        clusterbreed, en juist daarop viel die af.
+            TimeoutError: the project level did not sync within
+                ``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS``.
+            RuntimeError: ArgoCD is unreachable, or the refresh yields nothing.
         """
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD resources for {project_name} on cluster {settings.CLUSTER_MANAGER}")
 
         project_data = await self.project_manager.get_contents()
 
-        async def _projectniveau() -> str | None:
+        async def _project_level() -> str | None:
             await self.create_repository_secrets(project_data, deployment_name, deployment_names)
             await self.create_app_projects(project_data, deployment_name, deployment_names)
-            # Projectbreed, dus buiten de deployment-scope hierboven. Idempotent.
+            # Project-wide, so outside the deployment scope above. Idempotent.
             app_name = await self.create_project_application(project_data)
             # The kustomization is a single shared per-project file that must enumerate
             # every manifest, so it intentionally stays project-wide.
@@ -226,35 +199,35 @@ class ArgoManager:
 
         project_app_name = await self._mutate_and_push_argo(
             f"Added ArgoCD project-level resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}",
-            _projectniveau,
+            _project_level,
         )
 
-        # RC-229: hier ligt de ordening, en niet bij de sync-wave. Zolang de CR van een
-        # deployment-applicatie nog niet bestaat kan ArgoCD hem ook niet zelf
-        # synchroniseren, dus de commit daarmee gaat er pas na deze grendel heen.
-        # Gemeten in docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md.
+        # The ordering lives here and not in the sync wave: while the CR of a deployment
+        # application does not exist, ArgoCD cannot sync it either, so the commit that carries
+        # it only goes out after this gate (RC-229, and
+        # `docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`).
         if project_app_name:
             await self.project_manager.wait_for_project_level_application(project_app_name)
 
-        async def _deploymentapplicaties() -> None:
+        async def _deployment_applications() -> None:
             await self.create_applications(project_data, deployment_name, deployment_names)
             await self.create_kustomization_files(project_data, deployment_name)
 
         await self._mutate_and_push_argo(
             f"Added ArgoCD resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}",
-            _deploymentapplicaties,
+            _deployment_applications,
         )
 
     async def _mutate_and_push_argo[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
         """Write to argo-applications repo and remember the pushed commit."""
         workspace = await self.project_manager.get_argo_workspace()
-        uitkomst = await workspace.mutate_and_push(message, mutate)
-        # De stand die de wachter in de umbrella moet terugzien. Landde er niets omdat die
-        # stand er al stond, dan is dat de tip waarop we bouwden: ook dan valt te bewijzen
-        # dat ArgoCD hem heeft vergeleken.
+        outcome = await workspace.mutate_and_push(message, mutate)
+        # The state the waiter has to see back in the umbrella. If nothing landed because that
+        # state was already there, it is the tip we built on, and that it was compared can
+        # still be proven.
         write = workspace.last_write
         self.last_pushed_argo_commit = write.ref if write else None
-        return uitkomst
+        return outcome
 
     async def create_repository_secrets(
         self,
@@ -281,7 +254,6 @@ class ArgoManager:
         """
         project_name = await self.project_manager.get_name()
 
-        # Get deployments for THIS cluster only
         deployments = await self.project_manager.get_deployments(
             cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
         )
@@ -297,13 +269,11 @@ class ArgoManager:
             f"Creating ArgoCD repository secrets for project: {project_name} on cluster {settings.CLUSTER_MANAGER}"
         )
 
-        # Get all repositories from the project data
         repositories = await self.project_manager.get_repositories()
         if not repositories:
             logger.error("No repositories defined in project data")
             return
 
-        # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
         project_dir = os.path.join(
             str(working_dir), generate_argocd_project_folder_path(str(cluster_name), project_name)
@@ -311,7 +281,6 @@ class ArgoManager:
         logger.info(f"Creating cluster/project directory: {project_dir}")
         os.makedirs(project_dir, exist_ok=True)
 
-        # Prepare manifest configurations for batch creation
         manifest_configs = []
         for repository in repositories:
             repo_name = repository["name"]
@@ -319,12 +288,10 @@ class ArgoManager:
 
             logger.info(f"  Processing repository: {repo_name} ({repo_url})")
 
-            # Generate unique, sanitized name WITHOUT credential hash
             # ArgoCD properly reloads secrets when they change, so versioning is not needed
             unique_repo_name = generate_argocd_repository_secret_name(project_name, repo_name)
             logger.info(f"  Generated secret name: {unique_repo_name}")
 
-            # Prepare variables for the manifest template (includes URL uniquification)
             variables = await self.prepare_repository_variables(
                 name=unique_repo_name,
                 namespace=get_argo_namespace(cluster_name),
@@ -333,7 +300,6 @@ class ArgoManager:
                 project_name=project_name,
             )
 
-            # Determine template path based on authentication method
             is_https = repo_url.startswith("https://")
             template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
             template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
@@ -341,7 +307,6 @@ class ArgoManager:
 
             logger.info(f"  Output filename: {output_filename}")
 
-            # No cleanup needed - ArgoCD properly reloads secrets when they change
             manifest_config = {
                 "template_path": template_path,
                 "values": variables,
@@ -352,7 +317,6 @@ class ArgoManager:
             manifest_configs.append(manifest_config)
             logger.info(f"  Added repository manifest config for {unique_repo_name} (SOPS: True)")
 
-        # Use manifest generator to create all repository manifests with SOPS encryption
         logger.info(f"Creating {len(manifest_configs)} ArgoCD repository manifests with SOPS encryption")
         created_files = []
 
@@ -402,23 +366,21 @@ class ArgoManager:
         username = repository.get("username")
         password = repository.get("password")
 
-        # Make URL unique for ArgoCD by embedding project name as username
-        # This prevents "Found multiple credentials for repoURL" warnings
+        # The project name goes into the URL as a username, which keeps ArgoCD from warning
+        # "Found multiple credentials for repoURL".
         unique_url = make_argocd_repository_url_unique(repository_url, project_name)
 
         logger.debug(f"Original URL: {repository_url}")
         logger.debug(f"Unique URL for ArgoCD: {unique_url}")
 
-        # Determine authentication method
         is_https = unique_url.startswith("https://")
 
-        # Decrypt password if encrypted
         decrypted_password = None
         if password:
             decrypted_password = await decrypt_password_smart(password, settings.SOPS_AGE_PRIVATE_KEY)
-            # De sjablonen coderen dit al als YAML-scalar; deze controle laat een verkeerd
-            # gezette waarde opvallen bij de verwerking in plaats van pas in ArgoCD.
-            if decrypted_password and any(teken in decrypted_password for teken in "\r\n\x00"):
+            # The templates already encode this as a YAML scalar; this check makes a wrongly
+            # set value show up during processing instead of only in ArgoCD.
+            if decrypted_password and any(character in decrypted_password for character in "\r\n\x00"):
                 raise ValueError(
                     f"Het wachtwoord van repository '{repository.get('name') or name}' bevat een regeleinde"
                     " of een NUL-byte"
@@ -429,7 +391,6 @@ class ArgoManager:
         # callers that need SSH auth supply the key via the project flow.
         ssh_private_key = ""
 
-        # Prepare variables for template
         return {
             "name": name,
             "namespace": namespace,
@@ -440,55 +401,6 @@ class ArgoManager:
             "password": decrypted_password or "",
             "ssh_private_key": ssh_private_key,
         }
-
-    async def generate_repository_manifest(
-        self, name: str, namespace: str, repository: dict[str, Any], repo_type: str, project_name: str
-    ) -> str:
-        """
-        Generate an ArgoCD repository manifest using the template file.
-
-        Supports both SSH and HTTPS authentication methods.
-
-        Args:
-            name: Repository name
-            namespace: ArgoCD namespace
-            repository: Repository configuration dictionary
-            repo_type: Repository type (e.g., "git")
-            project_name: Project name to make URL unique
-
-        Returns:
-            String containing the YAML manifest
-        """
-        repository_url = repository.get("url", "")
-
-        # Prepare variables with unique URL
-        variables = await self.prepare_repository_variables(name, namespace, repository, repo_type, project_name)
-
-        # Choose template based on authentication method
-        is_https = repository_url.startswith("https://")
-
-        if is_https:
-            # Use HTTPS template for all HTTPS repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository-https.yaml.jinja")
-            logger.info(
-                f"Using HTTPS template for repository {name} (credentials: "
-                f"{'YES' if variables.get('username') and variables.get('password') else 'NO'})"
-            )
-        else:
-            # Use SSH template for SSH and git:// repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository.yaml.jinja")
-            logger.info(f"Using SSH template for repository {name}")
-
-        # Read and process the manifest template
-        try:
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-
-            # Process the template with the variables
-            return self.project_manager._manifest_generator.template_manifest(manifest_template, variables)
-        except Exception:
-            logger.exception("Error generating ArgoCD repository manifest")
-            raise
 
     async def create_app_projects(
         self,
@@ -509,7 +421,6 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
         logger.debug(f"Creating ArgoCD AppProject for project: {project_name} on cluster {settings.CLUSTER_MANAGER}")
 
-        # Get deployments for THIS cluster only
         deployments = await self.project_manager.get_deployments(
             cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
         )
@@ -518,16 +429,14 @@ class ArgoManager:
             logger.warning(f"No deployments for cluster {settings.CLUSTER_MANAGER}")
             return
 
-        # Collect unique namespaces from deployments
         base_namespaces: set[str] = set()
         for deployment in deployments:
             base_namespace = deployment.get("namespace")
             base_namespaces.add(base_namespace)
 
-        # De bronrepo's komen van ALLE deployments van dit cluster, niet van de gefilterde
-        # selectie hierboven: een AppProject wordt overschreven, en met alleen de repo van
-        # de ene deployment kan de Application van een andere in dezelfde namespace niet
-        # meer syncen.
+        # The source repos come from EVERY deployment of this cluster, not from the filtered
+        # selection above: an AppProject is overwritten, and with only one deployment's repo in
+        # it the Application of another deployment in the same namespace can no longer sync.
         source_repos_per_namespace = self._source_repos_per_namespace(
             await self.project_manager.get_deployments(cluster_filter=True),
             project_data.get("repositories", []),
@@ -537,15 +446,11 @@ class ArgoManager:
         argo_workspace = await self.project_manager.get_argo_workspace()
         working_dir = await argo_workspace.get_working_dir()
 
-        # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
 
-        # Create one AppProject per namespace in THIS cluster
         for base_destination_namespace in base_namespaces:
-            # Generate consistent project-namespace name for AppProject
             appproject_name = generate_argocd_appproject_prefix(project_name, base_destination_namespace)
 
-            # Create ArgoCD AppProject manifest content
             appproject_content = self.generate_appproject_manifest(
                 name=appproject_name,
                 namespace=get_argo_namespace(cluster_name),
@@ -569,7 +474,7 @@ class ArgoManager:
     def _source_repos_per_namespace(
         deployments: list[dict[str, Any]], repositories: list[dict[str, Any]], project_name: str
     ) -> dict[str, list[str]]:
-        """De bronrepo's per deployment-namespace, in de vorm die de Application gebruikt."""
+        """The source repos per deployment namespace, in the form the Application uses."""
         found: dict[str, set[str]] = {}
         for deployment in deployments:
             repo_name = deployment.get("repository")
@@ -585,27 +490,18 @@ class ArgoManager:
     def generate_appproject_manifest(
         self, name: str, namespace: str, destination_namespace: str, project_label: str, source_repos: list[str]
     ) -> str:
-        """
-        Generate an ArgoCD AppProject manifest using the template file.
+        """Render the ArgoCD AppProject manifest from its template.
 
         Args:
-            name: AppProject name
-            namespace: ArgoCD namespace
-            destination_namespace: Target namespace pattern (e.g., "project-*")
-            project_label: Project label
-            source_repos: Repository URLs the project may deploy from
-
-        Returns:
-            String containing the YAML manifest
+            destination_namespace: Target namespace pattern, e.g. "project-*".
+            source_repos: Repository URLs the project may deploy from.
         """
-        # Path to the ArgoCD AppProject manifest template
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "argocd-appproject.yaml.jinja")
 
-        # Zonder signing key rendert de template geen signatureKeys, zodat een cluster waar
-        # OPI niet ondertekent blijft werken.
+        # Without a signing key the template renders no signatureKeys, so a cluster where OPI
+        # does not sign keeps working.
         signing = get_git_signing_identity()
 
-        # Prepare variables for template
         variables = {
             "name": name,
             "namespace": namespace,
@@ -615,12 +511,10 @@ class ArgoManager:
             "signature_key_id": signing.key_id if signing else None,
         }
 
-        # Read and process the manifest template
         try:
             with open(manifest_path) as f:
                 manifest_template = f.read()
 
-            # Process the template with the variables
             return self.project_manager._manifest_generator.template_manifest(manifest_template, variables)
         except Exception:
             logger.exception("Error generating ArgoCD AppProject manifest")
@@ -638,28 +532,15 @@ class ArgoManager:
         project_label: str,
         sync_wave: int = 1,
     ) -> str:
-        """
-        Generate an ArgoCD application manifest using the template file.
+        """Render the ArgoCD Application manifest from its template.
 
         Args:
-            name: Application name
-            namespace: ArgoCD namespace
-            argo_project: ArgoCD project
-            repo_url: Git repository URL
-            target_revision: Git branch or tag
-            repo_path: Path in the Git repository
-            destination_namespace: Target namespace
-            project_label: Project label
-            sync_wave: ArgoCD sync-wave. Deployments run on 1; the project level runs on 0
-                so what is namespace-wide is there before the pods that need it.
-
-        Returns:
-            String containing the YAML manifest
+            target_revision: Git branch or tag.
+            sync_wave: Deployments run on 1; the project level runs on 0, so what is
+                namespace-wide is there before the pods that need it.
         """
-        # Path to the ArgoCD application manifest template
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "argocd-application.yaml.jinja")
 
-        # Prepare variables for template
         variables = {
             "name": name,
             "namespace": namespace,
@@ -672,12 +553,10 @@ class ArgoManager:
             "sync_wave": sync_wave,
         }
 
-        # Read and process the manifest template
         try:
             with open(manifest_path) as f:
                 manifest_template = f.read()
 
-            # Process the template with the variables
             return self.project_manager._manifest_generator.template_manifest(manifest_template, variables)
         except Exception:
             logger.exception("Error generating ArgoCD application manifest")
@@ -689,18 +568,10 @@ class ArgoManager:
         deployment_name: str | None = None,
         deployment_names: list[str] | None = None,
     ) -> bool:
-        """
-        Create ArgoCD Application resources for the project.
-
-        In a Distributed Operations Manager architecture, this method only creates applications
-        for deployments in the CLUSTER_MANAGER cluster.
+        """Create the ArgoCD Application resources, for the CLUSTER_MANAGER cluster only.
 
         Args:
-            project_data: The project configuration data
-            deployment_name: Optional deployment name to create application only for specific deployment
-
-        Returns:
-            True if all applications were created successfully, False otherwise
+            deployment_name: Limits the work to one deployment.
         """
         project_name = await self.project_manager.get_name()
         logger.debug(f"Creating ArgoCD application for project: {project_name}")
@@ -709,7 +580,6 @@ class ArgoManager:
         working_dir = await argo_workspace.get_working_dir()
 
         try:
-            # Create an ArgoCD application for each deployment (filtered by cluster and optional name)
             deployments = await self.project_manager.get_deployments(
                 cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
             )
@@ -727,7 +597,6 @@ class ArgoManager:
                 base_namespace = deployment.get("namespace")
                 namespace = get_prefixed_namespace(cluster_name, base_namespace)
 
-                # Get repository information
                 repo_name = deployment.get("repository")
                 repositories = project_data.get("repositories", [])
                 repo_info = next((r for r in repositories if r.get("name") == repo_name), None)
@@ -737,10 +606,8 @@ class ArgoManager:
                     all_succeeded = False
                     continue
 
-                # ArgoCD application name
                 app_name = generate_argocd_application_name(project_name, deployment["name"])
 
-                # Combine repository path, cluster name, project name, and deployment name
                 cluster_name = deployment.get("cluster", "local")
                 deployment_path = generate_deployment_manifest_path(
                     cluster_name, project_name, deployment["name"], repo_info.get("path", "")
@@ -778,14 +645,14 @@ class ArgoManager:
             return False
 
     async def create_project_application(self, project_data: dict[str, Any]) -> str | None:
-        """Maak de ArgoCD-applicatie voor het PROJECTniveau van de deployments-repo.
+        """Create the ArgoCD application for the PROJECT LEVEL of the deployments repo.
 
-        Naast de AppProject in dezelfde projectmap, op sync-wave 0 terwijl de
-        deployment-applicaties op 1 staan.
+        Next to the AppProject in the same project directory, on sync-wave 0 while the
+        deployment applications are on 1.
 
-        Geeft de naam van de applicatie terug, of None als er niets geschreven is: geen
-        projectniveau voor dit project op dit cluster, of de repository niet gevonden. De
-        aanroeper hangt zijn ordeningsgrendel aan die naam.
+        Returns the name of the application, or None when nothing was written: no project
+        level for this project on this cluster, or the repository was not found. The caller
+        hangs its ordering gate on that name.
         """
         project_name = await self.project_manager.get_name()
         deployments = await self.project_manager.get_deployments(cluster_filter=True)
@@ -793,8 +660,8 @@ class ArgoManager:
             logger.debug(f"Geen deployments op dit cluster voor '{project_name}'; geen projectapplicatie")
             return None
 
-        # Repository en pad komen uit dezelfde functies als bij de schrijver van de map
-        # (``_process_project_manifests``), zodat de applicatie niet ernaast kan wijzen.
+        # Repository and path come from the same functions the writer of the directory uses
+        # (``_process_project_manifests``), so the application cannot point next to it.
         deployment = project_level_deployment(deployments)
         if deployment is None:
             return None
@@ -835,25 +702,19 @@ class ArgoManager:
     async def create_kustomization_files(
         self, project_data: dict[str, Any], deployment_name: str | None = None
     ) -> None:
-        """
-        Create kustomization.yaml files for ArgoCD project folders.
+        """Write the kustomization.yaml of an ArgoCD project folder, for CLUSTER_MANAGER only.
 
-        In a Distributed Operations Manager architecture, this method only creates kustomization
-        files for the CLUSTER_MANAGER cluster.
-
-        This method lists all YAML files in the project folder and creates a kustomization.yaml
-        that includes all ArgoCD manifests (applications, repositories, appprojects).
+        It lists every YAML file in the folder, so applications, repositories and appprojects
+        all end up in it.
 
         Args:
-            project_data: The project configuration data
-            deployment_name: Optional deployment name (currently unused, for future filtering)
+            deployment_name: Accepted but unused.
         """
         argo_workspace = await self.project_manager.get_argo_workspace()
         working_dir = await argo_workspace.get_working_dir()
 
         project_name = await self.project_manager.get_name()
 
-        # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
         project_dir = os.path.join(
             str(working_dir), generate_argocd_project_folder_path(str(cluster_name), str(project_name))
@@ -871,27 +732,18 @@ class ArgoManager:
     async def create_infrastructure_application(
         self, project_data: dict[str, Any], database_config: dict[str, Any], cluster_name: str
     ) -> bool:
-        """
-        Create ArgoCD infrastructure application and AppProject for namespace-specific database.
+        """Create the ArgoCD application and AppProject for a namespace-specific database.
 
-        This creates a separate ArgoCD application with sync-wave 0 that manages infrastructure
-        resources (CNPG database cluster, superuser credentials) in the infrastructure namespace.
-
-        Creates in ArgoCD applications repo at {cluster}/{project_name}-infrastructure/:
-        - ArgoCD Application manifest
-        - ArgoCD AppProject manifest
-        - Repository secret (SOPS encrypted)
-        - Kustomization.yaml
+        A separate application on sync-wave 0 that manages the infrastructure resources (the
+        CNPG cluster and its superuser credentials) in the infrastructure namespace. Written
+        in the ArgoCD applications repo under {cluster}/{project_name}-infrastructure/: the
+        Application, the AppProject, the SOPS-encrypted repository secret, and the
+        kustomization.
 
         Args:
-            project_data: The project configuration data
-            database_config: Database configuration from parsed services (image, storage, instances)
-            cluster_name: Target cluster name
-
-        Returns:
-            True if infrastructure application was created successfully, False otherwise
+            database_config: Image, storage and instances from the parsed services.
         """
-        from opi.core.cluster_config import get_infrastructure_namespace
+        from opi.utils.naming import get_infrastructure_namespace
 
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD infrastructure application for project: {project_name}")
@@ -900,27 +752,22 @@ class ArgoManager:
         working_dir = await argo_workspace.get_working_dir()
 
         try:
-            # Get repository information (use first repository, typically main-repo)
             repositories = project_data.get("repositories", [])
             if not repositories:
                 raise ValueError("No repositories defined in project data")
             repo_info = repositories[0]  # Use first repository
 
-            # Infrastructure namespace (cluster-aware)
             infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
 
-            # ArgoCD application name for infrastructure
             app_name = f"{project_name}-infrastructure"
 
-            # Repository path for infrastructure resources
             infrastructure_path = generate_infrastructure_manifest_path(
                 cluster_name, project_name, repo_info.get("path", "")
             )
 
-            # Make repository URL unique for ArgoCD
             repo_url = make_argocd_repository_url_unique(repo_info.get("url"), project_name)
 
-            async def _infrastructuur() -> None:
+            async def _infrastructure() -> None:
                 infra_folder_relative = generate_infrastructure_argocd_folder_path(cluster_name, project_name)
                 infra_argo_dir = os.path.join(str(working_dir), infra_folder_relative)
                 os.makedirs(infra_argo_dir, exist_ok=True)
@@ -1012,7 +859,7 @@ class ArgoManager:
 
             await self._mutate_and_push_argo(
                 f"Add ArgoCD infrastructure application for {project_name} in {cluster_name} cluster",
-                _infrastructuur,
+                _infrastructure,
             )
 
             logger.info(f"Successfully committed ArgoCD infrastructure resources for project '{project_name}'")
@@ -1024,24 +871,12 @@ class ArgoManager:
             return False
 
     async def wait_for_application_created(
-        self, app_name: str, timeout: int = 120, poll_interval: int = POLL_INTERVAL_SECONDEN
+        self, app_name: str, timeout: int = 120, poll_interval: int = POLL_INTERVAL_SECONDS
     ) -> bool:
-        """
-        Wait for an ArgoCD application to be created and appear in the API.
-
-        This method polls the ArgoCD API until the application exists or timeout is reached.
-        Used after creating ArgoCD application manifests to wait for ArgoCD to detect them.
-
-        Args:
-            app_name: Name of the application to wait for
-            timeout: Maximum time to wait in seconds (default: 120 = 2 minutes)
-            poll_interval: Seconds between checks (default: POLL_INTERVAL_SECONDEN)
-
-        Returns:
-            True if application was created, False otherwise
+        """Poll the ArgoCD API until the application exists.
 
         Raises:
-            TimeoutError: If application is not created within timeout
+            TimeoutError: the application did not appear within ``timeout``.
         """
         from opi.connectors.argo import create_argo_connector
 
@@ -1049,10 +884,8 @@ class ArgoManager:
             f"Waiting for ArgoCD application '{app_name}' to be created (timeout: {timeout}s, poll: {poll_interval}s)"
         )
 
-        # Create ArgoConnector instance
         argo_connector = create_argo_connector()
 
-        # Login to ArgoCD
         if not await argo_connector.login():
             raise RuntimeError("Failed to login to ArgoCD")
 
@@ -1062,26 +895,23 @@ class ArgoManager:
             # committed state, so waiting out this timeout only delays it.
             await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to be created")
             try:
-                # Check if application exists
                 if await argo_connector.application_exists(app_name):
                     logger.info(f"ArgoCD application '{app_name}' has been created!")
                     return True
 
-                # Not created yet, wait and retry
                 logger.debug(
                     f"Application '{app_name}' not found yet, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                 )
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
                 logger.warning(f"Error checking application creation status: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-        # Timeout reached. Noem in dezelfde regel wat de umbrella vergeleken heeft: als die
-        # revisie niet onze gepushte commit is, wachtten we op een reconcile die onze
-        # wijziging nog helemaal niet gezien had.
+        # Name in the same line what the umbrella compared: if that revision is not our pushed
+        # commit, the wait was on a reconcile that had not seen our change at all.
         error_msg = (
             f"Timeout waiting for ArgoCD application '{app_name}' to be created after {timeout}s "
             f"(gepushte commit: {self.last_pushed_argo_commit or 'onbekend'}, "
@@ -1096,30 +926,19 @@ class ArgoManager:
         project_name: str,
         cluster_name: str,
         timeout: int = 300,
-        poll_interval: int = POLL_INTERVAL_SECONDEN,
+        poll_interval: int = POLL_INTERVAL_SECONDS,
         refreshed_after: str | None = None,
     ) -> bool:
-        """
-        Wait for infrastructure ArgoCD application to be synced and healthy.
-
-        Polls the ArgoCD API to check if the infrastructure application (database cluster)
-        is successfully deployed and healthy before proceeding with application deployment.
+        """Poll until the infrastructure application (the database cluster) is synced and healthy.
 
         Args:
-            project_name: Name of the project
-            cluster_name: Target cluster name
-            timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
-            poll_interval: Seconds between status checks (default: POLL_INTERVAL_SECONDEN)
-            refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
-                ``refresh_application``.  When set, terminal states are ignored
-                until ``reconciledAt`` moves past this value.
-
-        Returns:
-            True if infrastructure is healthy, False if timeout or error
+            refreshed_after: ISO-8601 ``reconciledAt`` timestamp from
+                ``refresh_application``. Given, terminal states are ignored until
+                ``reconciledAt`` moves past this value.
 
         Raises:
-            TimeoutError: If infrastructure doesn't become ready within timeout
-            RuntimeError: If infrastructure application fails to sync or becomes unhealthy
+            TimeoutError: the infrastructure did not become ready within ``timeout``.
+            RuntimeError: the application failed to sync, or became unhealthy.
         """
         from opi.connectors.argo import create_argo_connector
 
@@ -1129,10 +948,8 @@ class ArgoManager:
             f"(timeout: {timeout}s, poll: {poll_interval}s, refreshed_after={refreshed_after})"
         )
 
-        # Create ArgoConnector instance
         argo_connector = create_argo_connector()
 
-        # Login to ArgoCD
         if not await argo_connector.login():
             raise RuntimeError(f"Failed to login to ArgoCD for cluster {cluster_name}")
 
@@ -1140,27 +957,23 @@ class ArgoManager:
         elapsed_time = 0.0
         while elapsed_time < timeout:
             try:
-                # Get application status
                 status_data = await argo_connector.get_application_status(app_name)
 
                 if not status_data:
                     logger.warning(f"Could not get status for application {app_name}, retrying...")
                     await asyncio.sleep(poll_interval)
-                    elapsed_time = _verstreken_sinds(start)
+                    elapsed_time = _elapsed_since(start)
                     continue
 
-                # Check sync status
                 sync_status = status_data.get("status", {}).get("sync", {}).get("status")
                 health_status = status_data.get("status", {}).get("health", {}).get("status")
 
                 logger.info(f"Infrastructure status: sync={sync_status}, health={health_status}")
 
-                # Check if synced and healthy
                 if sync_status == "Synced" and health_status == "Healthy":
                     logger.info(f"Infrastructure application '{app_name}' is ready!")
                     return True
 
-                # Determine whether the status reflects our refresh.
                 status_is_fresh = self.status_reflects_refresh(status_data, refreshed_after)
                 if not status_is_fresh:
                     logger.debug(
@@ -1184,7 +997,6 @@ class ArgoManager:
                             f"{condense_render_error(condition_error)}"
                         )
 
-                    # Check for sync operation failures (unrecoverable errors)
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")
                     operation_message = operation_state.get("message", "")
@@ -1194,7 +1006,6 @@ class ArgoManager:
                         logger.error(error_msg)
                         if operation_message:
                             logger.error(f"  Sync error: {operation_message}")
-                        # Log sync result details if available
                         sync_result = operation_state.get("syncResult", {})
                         if sync_result:
                             resources = sync_result.get("resources", [])
@@ -1211,14 +1022,11 @@ class ArgoManager:
                     if health_status == "Degraded":
                         error_msg = f"Infrastructure application '{app_name}' is in failed state: {health_status}"
                         logger.error(error_msg)
-                        # Get more details from status
                         conditions = status_data.get("status", {}).get("conditions", [])
                         for condition in conditions:
                             logger.error(f"  Condition: {condition.get('type')} - {condition.get('message')}")
                         raise RuntimeError(error_msg)
 
-                # Not ready yet, wait and retry
-                # Log different messages based on health status for clarity
                 if health_status == "Missing":
                     logger.info(
                         f"Infrastructure resources are being created, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
@@ -1233,25 +1041,22 @@ class ArgoManager:
                         f"waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                     )
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
 
             except ArgoTransportError as e:
-                # Vervoerstout, niet applicatiestatus. Doorpollen binnen het budget.
+                # A transport error, not an application status. Keep polling within the budget.
                 logger.warning(f"Infrastructure status of '{app_name}' unreachable: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
             except RuntimeError:
-                # Re-raise RuntimeError (failure states)
                 raise
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(f"Error checking infrastructure status: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
 
-        # Timeout reached
         error_msg = f"Timeout waiting for infrastructure application '{app_name}' to be ready after {timeout}s"
         logger.error(error_msg)
-        # Construct ArgoCD dashboard URL from settings
         protocol = "https" if settings.ARGOCD_USE_TLS else "http"
         port_suffix = "" if settings.ARGOCD_PORT in (80, 443) else f":{settings.ARGOCD_PORT}"
         argocd_url = f"{protocol}://{settings.ARGOCD_HOST}{port_suffix}"
@@ -1260,11 +1065,11 @@ class ArgoManager:
 
     @staticmethod
     def status_reflects_refresh(status_data: dict[str, Any], refreshed_after: str | None) -> bool:
-        """Of deze status NA onze eigen refresh gereconcilieerd is.
+        """Whether this status was reconciled AFTER our own refresh.
 
-        Zonder dat bewijst een ``Synced`` niets over de commit die we net pushten: de status
-        kan nog van de vorige reconcile zijn. Zonder ``refreshed_after`` valt er niets te
-        vergelijken en geldt de status als vers, zoals voorheen.
+        Without that a ``Synced`` proves nothing about the commit just pushed: the status may
+        still be from the previous reconcile. Without ``refreshed_after`` there is nothing to
+        compare and the status counts as fresh.
         """
         if not refreshed_after:
             return True
@@ -1274,44 +1079,30 @@ class ArgoManager:
         self,
         app_name: str,
         timeout: int = 300,
-        poll_interval: int = POLL_INTERVAL_SECONDEN,
+        poll_interval: int = POLL_INTERVAL_SECONDS,
         refreshed_after: str | None = None,
         on_progressing: Callable[[int], Awaitable[None]] | None = None,
         on_poll: Callable[[int, dict[str, Any], bool], Awaitable[None]] | None = None,
     ) -> bool:
-        """
-        Wait for an ArgoCD application to be synced and healthy.
-
-        Polls the ArgoCD API until the application reaches Synced+Healthy state,
-        or until a terminal failure is detected.
+        """Poll the ArgoCD API until the application is Synced and Healthy, or terminally failed.
 
         Args:
-            app_name: Name of the application to wait for
-            timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
-            poll_interval: Seconds between status checks (default: 5)
-            refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
-                ``refresh_application``.  When set, the poll loop will not
-                treat ``Degraded`` or ``Failed``/``Error`` as terminal until
-                ArgoCD has reconciled *after* this timestamp.  This prevents
-                false failures when the status still reflects a previous
-                reconciliation.
-            on_progressing: Optional async callback invoked each poll iteration
-                when health is ``Progressing`` and the status is fresh.
-                Receives the elapsed time in seconds.  If the callback raises,
-                the exception propagates to the caller.
-            on_poll: Optional async callback invoked each poll iteration that read a
-                status and is still waiting, whatever the sync and health say. Receives
-                the elapsed time, the application status and whether that status is
-                fresh. Runs before ``on_progressing``.
-
-        Returns:
-            True if application is synced and healthy
+            refreshed_after: ISO-8601 ``reconciledAt`` timestamp from
+                ``refresh_application``. Given, the loop does not treat ``Degraded`` or
+                ``Failed``/``Error`` as terminal until ArgoCD has reconciled AFTER this
+                timestamp, which keeps a status from a previous reconciliation out.
+            on_progressing: Async callback per poll while health is ``Progressing`` and the
+                status is fresh, given the elapsed time in seconds. An exception from it
+                propagates to the caller.
+            on_poll: Async callback per poll that read a status and is still waiting,
+                whatever sync and health say, given the elapsed time, the application status
+                and whether that status is fresh. Runs before ``on_progressing``.
 
         Raises:
-            TimeoutError: If application doesn't become ready within timeout
-            ApplicationGone: If the application was visible during this wait and then
-                disappeared (another task deleted it); waiting on further is pointless
-            RuntimeError: If application enters a terminal failure state
+            TimeoutError: the application did not become ready within ``timeout``.
+            ApplicationGoneError: the application was visible during this wait and then
+                disappeared, so waiting on is pointless.
+            RuntimeError: the application entered a terminal failure state.
         """
         from opi.connectors.argo import create_argo_connector
 
@@ -1326,15 +1117,15 @@ class ArgoManager:
 
         start = asyncio.get_running_loop().time()
         elapsed_time = 0.0
-        # Tijdstip van de laatste zelf gevraagde refresh, op de wandklok. Dat kan niet meer
-        # met elapsed_time % HERVERVERS_ELKE_SECONDEN: een wandklok raakt dat punt niet exact.
-        laatste_herverversing = 0.0
-        # Is de applicatie in DEZE wacht ooit met succes uitgelezen? Zolang dat niet zo is,
-        # is een leeg antwoord "hij moet nog verschijnen" en polt de lus door. Daarna is
-        # hetzelfde lege antwoord "hij is weg", en dat is geen leesfout maar een einde.
+        # Wall-clock moment of the last refresh asked for here. Not
+        # elapsed_time % REFRESH_EVERY_SECONDS: a wall clock does not hit that point exactly.
+        last_refresh = 0.0
+        # Has the application been read successfully in THIS wait? While it has not, an empty
+        # answer means "it still has to appear" and the loop keeps polling. After that the same
+        # empty answer means "it is gone", which is an ending and not a read error.
         seen = False
-        # Het moment dat de sync klaar was, zodat de tijd TOT Synced en de tijd van Synced
-        # tot Healthy apart meetbaar zijn: de eerste is ArgoCD, de tweede is de pod.
+        # The moment the sync finished, so the time UNTIL Synced and the time from Synced to
+        # Healthy stay separately measurable: the first is ArgoCD, the second is the pod.
         synced_at: float | None = None
         while elapsed_time < timeout:
             await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to sync")
@@ -1343,13 +1134,13 @@ class ArgoManager:
 
                 if not status_data:
                     if seen:
-                        raise ApplicationGone(
+                        raise ApplicationGoneError(
                             f"Application '{app_name}' verdween tijdens het wachten "
                             f"(na {elapsed_time}s); een andere taak heeft hem waarschijnlijk verwijderd"
                         )
                     logger.debug(f"Could not get status for '{app_name}', retrying...")
                     await asyncio.sleep(poll_interval)
-                    elapsed_time = _verstreken_sinds(start)
+                    elapsed_time = _elapsed_since(start)
                     continue
                 seen = True
 
@@ -1357,33 +1148,32 @@ class ArgoManager:
                 health_status = status_data.get("status", {}).get("health", {}).get("status")
 
                 if sync_status == "Synced" and synced_at is None:
-                    synced_at = _verstreken_sinds(start)
+                    synced_at = _elapsed_since(start)
                     observe_rollout_phase(PHASE_ARGO_WAIT_SYNCED, synced_at)
 
                 if sync_status == "Synced" and health_status == "Healthy":
                     logger.info(f"Application '{app_name}' is synced and healthy")
-                    observe_rollout_phase(PHASE_ARGO_WAIT_HEALTHY, _verstreken_sinds(start) - (synced_at or 0.0))
+                    observe_rollout_phase(PHASE_ARGO_WAIT_HEALTHY, _elapsed_since(start) - (synced_at or 0.0))
                     return True
 
-                # Staat de status al een minuut op Progressing, vraag dan zelf om een
-                # refresh: ArgoCD hertoetst uit zichzelf pas na timeout.reconciliation, dus
-                # een gemist watch-event laat de health anders bevroren staan tot onze
-                # time-out. Alleen op Progressing - Degraded heeft verderop zijn eigen
-                # afhandeling en die moet niet uitgesteld worden.
-                if elapsed_time - laatste_herverversing >= HERVERVERS_ELKE_SECONDEN and health_status == "Progressing":
-                    laatste_herverversing = elapsed_time
+                # Once the status has been Progressing for a minute, ask for a refresh: ArgoCD
+                # re-evaluates on its own only after timeout.reconciliation, so a missed watch
+                # event would leave the health frozen until our timeout. Only on Progressing,
+                # because Degraded has its own handling below that must not be delayed.
+                if elapsed_time - last_refresh >= REFRESH_EVERY_SECONDS and health_status == "Progressing":
+                    last_refresh = elapsed_time
                     logger.info(
                         "Application '%s' staat %ds op Progressing; opnieuw een refresh gevraagd "
                         "(ArgoCD hertoetst zelf pas na timeout.reconciliation)",
                         app_name,
                         elapsed_time,
                     )
-                    # Alleen overschrijven als de refresh een tijdstempel oplevert: een
-                    # mislukte refresh geeft None terug, en dat zou de versheidsdrempel
-                    # wissen waardoor een oude status alsnog als vers zou tellen.
-                    opnieuw_gereconcilieerd = await argo_connector.refresh_application(app_name)
-                    if opnieuw_gereconcilieerd:
-                        refreshed_after = opnieuw_gereconcilieerd
+                    # Only overwrite when the refresh yields a timestamp: a failed refresh
+                    # returns None, which would clear the freshness threshold and let an old
+                    # status count as fresh.
+                    reconciled_again = await argo_connector.refresh_application(app_name)
+                    if reconciled_again:
+                        refreshed_after = reconciled_again
 
                 # Determine whether the status reflects our refresh.
                 # If reconciledAt is still <= refreshed_after, ArgoCD
@@ -1414,7 +1204,6 @@ class ArgoManager:
                             f"{condense_render_error(condition_error)}"
                         )
 
-                    # Check for terminal sync failures
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")
                     if operation_phase in ("Failed", "Error"):
@@ -1450,13 +1239,14 @@ class ArgoManager:
                 )
 
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
 
             except ArgoTransportError as e:
-                # Vervoerstout, niet applicatiestatus. Een timeout zou hier de hele wacht afbreken.
+                # A transport error, not an application status; a timeout here would break off
+                # the whole wait.
                 logger.warning(f"Status of '{app_name}' unreachable: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
                 continue
             except RuntimeError, TimeoutError:
                 raise
@@ -1466,12 +1256,12 @@ class ArgoManager:
                     f"Permission denied for '{app_name}', waiting for AppProject sync... (elapsed: {elapsed_time}s)"
                 )
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
                 continue
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time = _verstreken_sinds(start)
+                elapsed_time = _elapsed_since(start)
                 continue
 
             # Invoke the callbacks outside try/except so their

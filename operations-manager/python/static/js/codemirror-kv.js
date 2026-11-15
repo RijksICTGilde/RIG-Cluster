@@ -336,7 +336,7 @@
      * lezen, sluiten en overtypen.
      *
      * De lijst komt van de server mee in data-completions en is dezelfde bron als de
-     * validatie (alias_variabelen(), zie opi/services/catalog/aliases/overzicht.py). Er
+     * validatie (alias_variabelen(), zie opi/services/catalog/aliases/overview.py). Er
      * kan hier dus nooit een naam voorgesteld worden die het formulier afkeurt.
      */
     function completionSource(items) {

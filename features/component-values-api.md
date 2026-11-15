@@ -174,19 +174,18 @@ teruggelezen.
 
 Deze twee valkuilen zaten er al, en de keuze hierin is bewust:
 
-1. **`KeyValueConverter._maybe_encrypt` vangt breed af en geeft dan de plaintext terug**
-   met een warning (`opi/forms/editables/converters.py`). Voor een formulier
-   verdedigbaar - de invuller staat ernaar te kijken en kan het opnieuw proberen. Voor een
-   API-schrijfpad is het fail-open op een geheim. **Keuze: niet hergebruiken.**
-   `component_values.py` is een eigen, fail-closed schrijfhelper. De converter blijft
-   ongewijzigd; die is het lees/schrijfpad van de wizard en zijn faalgedrag veranderen is
-   een aparte wijziging met een eigen blast radius.
+1. **`KeyValueConverter._maybe_encrypt` ving breed af en gaf dan de plaintext terug**
+   met een warning (`opi/forms/editables/converters.py`). Voor een formulier leek dat
+   verdedigbaar; voor een schrijfpad is het fail-open op een geheim. Dat was de reden om
+   hem hier niet te hergebruiken: `component_values.py` is een eigen, fail-closed
+   schrijfhelper. **Die aparte wijziging is RC-463**: de converter heet nu `_encrypt` en
+   gooit `AgeEncryptionError` zonder projectsleutel, dus beide paden zijn fail-closed.
 2. **`UserEnvVarsEncryptGenerator` liep alleen over `components[*]`**, terwijl dezelfde
-   service ook `deployments[*]/components[*]/user-env-vars` bezit. Die generator is de
-   vangnetlaag voor wanneer er niets anders versleuteld heeft (geen contextdata, een
-   handmatig bewerkt bestand) - en een vangnet dat de helft van de lagen dekt, laat de
-   andere helft in plaintext in git belanden. **Keuze: gerepareerd**, de generator loopt nu
-   over beide lagen.
+   service ook `deployments[*]/components[*]/user-env-vars` bezit. De generator was de
+   vangnetlaag voor wanneer er niets anders versleuteld had, en een vangnet dat de helft
+   van de lagen dekt laat de andere helft in plaintext in git belanden. Eerst gerepareerd
+   over beide lagen, en met RC-463 weg: de wizard heeft vanaf zijn eerste stap een
+   projectsleutel, dus de converter versleutelt meteen en er valt niets te repareren.
 
 Concreet betekent fail-closed hier:
 
@@ -257,7 +256,14 @@ Net als de omliggende endpoints:
   in `DEFERRABLE_TASK_TYPES`.
 
 Schrijven gaat altijd via `ProjectStore` (`ProjectManager.mutate_and_commit_project`), nooit
-rechtstreeks YAML.
+rechtstreeks YAML. Sinds RC-481 loopt elke ingang, dus ook het env-vars-venster van het
+portaal, door dezelfde use case `opi/manager/service/values.py`; zie
+[env-vars-en-service-values-een-pad.md](env-vars-en-service-values-een-pad.md). Daar staat
+ook de operatie `replace`, die het venster gebruikt en die geen endpoint heeft: de API
+adresseert per sleutel, zodat twee clients niet elkaars sleutels weggooien.
+
+Een gelijktijdige wijziging die ook na opnieuw toepassen niet samen te voegen is, komt
+terug als `error_type: "conflict"` en niet als `internal_error`.
 
 ## Validatie
 
@@ -269,7 +275,7 @@ rechtstreeks YAML.
   hieronder).
 - **Een aliaswaarde moet naar een bestaande platformvariabele verwijzen.** `$DATABASE_SERVER_HOST`
   mag, `$BESTAAT_ECHT_NIET` niet, en een waarde zonder enige verwijzing ook niet. Die regel
-  bestond al (`_categorize_alias`) maar sloeg pas toe bij het uitrollen, zodat een typefout
+  bestond al (`categorize_alias`) maar sloeg pas toe bij het uitrollen, zodat een typefout
   pas zichtbaar werd als de container opkwam (RC-66). Voor een **eigen** env-var geldt hij
   bewust niet: een dollarteken in een wachtwoord is geen typefout. De regel staat in
   `opi/services/catalog/aliases/references.py` en hangt onder
@@ -349,8 +355,8 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | opslagvormen, versleutelen/ontsleutelen, operaties | `opi/services/component_values.py` |
 | declaratie dat een service een waardenmap bezit | `opi/services/catalog/base.py` (`owned_values_map`) |
 | de routes (registry-gedreven) | `opi/api/v2/router.py` (`_register_service_values_routes`) |
-| de schrijfactie | `ProjectManager.set_component_values` |
-| de taak | `opi/core/task_handlers_components.py` (`handle_configure_service_values`) |
+| de use case | `opi/manager/service/values.py` (`set_component_values`), met de schrijfkern in `ProjectManager.set_component_values` |
+| de taak | `opi/runtime/tasks/task_handlers_components.py` (`handle_configure_service_values`) |
 | lezen (maskering per dienst) | `opi/api/v2/router.py` (`_make_values_read_endpoint`), `Service.owned_value_is_secret` |
 | aliasregel (verwijzing bestaat) | `opi/services/catalog/aliases/references.py` |
 | toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py`, `tests/test_component_values_read_api.py`, `tests/test_alias_reference_validation.py` |

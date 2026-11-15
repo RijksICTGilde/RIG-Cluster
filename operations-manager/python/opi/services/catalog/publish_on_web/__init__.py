@@ -1,21 +1,21 @@
 """publish-on-web service.
 
 Owns its component-level config (TLS mode + attachment) hooked into the per-component
-form, AND the domain/subdomain approval capability: the `ApprovalSpec`s (declare +
-check + list + record) and the approval *state*, which now lives under this service's
-config at ``services/[publish-on-web]/config/domains`` (migrated lazily from the legacy
-project-root ``domains:`` block via the resolvers in connectors/subdomain.py).
+form, the deployment-level "Webadres" section, AND the domain/subdomain approval
+capability: the ``ApprovalSpec``s (declare + check + list + record) and the approval
+*state*, which lives under this service's config at
+``services/[publish-on-web]/config/domains`` (resolved, with a project-root fallback, by
+services/catalog/publish_on_web/subdomain.py).
 
-Still NOT owned here -- cross-project platform infrastructure the service depends on but
-does not own: the deployment-level "Webadres" domain wizard (DOMAIN_SECTION), the
-generic catalog-driven approver interface (opi/services/approvals.py +
-router_approvals, no longer domain-specific), the global subdomain registry DB
-(connectors/subdomain.py), and ingress generation (project_manager / naming.py).
+NOT owned here -- cross-project platform infrastructure the service depends on: the generic
+catalog-driven approver interface (opi/services/approvals.py + router_approvals), the global
+subdomain registry DB (services/catalog/publish_on_web/subdomain.py), and ingress generation (project_manager /
+naming.py).
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.approval import (
     ApprovalItem,
@@ -35,6 +35,14 @@ from opi.services.catalog.publish_on_web.variables import WebVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceType
 
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
+
 
 def _to_status(stored: str | None) -> ApprovalStatus:
     """Map a persisted status string onto ApprovalStatus; anything else -> NONE."""
@@ -44,15 +52,15 @@ def _to_status(stored: str | None) -> ApprovalStatus:
         return ApprovalStatus.NONE
 
 
-# --- CHECK: is a requested domain / subdomain approved? --------------------------
+# CHECK: is a requested domain / subdomain approved?
 
 
-def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
     """Approval status of a requested domain (``value`` is the domain string).
 
     Reads the stored state via the existing pure predicate -- no rules duplicated here.
     """
-    from opi.connectors.subdomain import get_project_allowed_domain_config
+    from opi.services.catalog.publish_on_web.subdomain import get_project_allowed_domain_config
 
     cfg = get_project_allowed_domain_config(project_data, value)
     if not isinstance(cfg, dict):
@@ -60,15 +68,15 @@ def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
     return _to_status(cfg.get("status"))
 
 
-def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
     """Approval status of a requested subdomain (``value`` is a ``(domain, subdomain)``)."""
-    from opi.connectors.subdomain import get_subdomain_status
+    from opi.services.catalog.publish_on_web.subdomain import get_subdomain_status
 
     domain, subdomain = value
     return _to_status(get_subdomain_status(project_data, domain, subdomain))
 
 
-# --- LIST: enumerate the approvable items in a project ---------------------------
+# LIST: enumerate the approvable items in a project.
 # These read the state via get_domains_config (service config, root fallback). The wire
 # shape is the established ApprovalItem contract; ``subject`` says WHAT is being asked for
 # (the domain, or the composed subdomain), so the approver page does not have to assemble
@@ -76,7 +84,7 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
 
 def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    from opi.connectors.subdomain import get_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
@@ -100,7 +108,7 @@ def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
 
 
 def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    from opi.connectors.subdomain import get_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
@@ -116,8 +124,8 @@ def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
             items.append(
                 {
                     "type": "subdomain",
-                    # Samengesteld, want dat is wat er wordt aangevraagd. De twee losse
-                    # velden blijven staan: daar wordt het oordeel op teruggerouteerd.
+                    # Composed, because that is what is requested. The two separate fields
+                    # stay: the verdict is routed back onto them.
                     "subject": f"{sub.get('name', '')}.{base_domain}",
                     "domain": base_domain,
                     "name": sub.get("name", ""),
@@ -129,7 +137,7 @@ def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
     return items
 
 
-# --- NOTICE: what an ungranted approval means for a deployment -------------------
+# NOTICE: what an ungranted approval means for a deployment.
 # The deployment still runs: naming.apply_domain_approval_fallback publishes it on the
 # cluster address instead of the requested one. That consequence is this service's
 # knowledge, so the sentence is written here and generic code only renders it.
@@ -145,7 +153,7 @@ def _deployment_domain(deployment: dict[str, Any]) -> tuple[str | None, str | No
     return base_domain or None, get_domain_setting(deployment, DomainSetting.SUBDOMAIN) or None
 
 
-def _last_verdict(history: Any) -> dict[str, Any]:
+def _last_verdict(history: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
     """The most recent history entry, or an empty dict when there is none."""
     if isinstance(history, list) and history and isinstance(history[-1], dict):
         return history[-1]
@@ -170,8 +178,8 @@ def _notice(label_kind: str, subject: str, status: ApprovalStatus, verdict: dict
 
 
 def _domain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-    from opi.connectors.subdomain import get_ingress_postfix, get_project_allowed_domain_config
     from opi.core.config import settings
+    from opi.services.catalog.publish_on_web.subdomain import get_ingress_postfix, get_project_allowed_domain_config
 
     base_domain, _ = _deployment_domain(deployment)
     if not base_domain or base_domain == get_ingress_postfix(settings.CLUSTER_MANAGER).lstrip("."):
@@ -184,7 +192,7 @@ def _domain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) ->
 
 
 def _subdomain_notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
-    from opi.connectors.subdomain import get_project_allowed_subdomains
+    from opi.services.catalog.publish_on_web.subdomain import get_project_allowed_subdomains
 
     base_domain, subdomain = _deployment_domain(deployment)
     if not base_domain or not subdomain:
@@ -205,13 +213,13 @@ def _subdomain_notices(project_data: dict[str, Any], deployment: dict[str, Any])
     return [_notice("subdomein", f"{subdomain}.{base_domain}", status, _last_verdict(detail.get("history")))]
 
 
-# --- RECORD: persist an approver verdict onto the stored state -------------------
+# RECORD: persist an approver verdict onto the stored state.
 # The generic layer builds the uniform ``history_entry`` (date/status/by/message);
 # each spec locates its own entry and writes the new status + history.
 
 
 def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    from opi.connectors.subdomain import ensure_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import ensure_domains_config
 
     domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-domains", []):
@@ -222,7 +230,7 @@ def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_ent
 
 
 def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    from opi.connectors.subdomain import ensure_domains_config
+    from opi.services.catalog.publish_on_web.subdomain import ensure_domains_config
 
     domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-subdomains", []):
@@ -253,8 +261,8 @@ class PublishOnWebService(Service):
     config_schema_version = "1.0"
     config_component_order = 30
 
-    def config_model_for(self, layer: ConfigLayer):
-        """One model per layer -- three questions, three shapes (RC-60).
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """One model per layer -- three questions, three shapes.
 
         Project: which domains may this project publish on. Deployment: how is this
         deployment's address composed. Component: does this component use the service, and
@@ -269,7 +277,7 @@ class PublishOnWebService(Service):
         # deployment-component entry exists precisely to override the component's.
         return PublishOnWebComponentConfig
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.DEPLOYMENT:
             from opi.services.catalog.publish_on_web.editables import PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES
 
@@ -289,21 +297,17 @@ class PublishOnWebService(Service):
 
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         """The "Webadres" step at the deployment layer; the base default elsewhere."""
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         return super().config_form_section(layer)
 
-    def deployment_form_section(self, deployment_index: int | None = None, *, edit_mode: bool = False):
-        """The "Webadres" section, optionally materialized for one deployment (RC-60).
+    def deployment_form_section(self, deployment_index: int | None = None, *, edit_mode: bool = False) -> FormSection:
+        """The "Webadres" section, optionally materialized for one deployment.
 
         The wizard step and the edit modal are the same form with a different heading and a
-        different post-save action, which is why one builder answers both. It used to be a
-        hand-authored ``DOMAIN_SECTION`` in ``forms/visualizers/wizard_sections.py``, a file
-        no part of this service could see -- so the fields, their display and their step all
-        lived apart from the values they configure. ``cross_domain_access`` already builds
-        its deployment section this way.
+        different post-save action, which is why one builder answers both.
 
         Without ``deployment_index`` the section describes the LAYER (wildcards intact),
         which is what ``config_form_section`` answers and ``test_service_config_layers``
@@ -323,9 +327,7 @@ class PublishOnWebService(Service):
         index = 0 if deployment_index is None else deployment_index
 
         def field(setting: DomainSetting) -> str:
-            # The renderer keys a virtualized field by its VIRTUAL path, so the layout has
-            # to name it the same way or the field is simply not laid out -- it disappears
-            # from the step without an error anywhere.
+            # The VIRTUAL path: a layout naming it otherwise loses the field without an error.
             return apply_virtualize(domain_setting_path(setting), SERVICE_VIRTUALIZE)
 
         layout = [
@@ -368,12 +370,12 @@ class PublishOnWebService(Service):
             post_save_action=post_save_action,
         )
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.publish_on_web.visualizers import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
 
         return [PUBLISH_ON_WEB_TLS, PUBLISH_ON_WEB_ATTACHMENT]
 
-    def config_deployment_component_visualizers(self):
+    def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.publish_on_web.visualizers import (
             DEPLOYMENT_COMP_PUBLISH_ATTACHMENT,
             DEPLOYMENT_COMP_PUBLISH_TLS,
@@ -381,7 +383,7 @@ class PublishOnWebService(Service):
 
         return [DEPLOYMENT_COMP_PUBLISH_TLS, DEPLOYMENT_COMP_PUBLISH_ATTACHMENT]
 
-    def config_deployment_component_layout(self):
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value
@@ -399,11 +401,11 @@ class PublishOnWebService(Service):
             )
         ]
 
-    def config_approvals(self, layer: ConfigLayer):
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
         # A deployment's requested domain / subdomain needs platform-admin approval
         # before ingress is generated for it. The rule (status_of) reuses the existing
         # pure predicates; the state lives under this service's config
-        # (services/[publish-on-web]/config/domains, resolved by connectors/subdomain.py).
+        # (services/[publish-on-web]/config/domains, resolved by services/catalog/publish_on_web/subdomain.py).
         # Turning the service on is never a request: only a custom domain or a chosen
         # subdomain on a guarded platform domain is, per deployment. Without
         # requires_approval_for the card and the help would say every use needs approval.
@@ -442,12 +444,12 @@ class PublishOnWebService(Service):
         API is the same entry, in the same block, in the same approver interface, and not
         a second way of asking.
         """
-        from opi.connectors.subdomain import ensure_domain_requests
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 
         ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value

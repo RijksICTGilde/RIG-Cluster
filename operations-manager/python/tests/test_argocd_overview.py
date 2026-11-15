@@ -133,7 +133,7 @@ async def test_een_trage_argocd_sleept_de_pagina_niet_mee(monkeypatch) -> None:
 
     dubbel = _TraagDubbel([])
     monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
-    monkeypatch.setattr(argocd_overview, "BEVRAGING_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(argocd_overview, "QUERY_TIMEOUT_SECONDS", 0.05)
 
     assert await argocd_overview.get_project_argocd_statuses("demo", ["productie"]) == {}
     assert dubbel.aanroepen == 1
@@ -195,7 +195,7 @@ async def test_de_bevraging_bouwt_een_connector_die_snel_faalt(argo) -> None:
     docs/post-mortems/argocd-server-herstart-elke-40-minuten.md: budget 0.
 
     Op het standaardbudget wacht de login hier 30 seconden met de projectpagina erachter.
-    ``BEVRAGING_TIMEOUT_SECONDS`` dekt dat niet af: die grens staat alleen om de
+    ``QUERY_TIMEOUT_SECONDS`` dekt dat niet af: die grens staat alleen om de
     lijst-aanroep.
     """
     await argocd_overview.get_project_argocd_statuses("demo", ["demo-dep-0"])

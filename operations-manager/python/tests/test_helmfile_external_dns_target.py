@@ -16,10 +16,14 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.helm_deployment import HelmDeployment
 from ruamel.yaml import YAML
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+#: Where the helmfile path binds its module names, and so where a patch has to land.
+_HELM = "opi.manager.project.helm_deployment"
 
 TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
 
@@ -30,7 +34,7 @@ type Values = dict[str, Any] | list[dict[str, Any]]
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -71,15 +75,11 @@ def _wire(
     base_values: dict[str, Any] | None = None,
     deployment_vindbaar: bool = True,
 ) -> None:
-    """Alles rond de waardenopbouw: git-clone, values-extractie, secrets, SOPS."""
+    """What the host supplies: the project file, the deployment and the values extraction."""
     manager.get_contents = AsyncMock(
         return_value={"name": "mb-docs-helmfile", "config": {"age-public-key": "age1demo"}}
     )
     manager.get_deployment_by_name = AsyncMock(return_value=deployment if deployment_vindbaar else None)
-    manager._sops_private_key_for = AsyncMock(return_value="AGE-SECRET-KEY-PROJECT")
-    manager._clone_helmfile_source = AsyncMock(return_value=("unused", None))
-    manager._write_helmfile_custom_files = MagicMock(return_value={})
-    manager._create_deployment_secrets = AsyncMock(return_value=[])
     manager._project_file_handler = MagicMock()
     manager._project_file_handler.get_helmfile_by_name = MagicMock(return_value={"name": "docs"})
     manager._project_file_handler.extract_helmfile_values = AsyncMock(return_value=base_values or {})
@@ -99,10 +99,13 @@ async def _values(
     manager = _manager()
     _wire(manager, deployment, deployment_values, base_values, deployment_vindbaar)
     with (
-        patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-prd-mb-docs-helmfile"),
-        patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"),
+        patch.object(HelmDeployment, "create_deployment_secrets", AsyncMock(return_value=[])),
+        patch(f"{_HELM}.clone_helmfile_source", AsyncMock(return_value=("unused", None))),
+        patch(f"{_HELM}.write_helmfile_custom_files", MagicMock(return_value={})),
+        patch(f"{_HELM}.get_prefixed_namespace", return_value="rig-prd-mb-docs-helmfile"),
+        patch(f"{_HELM}.encrypt_to_sops_files_or_fail"),
     ):
-        await manager._process_helmfile_deployment(deployment, MagicMock(), str(target))
+        await HelmDeployment(manager).process_helmfile_deployment(deployment, MagicMock(), str(target))
     return YAML().load((target / "values.to-sops.yaml").read_text())
 
 

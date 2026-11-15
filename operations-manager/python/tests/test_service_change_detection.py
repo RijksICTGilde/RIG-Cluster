@@ -14,9 +14,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.services_enums import CleanupStrategy
 from opi.utils.yaml_util import load_yaml_from_string
 from tests.jsonpath_counter import count_jsonpath_compiles

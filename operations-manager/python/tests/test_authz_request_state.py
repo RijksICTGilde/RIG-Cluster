@@ -12,14 +12,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import handhaaf
-from opi.api.principal import AccessDenied
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause, Decision, Resource, record_decision
-from opi.core.leden import LidSoort
-from opi.services.project_leden import hash_van, vervaldatum
+from opi.http.auth.authz import authorize
+from opi.http.auth.endpoint_util import enforce
+from opi.http.auth.principal import AccessDeniedError
+from opi.services.members import MemberKind
+from opi.services.project_members import expiry_date, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
-from opi.web.authz import authorize
 
 TOKEN = "zad_beheerder"
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -35,10 +35,10 @@ def _project() -> ProjectSummary:
             ProjectUser(
                 email=BEHEERDER,
                 role="admin",
-                type=LidSoort.PERSOON,
-                tokens=[ProjectToken(name="t", hash=hash_van(TOKEN), expires=vervaldatum(30))],
+                type=MemberKind.PERSON,
+                tokens=[ProjectToken(name="t", hash=hash_of(TOKEN), expires=expiry_date(30))],
             ),
-            ProjectUser(email=KIJKER, role="member", type=LidSoort.PERSOON),
+            ProjectUser(email=KIJKER, role="member", type=MemberKind.PERSON),
         ],
     )
 
@@ -72,8 +72,8 @@ def test_een_toegestane_portaalaanroep_zet_de_vier_attributen() -> None:
     store = MagicMock()
     store.get.return_value = _project()
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=_gebruikersdienst()),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=_gebruikersdienst()),
     ):
         authorize(request, action=Action.PROJECT_READ, project_name="demo")
 
@@ -88,8 +88,8 @@ def test_een_geweigerde_portaalaanroep_zet_ze_ook() -> None:
     store = MagicMock()
     store.get.return_value = _project()
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=_gebruikersdienst()),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=_gebruikersdienst()),
         pytest.raises(HTTPException) as fout,
     ):
         authorize(request, action=Action.DEPLOYMENT_WRITE, project_name="demo", deployment="live")
@@ -115,8 +115,8 @@ async def _schrijfroute(project_name: str) -> None: ...
 @pytest.mark.asyncio
 async def test_een_toegestane_api_aanroep_zet_de_vier_attributen() -> None:
     request = _verzoek(BEHEERDER)
-    with patch("opi.api.principal.get_user_service", return_value=_gebruikersdienst()):
-        await handhaaf(request, TOKEN, _leesroute, _project())
+    with patch("opi.http.auth.principal.get_user_service", return_value=_gebruikersdienst()):
+        await enforce(request, TOKEN, _leesroute, _project())
 
     _controleer(request, action_verwacht=Action.PROJECT_READ, toegestaan=True)
 
@@ -129,10 +129,10 @@ async def test_een_geweigerde_api_aanroep_zet_ze_ook() -> None:
             lid.roles = ["viewer"]
     request = _verzoek(BEHEERDER)
     with (
-        patch("opi.api.principal.get_user_service", return_value=_gebruikersdienst()),
-        pytest.raises((HTTPException, AccessDenied)),
+        patch("opi.http.auth.principal.get_user_service", return_value=_gebruikersdienst()),
+        pytest.raises((HTTPException, AccessDeniedError)),
     ):
-        await handhaaf(request, TOKEN, _schrijfroute, project)
+        await enforce(request, TOKEN, _schrijfroute, project)
 
     beslissing = _controleer(request, action_verwacht=Action.DEPLOYMENT_WRITE, toegestaan=False)
     assert beslissing.cause is Cause.INSUFFICIENT_ROLE

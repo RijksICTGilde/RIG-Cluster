@@ -1,4 +1,4 @@
-"""Visualizers owned by the ``user-env-vars`` system service (RC-25)."""
+"""Visualizers owned by the ``user-env-vars`` system service."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ COMPONENT_USER_ENV_VARS = EditableVisualizer(
         "Deze waarden worden versleuteld opgeslagen. "
         "Bijvoorbeeld: API_KEY=mijn-geheime-sleutel"
     ),
-    attributes={"kv_format": "env"},
+    attributes={"kv_format": "env", "kv_mask_values": "true"},
 )
 
 DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
@@ -31,5 +31,5 @@ DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
         "Overschrijft de omgevingsvariabelen uit de componentdefinitie voor deze deployment. "
         "Bijvoorbeeld: API_URL=https://api.production.example.com"
     ),
-    attributes={"kv_format": "env"},
+    attributes={"kv_format": "env", "kv_mask_values": "true"},
 )

@@ -55,7 +55,7 @@ FORGEJO_PW = os.environ.get("FORGEJO_PASSWORD", "admin1234")
 VERIFIEER = os.environ.get("FORGEJO_VERIFY_SSL", "true").lower() not in ("false", "0", "no")
 
 #: De tabbladen van de projectpagina, in de volgorde van de tabbalk. "services-info"
-#: verschijnt alleen als een dienst er een blok voor levert (TABS_MET_VOORWAARDE).
+#: verschijnt alleen als een dienst er een blok voor levert (CONDITIONAL_TABS).
 TABBLADEN = [
     ("details", "01-overzicht"),
     ("team", "02-team"),

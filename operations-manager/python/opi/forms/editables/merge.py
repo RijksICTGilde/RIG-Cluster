@@ -1,8 +1,7 @@
 """The one deep merge the form pipeline uses.
 
-There used to be two, line for line the same: one in the editable processor
-and one in the services merge. Two copies of a merge rule is one copy too
-many - the moment they drift, a value lands in one path and not in the other.
+The editable processor and the services merge share it. A second copy of a merge rule drifts,
+and then a value lands in one path and not in the other.
 """
 
 from __future__ import annotations
@@ -12,10 +11,9 @@ from typing import Any
 
 
 def deep_merge_into(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Recursively overlay *overlay* onto *base*, in place. Non-dict values replace.
+    """Recursively overlay *overlay* onto *base*, in place; a non-dict value replaces.
 
-    Returns *base* so the call can be used as an expression; callers that
-    only want the side effect can ignore the return value.
+    Returns *base*, so the call can be used as an expression.
     """
     for key, value in overlay.items():
         if isinstance(base.get(key), dict) and isinstance(value, dict):

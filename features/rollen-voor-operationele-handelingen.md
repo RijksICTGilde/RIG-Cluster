@@ -53,7 +53,7 @@ De grens zit aan de serverkant; de knop volgt hem.
 | `POST /projects/{p}/db-console`, `/db-console/{sid}/stop` | `require_project_operate_access` |
 | De modal en de statuspoll van beide (GET) | lidmaatschap |
 | De modal-wizard `modal-restore` (init, stap, terug, skip, confirm, de modusknop) | `require_project_operate_access` |
-| De modal-wizard `modal-backup` (dezelfde zes routes) | lidmaatschap |
+| De modal-wizard `modal-backup` (dezelfde zes routes) | `require_on_any_deployment` + autorisatie op de gekozen deployment |
 | Elke andere modal-wizard-stroom | `require_project_edit_access` |
 
 `require_project_operate_access` en `require_project_edit_access` staan in

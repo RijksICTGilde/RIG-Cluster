@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.api.route_herkenning import WEBSOCKET, route_herkenningen
+from opi.api.route_recognition import WEBSOCKET, route_recognitions
 from opi.server import app
 from tests.test_elke_route_heeft_een_herkenning import PUBLIEKE_ROUTES
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import httpx
-    from opi.api.route_herkenning import RouteHerkenning
+    from opi.api.route_recognition import RouteRecognition
 
     from security_tests.doel import Doel
 
@@ -77,20 +77,18 @@ def vul_pad_in(pad: str) -> str:
     return re.sub(r"\{[^}]+\}", VULWAARDE, pad)
 
 
-def te_beproeven_routes() -> list[RouteHerkenning]:
+def te_beproeven_routes() -> list[RouteRecognition]:
     """Elke HTTP-route die niet bewust publiek is."""
     return [
-        route
-        for route in route_herkenningen(app)
-        if route.methode != WEBSOCKET and route.sleutel not in PUBLIEKE_ROUTES
+        route for route in route_recognitions(app) if route.method != WEBSOCKET and route.key not in PUBLIEKE_ROUTES
     ]
 
 
-def loop_langs(routes: list[RouteHerkenning], vraag: Callable[[str, str], Antwoord]) -> dict[Uitkomst, list[str]]:
+def loop_langs(routes: list[RouteRecognition], vraag: Callable[[str, str], Antwoord]) -> dict[Uitkomst, list[str]]:
     """Roep elke route naamloos aan en groepeer de routes op uitkomst."""
     per_uitkomst: dict[Uitkomst, list[str]] = {uitkomst: [] for uitkomst in Uitkomst}
     for route in routes:
-        antwoord = vraag(route.methode, vul_pad_in(route.pad))
+        antwoord = vraag(route.method, vul_pad_in(route.path))
         per_uitkomst[beoordeel(antwoord)].append(f"{route} -> {antwoord.status}")
     return per_uitkomst
 
@@ -129,7 +127,7 @@ def test_de_dekkingsproef_merkt_een_open_route_op() -> None:
     async def geheim() -> dict[str, str]:
         return {"geheim": "open"}
 
-    routes = [route for route in route_herkenningen(kwetsbaar) if route.pad == "/geheim"]
+    routes = [route for route in route_recognitions(kwetsbaar) if route.path == "/geheim"]
     with TestClient(kwetsbaar) as client:
         per_uitkomst = loop_langs(routes, _vraag_via(client))
     assert per_uitkomst[Uitkomst.BEVINDING] == ["GET /geheim (security_tests.test_auth_dekking) -> 200"]

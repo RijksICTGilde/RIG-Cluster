@@ -146,7 +146,7 @@ class TestCheckPodHealth:
     async def test_no_issues_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -161,7 +161,7 @@ class TestCheckPodHealth:
     async def test_oom_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(oom=True), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -177,7 +177,7 @@ class TestCheckPodHealth:
         # not be treated as a live OOM (which would fail the deploy for a phantom).
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(oom=True, terminating=True), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -192,7 +192,7 @@ class TestCheckPodHealth:
         # deletionTimestamp, so only the pod-template-hash tells the generations apart.
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = _kubectl_returning(
             pods=[
                 _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=True),
@@ -217,7 +217,7 @@ class TestCheckPodHealth:
         # ReplicaSet that crash-loops is a real failure.
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = _kubectl_returning(
             pods=[
                 _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=False),
@@ -242,7 +242,7 @@ class TestCheckPodHealth:
         # ReplicaSet, ...): keep the previous behaviour and say so at WARNING.
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = _kubectl_returning(
             pods=[
                 _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=True),
@@ -262,7 +262,7 @@ class TestCheckPodHealth:
     async def test_image_pull_backoff_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(image_pull="ImagePullBackOff"), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -276,7 +276,7 @@ class TestCheckPodHealth:
     async def test_err_image_pull_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(image_pull="ErrImagePull"), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -290,7 +290,7 @@ class TestCheckPodHealth:
         # outcome as ImagePullBackOff and terminal, so it must be detected too.
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(image_pull="ErrImageNeverPull"), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -324,7 +324,7 @@ class TestCheckPodHealth:
         # 'app' image (which is healthy here).
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         pods_json = self._two_container_pod(
             app_waiting=None,
             sidecar_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
@@ -344,7 +344,7 @@ class TestCheckPodHealth:
         # image wins: it drives auto-disable and is the user's actual problem.
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         pods_json = self._two_container_pod(
             app_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
             sidecar_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
@@ -391,7 +391,7 @@ class TestCheckPodHealth:
         """
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         sidecar_pod = self._pod_failing_on(
             "prod-api-aaa", "authorization-wall", "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
         )
@@ -409,7 +409,7 @@ class TestCheckPodHealth:
     async def test_crash_loop_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(crash_loop=True), "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -423,7 +423,7 @@ class TestCheckPodHealth:
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio
     async def test_kubectl_not_connected(self, mock_kubectl_cls):
-        mock_kubectl_cls.isConnected = False
+        mock_kubectl_cls.is_connected = False
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
 
@@ -436,7 +436,7 @@ class TestCheckPodHealth:
     async def test_kubectl_command_fails(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=("", "error", 1))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -447,7 +447,7 @@ class TestCheckPodHealth:
     async def test_no_pods_found(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(return_value=('{"items": []}', "", 0))
 
         result = await check_pod_health("rig-prd-ns", "prod-api")
@@ -459,7 +459,7 @@ class TestCheckPodHealth:
         """OOM from before pod creation should be ignored."""
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl.run_command = AsyncMock(
             return_value=(
                 _make_pods_json(
@@ -481,7 +481,7 @@ class TestCheckPodHealth:
         """Terminated with a non-OOM reason should not set oom_detected."""
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
 
         pods_json = json.dumps(
             {
@@ -514,7 +514,7 @@ class TestCheckPodHealth:
         kills and evictions too, so the cgroup OOMKilled reason is required."""
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
 
         pods_json = json.dumps(
             {
@@ -1486,7 +1486,7 @@ class TestPodGenerationLock:
         """The hash comes off the pod the OOM was actually observed on."""
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         oom_pod = {
             "metadata": {
                 "name": "prod-api-fb654fcc5-rcf6g",

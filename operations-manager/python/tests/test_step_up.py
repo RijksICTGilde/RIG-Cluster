@@ -1,6 +1,6 @@
 """Wanneer een handeling een verse step-up vraagt, en hoe vers die is (RC-332).
 
-Dekt ``opi/core/step_up.py``: het venster dat niet meeschuift (besluit 8.5), de vier
+Dekt ``opi/services/step_up.py``: het venster dat niet meeschuift (besluit 8.5), de vier
 soorten uit :class:`StepUpKind`, en wat een opslag daarvan afleidt
 (:func:`save_requires_step_up`).
 """
@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 from freezegun import freeze_time
-from opi.core.project_environment import Omgeving
-from opi.core.step_up import (
+from opi.services.project_environment import Omgeving
+from opi.services.step_up import (
     STEP_UP_SESSION_KEY,
     STEP_UP_WINDOW,
     StepUpAction,
@@ -85,7 +85,7 @@ def test_een_tweede_handeling_binnen_het_venster_verlengt_het_niet() -> None:
 
 def test_onleesbare_stempel_is_niet_vers(caplog: pytest.LogCaptureFixture) -> None:
     request = _request({STEP_UP_SESSION_KEY: "geen-datum"})
-    with caplog.at_level("WARNING", logger="opi.core.step_up"):
+    with caplog.at_level("WARNING", logger="opi.services.step_up"):
         assert has_fresh_step_up(request) is False
     assert any("Onleesbare step-up" in r.getMessage() for r in caplog.records)
 

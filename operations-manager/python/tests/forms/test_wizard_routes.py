@@ -17,7 +17,7 @@ from opi.web.router_wizard import (
     _get_section_from_flow,
     _render_step_html,
     _section_has_errors,
-    flow_uit_pad,
+    flow_from_path,
 )
 
 
@@ -52,11 +52,11 @@ class TestFlowUitPad:
     """RC-371: een onbekende flow in het pad geeft 404, niet de ongevangen 500 van get_flow."""
 
     def test_finds_existing_flow(self):
-        assert flow_uit_pad("create-project").flow_id == "create-project"
+        assert flow_from_path("create-project").flow_id == "create-project"
 
     def test_raises_404_for_unknown_flow(self):
         with pytest.raises(HTTPException) as exc_info:
-            flow_uit_pad("nonexistent-flow")
+            flow_from_path("nonexistent-flow")
         assert exc_info.value.status_code == 404
 
 

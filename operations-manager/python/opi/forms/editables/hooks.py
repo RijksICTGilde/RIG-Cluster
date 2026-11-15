@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.subdomain import ensure_domain_requests
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.processor import EditableFormProcessor
@@ -20,24 +19,20 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
     set_domain_setting,
 )
+from opi.services.catalog.publish_on_web.subdomain import ensure_domain_requests
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-    """Fill in None base-domain values from resolvers before processing.
+    """Fill in None base-domain values from the resolvers, mutating the deployments in place.
 
-    When the user didn't interact with the base-domain select, the value
-    is None in the wizard state. The resolvers know the cluster default.
-    This mutates the deployment dicts in place so ensure_domain_requests
-    sees the actual domain.
+    A base-domain select the user never touched is None in the wizard state, while the
+    resolvers know the cluster default, and ``ensure_domain_requests`` needs the actual domain.
 
-    The cluster default domain is never materialised: a cluster-default
-    deployment carries no explicit ``base-domain`` (its absence *means*
-    "use the default"), and ensure_domain_requests never requests the
-    default anyway. Writing it would add a spurious key and, before the
-    resolver was fixed, even a wrong nice-URL domain plus a phantom
-    domain request.
+    The cluster default itself is never materialised: a cluster-default deployment carries no
+    explicit ``base-domain`` (its absence *means* "use the default"), so writing it would add
+    a spurious key and a phantom domain request.
     """
     resolvers = context.get("resolvers")
     if not resolvers:
@@ -109,16 +104,15 @@ class ResolveAttachmentsHook:
     The modal-edit flow already has the project AGE key in ``yaml_data`` at PRE_SAVE,
     so staged uploads (passed via ``context['staged_attachments']``, a map id ->
     {filename, content="staging:<token>"}) are written into the project-level
-    attachments service ``data`` list and encrypted here. The create flow does the
-    same via AttachmentStagingResolveGenerator instead, because its key is generated
-    only after PRE_SAVE.
+    attachments service ``data`` list and encrypted here. The create flow reaches the
+    same AttachmentStagingResolveGenerator through its ``_generated`` path instead.
     """
 
     order: int = 1
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         from opi.forms.editables.generators import AttachmentStagingResolveGenerator
-        from opi.handlers.project_file_handler import merge_staged_attachments
+        from opi.services.project_file_handler import merge_staged_attachments
 
         staged = context.get("staged_attachments") or {}
         if not staged:
@@ -131,19 +125,18 @@ class ResolveAttachmentsHook:
 class PreserveAttachmentContentHook:
     """Re-attach the encrypted content of existing attachments at save (smart merge).
 
-    The modal wizard strips attachment ``content`` from its session state (only ``id`` +
-    ``filename`` are needed to display the catalog), so the saved catalog entries arrive
-    without ``content``. This restores it from the original project data, captured before
-    the form merge and passed via ``context['original_attachment_content']`` ({id ->
-    content}). It is the "preserve a field the form does not carry" case: new uploads are
-    handled separately by ``ResolveAttachmentsHook`` (tmp staging); this covers existing
-    ones. Runs before ``StripTransientsHook`` so the restored content survives.
+    The modal wizard strips attachment ``content`` from its session state (the catalog only
+    needs ``id`` and ``filename``), so the saved catalog entries arrive without it. This
+    restores it from the original project data, captured before the form merge and passed via
+    ``context['original_attachment_content']`` ({id -> content}). It covers existing
+    attachments; a new upload goes through ``ResolveAttachmentsHook``. Runs before
+    ``StripTransientsHook``, so the restored content survives.
     """
 
     order: int = 1
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-        from opi.handlers.project_file_handler import find_attachment_data_list
+        from opi.services.project_file_handler import find_attachment_data_list
 
         original = context.get("original_attachment_content") or {}
         data = find_attachment_data_list(yaml_data.get("services")) if original else None

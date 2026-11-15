@@ -1,13 +1,11 @@
-"""Extra API actions a service declares for itself (RC-38).
+"""Extra API actions a service declares for itself.
 
 The generic config endpoints cover "configure this service at this layer", and they are
-generated from what the service's *editables* declare. That works for most of the catalog
-and breaks exactly where a service can do something the wizard has no field for. The
-measured case: an API client could point a component at attachment ``my-cert`` but had no
-way to put ``my-cert`` into the project, because uploading a file is not a config block --
-it is the DEFINE side, and it arrives as multipart.
+generated from what the service's *editables* declare. An action is for what has no config
+field at all: uploading a file, for instance, which is the DEFINE side and arrives as
+multipart.
 
-So a service may declare extra actions. A declaration says, once:
+A declaration says, once:
 
 * which layer it acts on and what it does there (``ConfigRole``),
 * which fields it takes, what each field *means* (the text lands in the OpenAPI
@@ -17,11 +15,9 @@ So a service may declare extra actions. A declaration says, once:
 * an example of a call.
 
 Route, request signature and documentation are derived from that (see
-``_register_service_action_routes`` in ``opi/api/v2/router.py``), instead of the same
-knowledge being written out three times.
+``_register_service_action_routes`` in ``opi/api/v2/router.py``).
 
-**A field points at an editable; it never restates a rule.** This is the same move
-``opi/api/validation.py`` made for the component endpoints: the API references the shared
+**A field points at an editable; it never restates a rule.** The API references the shared
 ``Editable`` that the wizard renders, so "what may this value look like" has exactly one
 definition. A field that genuinely has no editable (a file's bytes) says so in
 ``no_editable_reason`` -- a written exception, not a second validator.
@@ -43,19 +39,17 @@ if TYPE_CHECKING:
 class ActionVerb(Enum):
     """The verbs an action can support, and what each one promises.
 
-    The distinction is the contract, decided on 6 August 2026 and deliberately not
-    softened: ``CREATE`` refuses to touch something that already exists, ``UPDATE``
-    expects it to exist, and ``UPSERT`` replaces whatever is there on id, without asking.
+    The distinction is the contract and is not to be softened: ``CREATE`` refuses to touch
+    something that already exists, ``UPDATE`` expects it to exist, and ``UPSERT`` replaces
+    whatever is there on id, without asking.
 
     Replacing without warning is only ever what ``UPSERT`` does, and it has to be called
     as such. A ``POST`` that silently overwrites lies about what it did, and the caller
     finds out when the old file is gone. Whether replacing was the intention is the
     caller's business -- which is exactly why the caller has to say it in the request.
 
-    ``DELETE`` joined them on 7 August 2026: the catalog could be written and rewritten but
-    never emptied, so entries piled up with no way back. It addresses one item by path and
-    takes nothing else (see ``takes_fields``); what it needs beyond that identity is a flag
-    the caller sets, not a body.
+    ``DELETE`` addresses one item by path and takes nothing else (see ``takes_fields``);
+    what it needs beyond that identity is a flag the caller sets, not a body.
     """
 
     CREATE = "create"
@@ -90,7 +84,7 @@ class ActionVerb(Enum):
 
     @property
     def on_existing(self) -> str:
-        """What happens when the id is already taken: ``reject``, ``replace`` or ``remove``."""
+        """What happens when the id already exists: ``reject``, ``replace`` or ``remove``."""
         if self is ActionVerb.CREATE:
             return "reject"
         return "remove" if self is ActionVerb.DELETE else "replace"
@@ -160,9 +154,9 @@ class FieldCombination:
 
     Documentation with a pointer, never an implementation: the rule itself lives in the
     model or the editable that already has it (an attachment delivered as a file needs a
-    path -- ``AttachmentUse`` says so, and refusing to say it twice is the point).
-    ``enforced_by`` is a dotted path, and a test resolves it, so the pointer cannot rot
-    into a claim about a check that no longer exists.
+    path, and ``AttachmentUse`` says so). ``enforced_by`` is a dotted path, and a test
+    resolves it, so the pointer cannot rot into a claim about a check that no longer
+    exists.
     """
 
     #: The condition, in the caller's terms (e.g. ``provide-as=file``).
@@ -177,16 +171,13 @@ class FieldCombination:
 class FieldDisjunction:
     """A rule that exactly one of these fields is given, and where it is enforced.
 
-    ``FieldCombination`` is an implication -- *if* this, *then* that -- and an either/or
-    can only be written as two of those, with nothing holding the two together: neither
-    side says that giving both is wrong, or that giving neither is. "Send A or B" is a
-    rule of its own, so it is declared as one.
+    ``FieldCombination`` is an implication -- *if* this, *then* that; "send A or B" is a
+    rule of its own and is declared as one, because neither half of an implication says
+    that giving both is wrong, or that giving neither is.
 
-    Same discipline as the implication, for the same reason: this is documentation with a
-    pointer. ``enforced_by`` names the code that actually refuses the request, a test
-    resolves it, and the declaration itself validates nothing -- a disjunction that
-    started checking would put the rule in two places, which is exactly what pointing at
-    the enforcer avoids.
+    Documentation with a pointer, like the implication: ``enforced_by`` names the code that
+    actually refuses the request, a test resolves it, and the declaration itself validates
+    nothing. A disjunction that started checking would put the rule in two places.
 
     It reaches the OpenAPI document as ``oneOf`` over the alternatives, so a client reads
     the rule off the spec instead of discovering it at the 422.
@@ -209,14 +200,12 @@ class ActionFlag:
     """A boolean query parameter one of an action's routes takes.
 
     A field describes the *thing* a request is about; a flag describes what the caller
-    wants done and what they already know. ``upsert`` was the first of these and lives in
-    the verb table, because replacing is a promise about an id. ``confirm_in_use`` is the
-    second and belongs to the service: only the attachments service knows what "in use"
-    means for an attachment.
+    wants done and what they already know. ``upsert`` lives in the verb table, because
+    replacing is a promise about an id; ``confirm_in_use`` belongs to the service, because
+    only the attachments service knows what "in use" means for an attachment.
 
-    Off by default, always. A flag exists because the default answer is a refusal and the
-    caller has to overrule it in the request -- a flag that defaults to on is just
-    behaviour with an extra name.
+    Off by default, always: a flag exists because the default answer is a refusal and the
+    caller has to overrule it in the request.
     """
 
     name: str
@@ -301,8 +290,7 @@ class ServiceAction:
     #:
     #: An action without it only writes the project file, and the change reaches the
     #: cluster whenever something else happens to process the project -- which is a
-    #: coincidence, not a contract. That was the attachments bug: a replaced certificate
-    #: was committed and nothing ever generated a manifest from it.
+    #: coincidence, not a contract.
     #:
     #: Declaring it changes the route's contract. It gains the ``rollout`` query parameter
     #: every other mutating endpoint has, and answers 202 with a task id instead of a
@@ -350,10 +338,10 @@ class ServiceAction:
     def editables_for(self, verb: ActionVerb) -> dict[str, Editable]:
         """The validation profile for one verb: field name -> shared Editable.
 
-        Built the way ``opi/api/validation.py`` builds its profiles -- the shared editable
-        with ``required`` set to what *this endpoint* insists on. Whether a field may be
-        left out is the endpoint's business; what a valid value looks like is the field's,
-        and that half is never copied here.
+        The same profile shape ``opi/api/validation.py`` builds: the shared editable with
+        ``required`` set to what *this endpoint* insists on. Whether a field may be left out
+        is the endpoint's business; what a valid value looks like is the field's, and that
+        half is never copied here.
 
         A verb that takes no fields has an empty profile rather than a profile of optional
         fields: there is nothing to send, so there is nothing to validate.

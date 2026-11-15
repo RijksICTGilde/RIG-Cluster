@@ -6,9 +6,9 @@ import opi.services.persistence  # noqa: F401  -- registers the ORM models on Ba
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.db import Base, configure_engine, dispose_engine, include_orm_object
 from opi.services.project_reconciliation_service import record_reconciliation
+from opi.services.tasks.async_task_service import AsyncTaskService
 from sqlalchemy import Engine, create_engine, text
 from tests.conftest import alembic_upgrade
 

@@ -10,30 +10,28 @@ from opi.services.services_enums import ServiceType
 AUTH_WALL_BANNER_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner"),
     # Optional free-text field: an empty submission leaves no key rather than writing
-    # banner: "" or null (checklist 4). banner defaults to None in the model, not a bool,
-    # so remove_when_none is safe here.
+    # banner: "" or null. banner defaults to None in the model, not a bool, so
+    # remove_when_none is safe here.
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
 
-#: Wegwijzer in het componentformulier: je zet de auth wall HIER aan, maar je stelt hem
-#: ELDERS in.
+#: Signpost in the component form: the auth wall is switched on HERE and configured
+#: ELSEWHERE.
 #:
-#: De dienst hangt aan een component (daar komt de oauth2-proxy voor de pod), terwijl zijn
-#: enige instelling, de bannertekst, projectbreed is: één toegangspagina voor het hele
-#: project. Wie hem hier aanvinkte zag daarna nergens wat er dan gebeurt, en de plek waar
-#: dat wel staat (tabblad Services, kaart Authorization Wall) is niet te raden vanaf hier.
+#: The service hangs off a component (that is where the oauth2-proxy joins the pod), while
+#: its only setting, the banner text, is project-wide: one access page for the whole
+#: project. The place that says so is the Authorization Wall card on the Services tab.
 #:
-#: Bewust alleen een verwijzing en geen tweede editor: het veld is projectbreed, dus een
-#: kopie per component zou suggereren dat je het per component kunt zetten.
+#: A pointer and not a second editor: the field is project-wide, so a copy per component
+#: would suggest it can be set per component.
 #:
-#: Het pad wordt nooit geschreven: de visualizer staat op ``readonly``, en de verwerking
-#: slaat readonly-velden over. Bewust NIET ``transient``, hoe verleidelijk dat ook klinkt
-#: voor een veld zonder waarde: ``transient`` samen met ``depends_on`` betekent in deze
-#: codebase al iets anders (een veld dat zijn ouder spiegelt, zoals het eigen domein), en de
-#: wizard probeert zo'n veld bij het hertekenen te vullen. Dat viel om op het jokerteken in
-#: het pad.
+#: The path is never written: the visualizer is ``readonly``, and processing skips readonly
+#: fields. Deliberately NOT ``transient``, however tempting that sounds for a field without
+#: a value: ``transient`` together with ``depends_on`` already means something else in this
+#: codebase (a field mirroring its parent, like the own domain), and the wizard tries to
+#: fill such a field while redrawing, which fails on the wildcard in the path.
 AUTH_WALL_COMPONENT_INFO_EDITABLE = Editable(
     yaml_path="components[*]/_authorization-wall-info",
     depends_on="components[*]/services",

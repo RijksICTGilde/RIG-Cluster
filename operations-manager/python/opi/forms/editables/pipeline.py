@@ -1,8 +1,7 @@
 """Data-only validation pipeline for Editable objects.
 
-Operates on raw Editable instances without any UI dependency.
-Designed for API endpoint validation - validates flat field maps
-against editable validators, converters, and enforcers.
+Works on raw Editable instances with no UI dependency: a flat field map against the editable
+validators, converters and enforcers, which is what an API endpoint needs.
 """
 
 from __future__ import annotations
@@ -16,21 +15,12 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import ContextAwareEditableValidator, Editable, EditableEnforcer
 
 
-def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:
-    """Validate a single value against an editable's constraints.
+def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
+    """The error messages for one value, empty when it is valid.
 
-    Runs the required check (if editable.required) and then the
-    editable's validator (if present).
-
-    ``context`` carries what a validator cannot know from the value alone -- the ids
-    already taken, for a uniqueness check. It is passed only when given, following the
-    same convention as ``EditableFormProcessor._validate_field``: a validator that takes
-    no context raises TypeError and is called plainly. This is what lets a caller outside
-    the form pipeline (the attachment upload endpoints) run the *shared* rule instead of
-    reaching past the editable to instantiate its validator itself.
-
-    Returns:
-        List of error message strings (empty = valid).
+    ``context`` carries what a validator cannot know from the value alone, such as the ids
+    already in use for a uniqueness check, and is passed on only when both given and accepted,
+    the same convention as ``EditableFormProcessor._validate_field``.
     """
     errors: list[str] = []
 
@@ -40,10 +30,9 @@ def validate_field(editable: Editable, value: Any, context: dict[str, Any] | Non
             return req_errors
 
     if editable.validator and value is not None and value != "":
-        # Welke aanroepvorm geldt is een eigenschap van de validator, niet iets om met
-        # een TypeError te ontdekken: die ving ook een TypeError uit de validator zelf
-        # en draaide hem dan stilletjes opnieuw zonder context (zelfde vorm als
-        # FormProcessor sinds RC-40).
+        # Which call form applies is a property of the validator, not something to discover
+        # from a TypeError: that also catches a TypeError raised BY the validator and then
+        # silently re-runs it without context. Same shape as FormProcessor.
         if context is not None and _validator_accepts_context(type(editable.validator)):
             errors.extend(cast("ContextAwareEditableValidator", editable.validator).validate(value, context))
         else:
@@ -56,15 +45,9 @@ def validate_fields(
     field_map: dict[str, Any],
     editables: dict[str, Editable],
 ) -> dict[str, list[str]]:
-    """Validate a dict of {field_name: value} against matching editables.
+    """The errors per field name; a field without errors is left out.
 
-    Only validates fields present in both ``field_map`` and ``editables``.
-    Fields in ``editables`` that are required but absent from ``field_map``
-    are also checked.
-
-    Returns:
-        Dict mapping field names to their error lists.
-        Fields with no errors are omitted.
+    A required editable missing from ``field_map`` is checked too.
     """
     errors: dict[str, list[str]] = {}
 
@@ -82,16 +65,9 @@ def convert_fields(
     editables: dict[str, Editable],
     context_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Apply converter.write() to each value in the field map.
+    """Apply ``converter.write()`` to each value, in a new dict.
 
-    Returns a new dict with converted values. Fields without a converter
-    are passed through unchanged. Only processes fields present in both
-    ``field_map`` and ``editables``.
-
-    Args:
-        field_map: The field values to convert.
-        editables: Mapping of field names to Editable instances.
-        context_data: Optional full project/session data passed to converters.
+    A field without a converter, or without an editable, passes through unchanged.
     """
     result: dict[str, Any] = {}
 
@@ -110,14 +86,7 @@ async def enforce_rules(
     enforcers: list[EditableEnforcer],
     context: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Run business rule enforcers against the data.
-
-    Each enforcer receives the full data dict and a context dict.
-    Enforcers raise ``ValueError`` on violation.
-
-    Returns:
-        List of error message strings from any violations.
-    """
+    """Run every enforcer against the full *data*, and collect the violations they raise."""
     errors: list[str] = []
     ctx = context or {}
 

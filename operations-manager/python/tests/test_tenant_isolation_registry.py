@@ -17,14 +17,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
 from opi.connectors.skopeo import SkopeoConnector
-from opi.core.project_schema import ProjectIntegrityError
-from opi.manager.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_claims,
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 
 PROJECT_A = "project-a"
 PROJECT_B = "project-b"
@@ -37,7 +37,9 @@ PLATFORM_REPO = f"{REGISTRY_URL}/{REGISTRY_ORG}"
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
-CREDS = {"username": "u", "password": "plain:een-token"}
+#: A token in its encrypted stored form. Since schema version 2.18 a project file may not
+#: carry ``plain:``, and these tests are about something other than the token.
+CREDS = {"username": "u", "password": "base64+age:ZWVuLXRva2Vu"}
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +62,7 @@ def two_projects():
     projects = {PROJECT_A: _project(PROJECT_A, KEY_A), PROJECT_B: _project(PROJECT_B, KEY_B)}
     store = MagicMock()
     store.get.side_effect = projects.get
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         yield store
 
 
@@ -156,7 +158,7 @@ class TestPushOwnership:
         """
         store = MagicMock()
         store.get.side_effect = {"PROJECT-A": _project(PROJECT_A, KEY_A)}.get
-        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
             response = _push(client, "PROJECT-A", KEY_A)
 
         assert response.status_code == 200
@@ -168,7 +170,7 @@ class TestReadOwnership:
 
     @pytest.fixture(autouse=True)
     def _registry_configured(self):
-        with patch("opi.manager.project_validation.settings") as mocked:
+        with patch("opi.services.project_validation.settings") as mocked:
             mocked.REGISTRY_URL = REGISTRY_URL
             mocked.REGISTRY_ORG = REGISTRY_ORG
             yield
@@ -232,7 +234,7 @@ class TestReadOwnership:
             assert validate_platform_registry_image_ownership(self._project_with_image(image)) == []
 
     def test_missing_registry_configuration_disables_the_check(self):
-        with patch("opi.manager.project_validation.settings") as mocked:
+        with patch("opi.services.project_validation.settings") as mocked:
             mocked.REGISTRY_URL = ""
             mocked.REGISTRY_ORG = ""
             data = self._project_with_image(f"{PLATFORM_REPO}:{PROJECT_B}_backend-latest")

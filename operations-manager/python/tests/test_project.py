@@ -87,6 +87,43 @@ class TestReferenceLookup:
         items = [{"a": 1, "b": 2}, {"a": 1, "b": 3}]
         assert Project.locate(items, a=1, b=3) == {"a": 1, "b": 3}
 
+    def test_find_missing_collection_returns_none(self) -> None:
+        assert Project({"name": "demo"}).find("deployments", name="prod") is None
+
+    def test_find_none_collection_returns_none(self) -> None:
+        assert Project({"deployments": None}).find("deployments", name="prod") is None
+
+    def test_find_dict_collection_returns_none(self) -> None:
+        assert Project({"deployments": {"prod": {}}}).find("deployments", name="prod") is None
+
+    def test_find_skips_non_dict_entries(self) -> None:
+        data = {"deployments": ["prod", None, 7, {"name": "prod", "cluster": "a"}]}
+        assert Project(data).find("deployments", name="prod") == {"name": "prod", "cluster": "a"}
+
+    def test_find_by_name_and_cluster(self) -> None:
+        data = {
+            "deployments": [
+                {"name": "prod", "cluster": "odcn-staging"},
+                {"name": "prod", "cluster": "odcn-production"},
+            ]
+        }
+        found = Project(data).find("deployments", name="prod", cluster="odcn-production")
+        assert found == {"name": "prod", "cluster": "odcn-production"}
+
+    def test_find_returns_the_live_dict(self) -> None:
+        data = _project()
+        found = Project(data).find("deployments", name="prod")
+        assert found is data["deployments"][0]
+        found["namespace"] = "demo"
+        assert data["deployments"][0]["namespace"] == "demo"
+
+    def test_find_is_case_sensitive(self) -> None:
+        assert Project(_project()).find("deployments", name="Prod") is None
+
+    def test_find_all_skips_non_dict_entries(self) -> None:
+        data = {"deployments": ["prod", {"name": "prod"}, {"name": "prod"}]}
+        assert len(Project(data).find_all("deployments", name="prod")) == 2
+
 
 class TestOrderPreservation:
     def test_set_appends_without_reordering(self) -> None:

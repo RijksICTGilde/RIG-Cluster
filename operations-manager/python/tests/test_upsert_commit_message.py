@@ -9,11 +9,28 @@ the changed components.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from opi.manager.project.deployment_mutations import DeploymentMutations
+
+
+@pytest.fixture(autouse=True)
+def _accept_component_references():
+    """The project fixtures here name components the project itself does not define.
+
+    The stub used to sit on the manager instance; since RC-443 the validator lives on
+    DeploymentMutations, one object further, so an instance stub would silently stop
+    reaching it.
+    """
+    with patch.object(
+        DeploymentMutations, "_validate_component_references", return_value={"success": True, "error": None}
+    ):
+        yield
+
 
 def _make_manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -34,7 +51,6 @@ def _wire_update_mocks(pm, project_data: dict) -> AsyncMock:
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value="demo")
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
-    pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
     save = AsyncMock()
     pm.save_and_commit_project = save
     return save
@@ -58,7 +74,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
@@ -73,7 +89,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="worker", image="ghcr.io/org/worker:v1")],
@@ -88,7 +104,7 @@ class TestUpsertCommitMessage:
         project_data = _project("ghcr.io/org/app:v1")
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -115,7 +131,7 @@ class TestUpsertConflictRetry:
         # Conflict once (another writer landed first), then succeed on the fresh re-read.
         save.side_effect = [ConflictError("gewijzigd sinds u begon"), None]
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
@@ -127,12 +143,12 @@ class TestUpsertConflictRetry:
     async def test_persistent_conflict_returns_a_conflict_not_a_crash(self):
         pm = _make_manager()
         save = _wire_update_mocks(pm, _project("ghcr.io/org/app:v1"))
-        from opi.manager.project_manager import _UPSERT_CONFLICT_RETRIES
+        from opi.manager.project.deployment_mutations import _UPSERT_CONFLICT_RETRIES
         from opi.services.project_store import ConflictError
 
         save.side_effect = ConflictError("gewijzigd sinds u begon")  # never resolves
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],

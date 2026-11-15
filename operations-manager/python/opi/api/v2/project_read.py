@@ -1,12 +1,7 @@
-"""Reading a project back out of its project file (RC-61).
+"""Reading a project back out of its project file, in three layers.
 
-The v2 API could change a project but not show one: there was no way to ask which
-services it uses, what its components look like, or what a deployment runs, without
-knowing the answer already. This module is the read side of that, in three layers that
-build on one another:
-
-* :func:`collect_project_services` -- which services this project uses, per layer;
-* :func:`build_component_details` -- the component definitions;
+* :func:`collect_project_services`: which services this project uses, per layer;
+* :func:`build_component_details`: the component definitions;
 * the whole-project view, which is those two plus the existing deployment reader and
   ``pending-rollout``, composed in the router without any data logic of its own.
 
@@ -21,19 +16,21 @@ answer describes the file and silently claims to describe what runs.
 block they live in, so the risk is real and it is handled per kind of content rather
 than by one blanket filter: env-var values never ship, an alias value ships when it is a
 reference to a platform variable and is masked when it is anything else (the owning
-service decides -- RC-66), an attachment's coupling ships but its content never does, and
-any value stored as an encrypted or ``plain:``-marked secret is replaced by ``***``.
+service decides), an attachment's coupling ships but its content never does, and any
+value stored as an encrypted or ``plain:``-marked secret is replaced by ``***``.
 
-An attachment's *size and sha256* do ship, on the catalogue usage, because "the file on
-the mount is the file I uploaded" was otherwise unprovable through the API. Facts about
-the content, computed over the decrypted bytes and never a byte of them; the reasoning is
-in ``AttachmentsService.summarize_data``.
+An attachment's *size and sha256* do ship, on the catalogue usage: facts about the
+content, computed over the decrypted bytes and never a byte of them, so that "the file on
+the mount is the file I uploaded" is provable through the API. See
+``AttachmentsService.summarize_data``.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from opi.services.catalog.base import ConfigLayer
 from opi.services.component_values import ComponentValuesError
@@ -43,7 +40,6 @@ from opi.services.registry import get_service
 from opi.services.services import service_entry_config, service_entry_data, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +47,7 @@ logger = logging.getLogger(__name__)
 REDACTED = "***"
 
 #: Prefix marking a deliberately unencrypted password. Not an encrypted value, still a
-#: secret, so it is redacted here too -- see ``carries_encrypted_value``.
+#: secret, so it is redacted here too; see ``carries_encrypted_value``.
 PLAIN_PREFIX = "plain:"
 
 #: The service whose component config is the attachment couplings.
@@ -62,7 +58,7 @@ ATTACHMENTS_SERVICE = "attachments"
 _SERVICE_NAMES = {service_type.value for service_type in ServiceType}
 
 
-def redact_secrets(value: Any) -> Any:
+def redact_secrets(value: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Replace every stored secret in a config tree with ``***``.
 
     A service config is free-form (it is the service's own model), so this walks it
@@ -84,10 +80,9 @@ def _shows_value(value: str) -> bool:
 
     An alias is normally a reference to a platform variable (``$DATABASE_SERVER_HOST``),
     and hiding that would defeat the point of asking. The owning service makes that call
-    (``AliasesService.owned_value_is_secret``), because only it knows what its values
-    mean; the storage form cannot answer it, since aliases are AGE-encrypted per value
-    and by that rule every alias came back as ``***`` (RC-66, bevinding 4). A value that
-    is still stored plainly with the ``plain:`` marker is a password all the same.
+    (``AliasesService.owned_value_is_secret``), because only it knows what its values mean;
+    the storage form cannot answer it, since every alias is stored encrypted. A value that is
+    still stored plainly with the ``plain:`` marker is a password all the same.
     """
     if value.strip().startswith(PLAIN_PREFIX):
         return False
@@ -204,22 +199,22 @@ class ComponentDetail(BaseModel):
 def project_defines_anything(project_data: dict[str, Any]) -> bool:
     """Whether any service entry in this project carries a DEFINE-side payload.
 
-    The read only needs the project's AGE private key in order to describe such a
-    payload, and resolving that key costs an ``age`` call -- and raises for a project
-    that has no key at all, which a services read never used to care about. So the
-    caller asks this first and hands over an empty key when there is nothing to open.
+    The read only needs the project's AGE private key in order to describe such a payload,
+    and resolving that key costs an ``age`` call and raises for a project that has no key at
+    all. So the caller asks this first and hands over an empty key when there is nothing to
+    open.
     """
     return any(service_entry_data(entry) is not None for entry in project_data.get("services") or [])
 
 
-def _usage(target: ConfigLayer, entry: Any, private_key: str, **ids: str | None) -> ServiceUsage:
+def _usage(target: ConfigLayer, entry: Any, private_key: str, **ids: str | None) -> ServiceUsage:  # noqa: ANN401  # a project-file value
     """Build one usage record from a services-list entry.
 
     The ``data`` of a definition is dropped from ``config`` before anything else happens.
     On the legacy single-key form ``service_entry_config`` falls back to the whole entry
-    body, and for a DEFINE-side entry that body IS the definition -- for the attachments
-    catalog, the base64 content of every uploaded file. A definition is not
-    configuration, and its content has no place in any read response.
+    body, and for a DEFINE-side entry that body IS the definition: for the attachments
+    catalog, the base64 content of every uploaded file. A definition is not configuration,
+    and its content has no place in any read response.
 
     What the definition may say about *itself* is a separate question, and only the
     owning service can answer it (``summarize_data``). The default answer is still
@@ -248,18 +243,17 @@ def collect_project_services(project_data: dict[str, Any], private_key: str) -> 
     Deliberately a different rule than ``_collect_service_config`` in the router, which
     answers "what is this service configured with" and therefore skips a bare selection.
     Here the question is "which services does this project use", and a bare
-    ``- publish-on-web`` is the answer to it: the service is on. Reporting it as absent
-    would be the one thing this endpoint exists to prevent.
+    ``- publish-on-web`` is the answer to it: the service is on.
 
     The four layers stay apart, and every usage carries the component or deployment it
-    belongs to. Flattening them into one entry per service would lose the only thing that
-    makes the answer usable: whether ``tls: standard`` holds for the whole project or for
-    a single component. This layered list is the authority on service configuration; the
-    plain name list on a component is a cross-reference and carries no config of its own.
+    belongs to, because whether ``tls: standard`` holds for the whole project or for a single
+    component is the only thing that makes the answer usable. This layered list is the
+    authority on service configuration; the plain name list on a component is a
+    cross-reference and carries no config of its own.
     """
     found: dict[str, list[ServiceUsage]] = {}
 
-    def add(services: Any, target: ConfigLayer, **ids: str | None) -> None:
+    def add(services: Any, target: ConfigLayer, **ids: str | None) -> None:  # noqa: ANN401  # a project-file value
         for entry in services or []:
             name = service_entry_name(entry)
             if name is None:
@@ -311,11 +305,11 @@ def _component_aliases(
 ) -> dict[str, str]:
     """A component's aliases, with values that are not a reference replaced by ``***``.
 
-    The stored value is decrypted first: aliases are written as ONE AGE block whose
-    plaintext is ``KEY=value`` lines (RC-106), so without decrypting there is nothing to
-    judge and nothing to show. Through the shared decoder, so this reads exactly what a
-    write wrote. A set that cannot be read at all is dropped rather than half-shown --
-    with one block there is no per-entry failure left to report.
+    The stored value is decrypted first: aliases are written as ONE AGE block whose plaintext
+    is ``KEY=value`` lines, so without decrypting there is nothing to judge and nothing to
+    show. Through the shared decoder, so this reads exactly what a write wrote. A set that
+    cannot be read at all is dropped rather than half-shown: with one block there is no
+    per-entry failure left to report.
     """
     raw = component.get("aliases")
     if not raw:

@@ -1,14 +1,14 @@
-"""De grens op de oude versies in een bucket met versioning (RC-380).
+"""The limit on the noncurrent versions in a bucket with versioning.
 
-Een bucket met versioning houdt zonder regel elke oude versie van elk object, dus een
-applicatie die per bewerking een versie wegschrijft laat hem zonder grens groeien. De
-grens is een platformbesluit met ruimte per project en per deployment, en staat daarom
-hier en niet in het projectbestand. Een bucket hoort bij een deployment, dus de
-deploymentwaarde is wat er op de bucket komt.
+Without a rule a bucket with versioning keeps every old version of every object, so an
+application that writes a version per edit lets it grow without bound. The limit is a platform
+decision with room per project and per deployment, and therefore lives here and not in the
+project file. A bucket belongs to a deployment, so the deployment value is what lands on the
+bucket.
 
-Beide object-opslagdiensten dragen dezelfde grens op dezelfde twee lagen, dus de
-declaratie staat hier en niet twee keer: ``minio-storage`` en ``seaweedfs-storage`` geven
-hun eigen ``ServiceType`` mee aan het oplossen.
+Both object storage services carry the same limit on the same two layers, so the declaration
+lives here and not twice: ``minio-storage`` and ``seaweedfs-storage`` pass their own
+``ServiceType`` to the resolution.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from opi.services.services import deployment_index
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.services_enums import ServiceType
 
 MAX_NONCURRENT_VERSIONS: Final = IntegerSetting(
@@ -36,9 +37,8 @@ MAX_NONCURRENT_VERSIONS: Final = IntegerSetting(
     label="Aantal oude versies",
 )
 
-#: Geen standaard: een leeftijdsgrens is een keuze per bucket, en in een reeks die bij 1
-#: begint is er geen getal dat "geen grens" betekent. Zie ``default=None`` in
-#: ``config_settings``.
+#: No default: an age limit is a choice per bucket, and in a range that starts at 1 there is no
+#: number meaning "no limit". See ``default=None`` in ``config_settings``.
 NONCURRENT_EXPIRE_DAYS: Final = IntegerSetting(
     path="noncurrent-expire-days",
     layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
@@ -48,29 +48,28 @@ NONCURRENT_EXPIRE_DAYS: Final = IntegerSetting(
     label="Leeftijd oude versies",
 )
 
-#: De stappen die de wizard aanbiedt. Een gemak, geen grens: elke waarde binnen de
-#: declaratie is geldig, en een opgeslagen waarde buiten deze lijst blijft zichtbaar.
+#: The steps the wizard offers. A convenience, not a bound: every value within the declaration
+#: is valid, and a stored value outside this list stays visible.
 MAX_NONCURRENT_VERSIONS_STEPS: Final[tuple[int, ...]] = (5, 10, 20, 30, 50, 100, 250, 1000)
 NONCURRENT_EXPIRE_DAYS_STEPS: Final[tuple[int, ...]] = (7, 30, 90, 180, 365, 730, 3650)
 
-#: Wat een dienst die deze grens draagt declareert.
+#: What a service carrying this limit declares.
 NONCURRENT_VERSION_SETTINGS: Final[tuple[IntegerSetting, ...]] = (MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS)
 
 
 @dataclass(frozen=True)
 class NoncurrentVersionRule:
-    """De effectieve grens voor een bucket: hoeveel oude versies, en hoe lang."""
+    """The effective limit for a bucket: how many noncurrent versions, and for how long."""
 
     max_versions: int
     expire_days: int | None
 
 
-def noncurrent_config_field(setting: IntegerSetting, description: str) -> Any:
-    """Het pydantic-veld van een van deze twee instellingen, voor het config-model.
+def noncurrent_config_field(setting: IntegerSetting, description: str) -> Any:  # noqa: ANN401  # pydantic Field() fits any field
+    """The pydantic field of one of these two settings, for the config model.
 
-    De grenzen worden geoordeeld door de declaratie (``check_settings``) en niet door
-    ``ge``/``le`` hier; het model noemt ze alleen in zijn beschrijving, zodat ze op een
-    plek staan.
+    The bounds are judged by the declaration (``check_settings``) and not by ``ge``/``le``
+    here; the model only names them in its description, so they live in one place.
     """
     room = f"Between {setting.minimum} and {setting.maximum}"
     room += f", platform default {setting.default}." if setting.default is not None else ", no platform default."
@@ -90,7 +89,7 @@ def _layer_values(project_data: dict[str, Any], deployment_name: str | None) -> 
 
 def _resolve(
     setting: IntegerSetting, project_data: dict[str, Any], deployment_name: str | None, service: ServiceType
-) -> Any:
+) -> Any:  # noqa: ANN401  # the resolved setting value, an int or None
     values = {
         layer: service_setting_value(entries, service, setting)
         for layer, entries in _layer_values(project_data, deployment_name).items()
@@ -99,7 +98,7 @@ def _resolve(
 
 
 def project_max_noncurrent_versions(project_data: dict[str, Any], service: ServiceType) -> int:
-    """Wat een deployment zonder eigen waarde krijgt: die van het project, anders de standaard."""
+    """What a deployment without a value of its own gets: the project's, else the default."""
     return _resolve(MAX_NONCURRENT_VERSIONS, project_data, None, service)
 
 
@@ -110,26 +109,28 @@ def project_noncurrent_expire_days(project_data: dict[str, Any], service: Servic
 def deployment_noncurrent_rule(
     project_data: dict[str, Any], deployment_name: str, service: ServiceType
 ) -> NoncurrentVersionRule:
-    """De grens die op de bucket van ``deployment_name`` komt: deployment boven project boven standaard."""
+    """The limit that lands on the bucket of ``deployment_name``: deployment over project over default."""
     return NoncurrentVersionRule(
         max_versions=_resolve(MAX_NONCURRENT_VERSIONS, project_data, deployment_name, service),
         expire_days=_resolve(NONCURRENT_EXPIRE_DAYS, project_data, deployment_name, service),
     )
 
 
-def noncurrent_deployment_section(section_prefix: str, fields: Sequence[Any], deployment_index: int | None) -> Any:
-    """De sectie van de deploymentmodal: de grens op de bucket van een deployment.
+def noncurrent_deployment_section(
+    section_prefix: str, fields: Sequence[EditableVisualizer], deployment_index: int | None
+) -> FormSection:
+    """The section of the deployment modal: the limit on one deployment's bucket.
 
-    Zonder index beschrijft hij de laag (de velden dragen dan hun wildcard-pad), met index
-    staat hij in de modal van dat deployment. Beide diensten die deze grens dragen krijgen
-    dezelfde sectie; alleen hun eigen velden en sectie-id verschillen. De imports staan in
-    de functie en niet bovenaan, zoals overal waar de catalogus het formulier aanroept.
+    Without an index it describes the layer (the fields then carry their wildcard path), with an
+    index it sits in that deployment's modal. Both services carrying this limit get the same
+    section; only their own fields and section id differ. The imports sit inside the function
+    and not at the top, as everywhere the catalog calls the form.
     """
     from opi.forms.editables.reindex import materialize_wildcard_visualizer
     from opi.forms.visualizers.sections import FormSection
 
     index = 0 if deployment_index is None else deployment_index
-    gematerialiseerd = [materialize_wildcard_visualizer(field, index) for field in fields]
+    materialized = [materialize_wildcard_visualizer(field, index) for field in fields]
     suffix = "" if deployment_index is None else f"-{deployment_index}"
     return FormSection(
         section_id=f"{section_prefix}{suffix}",
@@ -137,6 +138,6 @@ def noncurrent_deployment_section(section_prefix: str, fields: Sequence[Any], de
         icon="wolk",
         description="Geldt alleen voor een bucket met versiebeheer.",
         post_save_action="process_project",
-        editables=gematerialiseerd,
-        layout=[field.editable.yaml_path for field in gematerialiseerd],
+        editables=materialized,
+        layout=[field.editable.yaml_path for field in materialized],
     )

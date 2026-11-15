@@ -23,7 +23,7 @@ repos:
       - id: trailing-whitespace
         exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
       - id: end-of-file-fixer
-        exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
+        exclude: (\.patch$|^operations-manager/python/tests/golden/|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-added-large-files
@@ -45,6 +45,24 @@ repos:
         entry: uv run --directory operations-manager/python pyright
         language: system
         files: ^operations-manager/python/.*\.py$
+        pass_filenames: false
+
+      # Taal en commentaardichtheid tegen scripts/code-conventions-baseline.json. Draait over
+      # de hele boom en niet over de staged bestanden: de baseline is de vergelijking. Zie
+      # docs/development/coding-rules.md, hoofdstuk 11.
+      - id: code-conventions
+        name: code-conventions
+        entry: python3 scripts/check-code-conventions.py
+        language: system
+        files: ^operations-manager/python/.*\.py$
+        pass_filenames: false
+
+      # Lagencontract van het lagenmodel; uitzonderingen kunnen alleen krimpen
+      - id: lint-imports
+        name: lint-imports
+        entry: uv run --directory operations-manager/python lint-imports
+        language: system
+        files: ^operations-manager/python/(.*\.py|pyproject\.toml)$
         pass_filenames: false
 
       # quick secret scan - zie ook features/sops-sleutel-roteren.md.

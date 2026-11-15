@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from opi.connectors.postgres import _summarize_sql_statement
-from opi.utils.logging_config import setup_logging
-from opi.utils.logging_redact import redact_text
+from opi.core.logging_config import setup_logging
+from opi.core.logging_redact import redact_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

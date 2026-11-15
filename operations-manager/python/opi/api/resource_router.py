@@ -1,24 +1,21 @@
-"""
-Resource tuning and deployment sanitization API endpoints.
-
-Provides on-demand resource tuning (queries Prometheus for actual usage)
-and deployment sanitization (detects broken deployments and disables them).
-"""
+"""Tuning the resources of a project, and disabling the deployments that are broken."""
 
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+
 from opi.api.params import ProjectNamePath
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
+from opi.http.auth.endpoint_util import validate_api_token
 from opi.manager.project_manager import ProjectManager
+from opi.services.metrics_queries import pod_restarts
+from opi.services.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
 from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
     trigger_reprocessing,
@@ -40,18 +37,7 @@ resource_router: APIRouter = APIRouter(
 
 
 def _get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
-    """
-    Get project data and filename from the project service.
-
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Tuple of (project_data, filename)
-
-    Raises:
-        HTTPException: If project not found or has no data
-    """
+    """The data and the filename of a project; raises 404 when there is neither."""
     project = get_project_store().get(project_name)
 
     if not project:
@@ -71,23 +57,18 @@ async def tune_resources(
     project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to tune (optional)"),
 ) -> JSONResponse:
-    """
-    Analyze actual resource usage via Prometheus and recommend/apply memory adjustments.
+    """Analyze actual resource usage via Prometheus and apply memory adjustments.
 
     Queries Prometheus for max memory usage over the configured window, detects OOM kills,
     and updates the project YAML with recommended resource limits.
-
-    Args:
-        project_name: Name of the project
-        deployment: Optional specific deployment name to tune
     """
     try:
         result = await tune_deployment_resources(project_name, deployment)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
-        # De meting komt van Prometheus, en de melding daarvan draagt het adres van die
-        # dienst. Die hoort in de log, niet in het antwoord.
+        # The measurement comes from Prometheus and its error carries the address of that
+        # service, which belongs in the log and not in the answer.
         logger.exception("Afstemmen van de resources van '%s' mislukt", project_name)
         raise HTTPException(
             status_code=503,
@@ -113,8 +94,7 @@ async def sanitize_deployment(
     project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to sanitize (optional)"),
 ) -> JSONResponse:
-    """
-    Detect broken deployments (crash loops, restart storms) and disable them.
+    """Detect broken deployments (crash loops, restart storms) and disable them.
 
     Sets disabled=true on broken components in the project YAML, which renders replicas: 0
     in the deployment template.
@@ -124,17 +104,12 @@ async def sanitize_deployment(
     tuner has, turning a memory that is set too low into a permanent outage. A
     component that keeps dying for it still trips the restart threshold below.
 
-    An image that cannot be pulled is not a reason either. Since RC-243 it is a reason to
-    skip the component entirely, symptoms included: see ``_run_sanitize``.
-
-    Args:
-        project_name: Name of the project
-        deployment: Optional specific deployment name to sanitize
+    An image that cannot be pulled is not a reason either. It is a reason to skip the
+    component entirely, symptoms included: see ``_run_sanitize``.
     """
     # Existence check via the cache; load fresh (migrated) data from git for the
     # mutation so a stale cache cannot overwrite concurrent changes on commit.
     _, filename = _get_project_data(project_name)
-    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
         return await _run_sanitize(project_manager, project_name, deployment, filename)
@@ -188,7 +163,6 @@ async def _run_sanitize(
             if not component_ref:
                 continue
 
-            # Skip already-disabled components (check deployment-level, falls back to definition)
             is_disabled, _ = file_handler.extract_deployment_component_disabled(project_data, dep_name, component_ref)
             if is_disabled:
                 continue
@@ -197,7 +171,6 @@ async def _run_sanitize(
 
             reasons: list[str] = []
 
-            # Check deployment status via kubectl
             try:
                 dep_statuses = await kubectl.get_deployment_status(namespace, unique_name)
                 if dep_statuses:
@@ -210,20 +183,18 @@ async def _run_sanitize(
                     desired = int(status.get("replicas", "1"))
                     if desired > 0 and ready == 0:
                         reasons.append(f"0/{desired} pods ready")
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 logger.warning(f"Failed to get deployment status for {unique_name}: {e}")
 
-            # Check restart count via Prometheus
             restart_count = 0
             if connector:
                 try:
-                    pod_restarts = await connector.get_pod_restarts(namespace)
-                    for pod_data in pod_restarts:
+                    for pod_data in await pod_restarts(connector, namespace):
                         pod_name = pod_data.get("metric", {}).get("pod", "")
                         if pod_name.startswith(unique_name):
                             count = int(float(pod_data.get("value", [0, 0])[1]))
                             restart_count = max(restart_count, count)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Failed to query restarts for {unique_name}: {e}")
 
             if restart_count > restart_threshold:
@@ -233,16 +204,11 @@ async def _run_sanitize(
             # the resource tuner, which raises the memory; disabling the component takes
             # away the pods that produce the very metric the tuner reads.
 
-            # Check for image pull errors. Seeing one skips this component entirely: no
-            # disable for the pull itself (RC-243), and none for the symptoms gathered
-            # above either.
-            #
-            # That second half is the subtlety. A pull that does not succeed EXPLAINS
-            # every other reason on the list: zero pods are ready, and the container
-            # "restarts", precisely because the image never arrived. Disabling on those
-            # symptoms removes the pod that would have retried the pull. The skip no
-            # longer asks what the registry said: an image-pull event is an image-pull
-            # event whatever the wording.
+            # An image that does not arrive skips this component entirely, symptoms included:
+            # a failing pull EXPLAINS every other reason on the list (zero pods ready, a
+            # container that "restarts"), and disabling on those symptoms removes the pod
+            # that would have retried the pull. Whatever the registry said: an image-pull
+            # event is an image-pull event.
             image_pull_seen = False
             try:
                 events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)
@@ -254,7 +220,7 @@ async def _run_sanitize(
                             f"the pull, and skipping the sanitize for it: {event.get('message', '')}"
                         )
                         break
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
                 logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
 
             if image_pull_seen:
@@ -273,7 +239,6 @@ async def _run_sanitize(
             else:
                 healthy_components.append(component_ref)
 
-    # If components were disabled, commit and reprocess
     if disabled_components:
         component_names = [c["component"] for c in disabled_components]
         commit_msg = f"sanitize: disable broken components {', '.join(component_names)} in {project_name}"

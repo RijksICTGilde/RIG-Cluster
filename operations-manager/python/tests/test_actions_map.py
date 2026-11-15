@@ -6,7 +6,8 @@ kaart klopt met de code: een nieuwe stap in ``lifespan`` of ``run_startup_tasks`
 nieuw ``TaskType``, laat hem falen tot er een regel bij staat. Zo kan de kaart niet stil
 verouderen, en is in een bestand te zien wat nog ``planned`` is.
 
-Statisch, dus hij draait in de standaardrun; de groepen zelf hebben hun eigen task.
+Geen echte afhankelijkheid nodig, dus hij draait in de standaardrun; de groepen zelf
+hebben hun eigen task.
 """
 
 from __future__ import annotations
@@ -18,20 +19,21 @@ from typing import Any
 
 import pytest
 import yaml
-from opi.core.async_task_service import TaskType
+from opi.runtime.tasks.handler_registry import standalone_worker_handlers, task_handlers
+from opi.services.tasks.async_task_service import TaskType
 
 PYTHON_ROOT = Path(__file__).resolve().parent.parent
 MAP = PYTHON_ROOT / "tests" / "regression" / "actions.yaml"
 SERVER = PYTHON_ROOT / "opi" / "server.py"
-STARTUP = PYTHON_ROOT / "opi" / "core" / "startup.py"
-WORKER = PYTHON_ROOT / "opi" / "worker_main.py"
+STARTUP = PYTHON_ROOT / "opi" / "runtime" / "startup" / "startup.py"
 
 #: De TaskTypes die ``opi/worker_main.py`` met opzet niet registreert. Die losse worker
 #: wordt vandaag niet uitgerold (``infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml``
 #: laat zien dat de taken in het OPI-proces lopen), en backup en restore vragen meer dan een
 #: registratie: ze hebben kopia in de image en de gelijktijdigheidsgrens van
 #: ``BACKUP_MAX_CONCURRENT`` nodig. Een regel hier is dus een BESLISSING: wie ze daar
-#: registreert, haalt ze hier weg en laat deze toets meekijken.
+#: registreert, haalt ze hier weg en laat deze toets meekijken. Een eigen kopie van
+#: ``COMBINED_MODE_ONLY`` in de registry, zodat de beslissing op twee plekken moet vallen.
 WORKER_WITHOUT_HANDLER = frozenset({"BACKUP", "RESTORE"})
 
 #: Waar een toets mag staan die de kaart als ``measured`` noemt.
@@ -63,33 +65,15 @@ def _called_names(path: Path, function: str) -> set[str]:
     }
 
 
-def _registered_task_types(path: Path) -> set[str]:
-    """De TaskTypes waarvoor dit bestand een handler registreert.
-
-    Uit de AST en niet uit een import: een registratie staat in de ``lifespan`` van de
-    server, en die uitvoeren zou de hele opstelling vragen.
-    """
-    tree = ast.parse(path.read_text())
-    return {
-        node.args[0].attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "register_handler"
-        and node.args
-        and isinstance(node.args[0], ast.Attribute)
-    }
-
-
 def test_the_server_registers_a_handler_for_every_task_type() -> None:
     """Een TaskType zonder handler komt in de rij en blijft daar liggen.
 
     Dat is geen fout die een toets op de handler zelf vangt: de taak wordt aangenomen, de
     aanroeper krijgt een taak-id, en er gebeurt nooit iets.
     """
-    missing = sorted({task.name for task in TaskType} - _registered_task_types(SERVER))
+    missing = sorted({task.name for task in TaskType} - {task.name for task in task_handlers()})
     assert not missing, (
-        f"TaskTypes zonder register_handler in opi/server.py: {missing}. Een taak van dat "
+        f"TaskTypes zonder handler in de registry: {missing}. Een taak van dat "
         "type komt in de rij en wordt nooit uitgevoerd."
     )
 
@@ -100,11 +84,11 @@ def test_the_standalone_worker_registers_what_it_claims_to() -> None:
     De lijst hoort te krimpen en niet te groeien: staat een type er wel, dan hoort het uit
     ``WORKER_WITHOUT_HANDLER``.
     """
-    registered = _registered_task_types(WORKER)
+    registered = {task.name for task in standalone_worker_handlers()}
     expected = {task.name for task in TaskType} - WORKER_WITHOUT_HANDLER
 
     missing = sorted(expected - registered)
-    assert not missing, f"TaskTypes zonder register_handler in opi/worker_main.py: {missing}"
+    assert not missing, f"TaskTypes zonder handler voor opi/worker_main.py: {missing}"
 
     gone = sorted(WORKER_WITHOUT_HANDLER & registered)
     assert not gone, f"opi/worker_main.py registreert {gone} wel; haal ze uit WORKER_WITHOUT_HANDLER in deze toets."

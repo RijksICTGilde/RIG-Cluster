@@ -13,7 +13,7 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 from __future__ import annotations
 
 import re
-from collections.abc import Callable  # noqa: TC003
+from collections.abc import Callable  # noqa: TC003  # a runtime annotation on a dataclass field
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.aliases import AliasesService
@@ -265,9 +265,9 @@ def collect_deployment_actions(project_data: dict, deployment_name: str) -> list
 def deployment_action_key(action: DeploymentAction) -> str:
     """A stable, URL-safe id for a deployment action, derived from its label.
 
-    The confirmation dialog addresses an action by this key instead of by its endpoint:
-    the endpoint is then never taken from the request, only from what a service really
-    offered for this deployment (an endpoint in the URL would be an open POST target).
+    The confirmation dialog addresses an action by this key and never by its endpoint, so
+    the endpoint comes from what a service really offered for this deployment and never from
+    the request. An endpoint in the URL would be an open POST target.
     """
     return re.sub(r"[^a-z0-9]+", "-", action.label.lower()).strip("-")
 
@@ -310,7 +310,7 @@ def selected_services(project_data: dict) -> list[Service]:
     ``extract_service_names_from_component``, so the v1 ``uses-services`` key counts too;
     reading ``services`` alone silently loses every service on an unmigrated component.
     """
-    from opi.handlers.project_file_handler import extract_service_names_from_component
+    from opi.services.project_file_handler import extract_service_names_from_component
     from opi.services.services import service_entry_name
 
     selected: set[str | None] = {service_entry_name(entry) for entry in project_data.get("services", []) or []}
@@ -380,11 +380,10 @@ def component_service_visualizers() -> list[EditableVisualizer]:
 
 
 def component_service_notices() -> list[EditableVisualizer]:
-    """De informatieblokken die diensten aan het componentformulier meegeven.
+    """The notices services add to the component form.
 
-    Naast ``component_service_visualizers``, en bewust apart: die gaan over velden die je
-    invult, deze over iets wat je moet weten. Zie ``Service.component_form_notices`` voor
-    waarom een mededeling geen configlaag mag claimen.
+    Apart from ``component_service_visualizers``, which is about fields you fill in. See
+    ``Service.component_form_notices`` for why a notice may not claim a config layer.
     """
     notices: list[EditableVisualizer] = []
     for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):

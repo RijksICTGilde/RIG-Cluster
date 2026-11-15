@@ -233,6 +233,9 @@ class Component:
     db_user_fallback: str = ""  # cnpg-secret: als het bestand geen username-veld heeft
     workloads: tuple[str, ...] = ()  # workloads die na de sync-gate herstart worden
     zad_env: tuple[str, ...] = ()  # env-variabelen in .env-<cluster>.secrets die dezelfde waarde dragen
+    # Extra env-namen die de waarde van het EERSTE rotate_field meedragen, buiten de
+    # 1-op-1-koppeling van zad_env: een ronde vraagt die waarde één keer en schrijft hem overal.
+    zad_env_copies: tuple[str, ...] = ()
     # (secret, key) in het cluster waar de HUIDIGE waarde staat, voor componenten zonder
     # template én zonder envbestand-kopie. Dan is dat cluster-secret de enige bron, en hoeft
     # er nergens een tweede exemplaar te staan dat stil kan afwijken.
@@ -448,6 +451,9 @@ COMPONENTS: list[Component] = [
         rotate_fields=("PROJECT_REPO_PASSWORD",),
         workloads=(OPI_DEPLOYMENT,),
         zad_env=("PROJECT_REPO_PASSWORD",),
+        # OPI leest zijn eigen drie repos met dezelfde token. Lieten die namen buiten de ronde,
+        # dan hield het envsecret de oude token in leven: dat gebeurde op 28-09.
+        zad_env_copies=("GIT_PROJECTS_SERVER_PASSWORD", "GIT_ARGO_APPLICATIONS_PASSWORD"),
         note="Aanmaken doe je in de GitHub-console (Settings → Developer settings). De tool "
         "toetst huidige én nieuwe token via de GitHub-API vóór het bestand wordt bijgewerkt. "
         "Daarna zelf: het env-secret regenereren en ZAD herstarten (staat als tekst in de stappen).",
@@ -657,7 +663,7 @@ def zad_env_coverage_gaps() -> list[str]:
         # Zonder bestand meet de poort niets, en dat mag niet stil gebeuren: een andere
         # bestandsnaam of een ander overlay-pad houdt de toets anders groen en leeg.
         return [f"geen enkel {ZAD_ENV_SECRET}.yaml in git onder {ZAD_ENV_OVERLAYS}: de poort meet niets"]
-    rotated = {name for component in COMPONENTS for name in component.zad_env}
+    rotated = {name for component in COMPONENTS for name in (*component.zad_env, *component.zad_env_copies)}
     named = rotated | set(ZAD_ENV_CONFIG) | set(ZAD_ENV_NON_ROTATABLE)
     gaps: list[str] = []
     seen: set[str] = set()
@@ -2636,10 +2642,19 @@ def file_step(component: Component, cluster: Cluster) -> Step:
     )
 
 
+def env_pairs(component: Component) -> list[tuple[str, str]]:
+    """(veld, env-naam) per kopie in het ZAD-envbestand, zad_env plus zad_env_copies.
+
+    Een component zonder zad_env heeft daar geen kopie, en dus geen paren.
+    """
+    one_to_one = list(zip(component.rotate_fields, component.zad_env, strict=True)) if component.zad_env else []
+    return one_to_one + [(component.rotate_fields[0], name) for name in component.zad_env_copies]
+
+
 def env_step(component: Component, cluster: Cluster) -> Step:
     """De kopie in het ZAD-envbestand meenemen, als dit veld daar een dubbele heeft."""
     path = env_file_for(cluster.name)
-    pairs = list(zip(component.rotate_fields, component.zad_env, strict=True))
+    pairs = env_pairs(component)
 
     def _write(ctx: Ctx) -> str:
         if not path.exists():
@@ -3286,7 +3301,7 @@ def gather_ctx(
         # veldnaam, zodat stappen overal hetzelfde adresseren: current['root-password'] is
         # dan de huidige BACKUP_S3_SECRET_KEY.
         current = dict(values)
-        for field, env_name in zip(component.rotate_fields, component.zad_env, strict=False):
+        for field, env_name in env_pairs(component):
             if field in values:
                 continue
             if env_name in values:

@@ -31,18 +31,18 @@ import pydantic
 import pytest
 import yaml
 from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.generation.manifests import ManifestGenerator, render_template
-from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN, UPSTREAM_PATTERN, RegistryEntry
 from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
+from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.services.project_store import GitProjectStore
+from opi.services.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
@@ -82,7 +82,9 @@ AGE_ENTRY = {"name": "versleuteld", "upstream": "ghcr.io", "username": "u", "pas
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
-CREDS = {"username": "u", "password": "plain:een-token"}
+#: A token in its encrypted stored form. Since schema version 2.18 a project file may not
+#: carry ``plain:``, and these tests are about something other than the token.
+CREDS = {"username": "u", "password": "base64+age:ZWVuLXRva2Vu"}
 
 #: De andere manier om te pullen: een secret dat het platform zelf neerzet.
 SECRET = {"secretName": "rig-robot-pull-secret"}
@@ -118,7 +120,7 @@ def _inzending(registry: dict[str, Any]) -> dict[str, Any]:
     """Wat de modaal post: de dienstconfig plus de lijst met gerenderde reeksen."""
     return {
         "_services-config": {"image-registries": {"config": {"registries": [registry]}}},
-        GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+        RENDERED_SEQUENCES_FIELD: ["_services-config/image-registries/config/registries"],
     }
 
 
@@ -221,7 +223,18 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
                     "services": [
                         {
                             "name": "image-registries",
-                            "config": {"registries": [{"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM, **CREDS}]},
+                            # A readable token: this render DECRYPTS it, and the question
+                            # here is the upstream, not the stored form.
+                            "config": {
+                                "registries": [
+                                    {
+                                        "name": "eigen",
+                                        "upstream": YAML_INJECTIE_UPSTREAM,
+                                        "username": "u",
+                                        "password": "plain:een-token",
+                                    }
+                                ]
+                            },
                         }
                     ],
                 },
@@ -632,7 +645,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         een entry met alleen een token is sinds RC-187 juist geldig.
         """
         with pytest.raises(ProjectIntegrityError) as excinfo:
-            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, "password": "plain:ghp_GEHEIM"}))
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, "password": "base64+age:ghp_GEHEIM"}))
         assert "ghp_GEHEIM" not in str(excinfo.value)
 
     @pytest.mark.asyncio
@@ -641,7 +654,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         submitted, errors = await EditableFormProcessor().process_json_submission(
-            _inzending({"name": "eigen", "upstream": "ghcr.io/team", "username": "", "password": "plain:een-token"}),
+            _inzending({"name": "eigen", "upstream": "ghcr.io/team", "username": "", "password": CREDS["password"]}),
             section.editables,
             copy.deepcopy(_leeg_project()),
             edit_mode=True,
@@ -664,7 +677,7 @@ class TestEenRegistryHeeftEenManierOmTePullen:
                     "config": {"registries": [{"name": "eigen", "upstream": "ghcr.io/team", "username": "u"}]}
                 }
             },
-            GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+            RENDERED_SEQUENCES_FIELD: ["_services-config/image-registries/config/registries"],
         }
         project = _project({"name": "eigen", "upstream": "ghcr.io/team", **SECRET})
         project["services"][0]["config"]["registries"] = []
@@ -695,7 +708,7 @@ class TestDeGebruikersnaamBlijftLeegInHetProjectbestand:
     async def test_na_een_save_staat_er_nog_steeds_geen_gebruikersnaam(self, ingevuld: str | None) -> None:
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
-        registry: dict[str, Any] = {"name": "eigen", "upstream": "ghcr.io/team", "password": "plain:een-token"}
+        registry: dict[str, Any] = {"name": "eigen", "upstream": "ghcr.io/team", "password": CREDS["password"]}
         if ingevuld is not None:
             registry["username"] = ingevuld
         submitted, errors = await EditableFormProcessor().process_json_submission(

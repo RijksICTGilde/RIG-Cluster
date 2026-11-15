@@ -65,11 +65,11 @@ from opi.core.cluster_config import (  # noqa: E402  (after the sys.path bootstr
     CLUSTER_CONFIG,
     get_cluster_config,
 )
-from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
+from opi.services.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
     find_plaintext_secret_violations,
     validate_project_schema,
 )
-from opi.manager.project_validation import validate_project_structure  # noqa: E402
+from opi.services.project_validation import validate_project_structure  # noqa: E402
 from opi.utils.age import (  # noqa: E402
     BASE64_AGE_PREFIX,
     ensure_base64_age_sync,
@@ -82,7 +82,7 @@ from opi.utils.age import (  # noqa: E402
 # rondes ernaast en door de toetsen: die kennen dit bestand als de ingang.
 from opi.utils.key_rotation import (  # noqa: E402
     Conversion,  # noqa: F401
-    ConversionFailed,
+    ConversionError,
     Form,  # noqa: F401
     convert_value,
     decrypt_field,
@@ -504,7 +504,7 @@ def sops_rotate(path: str | Path, old_public_key: str, new_public_key: str, old_
         env={**os.environ, "SOPS_AGE_KEY": old_private_key},
     )
     if process.returncode != 0:
-        raise ConversionFailed(f"sops rotate failed on {path}: {process.stderr.strip()}")
+        raise ConversionError(f"sops rotate failed on {path}: {process.stderr.strip()}")
 
 
 # places 2 and 3: loose encrypted values, outside a SOPS file and outside a project file
@@ -544,9 +544,8 @@ def _de_indent(block: str) -> str:
 def loose_values(path: str | Path) -> list[LooseValue]:
     """Every encrypted value in a text file that can be converted line by line.
 
-    Works on text and not on YAML, the two ``configmap.yaml`` included: there the env
-    content sits in a literal block scalar, and a YAML round trip would re-emit that whole
-    block.
+    Works on text and not on YAML: an env file holds its values line by line, and in a
+    configmap they sit in a literal block scalar that a YAML round trip would re-emit whole.
 
     Two shapes come out. A ``base64+age:`` value is base64 and therefore always a single
     line, so a line-scoped replacement touches exactly that one field -- wherever on the line
@@ -586,13 +585,13 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
     if field_.line_number is None:
         text = path.read_text(encoding="utf-8")
         if field_.value not in text:
-            raise ConversionFailed(f"{path} no longer holds the expected value")
+            raise ConversionError(f"{path} no longer holds the expected value")
         content = text.replace(field_.value, new_value)
     else:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         index = field_.line_number - 1
         if field_.value not in lines[index]:
-            raise ConversionFailed(f"{path}:{field_.line_number} no longer holds the expected value")
+            raise ConversionError(f"{path}:{field_.line_number} no longer holds the expected value")
         lines[index] = lines[index].replace(field_.value, new_value)
         content = "".join(lines)
 
@@ -624,13 +623,14 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 #: carries a copy of that same value. Both open with the platform key.
 #:
 #: ``projects/age-secret-github.txt`` stood here too, a whole file that was one armored block.
-#: It was removed from the tree: nothing read it and the token in it was withdrawn.
+#: It was removed from the tree: nothing read it and the token in it was withdrawn. The
+#: ``odcn-production`` configmap stood here for its two ``GIT_*_PASSWORD`` values; those moved to
+#: the envsecret, which is a SOPS file, so ``sops rotate`` reaches them without this list.
 #:
 #: It lives here and not in ``sops_rotation`` because BOTH rounds walk it. The key round
 #: re-encrypts every value on the list; the PAT round replaces the ones that hold the shared
 #: GitHub token, and skips the git-server passwords next to them -- see ``is_github_token``.
 LOOSE_VALUE_FILES = (
-    "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "operations-manager/python/.env",
     "operations-manager/python/scripts/migrate_project_to_production.py",
 )
@@ -654,13 +654,12 @@ def all_loose_values(paths: list[Path]) -> list[LooseValue]:
 def is_github_token(plaintext: str) -> bool:
     """Whether a decrypted value is a GitHub token, by the shapes the secret scanner knows.
 
-    This is what tells the PAT carriers from the other loose values next to them. The
-    ``odcn-production`` configmap and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
-    ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the platform's OWN git-server credentials on
-    the same platform key; writing a GitHub PAT over those would take OPI's access to its three
-    repositories away. Measured on the plaintext rather than settled by a list of file names,
-    because a list is what has to be kept right by hand and the shapes are already written down
-    once, in ``secret_scan.RULES``.
+    This is what tells the PAT carriers from the other loose values next to them. ``.env``
+    holds ``GIT_PROJECTS_SERVER_PASSWORD`` and ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the
+    platform's OWN git-server credentials on the same platform key; writing a GitHub PAT over
+    those would take OPI's access to its three repositories away. Measured on the plaintext
+    rather than settled by a list of file names, because a list is what has to be kept right by
+    hand and the shapes are already written down once, in ``secret_scan.RULES``.
     """
     return any(pattern.search(plaintext) for pattern in GITHUB_TOKEN_RULES)
 
@@ -802,7 +801,7 @@ def set_project_field(data: dict[str, Any], field_name: str, new_value: str) -> 
         return
     match = re.fullmatch(r"repositories\[(\d+)\]\.password", field_name)
     if not match:
-        raise ConversionFailed(f"unknown project field: {field_name}")
+        raise ConversionError(f"unknown project field: {field_name}")
     data["repositories"][int(match.group(1))]["password"] = to_write
 
 
@@ -914,7 +913,7 @@ async def rotate_project_file(
     round_report = ProjectRound(path=path)
     new_public_key = new_public_key or public_key_of(new_private_key)
     if new_pat is not None and current_pat is None:
-        raise ConversionFailed("a PAT round needs the current PAT: without it every value is replaced blindly")
+        raise ConversionError("a PAT round needs the current PAT: without it every value is replaced blindly")
 
     data = load_yaml_from_path(str(path))
     if not isinstance(data, dict):

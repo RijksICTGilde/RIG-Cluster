@@ -2,9 +2,9 @@
 
 import pytest
 from opi.generation.manifests import render_template
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.sleep_mode import manifests
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
+from opi.services.project_file_handler import ProjectFileHandler
 from ruamel.yaml import YAML
 
 

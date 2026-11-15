@@ -13,8 +13,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_step_up
-from opi.core.step_up import StepUpAction
+from opi.http.auth.auth_decorators import REQUIRES_STEP_UP, requires_step_up
+from opi.services.step_up import StepUpAction
 
 ACTIE = StepUpAction.PROJECT_DELETE
 HANDELING = ACTIE.phrase
@@ -30,7 +30,7 @@ def _request(path: str, *, htmx: bool = False, email: str = "eigenaar@example.or
 
 
 def _decorated(condition: Any) -> Any:
-    @requires_step_up(condition, actie=ACTIE)
+    @requires_step_up(condition, action=ACTIE)
     async def route(request: Any, project_name: str = "demo") -> str:
         return "uitgevoerd"
 
@@ -75,35 +75,35 @@ async def test_api_pad_zonder_geldige_otp_geeft_het_probleem_en_voert_niets_uit(
     antwoord = object()
 
     with (
-        patch("opi.api.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=probleem)) as verify,
-        patch("opi.api.otp_step_up.step_up_problem_response", return_value=antwoord) as respond,
+        patch("opi.http.auth.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=probleem)) as verify,
+        patch("opi.http.auth.otp_step_up.step_up_problem_response", return_value=antwoord) as respond,
     ):
         resultaat = await route(_request("/api/projects/demo"), project_name="demo")
 
     assert resultaat is antwoord
     respond.assert_called_once_with(probleem)
-    verify.assert_awaited_once_with(ANY, project_name="demo", actie=ACTIE, doelwit="demo")
+    verify.assert_awaited_once_with(ANY, project_name="demo", action=ACTIE, target="demo")
 
 
 @pytest.mark.asyncio
 async def test_api_pad_kiest_naam_als_doelwit_boven_het_project() -> None:
     """``naam`` is het lid van de ledenroutes (RC-387): het doelwit, niet het project."""
 
-    @requires_step_up(lambda request, **kwargs: True, actie=ACTIE)
+    @requires_step_up(lambda request, **kwargs: True, action=ACTIE)
     async def route(request: Any, project_name: str, naam: str) -> str:
         return "uitgevoerd"
 
-    with patch("opi.api.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)) as verify:
+    with patch("opi.http.auth.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)) as verify:
         await route(_request("/api/projects/demo/leden/bouwstraat"), project_name="demo", naam="bouwstraat")
 
-    verify.assert_awaited_once_with(ANY, project_name="demo", actie=ACTIE, doelwit="bouwstraat")
+    verify.assert_awaited_once_with(ANY, project_name="demo", action=ACTIE, target="bouwstraat")
 
 
 @pytest.mark.asyncio
 async def test_api_pad_met_geldige_otp_voert_de_handeling_uit() -> None:
     route = _decorated(lambda request, **kwargs: True)
 
-    with patch("opi.api.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)):
+    with patch("opi.http.auth.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)):
         resultaat = await route(_request("/api/projects/demo"), project_name="demo")
 
     assert resultaat == "uitgevoerd"
@@ -119,7 +119,7 @@ async def test_portaal_zonder_verse_step_up_en_zonder_htmx_geeft_een_kale_403() 
     route = _decorated(lambda request, **kwargs: True)
 
     with (
-        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=False),
+        patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=False),
         pytest.raises(HTTPException) as excinfo,
     ):
         await route(_request("/projects/delete/demo"), project_name="demo")
@@ -134,9 +134,9 @@ async def test_portaal_zonder_verse_step_up_met_htmx_geeft_de_dialoog() -> None:
     dialoog_response = object()
 
     with (
-        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=False),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", new=AsyncMock(return_value="<html/>")) as render,
-        patch("opi.web.step_up_dialog.step_up_dialog_response", return_value=dialoog_response) as respond,
+        patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=False),
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", new=AsyncMock(return_value="<html/>")) as render,
+        patch("opi.http.auth.step_up_dialog.step_up_dialog_response", return_value=dialoog_response) as respond,
     ):
         resultaat = await route(_request("/projects/delete/demo", htmx=True), project_name="demo")
 
@@ -149,7 +149,7 @@ async def test_portaal_zonder_verse_step_up_met_htmx_geeft_de_dialoog() -> None:
 async def test_portaal_met_verse_step_up_voert_de_handeling_uit() -> None:
     route = _decorated(lambda request, **kwargs: True)
 
-    with patch("opi.core.auth_decorators.has_fresh_step_up", return_value=True):
+    with patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=True):
         resultaat = await route(_request("/projects/delete/demo"), project_name="demo")
 
     assert resultaat == "uitgevoerd"
@@ -159,14 +159,14 @@ async def test_portaal_met_verse_step_up_voert_de_handeling_uit() -> None:
 async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_project() -> None:
     """``doelwit`` kiest de deployment- of componentnaam boven de projectnaam."""
 
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 
     with (
-        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=False),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", new=AsyncMock(return_value="<html/>")) as render,
-        patch("opi.web.step_up_dialog.step_up_dialog_response", return_value=MagicMock()),
+        patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=False),
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", new=AsyncMock(return_value="<html/>")) as render,
+        patch("opi.http.auth.step_up_dialog.step_up_dialog_response", return_value=MagicMock()),
     ):
         await route(
             _request("/projects/demo/delete-deployment/prod", htmx=True), project_name="demo", deployment_name="prod"
@@ -174,8 +174,8 @@ async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_proj
 
     render.assert_awaited_once_with(
         ANY,
-        vervolg="/projects/demo/delete-deployment/prod",
-        handeling=StepUpAction.DEPLOYMENT_DELETE.phrase,
-        vervolg_velden={},
-        methode="POST",
+        follow_url="/projects/demo/delete-deployment/prod",
+        action_text=StepUpAction.DEPLOYMENT_DELETE.phrase,
+        follow_fields={},
+        method="POST",
     )

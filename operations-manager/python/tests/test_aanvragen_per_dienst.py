@@ -15,10 +15,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.approvals import collect_approval_items
 from opi.web.lotc_fixtures import page_data
-from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_op_status, groepeer_per_dienst
+from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_by_status, group_by_service
 
 #: Een project met alle drie de soorten aanvraag die het platform vandaag kent: een domein
 #: en een subdomein (publish-on-web) en het gebruik van de dienst zelf (send-email).
@@ -118,7 +118,7 @@ class TestElkItemZegtWaarHetOverGaat:
 
 class TestDeGroepering:
     def test_er_is_een_groep_per_dienst_met_naam_en_icoon_uit_de_registry(self) -> None:
-        groepen = groepeer_per_dienst(_items())
+        groepen = group_by_service(_items())
 
         assert [(g["service"], g["naam"], g["icoon"]) for g in groepen] == [
             ("publish-on-web", "Publiceren op het web", "wereldbol"),
@@ -128,20 +128,20 @@ class TestDeGroepering:
     def test_de_soort_tag_staat_er_alleen_als_hij_iets_toevoegt(self) -> None:
         """Bij publiceren op het web scheidt hij domein van subdomein; bij een dienst met
         een enkele soort herhaalt hij alleen de groepskop."""
-        groepen = {g["service"]: g for g in groepeer_per_dienst(_items())}
+        groepen = {g["service"]: g for g in group_by_service(_items())}
 
         assert groepen["publish-on-web"]["toon_soort"] is True
         assert groepen["send-email"]["toon_soort"] is False
 
     def test_geen_aanvraag_raakt_zoek_in_de_groepering(self) -> None:
         items = _items()
-        groepen = groepeer_per_dienst(items)
+        groepen = group_by_service(items)
 
         assert sum(len(g["aanvragen"]) for g in groepen) == len(items)
 
     def test_een_dienst_die_de_registry_niet_kent_verliest_zijn_rij_niet(self) -> None:
         """Het opschrift van de spec is dan het beste dat er is."""
-        groepen = groepeer_per_dienst([{"service": "verdwenen", "type": "x", "label": "Iets", "subject": "s"}])
+        groepen = group_by_service([{"service": "verdwenen", "type": "x", "label": "Iets", "subject": "s"}])
 
         assert [(g["naam"], g["icoon"]) for g in groepen] == [("Iets", "")]
 
@@ -153,7 +153,7 @@ class TestDeTellingBlijftOverAANVRAGENGaan:
     def test_het_statusfilter_werkt_nog_op_items(self) -> None:
         projecten = [{"project_name": "ai1-uit", "approval_items": _items()}]
 
-        gefilterd = filter_op_status(projecten, "requested")
+        gefilterd = filter_by_status(projecten, "requested")
 
         onderwerpen = [item["subject"] for item in gefilterd[0]["approval_items"]]
         assert onderwerpen == ["voorbeeld.nl", "Gebruik van de dienst"]
@@ -161,7 +161,7 @@ class TestDeTellingBlijftOverAANVRAGENGaan:
     def test_de_mailaanvraag_valt_weg_bij_een_andere_status(self) -> None:
         projecten = [{"project_name": "ai1-uit", "approval_items": _items()}]
 
-        gefilterd = filter_op_status(projecten, "approved")
+        gefilterd = filter_by_status(projecten, "approved")
 
         assert [item["subject"] for item in gefilterd[0]["approval_items"]] == ["mijnapp.sandbox.rijksapp.dev"]
 
@@ -169,8 +169,8 @@ class TestDeTellingBlijftOverAANVRAGENGaan:
         """Anders staat er een groepskop boven een tabel zonder rijen."""
         projecten = [{"project_name": "ai1-uit", "approval_items": _items()}]
 
-        gefilterd = filter_op_status(projecten, "approved")
-        groepen = groepeer_per_dienst(gefilterd[0]["approval_items"])
+        gefilterd = filter_by_status(projecten, "approved")
+        groepen = group_by_service(gefilterd[0]["approval_items"])
 
         assert [g["service"] for g in groepen] == ["publish-on-web"]
 
@@ -180,7 +180,7 @@ def _render(items: list[dict[str, Any]], status: str = "") -> str:
         {
             "project_name": "ai1-uit",
             "approval_items": items,
-            "approval_groups": groepeer_per_dienst(items),
+            "approval_groups": group_by_service(items),
         }
     ]
     return templates_lotc.env.get_template("bg/admin-approvals.html.j2").render(
@@ -251,7 +251,7 @@ def test_de_domeinnamen_zijn_uit_de_broncode_verdwenen(titel: str) -> None:
     ZONDER HOOFDLETTER vergeleken, en ook over de stijlbladen: de eerste vorm van deze
     poort keek alleen naar "Domeinbeheer" met een hoofdletter in .py en .j2, en liet
     daarmee twee achterblijvers staan die allebei in een commentaar zonder hoofdletter
-    stonden (opi/web/lotc_switch.py en static/css/admin-approvals.css).
+    stonden (opi/http/render/lotc_switch.py en static/css/admin-approvals.css).
     """
     from pathlib import Path
 

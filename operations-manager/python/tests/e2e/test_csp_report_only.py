@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from opi.web.lotc_switch import PROJECT_TABS, project_tab_url
+from opi.http.render.lotc_switch import PROJECT_TABS, project_tab_url
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page

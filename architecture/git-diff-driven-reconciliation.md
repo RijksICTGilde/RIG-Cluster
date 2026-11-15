@@ -20,17 +20,17 @@ footprint should disappear too. Today that invariant holds for create/update but
 
 ## 2. Current state (with evidence)
 
-### 2.1 Git monitoring does not process the full lifecycle
-- `opi/core/git_monitor.py` → `file_change_handler(file_path, content)` reacts only to
-  a *changed* file and merely ensures namespaces (`check_and_create_namespaces`).
-  There is **no branch for a removed project file**, and no full processing
-  (DB/bucket/argo/manifests) — that is all it does.
-- `start_git_monitoring` passes only a single change-callback; nothing observes
-  deletions.
-- Defaults make it a demo, not the real processor: `ENABLE_GIT_MONITOR = False`, and
-  `GIT_PROJECTS_SERVER_FILE_PATH = "projects/simple-example.yaml"` — it watches **one
-  file**, not a directory of projects. Verified on the running sandbox: its configmap
-  sets `ENABLE_GIT_MONITOR=false`.
+### 2.1 Git monitoring is gone (RC-483)
+The git monitor described here was removed in opschoonronde 8d. What it was:
+`file_change_handler(file_path, content)` reacted only to a *changed* file and merely
+ensured namespaces, with no branch for a removed project file and no full processing
+(DB/bucket/argo/manifests). It watched **one** file (`projects/simple-example.yaml`),
+not a directory of projects, and `ENABLE_GIT_MONITOR` was false in every overlay, so it
+never ran anywhere. Its namespace creation duplicated
+`Infrastructure.check_and_create_namespaces`, which is on the path that does run.
+
+So the gap below is unchanged by the removal: nothing reconciles a project file edited
+outside ZAD except the store's fallback reconcile poll, which updates the cache.
 
 ### 2.2 Full processing and deletion live on the API/UI path
 - Full project processing happens via the wizard/API (`process_project_background` →
@@ -77,8 +77,9 @@ explicit deletes time out (the 207).
 Robust, safe detection across git diffs of **what is new, what is changed, and what is
 gone**, at the project (and deployment/component) level — and then dispatching each to
 the right manager. Building blocks that already exist:
-- Component-level diffing: `analyze_project_changes` in `opi/connectors/git.py`
-  (file-scoped diff that detects removed components).
+- Component-level diffing: `analyze_project_changes` in
+  `opi/services/project_file_handler.py` (file-scoped diff that detects removed
+  components).
 - Create/update: `process_project`. Delete: `delete_project_manager`.
 - Mark/purge machinery + grace periods in `reconciliation.py`.
 
@@ -125,8 +126,9 @@ carry strong guardrails or it becomes a foot-gun.
   falls back on the 207 of §2.2.
 - How to bound a "catastrophic diff" safely (threshold values; what counts as an
   override; alerting).
-- Single-file vs directory-of-projects monitoring: the current monitor watches one
-  file; full lifecycle needs the whole `zad-projects` tree.
+- Single-file vs directory-of-projects monitoring: there is no monitor at all since
+  RC-483 (§2.1), and the one that was removed watched a single file; full lifecycle needs
+  the whole `zad-projects` tree.
 - Concurrency: the API/UI path is a live writer of the same repo/resources. Git-diff
   reconciliation and interactive edits must not race or double-process.
 - Recovery semantics: `git revert` should cleanly undo a pending deletion (unmark), and

@@ -50,6 +50,13 @@ Een net gepubliceerde versie wacht eerst zeven dagen (`minimumReleaseAge`), zoda
 ingetrokken of gecompromitteerde release de kans krijgt om op te vallen voordat wij hem
 binnenhalen.
 
+Dat wachten is sinds RC-486 onvoorwaardelijk: `internalChecksFilter` staat op `strict`, de
+standaard van Renovate zelf. Onder de `flexible` die hier stond koos Renovate alsnog de
+nieuwste versie als ELKE kandidaat te jong was, en maakte hij daar een branch zonder
+`pendingChecks` voor. De auto-merge-groepen hieronder mergen zo'n branch dan zonder dat er
+iemand aan te pas komt, en dan heeft de cooldown precies in het geval waarvoor hij bedoeld
+is niets gedaan.
+
 Patch en minor komen gegroepeerd per ecosysteem: een eigen PR voor python, go, maven,
 npm, dockerfile, kubernetes, github actions, tool-versions en remote manifests. Dat is
 met opzet geen enkele grote PR, want dan blokkeert een rode Python-update een

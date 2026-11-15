@@ -1,9 +1,9 @@
-"""Welke kinds een deployments-repo rendert, en onder welke kubectl-typen ze te vragen zijn.
+"""Which kinds a deployments repo renders, and under which kubectl types they can be asked for.
 
-Dit is de maatstaf voor "is deze namespace leeg": niet elk type dat het cluster serveert,
-maar de kinds die wij er zelf in zetten. In een Capsule-tenant mag de serviceaccount zo'n
-90 van de ~322 typen niet lijsten, en een inventaris die daarop onvolledig heet keurt een
-verwijdering af die wel afkwam (features/futures/verwijderpaden-in-kaart.md, geval 4).
+This is the measure for "is this namespace empty": not every type the cluster serves, but the
+kinds we put there ourselves. In a Capsule tenant the service account may not list some 90 of
+the ~322 types, and an inventory that calls itself incomplete over that rejects a deletion
+that did finish (`features/futures/verwijderpaden-in-kaart.md`, case 4).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Naamregels die alleen deze dienst kent, zodat de map verplaatsbaar blijft."""
+"""Naming rules only this service knows, so the folder stays movable."""
 
 from __future__ import annotations
 
@@ -6,26 +6,26 @@ import hashlib
 
 from opi.utils.naming import sanitize_kubernetes_name, upstream_host
 
-#: De operator plakt dit achter de naam van het pull-secret dat hij maakt.
-PULL_SECRET_POSTFIX = "robot-pull-secret"  # noqa: S105  # achtervoegsel van de secretnaam, geen secret
+#: The operator appends this to the name of the pull secret it creates.
+PULL_SECRET_POSTFIX = "robot-pull-secret"  # noqa: S105  # a secret-name suffix, not a secret
 
-#: De gebruikersnaam die wij invullen als de afnemer er geen opgaf.
+#: The username we fill in when the consumer gave none.
 #:
-#: Er MOET iets staan: een ``kubernetes.io/dockerconfigjson`` draagt per registry een
-#: ``auth`` van ``base64(gebruikersnaam:wachtwoord)``, en ``:token`` weigeren registries als
-#: een lege gebruikersnaam. ghcr.io kijkt niet naar de waarde; Docker Hub en Quay wel, daar
-#: moet de afnemer hem zelf invullen. ``x-access-token`` is de naam die GitLab en GitHub
-#: voor dit gat gebruiken. Berekend bij het bouwen, nooit opgeslagen.
+#: Something MUST be there: a ``kubernetes.io/dockerconfigjson`` carries an ``auth`` of
+#: ``base64(username:password)`` per registry, and registries refuse ``:token`` as an empty
+#: username. ghcr.io does not look at the value; Docker Hub and Quay do, so there the consumer
+#: has to fill it in. ``x-access-token`` is the name GitLab and GitHub use for this gap.
+#: Computed at build time, never stored.
 PULL_USERNAME_PLACEHOLDER = "x-access-token"
 
 UPSTREAM_HASH_LENGTH = 8
 
 
 def friendly_name(upstream: str) -> str:
-    """De ``friendlyName`` voor de Quay-organisatie: de host zonder TLD en zonder punten.
+    """The ``friendlyName`` for the Quay organization: the host without TLD and without dots.
 
-    Quay verbiedt een punt in dat veld. De TLD valt weg omdat de gedeelde organisaties op
-    ODCN (``ghcr-rig``, ``code-overheid-rig``) diezelfde vorm hebben.
+    Quay forbids a dot in that field. The TLD drops out because the shared organizations on
+    ODCN (``ghcr-rig``, ``code-overheid-rig``) have that same shape.
     """
     host = upstream_host(upstream).split(":", 1)[0]
     labels = host.split(".")
@@ -33,76 +33,70 @@ def friendly_name(upstream: str) -> str:
     return sanitize_kubernetes_name("".join(stem))
 
 
-def upstream_namespace(upstream: str) -> str:
-    """Het pad achter de host, leeg als de upstream alleen een host is."""
-    _, _, path = upstream.partition("/")
-    return path.strip("/")
-
-
 def upstream_hash(upstream: str) -> str:
-    """Het onderscheidende deel van de suffix.
+    """The distinguishing part of the suffix.
 
-    Een hash en niet de leesbare namespace, want beide delen van de suffix gaan door
-    ``sanitize_kubernetes_name`` en die maakt van ``.`` en ``/`` een ``-``: zonder een
-    deel van vaste lengte aan het eind is de samenvoeging niet omkeerbaar en botsen
-    project ``demo`` + ``ghcr.io/team`` en project ``demo-team`` + ``ghcr.io``. Over de
-    HELE upstream, want ``friendly_name`` laat de TLD weg.
+    A hash and not the readable namespace, because both parts of the suffix go through
+    ``sanitize_kubernetes_name``, which turns ``.`` and ``/`` into ``-``: without a
+    fixed-length part at the end the join is not reversible and project ``demo`` +
+    ``ghcr.io/team`` collides with project ``demo-team`` + ``ghcr.io``. Over the WHOLE
+    upstream, because ``friendly_name`` drops the TLD.
     """
     return hashlib.sha256(upstream.strip().strip("/").encode()).hexdigest()[:UPSTREAM_HASH_LENGTH]
 
 
 def organization_suffix(upstream: str, project_name: str) -> str:
-    """Wat wij als ``spec.suffix`` op de ``Organization`` zetten.
+    """What we put on the ``Organization`` as ``spec.suffix``.
 
-    De naam die de operator eromheen bouwt draagt alleen de host, dus zonder dit deel
-    vallen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van hetzelfde project op één organisatie.
+    The name the operator builds around it carries only the host, so without this part
+    ``ghcr.io/orga`` and ``ghcr.io/orgb`` of the same project land on one organization.
     """
     return f"{sanitize_kubernetes_name(project_name)}-{upstream_hash(upstream)}"
 
 
 def organization_name(upstream: str, customer_name: str, project_name: str) -> str:
-    """``<friendlyName>-<customerName>-<suffix>``, de naam die de operator samenstelt."""
+    """``<friendlyName>-<customerName>-<suffix>``, the name the operator assembles."""
     return sanitize_kubernetes_name(
         f"{friendly_name(upstream)}-{customer_name}-{organization_suffix(upstream, project_name)}"
     )
 
 
 def pull_secret_name(upstream: str, customer_name: str, project_name: str) -> str:
-    """De naam van het pull-secret, expliciet gezet omdat de operator de suffix weglaat."""
+    """The pull secret name, set explicitly because the operator leaves the suffix out."""
     return sanitize_kubernetes_name(f"{organization_name(upstream, customer_name, project_name)}-{PULL_SECRET_POSTFIX}")
 
 
 def registry_destination(upstream: str, registry_host: str, customer_name: str, project_name: str) -> str:
-    """Waar images van deze upstream heen gaan: ``<rcr-host>/<organisatie>``."""
+    """Where images from this upstream go: ``<rcr-host>/<organization>``."""
     return f"{registry_host}/{organization_name(upstream, customer_name, project_name)}"
 
 
 def direct_secret_name(project_name: str, registry_name: str) -> str:
-    """Het dockerconfigjson-secret op een cluster zonder proxy-operator, projectbreed."""
+    """The dockerconfigjson secret on a cluster without proxy operator, project wide."""
     return sanitize_kubernetes_name(f"{project_name}-{registry_name}-registry")
 
 
-#: Hoeveel varianten we proberen voor we het opgeven; met meer registries dan dit in een
-#: project is er iets anders aan de hand dan een naambotsing.
+#: How many variants we try before giving up; with more registries than this in one project
+#: something other than a name collision is going on.
 SLUG_ATTEMPTS = 100
 
 
-def registry_slug(label: str, taken: set[str]) -> str:
-    """De verwijzing die bij een vrij label hoort, uniek binnen het project.
+def registry_slug(label: str, used: set[str]) -> str:
+    """The reference belonging to a free-text label, unique within the project.
 
-    ``REGISTRY_NAME_PATTERN`` eist een kleine LETTER vooraan, zodat de naam nooit als
-    YAML-getal wordt gelezen; een label dat met een cijfer begint krijgt daarom een ``r``.
-    Het afkappen daarna kan weer op een streepje eindigen, dat het patroon weigert op een
-    veld dat de afnemer niet ziet. Daarom de ``rstrip`` op de nieuwe grens.
+    ``REGISTRY_NAME_PATTERN`` demands a lowercase LETTER up front, so the name is never read
+    as a YAML number; a label starting with a digit therefore gets an ``r``. The truncation
+    after that can end on a hyphen again, which the pattern refuses on a field the consumer
+    never sees. Hence the ``rstrip`` on the new boundary.
     """
-    basis = sanitize_kubernetes_name(label, max_length=60)
-    if not basis[0].isalpha():
-        basis = f"r{basis}"[:60].rstrip("-")
-    if basis not in taken:
-        return basis
-    for volgnummer in range(2, SLUG_ATTEMPTS + 1):
-        kandidaat = f"{basis}-{volgnummer}"
-        if kandidaat not in taken:
-            return kandidaat
+    base = sanitize_kubernetes_name(label, max_length=60)
+    if not base[0].isalpha():
+        base = f"r{base}"[:60].rstrip("-")
+    if base not in used:
+        return base
+    for sequence_number in range(2, SLUG_ATTEMPTS + 1):
+        candidate = f"{base}-{sequence_number}"
+        if candidate not in used:
+            return candidate
     msg = f"Geen vrije registrynaam te maken voor label '{label}'"
     raise ValueError(msg)

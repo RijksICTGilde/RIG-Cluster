@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from opi.api.federation_router import _registry_of_404
 from opi.connectors.opi import OpiConnector, OpiConnectorError
 from opi.core.federation_config import FederationRegistry, PeerConfig
-from opi.core.federation_service import FederationError, FederationService
+from opi.runtime.tasks.federation_service import FederationError, FederationService
 
 # ---------------------------------------------------------------------------
 # FederationRegistry tests
@@ -250,7 +250,7 @@ class TestFederationService:
 
         mock_result = {"task_id": "remote-task-id", "status": "accepted", "poll_url": "/api/tasks/remote-task-id"}
 
-        with patch("opi.core.federation_service.OpiConnector") as MockConnector:
+        with patch("opi.runtime.tasks.federation_service.OpiConnector") as MockConnector:
             mock_conn = AsyncMock()
             mock_conn.create_task = AsyncMock(return_value=mock_result)
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -307,7 +307,7 @@ class TestFederationService:
 
         mock_result = {"task_id": "remote-123", "status": "running", "progress_percent": 50}
 
-        with patch("opi.core.federation_service.OpiConnector") as MockConnector:
+        with patch("opi.runtime.tasks.federation_service.OpiConnector") as MockConnector:
             mock_conn = AsyncMock()
             mock_conn.get_task_status = AsyncMock(return_value=mock_result)
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)

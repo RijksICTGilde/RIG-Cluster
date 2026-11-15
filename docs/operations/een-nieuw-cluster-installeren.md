@@ -563,10 +563,10 @@ Meer dan het lijkt. `features/federation-routing.md` beschrijft precies dit, met
 |---|---|---|
 | instellingen | `opi/core/config.py:426-428` (`FEDERATION_ROLE`, `FEDERATION_PEERS`, `FEDERATION_REQUEST_TIMEOUT`) | — |
 | peerregister | `opi/core/federation_config.py` | 86 |
-| routeringslaag | `opi/core/federation_service.py` | 228 |
+| routeringslaag | `opi/runtime/tasks/federation_service.py` | 228 |
 | HTTP-client naar een peer | `opi/connectors/opi.py` | 132 |
 | peers/health-endpoints | `opi/api/federation_router.py` | 74 |
-| inhaakpunt in de taakketen | `opi/core/task_helpers.py:58-61` (aanmaken), `:110-112` en `opi/api/task_router.py:166-168` (status) | — |
+| inhaakpunt in de taakketen | `opi/http/task_helpers.py:58-61` (aanmaken), `:110-112` en `opi/api/task_router.py:166-168` (status) | — |
 
 `FEDERATION_ROLE` is `standalone` | `master` | `slave`; default `standalone`, en dan bestaat de
 laag niet (`opi/server.py:250-255` bouwt de service alleen als er peers zijn). Een master leest
@@ -633,9 +633,9 @@ Alles hieronder gaat vandaag over een **directe verbinding** en niet via federat
 | verbinding | waar | binnen één cluster | cross-cluster |
 |---|---|---|---|
 | `kubectl` naar de API-server | `opi/connectors/kubectl.py` | werkt (OPI zit in het cluster) | **kan niet** — geen mechanisme |
-| chisel-tunnels voor databases en MinIO | `opi/connectors/chisel_connector.py`, `opi/utils/chisel_helper.py` | werkt | zie hieronder |
+| chisel-tunnels voor databases en MinIO | `opi/connectors/chisel_connector.py`, `opi/manager/chisel_helper.py` | werkt | zie hieronder |
 | Keycloak-beheer (realms, clients) | Keycloak-connector | werkt als Keycloak bereikbaar is | hangt aan vraag 3.6-23 |
-| database-kloon tussen omgevingen | `opi/manager/database_manager.py`, `opi/manager/clone_validation.py` | werkt | **moet nog** |
+| database-kloon tussen omgevingen | `opi/manager/database_manager.py`, `opi/services/clone_validation.py` | werkt | **moet nog** |
 | MinIO-kopie | `opi/manager/minio_manager.py` | werkt | **moet nog** |
 | ArgoCD | in-cluster service | werkt | n.v.t. — elk cluster zijn eigen ArgoCD |
 

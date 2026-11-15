@@ -1,4 +1,4 @@
-"""Team section editables: de ledenlijst met per lid een e-mailadres en zijn rollen."""
+"""Team section editables: the member list, with an email address and roles per member."""
 
 from __future__ import annotations
 
@@ -6,26 +6,24 @@ from opi.core.authz.engine import Role
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import EmailValidator, RequiredValidator
 
-# --- Pure Editable definitions (data logic only) ---
-
 USER_EMAIL_EDITABLE = Editable(
     yaml_path="users[*]/email",
     validator=EmailValidator(),
     required=True,
 )
 
-#: De rollen van een lid. Een lijst sinds schemaversie 2.13 (B1), en een ZICHTBARE
-#: meerkeuze: tot RC-392 was dit een verborgen veld met standaard ``admin``, waardoor elk
-#: nieuw lid beheerder werd en een gemanipuleerde POST elke rol kon zetten. De
-#: voorinvulling is nu ``developer`` (B12), en de admin die het lid toevoegt kiest.
+#: The roles of a member: a list since schema version 2.13, and a visible multi-select. It
+#: must stay visible and pre-filled with ``developer``: as a hidden field defaulting to
+#: ``admin`` every new member became an administrator, and a manipulated POST could set any
+#: role.
 USER_ROLES_EDITABLE = Editable(
     yaml_path="users[*]/roles",
     required=True,
     default=[Role.DEVELOPER.value],
     values_provider="UserRoleOptionsProvider",
-    # Leeg is hier een FOUT en geen weglating: het schema eist minstens een rol, en een
-    # lid zonder rollen opent niets. De validator geeft dat als veldmelding, zodat het
-    # formulier het zegt in plaats van de opslag.
+    # Empty is an error here, not an omission: the schema demands at least one role, and a
+    # member without roles opens nothing. The validator reports it at the field, so the form
+    # says it instead of the storage layer.
     validator=RequiredValidator(),
 )
 

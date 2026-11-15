@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from opi.forms.field import FormField
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.services.catalog.aliases.visualizers import COMPONENT_ALIASES
+from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS, DEPLOYMENT_COMP_USER_ENV_VARS
 
 
 class TestRenderDisplayCard:
@@ -159,3 +161,19 @@ class TestRenderKeyValueEditor:
         field = self._make_field(value="KEY: value", attributes={"kv_format": "yaml"})
         html = LOTCWidgetAdapter().render_key_value_editor(field)
         assert 'data-format="yaml"' in html
+
+    def test_a_masked_field_carries_the_veil_and_its_toggle(self) -> None:
+        field = self._make_field(value="API_KEY=secret", attributes={"kv_format": "env", "kv_mask_values": "true"})
+        html = LOTCWidgetAdapter().render_key_value_editor(field)
+        assert 'data-mask-values="true"' in html
+        assert "toggleKvMask(" in html
+
+    def test_an_unmasked_field_has_no_veil(self) -> None:
+        html = LOTCWidgetAdapter().render_key_value_editor(self._make_field(value="X=1"))
+        assert "data-mask-values" not in html
+        assert "toggleKvMask(" not in html
+
+    def test_both_env_vars_fields_are_masked_and_the_aliases_are_not(self) -> None:
+        assert COMPONENT_USER_ENV_VARS.attributes.get("kv_mask_values") == "true"
+        assert DEPLOYMENT_COMP_USER_ENV_VARS.attributes.get("kv_mask_values") == "true"
+        assert not COMPONENT_ALIASES.attributes.get("kv_mask_values")

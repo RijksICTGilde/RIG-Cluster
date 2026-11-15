@@ -28,15 +28,14 @@ from opi.manager.run_support import (
     apply_bundle,
     delete_bundle,
     find_deployment,
-    is_stale_starting,
-    parse_expires,
     resolve_image,
 )
 from opi.services.catalog.image_registries.ownership import foreign_proxy_organization_owner
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
+from opi.services.runs_support import is_stale_starting, parse_expires
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import generate_job_name, generate_project_service_account_name
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +58,6 @@ class JobError(Exception):
 
 @dataclass
 class JobRun:
-    """Public description of a job run (live state from the pod)."""
-
     session_id: str
     name: str
     namespace: str
@@ -74,8 +71,6 @@ class JobRun:
 
 
 class JobManager:
-    """Orchestrates the lifecycle of ad-hoc job pods."""
-
     def __init__(self) -> None:
         self._kubectl = create_kubectl_connector()
 
@@ -107,8 +102,8 @@ class JobManager:
                 f"Deployment '{deployment_name}' draait op cluster '{cluster}', niet beheerd door deze instance."
             )
 
-        # Deze image komt uit een formulierveld en ziet dus geen van de validators die bij
-        # het opslaan draaien, terwijl apply_bundle er wel een pull-secret aan hangt.
+        # This image comes from a form field and so passes none of the validators that run
+        # on save, while apply_bundle does hang a pull secret on it.
         owner = foreign_proxy_organization_owner(image, cluster, project_name)
         if owner is not None:
             raise JobError(
@@ -124,7 +119,7 @@ class JobManager:
             raise JobError("Er draait al een job voor deze deployment. Stop die eerst.")
         try:
             latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.JOB)
-        except Exception:
+        except Exception:  # noqa: BLE001  # an unreadable run row must not block the start
             latest = None
         if latest and latest.get("status") == "starting":
             # No pod exists (checked above). A 'starting' row with no pod is either
@@ -234,7 +229,7 @@ class JobManager:
                     "db_secret_name": db_secret_name,
                 },
             )
-            # Met project_data tellen ook de eigen private registries mee in de regels.
+            # With project_data the project's own private registries count in the rules too.
             project_data = await get_project_store().get_decrypted(project_name)
             ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster, project_data)
             if not ok:

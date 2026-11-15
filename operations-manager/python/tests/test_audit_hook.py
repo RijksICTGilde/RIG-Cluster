@@ -16,10 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import handhaaf
 from opi.core.actor import Actor, ActorKind, get_actor, service_account_actor, user_actor
-from opi.core.audit_trail import MAX_VELDWAARDE, begin_trail, capture_fields, record_commit, record_task, trail
-from opi.core.auth_decorators import requires_step_up
+from opi.core.audit_trail import MAX_FIELD_VALUE, begin_trail, capture_fields, record_commit, record_task, trail
 from opi.core.authz.actions import Action, action, action_of, audit_fields_of
 from opi.core.authz.engine import (
     ANY,
@@ -33,14 +31,16 @@ from opi.core.authz.engine import (
     all_rules,
     rule_for,
 )
-from opi.core.leden import LidSoort
-from opi.core.step_up import StepUpAction
-from opi.middleware.audit import AuditMiddleware, _schrijvers
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.http.auth.authz import enforce_route_action
+from opi.http.auth.endpoint_util import enforce
+from opi.middleware.audit import AuditMiddleware, _writers
 from opi.server import app
-from opi.services.project_leden import hash_van, vervaldatum
+from opi.services.members import MemberKind
+from opi.services.project_members import expiry_date, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
+from opi.services.step_up import StepUpAction
 from opi.utils.client_ip import PEER_SCOPE_KEY
-from opi.web.authz import enforce_route_action
 from starlette.requests import Request
 
 GEBRUIKER = user_actor("beheerder@rijksoverheid.nl")
@@ -92,7 +92,7 @@ async def _afgeschreven() -> None:
     De rij wordt met opzet NA het antwoord geschreven, dus zonder deze wacht meet een
     toets de wachtrij in plaats van de rij.
     """
-    await asyncio.gather(*list(_schrijvers), return_exceptions=True)
+    await asyncio.gather(*list(_writers), return_exceptions=True)
 
 
 async def _draai(
@@ -365,7 +365,7 @@ def test_een_step_up_route_noemt_daarmee_geen_auditvelden() -> None:
     """
 
     @action(Action.TOKEN_MANAGE)
-    @requires_step_up(actie=StepUpAction.TOKEN_ISSUE, velden=("tokennaam", "dagen"))
+    @requires_step_up(action=StepUpAction.TOKEN_ISSUE, fields=("tokennaam", "dagen"))
     async def route(request: Any, project_name: str) -> None: ...
 
     assert audit_fields_of(route) == ()
@@ -472,8 +472,8 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
             ProjectUser(
                 email="kijker@rijksoverheid.nl",
                 roles=["viewer"],
-                type=LidSoort.PERSOON,
-                tokens=[ProjectToken(name="t", hash=hash_van(token), expires=vervaldatum(30))],
+                type=MemberKind.PERSON,
+                tokens=[ProjectToken(name="t", hash=hash_of(token), expires=expiry_date(30))],
             )
         ],
     )
@@ -486,10 +486,10 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
     async def route(project_name: str) -> None: ...
 
     with (
-        patch("opi.api.principal.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.principal.get_user_service", return_value=gebruikers),
         pytest.raises(HTTPException) as fout,
     ):
-        await handhaaf(verzoek, token, route, project)
+        await enforce(verzoek, token, route, project)
 
     assert fout.value.status_code == 403
     assert get_actor().identity == "kijker@rijksoverheid.nl"
@@ -618,8 +618,8 @@ async def test_een_veldwaarde_wordt_afgekapt() -> None:
     verzoek.form = AsyncMock(return_value={"image": "y" * 5000})
 
     await capture_fields(verzoek, route)
-    assert len(trail().fields["deployment"]) == MAX_VELDWAARDE
-    assert len(trail().fields["image"]) == MAX_VELDWAARDE
+    assert len(trail().fields["deployment"]) == MAX_FIELD_VALUE
+    assert len(trail().fields["image"]) == MAX_FIELD_VALUE
 
 
 @pytest.mark.asyncio
@@ -642,7 +642,10 @@ async def test_de_poort_leest_het_formulier_pas_na_het_toelaten() -> None:
     verzoek = Request(scope)
     begin_trail()
 
-    with patch("opi.web.authz.authorize", side_effect=HTTPException(status_code=403)), pytest.raises(HTTPException):
+    with (
+        patch("opi.http.auth.authz.authorize", side_effect=HTTPException(status_code=403)),
+        pytest.raises(HTTPException),
+    ):
         await enforce_route_action(verzoek)
 
     assert trail().fields == {}

@@ -227,6 +227,11 @@ def test_configure_modal_adds_keycloak_client(
     # there is exactly one add button, so modal_add_sequence_item targets it.
     service_config.modal_add_sequence_item(sandbox_page)
     sandbox_page.locator("#edit-section-inner [name*='additional-clients'][name$='/name']").last.fill(client_name)
+    # A client needs at least one redirect URI: the new entry comes with one empty row, and
+    # the project validation refuses to save it empty.
+    sandbox_page.locator("#edit-section-inner [name*='additional-clients'][name*='redirect-uris']").last.fill(
+        f"https://{client_name}.sandbox.rijksapp.dev/callback"
+    )
     capture(sandbox_page, "keycloak-configure-modal")
     service_config.modal_submit(sandbox_page)
 

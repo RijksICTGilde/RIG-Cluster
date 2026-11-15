@@ -49,7 +49,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
 
 if TYPE_CHECKING:

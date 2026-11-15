@@ -1,27 +1,46 @@
-"""
-Web routes for serving HTML pages (non-API endpoints).
-"""
+"""The HTML pages of the portal, and the sub-routers that make up the rest of them."""
 
 import asyncio
 import copy
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
-from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
-from opi.core.step_up import StepUpAction, is_elevated_admin
-from opi.core.templates_lotc import templates_lotc
-from opi.services.api_token_service import is_projectbeheerder
+from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso, requires_step_up
+from opi.http.auth.authz import enforce_route_action, may
+from opi.http.render.lotc_switch import (
+    CONDITIONAL_TABS,
+    DEFAULT_TAB,
+    TABS_WITH_DEPLOYMENT,
+    audit_page,
+    build_deployment_status_column,
+    build_lotc_dashboard,
+    build_lotc_introduction,
+    build_lotc_project_details,
+    build_lotc_projects,
+    choose_deployment,
+    deployment_page_address,
+    project_tab_url,
+    render,
+    render_fragment,
+    tab_from_path,
+)
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation
+from opi.http.render.templates_lotc import templates_lotc
+from opi.http.task_helpers import require_removable_deployment
+from opi.services.api_token_service import is_project_admin
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,
@@ -31,6 +50,7 @@ from opi.services.argocd_operation import (
     seconds_since,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -41,44 +61,25 @@ from opi.services.project_authorization import (
     get_user_roles_for_project,
     is_user_authorized_for_project,
 )
-from opi.services.project_leden import human_members
+from opi.services.project_members import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
+from opi.services.step_up import StepUpAction, is_elevated_admin
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.services.zad_map import platform_graph, project_graph
 from opi.services.zad_map.platform import current_cluster_folder
 from opi.services.zad_map.project import usage_targets
 from opi.services.zad_map.usage import measure_usage
-from opi.utils.age import decrypt_password_smart, unwrap_project_key
+from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.naming import extract_domain_from_url
 from opi.utils.totp import totp_now
 from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
-from opi.web.authz import enforce_route_action, may
-from opi.web.lotc_switch import (
-    STANDAARD_TAB,
-    TABS_MET_DEPLOYMENT,
-    TABS_MET_VOORWAARDE,
-    audit_pagina,
-    build_deployment_status_column,
-    build_lotc_dashboard,
-    build_lotc_introductie,
-    build_lotc_project_details,
-    build_lotc_projects,
-    deployment_pagina_adres,
-    kies_deployment,
-    project_tab_url,
-    render,
-    render_fragment,
-    tab_from_path,
-)
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
 from opi.web.security_policy import security_policy_html
-from opi.web.stap_labels import stap_label
+from opi.web.step_labels import step_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
 from ..utils.age import decrypt_age_content, is_age_encrypted
@@ -100,19 +101,24 @@ from .router_wizard import wizard_router
 from .router_wizard_attachments import wizard_attachments_router
 from .services_router import services_router
 
+if TYPE_CHECKING:
+    from opi.connectors.argo import ArgoConnector
+    from opi.connectors.kubectl import KubectlConnector
+    from opi.connectors.metrics_backend import MetricsBackend
+    from opi.services.tasks.async_task_service import AsyncTaskService
+
 logger = logging.getLogger(__name__)
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
-#: De poort van het portaal: elke route met een projectrecht loopt erlangs, zonder dat
-#: een handler eraan hoeft te denken. Zie opi/web/authz.py.
+#: The gate of the portal: every route with a project right passes it, without a handler
+#: having to remember. See opi/http/auth/authz.py.
 web_router = APIRouter(dependencies=[Depends(enforce_route_action)])
 
-#: Proef- en testpagina's. Ze hangen aan een eigen router omdat opi/server.py ze alleen
-#: lokaal en in de sandbox registreert.
+#: The preview and test pages, on a router of their own because opi/server.py registers them
+#: only locally and in the sandbox.
 dev_router = APIRouter()
 
-# Include sub-routers
 web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
@@ -130,103 +136,90 @@ web_router.include_router(step_up_router)
 web_router.include_router(token_web_router)
 web_router.include_router(env_vars_web_router)
 
-# Routers the services themselves deliver (RC-24): a service that owns a page block owns
-# the endpoints that fill it (the backups fragment, the console/job modals), instead of
-# leaving half the block behind in this router. Shared routers are mounted once.
+# The routers the services themselves deliver: a service that owns a page block owns the
+# endpoints that fill it, instead of leaving half the block behind in this router.
 for _service_router in collect_service_routers():
     web_router.include_router(_service_router)
 
 
-async def ontsleutel_helm_values(items: list[dict[str, Any]], naam_sleutel: str, waar: str, private_key: str) -> None:
-    """Maak de ``helm-values`` van helm-chart- of helmfile-items leesbaar voor de pagina.
+async def decrypt_helm_values(items: list[dict[str, Any]], name_key: str, where: str, private_key: str) -> None:
+    """Make the ``helm-values`` of helm-chart or helmfile items readable for the page.
 
-    Het veld heeft in het schema geen type (``"helm-values": {}``) en komt in de
-    projectbestanden in twee vormen voor: als AGE-blok en als gewone boom. In
-    ``mb-docs-helmfile`` staan ze zelfs allebei -- versleuteld op de deployment, in
-    platte tekst op het project. De generatie leest beide vormen
-    (``_decrypt_with_private_key`` ontsleutelt alleen strings), maar deze
-    weergaveweg ontsleutelde onvoorwaardelijk. Een boom viel dan in de ``except``
-    en werd ``None``, en omdat het sjabloon het blok alleen toont ``if ... is
-    mapping`` verdween het van het scherm zonder melding.
-
-    Daarom kijken we eerst wat er staat: alleen een AGE-blok gaat door de
-    ontsleuteling, de rest blijft zoals hij is.
+    The field has no type in the schema and occurs in two shapes in the project files: as an
+    AGE block and as a plain tree, sometimes both in one project. So look at what is there
+    first: only an AGE block goes through the decryption, the rest stays as it is. Decrypting
+    unconditionally turns a tree into ``None``, and the template only shows the block for a
+    mapping, so it then disappears from the screen without a word.
     """
     for item in items:
-        waarde = item.get("helm-values")
-        if not waarde:
+        value = item.get("helm-values")
+        if not value:
             continue
-        naam = item.get(naam_sleutel, "unknown")
-        if not isinstance(waarde, str):
-            # Al een boom: niets te ontsleutelen, en niets te verliezen.
+        name = item.get(name_key, "unknown")
+        if not isinstance(value, str):
+            # Already a tree: nothing to decrypt, and nothing to lose.
             continue
-        if not is_age_encrypted(waarde):
-            # Een string die geen AGE-blok is, is YAML in platte tekst.
-            item["helm-values"] = load_yaml_from_string(waarde)
+        if not is_age_encrypted(value):
+            # A string that is not an AGE block is YAML in plain text.
+            item["helm-values"] = load_yaml_from_string(value)
             continue
         try:
-            item["helm-values"] = load_yaml_from_string(await decrypt_age_content(waarde, private_key))
-            logger.info(f"Decrypted helm-values for {waar} '{naam}'")
-        except Exception as e:
-            logger.warning(f"Failed to decrypt helm-values for {waar} '{naam}': {e}")
+            item["helm-values"] = load_yaml_from_string(await decrypt_age_content(value, private_key))
+            logger.info(f"Decrypted helm-values for {where} '{name}'")
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
+            logger.warning(f"Failed to decrypt helm-values for {where} '{name}': {e}")
             item["helm-values"] = None
 
 
-def _render_eigen_domein(request: Request, *, current_path: str) -> Response:
-    """De uitleg over het aanwijzen van een eigen domein.
+def _render_own_domain(request: Request, *, current_path: str) -> Response:
+    """The explanation of how to point your own domain here.
 
-    Twee ingangen, een pagina: de kale routernaam (waar de bezoeker binnenvalt vanuit
-    andermans DNS-record) en /eigen-domein in het menu (waar een projecteigenaar hem
-    opzoekt). De genoemde routernaam volgt de zone waarop je kijkt.
+    Two entrances, one page: the bare router name, where a visitor lands from someone else's
+    DNS record, and the menu item, where a project owner looks it up. The router name shown
+    follows the zone you are looking at.
     """
-    gebruiker = get_current_user(request)
+    user = get_current_user(request)
     router_host = router_hostname_for(request.url.hostname)
-    adressen = router_addresses_for(router_host)
+    addresses = router_addresses_for(router_host)
     return render(
         request,
         template="bg/router.html.j2",
         context={
             "request": request,
-            "menu_items": get_menu_items(gebruiker),
-            "navigation": get_navigation(gebruiker, current_path=current_path),
+            "menu_items": get_menu_items(user),
+            "navigation": get_navigation(user, current_path=current_path),
             "router_host": router_host,
-            # Leeg als we ze voor deze naam niet kennen (de sandbox): dan toont de pagina
-            # alleen de CNAME-vorm in plaats van adressen die daar niet kloppen.
-            "router_ipv4": adressen[0] if adressen else "",
-            "router_ipv6": adressen[1] if adressen else "",
+            # Empty when we do not know them for this name, as in the sandbox: the page then
+            # shows only the CNAME form instead of addresses that do not hold there.
+            "router_ipv4": addresses[0] if addresses else "",
+            "router_ipv6": addresses[1] if addresses else "",
         },
     )
 
 
 @web_router.get("/eigen-domein", response_class=HTMLResponse)
 async def eigen_domein(request: Request) -> Response:
-    """BEWUST ZONDER ``@requires_sso``: wie een domein aanwijst is vaak een DNS-beheerder
-    van een andere organisatie, zonder account hier. Een inlogmuur zou de pagina precies
-    voor zijn publiek onbereikbaar maken. ``tests/test_routerpagina.py`` bewaakt dat.
+    """DELIBERATELY WITHOUT ``@requires_sso``: whoever points a domain here is often a DNS
+    administrator of another organisation, without an account here, so a login wall would put
+    the page out of reach of its own audience. ``tests/test_routerpagina.py`` guards that.
     """
-    return _render_eigen_domein(request, current_path="/eigen-domein")
+    return _render_own_domain(request, current_path="/eigen-domein")
 
 
 @web_router.get("/")
-async def root(request: Request):
-    """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
+async def root(request: Request) -> RedirectResponse:
+    """The front door: the dashboard when signed in, the introduction otherwise.
 
-    BEWUST ZONDER ``@requires_sso``: de voordeur hoort leesbaar te zijn zonder sessie.
+    DELIBERATELY WITHOUT ``@requires_sso``: the front door has to be readable without a
+    session, or every visitor without rights lands on the login screen without ever having
+    read WHAT this is.
 
-    Wie hier zonder sessie binnenkwam werd naar ``/dashboard`` gestuurd, en die vraagt SSO,
-    dus eindigde elke bezoeker zonder rechten op het inlogscherm - zonder ooit gelezen te
-    hebben WAT dit is. Sinds de architectuurpagina weg is, was dat de enige uitkomst.
+    ON A ROUTER NAME IT STARTS SOMEWHERE ELSE. ``router.<zone>`` is the bare entrance of the
+    cluster every other name CNAMEs to, so whoever types it met it in someone else's DNS
+    record and has a different question than a ZAD user.
 
-    Doorverwijzen en niet hier renderen, zodat de introductie een eigen adres houdt dat je
-    kunt delen en dat ook werkt voor iemand die al ingelogd is.
-
-    OP DE ROUTERNAMEN BEGINT HET ERGENS ANDERS. ``router.<zone>`` is de kale ingang van het
-    cluster waar elke andere naam met een CNAME naartoe wijst. Wie die naam intypt kwam hem
-    tegen in andermans DNS-record en heeft een andere vraag dan een ZAD-gebruiker, dus die
-    begint bij de uitleg over het aanwijzen van een eigen domein.
-
-    Doorverwijzen en niet hier renderen, om dezelfde reden als hierboven: het is gewoon ZAD,
-    alleen met een ander beginpunt, en de pagina houdt een adres dat je kunt delen.
+    Both redirect rather than render here, so each page keeps an address you can share and
+    that works for someone who is already signed in.
     """
     if request.url.hostname in ROUTER_HOSTNAMES:
         return RedirectResponse(url="/eigen-domein", status_code=302)
@@ -236,17 +229,16 @@ async def root(request: Request):
 
 
 @web_router.get("/introductie", response_class=HTMLResponse)
-async def introductie(request: Request):
-    """Wat ZAD is, voor wie hier voor het eerst komt.
+async def introductie(request: Request) -> Response:
+    """What ZAD is, for whoever comes here for the first time.
 
-    BEWUST ZONDER ``@requires_sso``. Dit is de pagina voor iemand die nog geen rechten
-    heeft - de enige groep die hem echt nodig heeft - dus een inlogmuur ervoor maakt hem
-    precies voor zijn eigen publiek onbereikbaar. Publiek zijn is hier de hele opzet en
-    geen omissie; ``tests/test_introductiepagina.py`` bewaakt dat de decorator er niet
-    alsnog opkomt.
+    DELIBERATELY WITHOUT ``@requires_sso``: this is the page for someone who has no rights
+    yet, the only group that really needs it, so a login wall would put it out of reach of its
+    own audience. Being public is the whole point here and no omission;
+    ``tests/test_introductiepagina.py`` guards that the decorator does not appear after all.
 
-    De schil verdraagt ``user=None``: ``get_navigation(None, ...)`` levert de basisitems
-    plus "Inloggen" rechtsboven in plaats van account en uitloggen.
+    The shell tolerates ``user=None``: ``get_navigation(None, ...)`` yields the base items plus
+    a sign-in item instead of the account and sign-out ones.
     """
     user = get_current_user(request)
     return render(
@@ -255,18 +247,19 @@ async def introductie(request: Request):
         context={
             "request": request,
             "menu_items": get_menu_items(user),
-            **build_lotc_introductie(user),
+            **build_lotc_introduction(user),
         },
     )
 
 
 @web_router.get("/getting-started", response_class=HTMLResponse)
-async def getting_started(request: Request):
+async def getting_started(request: Request) -> Response:
     """The first steps on ZAD.
 
-    BEWUST ZONDER ``@requires_sso``: public like /introductie, it is for people without access yet.
+    DELIBERATELY WITHOUT ``@requires_sso``: public like /introductie, for people without
+    access yet.
     """
-    return _wegwijzer(
+    return _signpost(
         request,
         "getting-started.html.j2",
         "bg/getting-started.html.j2",
@@ -278,31 +271,19 @@ async def getting_started(request: Request):
 
 @web_router.get("/permission-denied", response_class=HTMLResponse)
 async def permission_denied(request: Request) -> HTMLResponse:
+    """The permission-denied page, for a user who authenticated but is not authorized.
+
+    DELIBERATELY WITHOUT ``@requires_sso``: this page is exactly for whoever has no rights.
     """
-    Show the permission denied page for users who are authenticated but not authorized.
-
-    BEWUST ZONDER ``@requires_sso``: deze pagina is juist voor wie geen rechten heeft.
-
-    This page is shown to users who have successfully authenticated via SSO
-    but whose email address is not in the allowed users list.
-
-    Args:
-        request: The FastAPI request object
-
-    Returns:
-        HTML response with the permission denied page
-    """
-    # Get user from session if available
     user = request.session.get("user") if hasattr(request, "session") else None
 
     # One-shot denial reason set by the login callback (server-side flash, not a URL param).
     denied_reason = request.session.pop("denied_reason", None) if hasattr(request, "session") else None
 
-    # Log the permission denied access
     user_email = user.get("email", "unknown") if user else "anonymous"
     logger.warning(f"Permission denied page accessed by: {user_email}")
 
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return render(
         request,
@@ -311,32 +292,30 @@ async def permission_denied(request: Request) -> HTMLResponse:
             "request": request,
             "user": user,
             "reason": denied_reason,
-            "menu_items": get_menu_items(user),  # Same menu as other pages
+            "menu_items": get_menu_items(user),
             "navigation": get_navigation(user, current_path="/permission-denied"),
         },
     )
 
 
-# Redirect old self-service portal URL to the wizard
 @web_router.get("/projects/new")
-async def redirect_projects_new_to_wizard():
-    """Redirect legacy /projects/new to the wizard-based project creation flow.
+async def redirect_projects_new_to_wizard() -> RedirectResponse:
+    """Redirect the legacy /projects/new to the wizard.
 
-    BEWUST ZONDER ``@requires_sso``: een blinde doorverwijzing geeft niets prijs, en de
-    wizard erachter vraagt wel een sessie.
+    DELIBERATELY WITHOUT ``@requires_sso``: a blind redirect gives nothing away, and the
+    wizard behind it does ask for a session.
     """
     return RedirectResponse(url="/forms/wizard/create-project", status_code=302)
 
 
-# SSO-protected subdomain availability check (prevents unauthenticated enumeration)
+# SSO-protected, so the subdomain registry cannot be enumerated anonymously.
 web_router.add_api_route("/subdomains/check", check_subdomain_availability_web, methods=["GET"])
 
 
 def _progress_page_context(task: dict, task_id: str) -> dict:
     """The context the progress page and its polled fragment share.
 
-    Both render the same fragment, so both build it here: one weergave, one plek waar
-    hij wordt gevuld. The page adds the shell around it, nothing more.
+    Both render the same fragment, so both build it here; the page only adds the shell.
     """
     project_name = task.get("project_name", "")
     context = _v2_task_to_template_context(task, project_name)
@@ -348,8 +327,8 @@ def _progress_page_context(task: dict, task_id: str) -> dict:
     else:
         context["success_message"] = "Verwerking succesvol afgerond."
     if project_name:
-        # Whether it finished or failed, the detail page is where the user goes next --
-        # to use the project, or to fix what went wrong.
+        # Whether it finished or failed, the detail page is where the user goes next: to use
+        # the project, or to fix what went wrong.
         context["on_complete"] = f"window.location.href='/projects/{project_name}/details'"
         context["on_complete_label"] = "Naar projectdetails"
     return context
@@ -358,22 +337,20 @@ def _progress_page_context(task: dict, task_id: str) -> dict:
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)
 @action(Action.TASK_READ)
 @requires_sso
-async def project_progress_page(request: Request, task_id: str):
-    """
-    Show the project creation progress page.
+async def project_progress_page(request: Request, task_id: str) -> Response:
+    """The project-creation progress page.
 
-    The page is a shell around the shared progress fragment: the first paint is
-    server-rendered here, and htmx polls the fragment route below for the rest.
-    Reads task state from the V2 async task service (database-backed).
+    A shell around the shared progress fragment: the first paint is server-rendered here, and
+    htmx polls the fragment route below for the rest.
     """
     try:
-        from opi.core.task_helpers import get_task_service
+        from opi.http.task_helpers import get_task_service
 
         task_service = get_task_service(request)
         task = await task_service.get_task(task_id)
         user = get_current_user(request)
 
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         if not task:
             return render(
@@ -425,7 +402,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
     button. The page has no project name in its path, so the task supplies it and the
     same access rule applies as on the project-scoped fragment route.
     """
-    from opi.core.task_helpers import get_task_service
+    from opi.http.task_helpers import get_task_service
 
     task_service = get_task_service(request)
     task = await task_service.get_task(task_id)
@@ -434,12 +411,11 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 
     _require_task_access(request, task, task.get("project_name", ""))
 
-    # Rendered once on purpose -- see render_progress_fragment for why a second pass
-    # over the rendered HTML would execute task text as Jinja.
+    # Rendered once on purpose; see render_progress_fragment for why a second pass over the
+    # rendered HTML would execute task text as Jinja.
     #
-    # Het eigen fragment van de voortgangsPAGINA, en niet het gedeelde uit
-    # task_progress.py: de pagina zet bg/_task-progress.html.j2 neer en dit is de
-    # pollroute die datzelfde blok vervangt.
+    # The PAGE's own fragment and not the shared one from task_progress.py: the page puts
+    # bg/_task-progress.html.j2 down, and this is the poll route that replaces that block.
     context = _progress_page_context(task, task_id)
     return HTMLResponse(content=render_fragment(request, template="bg/_task-progress.html.j2", context=context))
 
@@ -447,14 +423,13 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 @web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
 @action(Action.PROJECT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
+@requires_step_up(action=StepUpAction.PROJECT_DELETE)
 async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Delete a whole project from the UI, as a task you can follow.
 
-    Deleting tears down git, ArgoCD, the namespace, databases and buckets. Inline that
-    left the page on an open POST for minutes with nothing to show, and the dialog was
-    dismissable while it ran. It answers with the same shared progress fragment as
-    reprocessing, so there is one way an action reports back.
+    Deleting tears down git, ArgoCD, the namespace, databases and buckets, so it answers with
+    the same shared progress fragment as reprocessing rather than leaving the page on an open
+    POST for minutes.
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
@@ -477,7 +452,7 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
 @web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}", response_class=HTMLResponse)
 @action(Action.DEPLOYMENT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
+@requires_step_up(action=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Delete one deployment from the UI, as a task you can follow."""
     user = get_current_user(request)
@@ -485,10 +460,9 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 
     logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
 
-    project = get_project_store().get(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project niet gevonden")
-    _require_deployment(project.data or {}, project_name, deployment_name)
+    # The cluster-filtered check: a name that belongs to another cluster is not ours to
+    # delete, and used to make the task report "was not there (any more)".
+    require_removable_deployment(project_name, deployment_name)
 
     return await create_task_and_render_progress(
         request=request,
@@ -504,12 +478,11 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 @web_router.post("/projects/{project_name}/delete-component/{component_name}", response_class=HTMLResponse)
 @action(Action.COMPONENT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.COMPONENT_DELETE)
+@requires_step_up(action=StepUpAction.COMPONENT_DELETE)
 async def delete_component_web(request: Request, project_name: str, component_name: str) -> HTMLResponse:
     """Delete a component from the UI, as a task you can follow.
 
-    Removing the component from the project file is the quick half; the reprocessing
-    that applies it is not, and it always ran as a task already. Both now live in one
+    Removing the component from the project file and the reprocessing that applies it are one
     task, so the dialog follows the whole thing instead of reporting success halfway.
     """
     user = get_current_user(request)
@@ -527,9 +500,8 @@ async def delete_component_web(request: Request, project_name: str, component_na
         project_name=project_name,
         task_type="delete_component",
         # The confirmation dialog names every deployment and component that references this
-        # one and says those references go with it, so the user who clicked through it has
-        # confirmed exactly what confirm_in_use states. Without it the portal could only
-        # delete components nothing uses, which is nearly none of them.
+        # one and says those references go with it, so the user has confirmed exactly what
+        # confirm_in_use states.
         payload={"project_name": project_name, "component_name": component_name, "confirm_in_use": True},
         current_step=f"Component '{component_name}' verwijderen gestart...",
         success_message=f"Component '{component_name}' succesvol verwijderd",
@@ -596,11 +568,9 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
 def _require_deployment(project_data: dict, project_name: str, deployment_name: str) -> None:
     """404 straight away when the deployment does not exist.
 
-    The inline version raised DeploymentNotFound from flow.sleep, so the caller heard it
-    immediately. Now that the work runs as a task, an unknown name would otherwise only
-    surface as a task that fails a moment later -- further from the click and harder to
-    read. It also keeps a name the project does not have out of the task, and so out of
-    everything that later renders the task's text.
+    The work runs as a task, so an unknown name would otherwise only surface as a task that
+    fails a moment later. It also keeps a name the project does not have out of the task, and
+    so out of everything that later renders the task's text.
     """
     names = [d.get("name") for d in project_data.get("deployments", []) or [] if isinstance(d, dict)]
     if deployment_name not in names:
@@ -618,11 +588,10 @@ def _require_component(project_data: dict, project_name: str, component_name: st
 @action(Action.SLEEP_WAKE)
 @requires_sso
 async def wake_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
-    """Wake a sleeping deployment from the UI (session + CSRF + role auth).
+    """Wake a sleeping deployment from the UI, on the session and the role.
 
-    The counterpart of the API wake endpoint: same one implementation in
-    ``sleep_mode.flow.wake``, but authenticated by the session (no wake token) and
-    gated to admin/owner, like the other deployment actions.
+    The counterpart of the API wake endpoint, on the same implementation in
+    ``sleep_mode.flow.wake`` but without a wake token.
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
@@ -649,10 +618,9 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
 @action(Action.SLEEP_WAKE)
 @requires_sso
 async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
-    """Manually put a deployment to sleep from the UI (session + CSRF + role auth).
+    """Put a deployment to sleep from the UI, on the session and the role.
 
-    The other half of the wake toggle: same one implementation in ``sleep_mode.flow.sleep``,
-    gated to admin/owner exactly like the wake action.
+    The other half of the wake toggle, on the same implementation in ``sleep_mode.flow.sleep``.
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
@@ -663,9 +631,9 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
     _require_deployment(project.data or {}, project_name, deployment_name)
 
     logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}")
-    # An async task, not an inline call: sleeping commits to git and then reprocesses,
-    # ArgoCD sync included, so doing it in the request left the page on an open POST for
-    # tens of seconds with nothing to show. Same progress fragment as reprocessing.
+    # A task and not an inline call: sleeping commits to git and then reprocesses, the ArgoCD
+    # sync included, which in the request would leave the page on an open POST for tens of
+    # seconds with nothing to show.
     return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
@@ -689,11 +657,10 @@ async def deployment_action_confirm(
     """The confirmation body for a service-contributed deployment action.
 
     Loaded into the shared modal shell, so every ``DeploymentAction`` with a
-    ``confirm_message`` gets a real dialog instead of ``window.confirm()`` -- generic, so
-    a service needs no code here. The action is re-derived from the project's own
-    services and matched on its key, so the POST target this renders is always one a
-    service really offered for this deployment; an endpoint taken from the URL would be
-    an open POST target.
+    ``confirm_message`` gets a real dialog and a service needs no code here. The action is
+    re-derived from the project's own services and matched on its key, so the POST target this
+    renders is always one a service really offered for this deployment; an endpoint read from
+    the URL would be an open POST target.
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
@@ -713,8 +680,8 @@ async def deployment_action_confirm(
             "request": request,
             "action": action,
             "key": action_key,
-            # A service may leave the message out; still ask, rather than firing a
-            # POST straight from the page.
+            # A service may leave the message out; still ask, rather than firing a POST
+            # straight from the page.
             "message": action.confirm_message or f"Weet je zeker dat je '{action.label}' wilt uitvoeren?",
         },
     )
@@ -726,13 +693,12 @@ async def deployment_action_confirm(
 async def project_action_confirm(
     request: Request, project_name: str, action_key: str, target: str | None = None
 ) -> HTMLResponse:
-    """The confirmation body for a dangerous project action (delete, reprocess).
+    """The confirmation body for a dangerous project action, such as delete or reprocess.
 
-    The second, equally narrow entrance next to ``deployment_action_confirm``: deleting
-    does not come from a service, but it keeps the same property. The page names the
-    action by key and, where it applies, which deployment/component/attachment it is
-    about; the POST target is built here from the project's own data. An endpoint taken
-    from the request would be an open POST target, and one of these deletes a project.
+    The second, equally narrow entrance next to ``deployment_action_confirm``. The page names
+    the action by key and, where it applies, which deployment, component or attachment it is
+    about; the POST target is built here from the project's own data. An endpoint read from
+    the request would be an open POST target, and one of these deletes a project.
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
@@ -761,10 +727,10 @@ async def project_action_confirm(
 @dev_router.get("/test-hero", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def test_hero(request: Request):
+async def test_hero(request: Request) -> Response:
     """Test route for hero component."""
     try:
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -781,16 +747,8 @@ async def test_hero(request: Request):
 @dev_router.get("/forms/formulier", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def formulier_demo_form(request: Request):
-    """
-    Serve the RVO Formulier demo form showcasing all form field components.
-
-    This form demonstrates comprehensive form field usage with proper RVO styling,
-    validation states, and accessibility features based on the RVO documentation.
-
-    Returns:
-        HTML response with the formulier demo form
-    """
+async def formulier_demo_form(request: Request) -> Response:
+    """The demo form that shows every form field component, with its validation states."""
     try:
         return templates_lotc.TemplateResponse(
             request, "formulier-template.html.j2", {"request": request, "title": "Formulier Template"}
@@ -827,9 +785,9 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
         return "Degraded"
     health = status_data.get("status", {}).get("health", {}) or {}
     health_status = health.get("status", "Unknown")
-    # Een pod die na een geslaagde rollout opnieuw ingepland wordt en zijn image niet kan
-    # halen, haalt nooit de progress deadline: Kubernetes houdt Progressing=True vanaf de
-    # vorige rollout, dus ArgoCD meldt Progressing, wekenlang. Hier gaat de duur beslissen.
+    # A pod rescheduled after a successful rollout that cannot pull its image never reaches
+    # the progress deadline: Kubernetes keeps Progressing=True from the previous rollout, so
+    # ArgoCD reports Progressing for weeks. The duration decides here.
     if health_status == "Progressing":
         progressing_for = seconds_since(health.get("lastTransitionTime"))
         if progressing_for is not None and progressing_for >= STUCK_OPERATION_THRESHOLD_SECONDS:
@@ -838,10 +796,10 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
 
 
 def _deployment_inactivity(project_data: dict[str, Any], deployment_name: str) -> str | None:
-    """Why this deployment deliberately runs nothing, or None (RC-31).
+    """Why this deployment deliberately runs nothing, or None.
 
     Read from the project file, never from the cluster: zero replicas there can also mean
-    something went wrong, and the whole point is telling those two apart.
+    something went wrong, and the whole point is to tell those two apart.
 
     ``Disabled`` and ``Inactive`` stay separate because they ask different things of the
     reader: switched off stays off until someone turns it back on, while a deployment a
@@ -891,27 +849,21 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
 
     total = sum(health_counts.values())
 
-    # "Alle" mag alleen staan als het er ook echt alle zijn. Hier stond
-    # `if not disabled and not inactive`, en die tak sloeg dus ook aan met projecten in een
-    # VIERDE toestand: Unknown, wat een project is dat geen enkele deployment met een status
-    # heeft. Gevolg: bij twee gezonde en een leeg project stond er "Alle 2 projecten zijn
-    # gezond" terwijl het er drie waren. De voorwaarde toetst nu het totaal, dus elke
-    # toestand die er later bij komt valt vanzelf in de eerlijke tak.
-    # Een SLAPENDE deployment is gezond: hij doet precies wat er van hem gevraagd is en
-    # komt vanzelf terug op het eerste bezoek. Hij hoorde bij de niet-gezonde, en dan stond
-    # er "Geen van je 2 projecten is gezond" terwijl er niets mis was. Uitgeschakeld is wel
-    # iets anders: dat blijft uit tot iemand het aanzet, en dat is een keuze van een mens
-    # die het overzicht mag noemen. Slapend telt dus mee in de kop EN krijgt zijn eigen
-    # regel, want je wilt wel weten dat het zo is.
+    # "Alle" may only stand there when it really is all of them, so the condition tests the
+    # TOTAL: any state added later then falls into the honest branch on its own.
+    #
+    # A SLEEPING deployment counts as healthy: it does exactly what was asked of it and comes
+    # back by itself on the first visit. Switched off is something else, because it stays off
+    # until someone turns it on, so sleeping counts in the heading AND gets a line of its own.
     if healthy + inactive == total:
-        gezond = healthy + inactive
-        heading = "Het project is gezond" if gezond == 1 else f"Alle {gezond} projecten zijn gezond"
+        healthy_total = healthy + inactive
+        heading = "Het project is gezond" if healthy_total == 1 else f"Alle {healthy_total} projecten zijn gezond"
         return {"kind": "success", "heading": heading, "lines": []}
 
-    # Elke toestand krijgt zijn eigen regel, in eigen woorden: uitgeschakeld blijft uit tot
-    # iemand het aanzet, slapend komt vanzelf terug, en onbekend betekent dat er niets
-    # draait om iets over te zeggen. Een gedeelde grijze regel voor alle drie zou de lezer
-    # niet vertellen of hij iets moet doen.
+    # Every state gets its own line, in its own words: switched off stays off until someone
+    # turns it on, sleeping comes back by itself, and unknown means nothing is running to say
+    # anything about. One shared grey line for all three would not tell the reader whether to
+    # act.
     lines: list[str] = []
     if disabled:
         lines.append(
@@ -928,17 +880,17 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
             f"{unknown} project{'' if unknown == 1 else 'en'} "
             f"{'heeft' if unknown == 1 else 'hebben'} nog geen deployment die iets draait"
         )
-    # Vier gevallen, want "0 van de 1 projecten zijn gezond" is op drie manieren fout:
-    # het telwoord voor een enkelvoud, het meervoud "projecten", en het werkwoord.
-    gezond = healthy + inactive
+    # Four cases, because a single project needs another numeral, another plural and another
+    # verb than two or more.
+    healthy_total = healthy + inactive
     if total == 1:
-        heading = "Het project is gezond" if gezond else "Het project is niet gezond"
-    elif not gezond:
+        heading = "Het project is gezond" if healthy_total else "Het project is niet gezond"
+    elif not healthy_total:
         heading = f"Geen van je {total} projecten is gezond"
-    elif gezond == 1:
+    elif healthy_total == 1:
         heading = f"1 van de {total} projecten is gezond"
     else:
-        heading = f"{gezond} van de {total} projecten zijn gezond"
+        heading = f"{healthy_total} van de {total} projecten zijn gezond"
     return {
         "kind": "info",
         "heading": heading,
@@ -946,16 +898,16 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     }
 
 
-async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
-    """Lees een query met ``by (namespace)`` uit als namespace -> waarde.
+async def _sum_by_namespace(prom: MetricsBackend, promql: str) -> dict[str, float]:
+    """Read a query with ``by (namespace)`` as namespace -> value.
 
-    Zo levert EEN query de cijfers van alle projecten tegelijk, in plaats van een query per
-    project. Een mislukte query is geen fout maar een lege uitslag: het dashboard toont dan
-    nul, zoals het bij de andere Prometheus-queries in dit bestand ook doet.
+    One query then yields the figures of every project at once instead of a query per project.
+    A failed query is no error but an empty result, so the dashboard shows zero, as it does for
+    the other Prometheus queries in this file.
     """
     try:
-        result = await prom.custom_query(promql)
-    except Exception as e:
+        result = await prom.query(promql)
+    except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
         logger.warning(f"Dashboard per-namespace query failed: {e}")
         return {}
 
@@ -972,131 +924,120 @@ async def collect_dashboard_metrics(
     all_namespaces: list[str],
     user_projects: list[dict],
 ) -> tuple[dict, bool, int]:
-    """Haal het resourcegebruik voor het dashboard op bij Prometheus.
+    """Fetch the resource usage for the dashboard from Prometheus.
 
-    Uit de dashboardroute getrokken zodat twee plekken hem kunnen gebruiken: die route
-    zelf (voor de bestaande pagina) en het fragment dat de nieuwe pagina apart inlaadt.
-    Verdubbelen zou betekenen dat een verbetering aan de ene kant stilletjes niet aan de
-    andere kant landt.
+    Shared by the dashboard route and by the fragment the page loads separately, so an
+    improvement cannot land on one side only.
 
-    Zet ook per project ``cpu_cores``, ``cpu_limit_cores``, ``memory_mb`` en
-    ``memory_limit_mb`` in ``user_projects``, want de kaart "Gebruik per project" rekent
-    daarmee.
+    Also sets ``cpu_cores``, ``cpu_request_cores``, ``cpu_limit_cores``, ``memory_mb``,
+    ``memory_request_mb`` and ``memory_limit_mb`` per project in ``user_projects``, which
+    the per-project usage card needs.
 
-    Returns:
-        De metrics, of Prometheus bereikbaar was, en het aantal pods.
+    Returns the metrics, whether Prometheus was reachable, and the number of pods.
     """
     metrics: dict = {}
     prometheus_available = False
     pod_count = 0
-    ns_regex = "|".join(all_namespaces)
 
     if all_namespaces:
         try:
             from opi.connectors.prometheus import get_metrics_connector
+            from opi.services.metrics_queries import (
+                namespace_usage_queries,
+                network_traffic_queries,
+                usage_per_namespace_queries,
+            )
 
             prom = await get_metrics_connector()
             prometheus_available = prom.is_connected
 
             if prometheus_available:
-                # CPU usage and limits
+                queries = namespace_usage_queries(all_namespaces)
                 cpu_usage_val = 0.0
                 cpu_limit_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
-                    )
+                    result = await prom.query(queries["cpu_cores"])
                     if result and result[0].get("value"):
                         cpu_usage_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                    )
+                    result = await prom.query(queries["cpu_limit_cores"])
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard CPU limits query failed: {e}")
 
-                # Memory usage and limits
+                cpu_request_val = 0.0
+                try:
+                    result = await prom.query(queries["cpu_request_cores"])
+                    if result and result[0].get("value"):
+                        cpu_request_val = float(result[0]["value"][1])
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
+                    logger.warning(f"Dashboard CPU requests query failed: {e}")
+
                 mem_usage_val = 0.0
                 mem_limit_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
-                    )
+                    result = await prom.query(queries["memory_bytes"])
                     if result and result[0].get("value"):
                         mem_usage_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.query(queries["memory_limit_bytes"])
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory limits query failed: {e}")
 
-                # De REQUEST erbij, en alleen voor geheugen. ODCN factureert geheugen als
-                # request + clamp_min(gebruik - request, 0), oftewel per pod het hoogste van
-                # de twee. De meter toonde gebruik tegen limiet, en dat zijn allebei niet het
-                # getal waarop de rekening staat: op 28 augustus 2026 stond het dashboard op
-                # 25,5 GiB gebruikt van 71,6 GiB limiet terwijl er 43,1 GiB gevraagd was, en
-                # dat verschil van bijna 18 GiB is precies wat er betaald wordt zonder
-                # gebruikt te worden. Zie /admin/usage voor de maandrekening zelf.
-                #
-                # CPU krijgt dit NIET: daar wordt niet op gefactureerd, dus zou het alleen
-                # een getal meer op een regel zijn.
+                # The REQUEST as well: ODCN bills memory as request + clamp_min(usage - request, 0),
+                # so per pod the higher of the two, and neither usage nor limit is the number on
+                # the bill. CPU gets one too: it is not billed, but the tuner sets the CPU request
+                # and the tenant quota counts cpu requests.
                 mem_request_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_requests{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.query(queries["memory_request_bytes"])
                     if result and result[0].get("value"):
                         mem_request_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard memory requests query failed: {e}")
 
-                # Storage usage and capacity
                 storage_used_val = 0.0
                 storage_cap_val = 0.0
                 try:
-                    result = await prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                    result = await prom.query(queries["storage_used_bytes"])
                     if result and result[0].get("value"):
                         storage_used_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard storage usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
-                    )
+                    result = await prom.query(queries["storage_capacity_bytes"])
                     if result and result[0].get("value"):
                         storage_cap_val = float(result[0]["value"][1])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard storage capacity query failed: {e}")
 
-                # Pod count
                 try:
-                    result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                    result = await prom.query(queries["pod_count"])
                     if result and result[0].get("value"):
                         pod_count = int(float(result[0]["value"][1]))
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard pod count query failed: {e}")
 
-                # Network traffic time-series (last 30min, 5min step)
+                # The network time series: the last 30 minutes, in steps of 5.
                 network_in_data: list[dict] = []
                 network_out_data: list[dict] = []
                 try:
                     now = datetime.now(UTC)
-                    start = now.timestamp() - 1800  # 30 minutes ago
+                    start = now.timestamp() - 1800
                     end = now.timestamp()
+                    traffic = network_traffic_queries(all_namespaces)
                     in_results = await prom.query_range(
-                        f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        traffic["network_in"],
                         start_time=str(int(start)),
                         end_time=str(int(end)),
                         step="300",
@@ -1111,7 +1052,7 @@ async def collect_dashboard_metrics(
                             )
 
                     out_results = await prom.query_range(
-                        f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        traffic["network_out"],
                         start_time=str(int(start)),
                         end_time=str(int(end)),
                         step="300",
@@ -1124,32 +1065,37 @@ async def collect_dashboard_metrics(
                                     "v": round(float(val) / 1024, 1),
                                 }
                             )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
                     logger.warning(f"Dashboard network query failed: {e}")
 
-                # Compute display values
                 def _pct(used: float, total: float) -> int:
                     if total <= 0:
                         return 0
                     return min(100, round(used / total * 100))
+
+                def _pct_of_request(used: float, requested: float) -> int:
+                    # Not capped: above 100 means using more than requested, and the gauge shows that.
+                    return round(used / requested * 100) if requested > 0 else 0
 
                 def _format_cores(val: float) -> str:
                     if val < 1:
                         return f"{int(val * 1000)}m"
                     return f"{val:.1f}"
 
+                # The same rule as the gib() macro in bg/_resource-formats.html.j2.
                 def _format_gib(val_bytes: float) -> str:
                     gib = val_bytes / (1024**3)
-                    if gib < 0.1:
+                    if gib < 1:
                         mib = val_bytes / (1024**2)
                         return f"{mib:.0f} MiB"
                     return f"{gib:.1f} GiB"
 
                 metrics = {
-                    "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                    "cpu_percentage": _pct_of_request(cpu_usage_val, cpu_request_val),
                     "cpu_usage_display": _format_cores(cpu_usage_val),
+                    "cpu_request_display": _format_cores(cpu_request_val),
                     "cpu_limit_display": _format_cores(cpu_limit_val),
-                    "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                    "memory_percentage": _pct_of_request(mem_usage_val, mem_request_val),
                     "memory_usage_display": _format_gib(mem_usage_val),
                     "memory_request_display": _format_gib(mem_request_val),
                     "memory_limit_display": _format_gib(mem_limit_val),
@@ -1159,51 +1105,33 @@ async def collect_dashboard_metrics(
                     "network_in_data": network_in_data,
                     "network_out_data": network_out_data,
                 }
-                # Per project het gebruik EN de limiet, voor de kaart "Gebruik per project".
+                # The usage AND the limit per project, for the per-project usage card. Usage
+                # is the working set, and the limit comes along because the card has the shape
+                # of the project page's resource card: used over limit with a percentage and a
+                # bar, which needs an upper bound. The same four queries as that card, so a
+                # project shows the same figure in both places.
                 #
-                # Geheugen stond hier niet, en dat is waarom die kaart alleen CPU toonde: er
-                # kwam nooit een waarde binnen. Van de twee is geheugen de belangrijkste --
-                # daar valt een pod op om als het opraakt -- en op een rustig cluster is het
-                # CPU-cijfer bijna nul, waardoor de kaart in de praktijk leeg was.
-                #
-                # Gebruik is de working set en niet de limiet: dat is wat er werkelijk in
-                # gebruik is. De LIMIET komt er apart bij, want de kaart heeft de vorm van
-                # "Resourcegebruik (heel project)" op de projectpagina: gebruikt / limiet met
-                # een percentage, en dan een balk. Zonder limiet is er geen bovengrens om de
-                # balk tegen af te zetten. Dezelfde vier queries als die kaart, zodat een
-                # project op beide plekken hetzelfde cijfer laat zien.
-                #
-                # ``by (namespace)`` en niet vier queries PER project: zo kost dit vier
-                # queries ongeacht het aantal projecten, in plaats van vier keer het aantal
-                # projecten op een fragment dat al apart geladen wordt. Het was er eerst een
-                # per project, dus dit is ook voor CPU minder werk dan voorheen -- zodra er
-                # meer dan vier projecten zijn is de hele kaart netto goedkoper.
-                cpu_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))',
-                )
-                cpu_limit_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})',
-                )
-                mem_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})',
-                )
-                mem_limit_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})',
-                )
+                # ``by (namespace)`` and not a query PER project: this costs six queries
+                # whatever the number of projects.
+                per_namespace = usage_per_namespace_queries(all_namespaces)
+                cpu_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_cores"])
+                cpu_limit_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_limit_cores"])
+                cpu_request_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_request_cores"])
+                mem_by_ns = await _sum_by_namespace(prom, per_namespace["memory_bytes"])
+                mem_limit_by_ns = await _sum_by_namespace(prom, per_namespace["memory_limit_bytes"])
+                mem_request_by_ns = await _sum_by_namespace(prom, per_namespace["memory_request_bytes"])
 
                 for project in user_projects:
                     proj_ns = project.get("namespaces", [])
-                    # Een project zonder namespaces telt op tot nul, net als voorheen.
+                    # A project without namespaces sums to zero.
                     project["cpu_cores"] = sum(cpu_by_ns.get(ns, 0.0) for ns in proj_ns)
                     project["cpu_limit_cores"] = sum(cpu_limit_by_ns.get(ns, 0.0) for ns in proj_ns)
                     project["memory_mb"] = sum(mem_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
                     project["memory_limit_mb"] = sum(mem_limit_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
+                    project["cpu_request_cores"] = sum(cpu_request_by_ns.get(ns, 0.0) for ns in proj_ns)
+                    project["memory_request_mb"] = sum(mem_request_by_ns.get(ns, 0.0) for ns in proj_ns) / (1024 * 1024)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # a failed metrics query leaves the figure empty
             logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
 
     return metrics, prometheus_available, pod_count
@@ -1212,19 +1140,12 @@ async def collect_dashboard_metrics(
 @web_router.get("/dashboard", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def dashboard(request: Request):
-    """
-    Serve the main dashboard page with real project data, Prometheus metrics,
-    and ArgoCD status.
-
-    Returns:
-        HTML response with the dashboard showing project overview, metrics, and activity
-    """
+async def dashboard(request: Request) -> Response:
+    """The dashboard: the user's projects, the Prometheus metrics and the ArgoCD status."""
     try:
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
-        # --- Load user's projects ---
         all_projects = get_project_store().get_all()
 
         user_projects: list[dict] = []
@@ -1238,14 +1159,13 @@ async def dashboard(request: Request):
                 continue
             project_data = project.data or {}
             deployments = project_data.get("deployments", [])
-            # Alleen de MENSEN: het dashboard telt collega's, en een service account is er geen.
+            # The PEOPLE only: the dashboard counts colleagues, and a service account is none.
             users = human_members(project)
             total_deployments += len(deployments)
             for u in users:
                 if hasattr(u, "email") and u.email:
                     unique_users.add(u.email.lower())
 
-            # Collect k8s namespaces for Prometheus queries
             project_namespaces: list[str] = []
             for deployment in deployments:
                 cluster = deployment.get("cluster")
@@ -1265,8 +1185,8 @@ async def dashboard(request: Request):
                     "display_name": project_data.get("display-name", project_name),
                     "description": project_data.get("description", ""),
                     "deployments": deployments,
-                    # Needed to read whether a deployment deliberately runs nothing (RC-31);
-                    # that intent lives in the project file, not in the cluster.
+                    # Needed to read whether a deployment deliberately runs nothing; that
+                    # intent lives in the project file and not in the cluster.
                     "project_data": project_data,
                     "users": users,
                     "deployment_count": len(deployments),
@@ -1277,32 +1197,24 @@ async def dashboard(request: Request):
 
         user_projects.sort(key=lambda p: p["display_name"] or p["name"])
 
-        # --- Query Prometheus metrics (scoped to user's namespaces) ---
-        #
-        # Zes queries achter elkaar, plus een per project. Dat is wat het dashboard traag
-        # maakt, en het is precies waarom de RVO-pagina hier lazy loading voor had. De
-        # De pagina haalt dit blok apart op via /dashboard/resource-usage, zodat de pagina
-        # er meteen staat en een trage of afwezige Prometheus hem niet ophoudt. Hier
-        # blijven ze dus leeg; het sjabloon leest ze wel.
-
+        # The page fetches this block separately, over /dashboard/resource-usage, so it is
+        # there at once and a slow or absent Prometheus does not hold it up. They stay empty
+        # here; the template does read them.
         metrics: dict = {}
         prometheus_available = False
         pod_count = 0
 
         total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
-        # Geheugen erbij: dat is waar je op stuurt, en CPU alleen zei te weinig.
         total_memory_usage = sum(p.get("memory_mb", 0) or 0 for p in user_projects)
 
-        # --- Query ArgoCD status per project ---
         argocd_available = False
         try:
             from opi.connectors.argo import create_argo_connector
             from opi.utils.naming import generate_argocd_application_name
 
-            # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
-            # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
-            # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
-            # opi/api/v2/router.py; zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
+            # Fail fast: the default budget of 30 seconds would apply PER deployment here,
+            # sequentially in a single request. The same rule as in opi/api/v2/router.py; see
+            # "docs/post-mortems/argocd-server-herstart-elke-40-minuten.md".
             argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = await argo_connector.ensure_authenticated()
 
@@ -1320,36 +1232,34 @@ async def dashboard(request: Request):
                             if status_data:
                                 # A deployment that runs nothing on purpose reports zero
                                 # replicas, which ArgoCD calls Healthy. That is the only
-                                # verdict the intent replaces (RC-31): Degraded and
-                                # Progressing are things ArgoCD really observed and stand.
+                                # verdict the intent replaces: Degraded and Progressing are
+                                # things ArgoCD really observed, and they stand.
                                 argo_status = _deployment_dashboard_status(status_data)
                                 inactivity = _deployment_inactivity(project["project_data"], deployment_name)
                                 if inactivity and argo_status == "Healthy":
                                     argo_status = inactivity
                                 deployment_statuses.append(argo_status)
-                                # Wanneer er voor het laatst werkelijk iets is UITGEROLD, zonder
-                                # terugval op ``reconciledAt``. Die terugval meldde bij een
-                                # vastgelopen sync de tijd van de laatste VERGELIJKING als het
-                                # moment van uitrollen, en dat staat hier als "3 uur geleden" op
-                                # het scherm (RC-250). Geen uitrol betekent geen regel.
+                                # When something was last really DEPLOYED, with no fall back
+                                # to ``reconciledAt``: on a stuck sync that reports the time of
+                                # the last COMPARISON as the moment of deploying. No deploy
+                                # means no line.
                                 finished_at = read_sync_operation(status_data).finished_at
                                 if finished_at and (not latest_deploy or finished_at > latest_deploy):
                                     latest_deploy = finished_at
                             else:
                                 deployment_statuses.append("Unknown")
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                             logger.debug(f"Dashboard: ArgoCD status for {deployment_name}: {e}")
                             deployment_statuses.append("Unknown")
 
-                    # Derive overall project health (worst status wins)
+                    # Worst status wins.
                     project["health"] = _derive_project_health(deployment_statuses)
                     project["last_deployed"] = latest_deploy
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
             logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
             for project in user_projects:
                 project["health"] = "Unknown"
 
-        # Compute health counts for summary banner
         health_counts = {"Healthy": 0, "Progressing": 0, "Degraded": 0, "Disabled": 0, "Inactive": 0, "Unknown": 0}
         for p in user_projects:
             health_counts[p.get("health", "Unknown")] += 1
@@ -1396,8 +1306,8 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/kaart", response_class=HTMLResponse)
 @requires_sso
-async def project_details(request: Request, project_name: str):
-    """De projectpagina zonder deployment in het pad; zie :func:`render_project_page`."""
+async def project_details(request: Request, project_name: str) -> Response:
+    """The project page without a deployment in the path; see :func:`render_project_page`."""
     return await render_project_page(request, project_name, "")
 
 
@@ -1405,11 +1315,11 @@ async def project_details(request: Request, project_name: str):
 @action(Action.PROJECT_READ)
 @requires_sso
 async def project_map_json(request: Request, project_name: str, deployment: str | None = None) -> JSONResponse:
-    """De graaf achter het tabblad Kaart; met ``?deployment=`` die van een deployment.
+    """The graph behind the map tab; with ``?deployment=`` the one of a deployment.
 
-    Een eigen route met een eigen action, zoals het metingenfragment: het tabblad laadt
-    zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
-    Alleen de kaart van een deployment meet groottes.
+    A route with an action of its own, like the metrics fragment, because the tab loads its own
+    picture. Reads only ``ProjectSummary.data`` and never the decrypted form. Only a
+    deployment's map measures sizes.
     """
     try:
         usage = await measure_usage(*usage_targets(project_name, deployment)) if deployment else None
@@ -1422,12 +1332,12 @@ async def project_map_json(request: Request, project_name: str, deployment: str 
 @web_router.get("/projects/{project_name}/audit", response_class=HTMLResponse)
 @action(Action.AUDIT_READ)
 @requires_sso
-async def project_audit(request: Request, project_name: str):
-    """Het audittabblad. Een eigen route, want het draagt een eigen action.
+async def project_audit(request: Request, project_name: str) -> Response:
+    """The audit tab, on a route of its own because it carries an action of its own.
 
-    Dezelfde pagina als de andere tabbladen (:func:`render_project_page`); alleen de
-    action verschilt, en die beslist via de router-dependency over DIT project uit het
-    pad. ``?limit=`` is het aantal rijen, afgekapt op :data:`LIST_MAX_LIMIT`.
+    The same page as the other tabs (:func:`render_project_page`); only the action differs, and
+    the router dependency weighs it on THIS project from the path. ``?limit=`` is the number of
+    rows.
     """
     return await render_project_page(request, project_name, "")
 
@@ -1437,38 +1347,30 @@ async def project_audit(request: Request, project_name: str):
 @web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
-async def project_deployment_details(request: Request, project_name: str, deployment_name: str):
-    """EEN deployment op de tabbladen Deployments, Metrics en Backups.
+async def project_deployment_details(request: Request, project_name: str, deployment_name: str) -> Response:
+    """ONE deployment, on the Deployments, Metrics and Backups tabs.
 
-    Deployments en Metrics toonden alle deployments en verborgen er alles behalve een met
-    CSS. Nu staat de naam in het PAD en rendert de server er een: dat scheelt het werk voor
-    blokken die niemand ziet, de pagina is deelbaar, de terugknop werkt, en de keuze blijft
-    staan bij het wisselen van tabblad omdat de tabbalk hem in zijn adressen meeneemt.
+    The name is in the PATH and the server renders one deployment, so the page is shareable,
+    the back button works, and the choice survives a tab switch because the tab bar carries it
+    in its addresses.
 
-    Backups is er sinds RC-100 het derde: het backupsblok stond als dienstblok op
-    Deployments en heeft nu een eigen tabblad, met dezelfde vorm - een deployment per
-    pagina, zijn naam in het pad, dezelfde kiezer.
-
-    De paden staan hier letterlijk en niet als ``/projects/{project}/{tab}/{deployment}``,
-    om dezelfde reden als bij de tabbladen zelf: dat laatste vangt ook paden op die een
-    andere route toekomen.
+    The paths stand here literally and not as ``/projects/{project}/{tab}/{deployment}``, for
+    the same reason as for the tabs themselves: that would also catch paths belonging to
+    another route.
     """
     return await render_project_page(request, project_name, deployment_name)
 
 
-#: De tabbladpaden van voor RC-93, met het tabblad VOOR de projectnaam. Ze staan hier
-#: letterlijk en in dezelfde volgorde als hierboven, zodat de twee vormen naast elkaar te
-#: lezen zijn.
+#: The older tab paths, with the tab BEFORE the project name. They stand here literally and in
+#: the same order as the routes above, so the two shapes read side by side.
 #:
-#: Elk tabblad hoort hier te staan zolang zijn oude vorm hieronder als route geregistreerd
-#: is: die route zoekt zijn tabblad in deze tabel op, en een ontbrekende regel is dus geen
-#: doorverwijzing maar een 500. Zo stond ``team`` er niet in terwijl de route wel bestond
-#: (RC-101). tests/test_lotc_tabbladen_url.py loopt nu beide lijsten af.
-#: ``backups`` staat hier NIET bij, en dat is geen omissie: dat tabblad bestaat pas sinds
-#: RC-100, dus ``/projects/backups/<naam>`` heeft nooit bestaan en kan dus ook nooit
-#: gedeeld zijn. Een doorverwijzing voor een adres dat niemand kan hebben is onderhoud
-#: zonder lezer.
-OUDE_TABBLADPADEN = {
+#: Every tab belongs here for as long as its old shape is registered as a route below: that
+#: route looks its tab up in this table, so a missing line is not a redirect but a 500.
+#: tests/test_lotc_tabbladen_url.py walks both lists.
+#:
+#: ``backups`` is NOT here, and that is no omission: that tab is newer than these paths, so
+#: ``/projects/backups/<name>`` never existed and can never have been shared.
+OLD_TAB_PATHS = {
     "details": "project",
     "team": "team",
     "componenten": "componenten",
@@ -1490,167 +1392,134 @@ OUDE_TABBLADPADEN = {
 @web_router.get("/projects/taken/{project_name}", response_class=HTMLResponse)
 @web_router.get("/projects/deployments/{project_name}/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/metrics/{project_name}/{deployment_name}", response_class=HTMLResponse)
-async def project_tab_oude_vorm(request: Request, project_name: str, deployment_name: str = ""):
-    """De oude tabbladadressen (``/projects/deployments/<naam>``) verwijzen door.
+async def project_tab_old_shape(request: Request, project_name: str, deployment_name: str = "") -> RedirectResponse:
+    """Redirect the older tab addresses, which had the tab before the project name.
 
-    Sinds RC-93 staat de projectnaam voorop: ``/projects/<naam>/deployments``. De oude vorm
-    heeft in de sandbox gestaan en kan gedeeld zijn, en een gedeelde link hoort niet stil
-    een 404 te worden - dus verwijst hij door in plaats van te verdwijnen.
+    The project name comes first now. The old shape has been live and may have been shared, and
+    a shared link should not silently become a 404.
 
-    BEWUST ZONDER ``@requires_sso``, en dat kan omdat er niets wordt opgezocht: dit is een
-    blinde herschrijving van het pad die niets prijsgeeft over het project (of het bestaat,
-    of je erbij mag). Het antwoord is voor elke naam hetzelfde. De echte pagina achter het
-    nieuwe adres doet de autorisatie zoals altijd.
+    DELIBERATELY WITHOUT ``@requires_sso``, which is safe because nothing is looked up: this is
+    a blind rewrite of the path that gives nothing away about the project, and the answer is the
+    same for every name. The real page behind the new address does the authorization.
 
-    Ze staan NA de nieuwe vorm geregistreerd, want bij een project dat toevallig
-    ``deployments`` of ``details`` heet zijn beide vormen te lezen; dan wint het adres van
-    vandaag, niet dat van gisteren.
+    These routes are registered AFTER the new shape, because for a project that happens to be
+    called ``deployments`` or ``details`` both shapes read, and then today's address wins.
     """
-    tab = OUDE_TABBLADPADEN[request.url.path.strip("/").split("/")[1]]
+    tab = OLD_TAB_PATHS[request.url.path.strip("/").split("/")[1]]
     return RedirectResponse(
         url=project_tab_url(project_name, tab, request.url.query, deployment=deployment_name),
         status_code=302,
     )
 
 
-async def render_project_page(request: Request, project_name: str, deployment_name: str):
+async def render_project_page(request: Request, project_name: str, deployment_name: str) -> Response:
+    """The project page: its services, components, deployments and configuration.
+
+    Every tab has a PATH OF ITS OWN instead of a ``?tab=`` on a shared address, because a query
+    string reads as a filter while a tab is a page. The paths stand above literally and not as
+    ``/projects/{project_name}/{tab}``: that would also catch ``/projects/details/<name>``, with
+    ``project_name="details"``, and then the order of registration decides which route wins.
+
+    A ``?tab=`` in the URL is ignored; the overview tab is what you get.
     """
-    Serve the project details page showing comprehensive project information.
-    Shows detailed project data including services, components, deployments, and configuration.
-
-    Elk tabblad heeft een EIGEN PAD - ``/projects/<naam>/deployments`` en zo voor de
-    andere - in plaats van ``?tab=deployments`` op een gedeeld adres. Een querystring
-    leest als een filter, terwijl een tabblad een pagina is. De paden staan hierboven
-    letterlijk en niet als ``/projects/{project_name}/{tab}``: dat laatste zou ook
-    ``/projects/details/<naam>`` opvangen, met ``project_name="details"``, en dan hangt het
-    van de volgorde van registreren af welke route wint.
-
-    Args:
-        request: The FastAPI request object
-        project_name: The name of the project to display
-
-    Returns:
-        HTML response with detailed project information
-    """
-    # ``?tab=`` bestaat niet meer, ook niet als doorverwijzing. Er is bewust GEEN
-    # overgangspad: de oude vorm heeft nooit buiten deze applicatie geleefd (de links
-    # erheen staan in deze sjablonen en in de tests, en die wijzen nu naar de paden), en
-    # een doorverwijzing die niemand gebruikt is een tweede adres dat onderhouden moet
-    # worden. Een ?tab= in de URL wordt dus gewoon genegeerd; je krijgt Overzicht.
     try:
         from opi.services.services import ServiceAdapter
 
         user = get_current_user(request)
 
-        # Generate CSRF token for form protection (domain settings modal)
         csrf_token = ensure_csrf_token(request)
 
-        # TODO: this logic has to be centralized
         user_email = user.get("email", "").lower()
 
-        # Ensure project data is fresh (refreshes from Git if stale)
-
-        # Get project service to validate access
-
-        # Check if user has access to this project
         if not is_user_authorized_for_project(project_name, user_email):
             logger.warning(f"User {user_email} not authorized to view project: {project_name}")
             raise HTTPException(status_code=403, detail="You are not authorized to view this project")
 
-        # Get project details
         project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
-        # Get user's role for this project
         user_roles = get_user_roles_for_project(project_name, user_email)
 
-        # Use project data from memory if available
         project_data = project.data or {}
 
-        # WELKE deployment staat open, en staat die naam al in de URL? Deze twee
-        # tabbladen tonen er een, dus het adres hoort te zeggen welke: zonder naam in het
-        # pad (of met een naam die niet meer bestaat) kiest de server er een en verwijst
-        # hij daarheen, zodat de URL daarna klopt en deelbaar is. ``?deployment=<naam>``
-        # was de oude vorm en verwijst hier ook naartoe, zodat een gedeelde link uit die
-        # tijd blijft werken.
+        # WHICH deployment is open, and is that name already in the URL? These tabs show one,
+        # so the address has to say which: without a name in the path, or with a name that no
+        # longer exists, the server picks one and redirects there, so the URL is right and
+        # shareable afterwards. A ``?deployment=<name>`` from the older shape redirects here
+        # too.
         #
-        # Hier, direct na het laden van het project: alles hieronder is ontsleutelwerk dat
-        # voor een doorverwijzing niet gedaan hoeft te worden.
+        # Right after loading the project: everything below is decryption work a redirect does
+        # not need.
         deployment_open = ""
-        if tab_from_path(request.url.path) in TABS_MET_DEPLOYMENT:
-            deployment_open = kies_deployment(
+        if tab_from_path(request.url.path) in TABS_WITH_DEPLOYMENT:
+            deployment_open = choose_deployment(
                 [deployment["name"] for deployment in project_data.get("deployments") or []],
                 deployment_name,
                 request.query_params.get("deployment") or "",
             )
-            hoort_op = deployment_pagina_adres(request, project_name, deployment_open)
-            huidig = request.url.path + (f"?{request.url.query}" if request.url.query else "")
-            if hoort_op != huidig:
-                return RedirectResponse(url=hoort_op, status_code=302)
+            belongs_at = deployment_page_address(request, project_name, deployment_open)
+            current = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            if belongs_at != current:
+                return RedirectResponse(url=belongs_at, status_code=302)
 
         project_data_decrypted = copy.deepcopy(project_data)
 
-        project_private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
+        project_private_key = await get_decoded_project_private_key(project_data)
 
-        # Kaart laadt via eigen route: geen geheimen in de context, geen Prometheus, ArgoCD of Kopia.
+        # The map tab loads over a route of its own: no secrets in the context, and no
+        # Prometheus, ArgoCD or Kopia.
         map_tab = tab_from_path(request.url.path) == "kaart"
 
-        # Geheimen gaan alleen naar de context voor wie ze mag lezen (BIO2 5.15, 8.03).
-        # Uit het register en niet uit een rolnaam: wat de matrixpagina onder
-        # ``project-key.read`` toont is dan ook wat deze pagina doet.
-        mag_geheimen_zien = not map_tab and may(request, action=Action.PROJECT_KEY_READ, project_name=project_name)
+        # Secrets only reach the context for whoever may read them. From the rule register and
+        # not from a role name, so what the matrix page shows under ``project-key.read`` is
+        # what this page does.
+        may_see_secrets = not map_tab and may(request, action=Action.PROJECT_KEY_READ, project_name=project_name)
 
-        # De projectsleutel is er alleen nog in een bestand waarvan de migratie naar
-        # schemaversie 2.12 hem niet open kreeg. Zonder deze ``if`` gaf elke projectpagina
-        # een 500 op de KeyError zodra het veld weg was.
-        oude_sleutel = project_data["config"].get("api-key")
-        if mag_geheimen_zien:
-            if oude_sleutel:
+        # The project key is only still in a file whose migration could not open it, so without
+        # this ``if`` every project page would be a 500 on the KeyError once the field is gone.
+        legacy_key = project_data["config"].get("api-key")
+        if may_see_secrets:
+            if legacy_key:
                 project_data_decrypted["config"]["api-key"] = await decrypt_password_smart(
-                    oude_sleutel, project_private_key
+                    legacy_key, project_private_key
                 )
             project_data_decrypted["config"]["age-private-key"] = project_private_key
         else:
-            if oude_sleutel:
+            if legacy_key:
                 project_data_decrypted["config"]["api-key"] = None
             project_data_decrypted["config"]["age-private-key"] = None
 
-        # Decrypt Keycloak passwords (RC-5 B: connections live under the keycloak
-        # service config now, relocated from the old project-level config.keycloak).
+        # The Keycloak connections live under the keycloak service config.
         for kc_config in Project(project_data_decrypted).get("services/keycloak/config/realms") or []:
-            if not mag_geheimen_zien:
+            if not may_see_secrets:
                 kc_config["password"] = None
             elif kc_config.get("password"):
                 try:
                     kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                     kc_config["password"] = None
-            # De SEED bereikt de pagina nooit: die zou voor altijd codes opleveren. Wat er
-            # wel op komt is de CODE van dit moment, en die vergaat binnen een periode van
-            # 30 seconden.
-            #
-            # Hij wordt HIER berekend en niet meer op verzoek achter een knop (RC-101): de
-            # OTP is op het tabblad Toegang een veld zoals het wachtwoord ernaast, en een
-            # veld heeft zijn waarde bij het renderen. Dat zet de code in de HTML, net als
-            # het admin-wachtwoord dat er al stond - hetzelfde blok, dezelfde rolpoort
-            # (alleen admin/owner), en van de twee is de code de kortstlevende.
+            # The SEED never reaches the page, because it would yield codes forever. What does
+            # reach it is the CODE of this moment, which expires within 30 seconds. It is
+            # computed here, because on the page the OTP is a field like the password next to
+            # it, and a field has its value at render time. Same block, same role gate, and of
+            # the two the code is the shorter-lived.
             kc_config["has_totp"] = bool(kc_config.get("totp_secret"))
-            if kc_config["has_totp"] and mag_geheimen_zien:
+            if kc_config["has_totp"] and may_see_secrets:
                 try:
                     seed = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
                     kc_config["totp_code"], _ = totp_now(seed)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logger.warning(f"Failed to derive OTP code for realm {kc_config.get('realm')}: {e}")
                     kc_config["totp_code"] = None
             else:
                 kc_config["totp_code"] = None
             kc_config["totp_secret"] = None
 
-        # Sinds RC-388 staat er niets van de omgevingsvariabelen op de pagina, ook geen naam:
-        # waarden en namen vragen een verse step-up (router_env_vars). De versleutelde
-        # blokken gaan uit de kopie, zodat er niets van dit veld in de HTML kan belanden.
+        # Nothing of the environment variables is on the page, not even a name: values and
+        # names ask for a fresh step-up (router_env_vars). The encrypted blocks leave the copy,
+        # so nothing of this field can end up in the HTML.
         for deployment in project_data_decrypted.get("deployments", []):
             for dep_component in deployment.get("components", []):
                 dep_component.pop("user-env-vars", None)
@@ -1659,56 +1528,47 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
-            # Aliassen ook, en om dezelfde reden: de kaart toont ze en zonder dit staat er
-            # een AGE-blok op het scherm. Sinds RC-106 is dat hetzelfde blok als hierboven,
-            # en het is dezelfde decoder als de leesendpoints gebruiken, zodat de pagina en
-            # de API niet uiteen kunnen lopen over wat er staat. Wat er daarna nog
-            # afgeschermd wordt bepaalt de dienst, in het sjabloon via het filter
-            # is_verwijzing.
+            # The aliases too: the card shows them, and without this an AGE block stands on
+            # the screen. The same decoder the read endpoints use, so the page and the API
+            # cannot disagree about what is there; what is screened off after that is up to
+            # the service, in the template.
             if component.get("aliases"):
                 try:
-                    # In een thread, want decode_component_values is synchroon, en dat
-                    # blijft hij: hij wordt ook door de leesendpoints gebruikt en daar
-                    # hoort een tweede vorm niet thuis. De reden die hier stond, `age`
-                    # als subprocess per component, geldt sinds RC-218 niet meer:
-                    # opi/utils/age.py ontsleutelt in het proces, 0,17 ms per veld. De
-                    # thread-hop is blijven staan; hem opruimen is een eigen taak.
+                    # In a thread, because decode_component_values is synchronous and stays
+                    # that way: the read endpoints use it too, and a second shape does not
+                    # belong there.
                     component["aliases"] = await asyncio.to_thread(
                         decode_component_values, component["aliases"], project_data_decrypted, project_private_key
                     )
                 except (ComponentValuesError, ValueError) as error:
-                    # Een onleesbaar blok levert geen namen op om te tonen; laat het weg in
-                    # plaats van er een AGE-blok van te maken op het scherm.
+                    # An unreadable block yields no names to show, so leave it out rather than
+                    # putting an AGE block on the screen.
                     logger.warning(f"Aliases of component '{component_name}' could not be read: {error}")
                     component["aliases"] = {}
 
-        # helm-values leesbaar maken: op projectniveau (de catalogus) en op
-        # deploymentniveau (de verwijzing), voor helm-charts zowel als helmfile.
-        await ontsleutel_helm_values(
+        # Make helm-values readable at project level, the catalog, and at deployment level,
+        # the reference, for helm-charts as well as helmfile.
+        await decrypt_helm_values(
             project_data_decrypted.get("helm-charts", []), "name", "helm-chart", project_private_key
         )
-        await ontsleutel_helm_values(
-            project_data_decrypted.get("helmfile", []), "name", "helmfile", project_private_key
-        )
+        await decrypt_helm_values(project_data_decrypted.get("helmfile", []), "name", "helmfile", project_private_key)
         for deployment in project_data_decrypted.get("deployments", []):
             deployment_name = deployment.get("name", "unknown")
-            await ontsleutel_helm_values(
+            await decrypt_helm_values(
                 deployment.get("helm-charts", []),
                 "reference",
                 f"deployment '{deployment_name}' helm-chart",
                 project_private_key,
             )
-            await ontsleutel_helm_values(
+            await decrypt_helm_values(
                 deployment.get("helmfile", []),
                 "reference",
                 f"deployment '{deployment_name}' helmfile",
                 project_private_key,
             )
 
-        # Process services to add display information
         services_with_info = []
         project_services = project_data.get("services", [])
-        # Extract service names from project services (handles both string and dict formats)
         service_names = ServiceAdapter.extract_service_names_from_project_services(project_services)
         for service_name in service_names:
             service_enum = ServiceAdapter.get_service_by_value(service_name)
@@ -1720,8 +1580,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     }
                 )
 
-        # Prepare project details for template
-        from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+        from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 
         _attachment_usage = extract_attachment_usage(project_data)
 
@@ -1730,12 +1589,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             "display_name": project_data.get("display-name", project_name),
             "description": project_data.get("description", "Geen beschrijving beschikbaar"),
             "source_code": project_data.get("source-code", []),
-            # Alleen de MENSEN: het Team-blok en zijn bewerkmodaal nodigen mensen uit en
-            # sturen ze mail. De service accounts staan in het blok Leden en tokens.
+            # The PEOPLE only: the Team block and its edit modal invite people and mail them.
+            # The service accounts are in the members-and-tokens block.
             "users": human_members(project),
             "user_roles": user_roles,
-            # Voor de link naar de rolmatrix op de Team-kaart: die pagina is voor
-            # platformbeheerders, dus een lid krijgt er geen link naartoe die 403 geeft.
+            # For the link to the role matrix on the Team card: that page is for platform
+            # admins, so a member gets no link to it that answers 403.
             "is_platform_admin": is_elevated_admin(get_user_service(), user_email),
             "services": services_with_info,
             "clusters": project_data.get("clusters", []),
@@ -1755,7 +1614,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             ],
         }
 
-        # Check Prometheus availability (metrics are lazy-loaded via HTMX)
+        # The metrics themselves are loaded lazily over HTMX.
         prometheus_available = False
         if not map_tab:
             try:
@@ -1763,33 +1622,31 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
                 prom = await get_metrics_connector()
                 prometheus_available = prom.is_connected
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.debug(f"Prometheus not available: {e}")
 
-        # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
-        # does not block the page render; only the cheap availability check stays here.
-        # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
-        # erachter. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
+        # The ArgoCD status is loaded lazily per deployment, so it does not block the page
+        # render; only the cheap availability check stays here. Fail fast, because on the
+        # default budget this check would hold the page for 30 seconds. See
+        # "docs/post-mortems/argocd-server-herstart-elke-40-minuten.md".
         argocd_available = False
         if not map_tab:
             try:
                 from opi.connectors.argo import create_argo_connector
 
                 argocd_available = await create_argo_connector(connect_retry_seconds=0).ensure_authenticated()
-            except Exception as argo_error:
+            except Exception as argo_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
-        # Backup snapshots are NOT fetched here: listing them opens a Kopia repository
-        # over S3, which measured 2.1s to connect plus 0.4s to list on this page --
-        # 70% of its total render time, for a block most visitors never look at. Each
-        # deployment's block now loads itself via /backups/{deployment}, like the
-        # ArgoCD blocks already did.
+        # Backup snapshots are NOT fetched here: listing them opens a Kopia repository over
+        # S3, which was 70% of this page's render time for a block most visitors never look
+        # at. Each deployment's block loads itself over /backups/{deployment}.
         from opi.core.config import settings
         from opi.manager.backup import BackupManager
 
         current_cluster = settings.CLUSTER_MANAGER
-        # Ungranted approvals per deployment, asked of the catalog (each service writes
-        # its own notice) so this page holds no domain knowledge.
+        # The ungranted approvals per deployment, asked of the catalog, where each service
+        # writes its own notice, so this page holds no domain knowledge.
         from opi.services.approvals import collect_deployment_approval_notices
 
         approval_notices: dict[str, list[dict[str, Any]]] = {}
@@ -1803,16 +1660,14 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             try:
                 BackupManager()
                 backups_available = True
-            except Exception as backup_init_error:
+            except Exception as backup_init_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                 logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
 
-        # Generate ingress URLs for components with publish-on-web service
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
+        from opi.services.project_file_handler import ProjectFileHandler
 
         project_file_handler = ProjectFileHandler()
 
-        # Add ingress information to deployments
         for deployment in project_details["deployments"]:
             cluster = deployment.get("cluster")
             # One derivation, owned by publish-on-web: the invite form offers these same
@@ -1833,16 +1688,15 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 if link["component_name"] == component_name
             ]
 
-        # Get cluster base domains for domain settings modal
         from opi.web.router_self_service import get_cluster_base_domains_for_template
 
         cluster_base_domains = get_cluster_base_domains_for_template()
 
         from opi.forms.visualizers.flows import SERVICE_CONFIG_MODAL_FLOWS
 
-        # Deployment-level action buttons contributed by the project's services
-        # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
-        # project data so it can read the OPI-managed sleep state.
+        # The deployment-level action buttons the project's services contribute, keyed by
+        # deployment name. Built from the decrypted project data, so it can read the
+        # OPI-managed sleep state.
         from opi.services.catalog.base import DeploymentPageContext
         from opi.services.catalog.shared.backups import collect_backups_sections
         from opi.services.registry import (
@@ -1856,9 +1710,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             for dep in project_data_decrypted.get("deployments", [])
         }
 
-        # What the services report about each deployment (RC-28): the same facts the
-        # health check weighs, here only rendered. Without it a user sees a sleeping
-        # deployment with nothing running and no explanation why.
+        # What the services report about each deployment: the same facts the health check
+        # weighs, here only rendered. Without it a user sees a sleeping deployment with
+        # nothing running and no explanation why.
         from opi.services.deployment_state import collect_deployment_state
 
         deployment_states = {
@@ -1866,16 +1720,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             for dep in project_data_decrypted.get("deployments", [])
         }
 
-        # De statuskolom van de deploymenttabel op het tabblad Overzicht. Twee bronnen die
-        # allebei per PROJECT worden opgehaald en niet per rij: de feiten van de diensten
-        # (hierboven al berekend) en EEN gebundelde bevraging bij ArgoCD. Twintig rijen
-        # leveren dus geen twintig ArgoCD-verzoeken op - zie
-        # opi/services/argocd_overview.py voor de bevraging en de vervaltijd.
+        # The status column of the deployment table on the overview tab. Two sources, both
+        # fetched per PROJECT and not per row: the facts of the services, computed above, and
+        # ONE bundled query to ArgoCD, so twenty rows do not become twenty ArgoCD requests.
         #
-        # Alleen voor het tabblad dat de tabel toont: de andere tabbladen hebben de kolom
-        # niet, en dan hoeft ArgoCD er ook niet voor bevraagd te worden.
+        # Only for the tab that shows the table: the other tabs do not have the column.
         argocd_statuses: dict[str, dict[str, Any]] = {}
-        if argocd_available and tab_from_path(request.url.path) == STANDAARD_TAB:
+        if argocd_available and tab_from_path(request.url.path) == DEFAULT_TAB:
             argocd_statuses = await get_project_argocd_statuses(
                 project_name, [name for name in deployment_states if name]
             )
@@ -1884,10 +1735,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         )
 
         def deployment_page_context(dep: dict[str, Any]) -> DeploymentPageContext:
-            """Wat een dienst nodig heeft om zijn blok voor DEZE deployment te maken.
+            """What a service needs to build its block for THIS deployment.
 
-            De beschikbaarheid van de optionele achterkanten is hier al gemeten (een
-            dienst belt zelf nooit een connector) en gaat mee naar binnen.
+            The availability of the optional back ends is already measured here, because a
+            service never calls a connector itself, and travels in.
             """
             return DeploymentPageContext(
                 project_data=project_data_decrypted,
@@ -1897,87 +1748,75 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 backend_available={"prometheus": prometheus_available, "backups": backups_available},
             )
 
-        # Per-deployment read-only blocks the services deliver (RC-24): a block that
-        # describes one deployment is asked per deployment instead of being hardcoded in
-        # the Deployments tab.
+        # The per-deployment read-only blocks the services deliver: a block that describes
+        # one deployment is asked per deployment instead of being hardcoded in the tab.
         deployment_service_sections = {
             dep.get("name"): collect_deployment_page_sections(deployment_page_context(dep))
             for dep in project_data_decrypted.get("deployments", [])
         }
 
-        # De leden en hun tokens, alleen voor het tabblad waar ze staan (RC-322).
+        # The members and their tokens, only for the tab they stand on.
         token_context: dict[str, Any] = {}
         if tab_from_path(request.url.path) == "team":
             user_email = (user or {}).get("email", "").lower()
-            # Beheerder van DIT project, uit de ledenlijst in het projectbestand: dat is
-            # ook de bron van de weigering achter de knop. Een platformbeheerder die geen
-            # lid is zag hier anders knoppen die altijd weigeren.
+            # Admin of THIS project, from the member list in the project file, which is also
+            # the source of the refusal behind the button: a platform admin who is not a
+            # member would otherwise see buttons that always refuse.
             token_context = tokencontext(
                 request,
                 project_name,
                 user_email,
-                is_beheerder=is_projectbeheerder(project_name, user_email),
+                is_admin=is_project_admin(project_name, user_email),
             )
 
-        # Het backupsblok, voor de deployment die op het tabblad Backups openstaat (RC-100).
+        # The backups block, for the deployment that is open on the Backups tab. Asked by
+        # NAME and not through the general service mechanism above, because it has a tab of
+        # its own while that mechanism delivers everything onto ONE tab.
         #
-        # Bij NAAM gevraagd en niet via het algemene dienstenmechanisme hierboven, want het
-        # heeft een eigen tabblad gekregen en dat mechanisme levert alles op EEN tabblad af.
-        # De afweging staat in opi/services/catalog/shared/backups.py; kort: van de twee
-        # diensten die een deploymentblok leveren is dit de enige kandidaat voor een eigen
-        # tabblad, dus is een haak voor "welke dienst wil een tabblad" machinerie voor een
-        # geval dat niet bestaat.
-        #
-        # Alleen voor de OPEN deployment: de pagina toont er een, en voor de rest zou dit
-        # werk zijn voor blokken die niemand ziet.
+        # Only for the OPEN deployment: the page shows one, and the rest would be work for
+        # blocks nobody sees.
         backups_sections: list[Any] = []
         if tab_from_path(request.url.path) == "backups":
-            open_deployment = next(
-                (dep for dep in project_data_decrypted.get("deployments", []) if dep.get("name") == deployment_open),
-                None,
-            )
+            open_deployment = Project(project_data_decrypted).find("deployments", name=deployment_open)
             if open_deployment is not None:
                 backups_sections = collect_backups_sections(deployment_page_context(open_deployment))
 
-        # Read-only detail-page sections the project's services deliver (WP2): each
-        # service owns its own block instead of the general template hardcoding an
-        # include. Built from the decrypted data so a service can surface its managed
-        # credentials (e.g. keycloak realm admin details).
+        # The read-only detail-page sections the project's services deliver: each service
+        # owns its own block instead of the general template hardcoding an include. Built from
+        # the decrypted data, so a service can surface the credentials it manages.
         service_detail_sections = collect_detail_page_sections(
             project_data_decrypted,
-            # Een dienstblok dat een geheim toont leest dezelfde regel als de route
-            # erachter, in plaats van een eigen rolnaam.
-            lambda handeling: may(request, action=handeling, project_name=project_name),
+            # A service block that shows a secret reads the same rule as the route behind it,
+            # instead of a role name of its own.
+            lambda requested_action: may(request, action=requested_action, project_name=project_name),
         )
 
-        # Die blokken hebben sinds RC-101 een EIGEN tabblad (Toegang): het zijn de
-        # adressen, sleutels en bestanden waarmee je de diensten gebruikt, en daarvoor kom
-        # je terug. Tussen de rest van Overzicht waren ze niet te vinden.
+        # Those blocks have a TAB of their own: the addresses, keys and files with which you
+        # use the services, which is what you come back for.
         #
-        # Levert geen enkele dienst iets, dan is er geen tabblad: een lege pagina achter
-        # een tab is een belofte die niet waargemaakt wordt. De tab valt uit de balk
-        # (``lege_tabs`` hieronder), en wie er via een gedeelde link toch op uitkomt gaat
-        # naar Overzicht in plaats van naar het niets.
-        lege_tabs = () if service_detail_sections else TABS_MET_VOORWAARDE
-        # Het audittabblad staat er alleen voor wie het mag lezen. Dat is geen lege tab
-        # maar een recht, dus het volgt niet uit TABS_MET_VOORWAARDE; de route erachter
-        # weigert met een 403, en een tabblad dat daarop uitkomt hoort niet in de balk.
+        # When no service delivers anything there is no tab, because an empty page behind a tab
+        # is a promise that is not kept. The tab falls out of the bar ("empty_tabs" below),
+        # and whoever still arrives there over a shared link goes to the overview.
+        empty_tabs = () if service_detail_sections else CONDITIONAL_TABS
+        # The audit tab is only there for whoever may read it. That is a right and not an empty
+        # tab, so it does not follow from CONDITIONAL_TABS; the route behind it refuses with
+        # a 403, and a tab that ends in one does not belong in the bar.
         if not may(request, action=Action.AUDIT_READ, project_name=project_name):
-            lege_tabs = (*lege_tabs, "audit")
-        if tab_from_path(request.url.path) in lege_tabs:
-            return RedirectResponse(url=project_tab_url(project_name, STANDAARD_TAB), status_code=302)
+            empty_tabs = (*empty_tabs, "audit")
+        if tab_from_path(request.url.path) in empty_tabs:
+            return RedirectResponse(url=project_tab_url(project_name, DEFAULT_TAB), status_code=302)
 
-        # De auditrijen van dit project, alleen op het tabblad dat ze toont (stap 3).
-        # Het project komt uit het PAD: dezelfde naam die @action(AUDIT_READ) heeft laten
-        # wegen, nooit een naam uit de querystring of de body.
+        # The audit rows of this project, only on the tab that shows them. The project comes
+        # from the PATH: the same name @action(AUDIT_READ) weighed, never one from the query
+        # string or the body.
         audit_context: dict[str, Any] = {}
         if tab_from_path(request.url.path) == "audit":
-            audit_context = await audit_pagina(request, project_name)
+            audit_context = await audit_page(request, project_name)
 
-        # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
-        # above the tabs, because a project file that silently runs ahead of the cluster is
-        # worse than a slow rollout. A task service that is not up must not take the page
-        # down with it, so a failure here degrades to "no notice".
+        # Changes saved with rollout=false that nobody has rolled out yet, shown above the
+        # tabs, because a project file that silently runs ahead of the cluster is worse than a
+        # slow rollout. A task service that is not up must not take the page down with it, so a
+        # failure here degrades to "no notice".
         pending_rollout: dict[str, Any] = {
             "count": 0,
             "since": None,
@@ -1991,7 +1830,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             except SQLAlchemyError:
                 logger.exception("Could not determine deferred rollouts for project %s", project_name)
 
-        antwoord = render(
+        response = render(
             request,
             template="bg/project-tabs.html.j2",
             context={
@@ -2002,8 +1841,8 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "user": user,
                 "user_roles": user_roles,
                 "ServiceAdapter": ServiceAdapter,
-                # How a service is chosen, and -- when it has no project-wide settings --
-                # where it IS configured. Both derived from the registry (RC-33).
+                # How a service is chosen, and where it IS configured when it has no
+                # project-wide settings. Both derived from the registry.
                 "service_selection_labels": selection_labels,
                 "service_config_hint": project_step_config_hint,
                 "prometheus_available": prometheus_available,
@@ -2016,24 +1855,22 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "pending_rollout": pending_rollout,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
-                # De statuslabels per rij van de deploymenttabel (Overzicht), en de
-                # gebundelde ArgoCD-stand waar de kolom "Laatste sync" uit leest.
+                # The status labels per row of the deployment table, and the bundled ArgoCD
+                # state the last-sync column reads from.
                 "deployment_status_tags": deployment_status_tags,
                 "deployment_argocd": argocd_statuses,
-                # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
+                # The per-deployment service-owned blocks, keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
-                # Het backupsblok van de open deployment, voor het tabblad Backups (RC-100).
-                # Leeg op elk ander tabblad, en leeg voor een project dat niets kan backuppen.
+                # The backups block of the open deployment, for the Backups tab. Empty on
+                # every other tab, and for a project that has nothing to back up.
                 "backups_sections": backups_sections,
-                # De audit van dit project, voor het tabblad Audit. Leeg op elk ander
-                # tabblad en voor wie hem niet mag lezen.
+                # The audit of this project, for the Audit tab. Empty on every other tab and
+                # for whoever may not read it.
                 "audit_rijen": [],
                 "audit_fout": False,
                 **audit_context,
-                # Detail-page sections the project's services own (WP2). Replaces the
-                # hardcoded per-service includes (e.g. the Keycloak realm block, which
-                # after RC-5's config move kept reading the old project-level
-                # ``config.keycloak`` and silently stopped rendering).
+                # The detail-page sections the project's services own, in place of the
+                # hardcoded per-service includes.
                 "service_detail_sections": service_detail_sections,
                 **token_context,
                 **build_lotc_project_details(
@@ -2041,17 +1878,17 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                     user=user,
                     project=project_details,
                     deployment_open=deployment_open,
-                    lege_tabs=lege_tabs,
+                    empty_tabs=empty_tabs,
                 ),
             },
         )
         if token_context.get("nieuw_token"):
-            # Dit antwoord draagt een token dat 90 tot 365 dagen geldig is, en het wordt
-            # maar een keer getoond. Zonder deze header mag een browser de pagina op schijf
-            # zetten en toont de terug-knop hem opnieuw, ook nadat hij server-side weg is.
-            # Dezelfde reden en dezelfde header als bij GET /api/v2/projects/{p}/api-key.
-            antwoord.headers["Cache-Control"] = "no-store"
-        return antwoord
+            # This response carries a token that is valid for months and is shown only once.
+            # Without this header a browser may put the page on disk and the back button shows
+            # it again, also after it is gone server-side. The same header as on
+            # GET /api/v2/projects/{p}/api-key.
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     except HTTPException:
         raise
@@ -2090,26 +1927,27 @@ def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
             else:
                 error["age"] = f"{diff_min // 60} uur geleden"
         except ValueError, TypeError:
+            # No usable timestamp: the entry simply gets no age.
             pass
 
 
 async def _fetch_argocd_deployment_status(
     project_name: str,
     deployment: dict[str, Any],
-    argo: Any,
-    kubectl: Any,
+    argo: ArgoConnector,
+    kubectl: KubectlConnector,
     deployment_state: DeploymentState | None = None,
     project_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy.
+    """Fetch the ArgoCD status of one deployment, with interpreted errors when unhealthy.
 
     ``deployment_state`` is what the services report about this deployment (see
-    ``collect_deployment_state``). It only decides whether the pod summary is worth
-    asking for: a deployment whose pods are MEANT to be absent -- asleep, switched off --
-    would otherwise be told "nothing is running", which is true and not a problem.
+    ``collect_deployment_state``). It only decides whether the pod summary is worth asking
+    for: a deployment whose pods are MEANT to be absent, asleep or switched off, would
+    otherwise be told "nothing is running", which is true and not a problem.
 
-    ``project_data`` lets the card name an image in the project's own private registry
-    instead of its bare RCR URL.
+    ``project_data`` lets the card name an image in the project's own private registry instead
+    of its bare registry URL.
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
@@ -2134,18 +1972,17 @@ async def _fetch_argocd_deployment_status(
         operation_state = status.get("operationState", {})
         app_health = health.get("status", "Unknown")
 
-        # Components intentionally scaled to zero (auto-disabled by the watcher or manually):
-        # their resources must not be reported as a live "busy"/problem (WP6).
+        # Components intentionally scaled to zero, by the watcher or by hand: their resources
+        # must not be reported as a live problem.
         disabled_components = frozenset(
             ref
             for comp in deployment.get("components", []) or []
             if comp.get("disabled") and (ref := comp.get("reference"))
         )
 
-        # What is actually serving traffic, per component. Deliberately only on the
-        # unhealthy branch, next to the diagnostics that already cost a cluster call: a
-        # green deployment answers "is it running" with its own badge and must not pay for
-        # a pod query on every render.
+        # What is actually serving traffic, per component. Deliberately only on the unhealthy
+        # branch, next to the diagnostics that already cost a cluster call: a green deployment
+        # answers "is it running" with its own badge.
         pod_summaries: list[Any] = []
 
         if app_health != "Healthy":
@@ -2163,17 +2000,18 @@ async def _fetch_argocd_deployment_status(
             )
             expects_no_pods = deployment_state is not None and deployment_state.expects_no_application_pods
             if kubectl is not None and not expects_no_pods:
-                # No net of its own: get_application_pods is best-effort by contract - a
+                # No net of its own: get_application_pods is best-effort by contract, and a
                 # non-zero exit or unparsable output logs and returns [].
                 pods = await kubectl.get_application_pods(
                     get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
-                    deployment_name,
+                    deployment_pod_selector(deployment_name),
+                    APPLICATION_CONTAINER_NAME,
                 )
                 pod_summaries = summarize_component_pods(pods, deployment=deployment, project_data=project_data)
         else:
-            # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
-            # read the cheap app-level conditions unconditionally - no extra API call - so a
-            # render/compare error is not filtered out on precisely the moment it matters.
+            # A healthy last-known state can still hide a fresh ComparisonError, so the cheap
+            # app-level conditions are read unconditionally, at no extra API call, and a
+            # render or compare error is not filtered out on the moment it matters.
             raw_errors = conditions_to_errors(status_data)
 
         component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
@@ -2186,8 +2024,8 @@ async def _fetch_argocd_deployment_status(
         )
         _annotate_argocd_error_ages(errors)
 
-        # Afwijkingen naast fouten: welke resources houden de badges van groen af, en
-        # waarom. Alleen berekend als er iets af te wijken valt - groen blijft stil.
+        # Deviations next to errors: which resources keep the badges off green, and why. Only
+        # computed when there is something to deviate from; green stays quiet.
         deviations: list[dict[str, str]] = []
         if sync.get("status") == "OutOfSync" or (app_health == "Progressing" and not errors):
             deviations = gather_sync_deviations(
@@ -2198,9 +2036,8 @@ async def _fetch_argocd_deployment_status(
         if not last_sync and sync.get("status") == "Synced":
             last_sync = status.get("reconciledAt")
 
-        # Sinds wanneer de lopende sync loopt, en of hij daarmee vastligt. Zonder die twee is
-        # een phase `Running` niet te beoordelen: op 5 oktober 2026 stond die 45 minuten
-        # onveranderd (RC-250).
+        # Since when the running sync has been running, and whether it is stuck with that:
+        # without those two, a phase of ``Running`` cannot be judged.
         operation = read_sync_operation(status_data)
         operation_duration = (
             format_duration(operation_age_seconds(operation)) if operation.ongoing and operation.started_at else None
@@ -2221,19 +2058,20 @@ async def _fetch_argocd_deployment_status(
             "errors": errors,
             "deviations": deviations,
             "pods": pod_summaries,
-            # Costs no cluster call: the observer counted this cluster at most a minute
-            # ago. Read on the healthy branch too, deliberately -- a component that
-            # cannot pull keeps the application Degraded, but if ArgoCD ever says
-            # otherwise the card still has to say what is wrong.
+            # Costs no cluster call: the observer counted this cluster at most a minute ago.
+            # Read on the healthy branch too, deliberately: if ArgoCD ever says otherwise, the
+            # card still has to say what is wrong.
             "image_pull_failures": describe_image_pull_failures(deployment, project_data),
         }
     except Exception:
-        # De melding komt in ``errors`` en die tekent de kaart uit; wat ArgoCD hier
-        # opgooit noemt zijn eigen adres. Volledig in de log, met het kenmerk ernaast.
+        # The message goes into ``errors``, which draws the card; what ArgoCD throws here
+        # names its own address. In full in the log, with the reference next to it.
         logger.exception("Failed to fetch ArgoCD status for %s", app_name)
         return _argocd_unavailable_result(
             app_name,
-            met_kenmerk("De status is nu niet op te halen. Probeer het over een minuut opnieuw.", kenmerk_nu()),
+            with_reference(
+                "De status is nu niet op te halen. Probeer het over een minuut opnieuw.", current_reference()
+            ),
             source="API",
         )
 
@@ -2242,19 +2080,18 @@ async def _fetch_argocd_deployment_status(
 @action(Action.PORTAL_READ)
 @requires_sso
 async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
-    """Het resourcegebruik van het dashboard, apart opgehaald.
+    """The resource usage of the dashboard, fetched separately.
 
-    De zes Prometheus-queries plus een per project duren te lang om de pagina op te laten
-    wachten. Dit is dezelfde aanpak als de projectpagina al gebruikte, en dezelfde die de
-    RVO-pagina hier had.
+    The Prometheus queries take too long to keep the page waiting, so the page loads this
+    block on its own, as the project page does.
     """
     from opi.services.project_store import get_project_store
 
     user = get_current_user(request)
     user_email = (user or {}).get("email", "")
 
-    # Dezelfde verzameling namespaces als de dashboardroute: alleen projecten waar deze
-    # gebruiker bij mag. Zonder die grens zou dit fragment meer laten zien dan de pagina.
+    # The same set of namespaces as the dashboard route: only the projects this user may see,
+    # or this fragment would show more than the page.
     from opi.core.cluster_config import get_prefixed_namespace
 
     all_namespaces: list[str] = []
@@ -2286,7 +2123,6 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
 
     metrics, prometheus_available, pod_count = await collect_dashboard_metrics(all_namespaces, user_projects)
     total_cpu_usage = sum(project.get("cpu_cores", 0) for project in user_projects)
-    # Geheugen erbij: dat is waar je op stuurt, en CPU alleen zei te weinig.
     total_memory_usage = sum(project.get("memory_mb", 0) or 0 for project in user_projects)
 
     return render(
@@ -2297,14 +2133,13 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
             "metrics": metrics,
             "prometheus_available": prometheus_available,
             "projects": user_projects,
-            # Beide totalen, net als de dashboardroute. Het fragment rekende
-            # total_memory_usage al uit maar gaf het niet mee, en de omgeving staat op
-            # StrictUndefined: een sjabloon dat ernaar vraagt levert dan een 500 op het
-            # hele fragment in plaats van een lege regel.
+            # Both totals, like the dashboard route. The environment is on StrictUndefined,
+            # so a template asking for a missing one is a 500 on the whole fragment instead of
+            # an empty line.
             "total_cpu_usage": total_cpu_usage,
             "total_memory_usage": total_memory_usage,
-            # De kaart Pods staat in de pagina maar het getal komt uit deze queries; het
-            # fragment schuift hem er out-of-band overheen.
+            # The Pods card stands in the page, but its number comes out of these queries;
+            # the fragment slides it over out of band.
             "pod_count": pod_count,
         },
     )
@@ -2314,18 +2149,13 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
 @action(Action.PROJECT_READ)
 @requires_sso
 async def project_resource_usage_fragment(request: Request, project_name: str) -> HTMLResponse:
-    """Compact project-wide CPU and memory totals (HTMX lazy-load).
+    """The project-wide CPU and memory totals, lazily loaded over HTMX.
 
-    A project's deployments -- including every PR environment -- share one namespace,
-    so the per-deployment metrics blocks never show the total. This sums across the
-    project's namespaces, the same Prometheus queries the dashboard's Resource Usage
-    card uses, so a project with 18 PRs shows one honest number for its footprint.
+    A project's deployments, every PR environment included, share one namespace, so the
+    per-deployment metrics blocks never show the total. This sums across the project's
+    namespaces, with the same Prometheus queries the dashboard's resource card uses.
 
-    Memory is the working set (what is actually resident), not the limit, which is
-    the number that answers "how much is this project really using".
-
-    Lazy on its own request: Prometheus is cheap, but this keeps it off the page's
-    render and out of the way if Prometheus is down.
+    Memory is the working set, what is actually resident, and not the limit.
     """
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
@@ -2352,10 +2182,10 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
     ctx: dict[str, Any] = {"project": project, "usage": None, "usage_error": None}
 
     if namespaces:
-        ns_regex = "|".join(namespaces)
-        # Boven de try, want de except hieronder noemt deze fouten.
-        from opi.connectors.grafana_prometheus import GrafanaConnectionError
-        from opi.connectors.prometheus import PrometheusConnectionError, get_metrics_connector
+        # Above the try, because the except below names these errors.
+        from opi.connectors.metrics_backend import MetricsUnavailableError
+        from opi.connectors.prometheus import get_metrics_connector
+        from opi.services.metrics_queries import namespace_usage_queries
 
         try:
             prom = await get_metrics_connector()
@@ -2364,24 +2194,17 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
             else:
 
                 async def _scalar(promql: str) -> float:
-                    result = await prom.custom_query(promql)
+                    result = await prom.query(promql)
                     if result and result[0].get("value"):
                         return float(result[0]["value"][1])
                     return 0.0
 
-                cpu_used = await _scalar(
-                    f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
-                )
-                cpu_limit = await _scalar(
-                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                )
-                mem_used = await _scalar(
-                    f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
-                )
-                mem_limit = await _scalar(
-                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                )
-                pods = await _scalar(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                queries = namespace_usage_queries(namespaces)
+                cpu_used = await _scalar(queries["cpu_cores"])
+                cpu_limit = await _scalar(queries["cpu_limit_cores"])
+                mem_used = await _scalar(queries["memory_bytes"])
+                mem_limit = await _scalar(queries["memory_limit_bytes"])
+                pods = await _scalar(queries["pod_count"])
 
                 ctx["usage"] = {
                     "cpu_used": cpu_used,
@@ -2395,24 +2218,19 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
-        except (GrafanaConnectionError, PrometheusConnectionError) as fout:
-            # De metingsbron viel weg TIJDENS de bevraging. Dezelfde melding als hierboven,
-            # want voor de lezer is het hetzelfde: er is nu niets te meten.
-            logger.warning("Metrics niet beschikbaar voor %s: %s", project_name, fout)
+        except MetricsUnavailableError as error:
+            # The metrics source fell away DURING the query, which for the reader is the same
+            # as it not being there: nothing to measure now.
+            logger.warning("Metrics niet beschikbaar voor %s: %s", project_name, error)
             ctx["usage_error"] = "Metrics zijn op dit moment niet beschikbaar."
         except Exception:
-            # De melding van de metingslaag ging tot nu toe onbewerkt het sjabloon in en
-            # kwam er op regel 40 letterlijk uit: bij een onbereikbare Prometheus stond
-            # daar de hostnaam, de poort en de errno van die dienst, op het tabblad
-            # Project. De volledige fout staat nu in de log, gekoppeld met het kenmerk.
+            # Never the message of the metrics layer: for an unreachable Prometheus that is
+            # the host name, the port and the errno of that service, on a project page. The
+            # full error goes in the log, tied to it by the reference.
             logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
-            # De kop van de melding zegt al WAT er niet lukt ("Resourcegebruik is niet
-            # op te halen"), dus zegt de zin eronder wat je eraan kunt doen.
-            ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
-
-    # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
-    # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die
-    # halverwege van vormgeving wisselt.
+            # The heading of the notice already says WHAT is failing, so the line below it
+            # says what you can do about it.
+            ctx["usage_error"] = with_reference("Probeer het over een minuut opnieuw.", reference_for(request))
 
     return render(
         request,
@@ -2427,7 +2245,7 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
 async def argocd_status_fragment(
     request: Request, project_name: str, deployment_name: str, prefix: str = ""
 ) -> HTMLResponse:
-    """ArgoCD status HTML fragment for a single deployment (HTMX lazy-load)."""
+    """The ArgoCD status of a single deployment, lazily loaded over HTMX."""
     from opi.connectors.argo import ArgoAuthConfigurationError, create_argo_connector
     from opi.connectors.kubectl import create_kubectl_connector
     from opi.core.config import settings
@@ -2443,24 +2261,22 @@ async def argocd_status_fragment(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    deployment = next(
-        (d for d in (project.data or {}).get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project.data or {}).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    # What the services report about this deployment (RC-35). Read from the project file,
-    # not from the cluster: zero replicas can also mean something went wrong, and the card
-    # has to tell those two apart. Computed BEFORE the fetch because the fetch needs it too
-    # -- it decides whether asking the cluster which pod is serving makes sense at all.
+    # What the services report about this deployment. Read from the project file and not from
+    # the cluster: zero replicas can also mean something went wrong, and the card has to tell
+    # those two apart. Computed BEFORE the fetch, because the fetch needs it as well: it
+    # decides whether asking the cluster which pod is serving makes sense at all.
     deployment_state = collect_deployment_state(project.data or {}, deployment_name)
 
-    # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
-    # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
-    # taak. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
-    # Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken. Dat hoort
-    # dezelfde kaart te geven als een ArgoCD die niet antwoordt, niet een 500 in dit fragment.
+    # Fail fast, for the same reason as on /dashboard: this fragment loads inside a page, so
+    # sitting out an ArgoCD restart holds up a user and not a task. See
+    # "docs/post-mortems/argocd-server-herstart-elke-40-minuten.md".
+    #
+    # Without a token and without a password there is no connector to make, and that has to
+    # give the same card as an ArgoCD that does not answer, not a 500 in this fragment.
     argo = None
     try:
         argo = create_argo_connector(connect_retry_seconds=0)
@@ -2494,21 +2310,16 @@ async def argocd_status_fragment(
 @action(Action.DEPLOYMENT_READ)
 @requires_sso
 async def oom_status_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
-    """Geheugengebrek van EEN deployment, als los fragment (HTMX, lui geladen).
+    """The memory shortage of ONE deployment, as a fragment of its own, lazily loaded.
 
-    WAAROM DIT EEN EIGEN FRAGMENT IS EN NIET EEN BLOK IN DE ARGOCD-KAART
+    A fragment and not a block in the ArgoCD card, because it looks at something else: that
+    card reports what is wrong NOW, this reports what happened in the last day, which
+    disappears from that card as soon as the auto-tuner has put it right. It also talks to
+    Prometheus while the card does not, and a metrics source that does not resolve costs the
+    whole DNS and retry chain.
 
-    Twee redenen, allebei gemeten gedrag. Ten eerste kijkt dit naar iets anders: de
-    ArgoCD-kaart meldt wat er NU mis is, dit meldt wat er in het afgelopen etmaal is
-    gebeurd -- en juist dat verdwijnt uit die kaart zodra de auto-tuner het heeft
-    rechtgezet. Ten tweede praat dit met Prometheus en de kaart niet; een metriekbron die
-    niet oplost kost de volledige DNS- en retryketen (zie custom_query in
-    connectors/prometheus.py), en dan hoort de ArgoCD-stand niet mee te wachten.
-
-    Er staat er precies EEN per pagina, net als de ArgoCD-kaart: het deploymentpaneel
-    rendert alleen de deployment uit het pad. Dit is dus geen bevraging per rij. Dat
-    onderscheid is de reden dat het oude blok in juni werd weggehaald (commit 2df6b507):
-    dat hing aan elke deploymentkaart op de projectpagina.
+    There is exactly ONE per page, like the ArgoCD card: the deployment panel renders only the
+    deployment from the path, so this is no query per row.
     """
     from opi.services.resource_tuning_service import (
         OOM_OBSERVATION_WINDOW_HOURS,
@@ -2526,17 +2337,13 @@ async def oom_status_fragment(request: Request, project_name: str, deployment_na
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project.data or {}
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    # Wat de tuner al heeft gedaan. Gratis: het staat in het projectbestand dat hierboven
-    # toch al geladen is, en anders dan de meting overleeft het elke bewaartermijn --
-    # Prometheus, de Events en de pod zelf. Nieuwste eerst, dus het eerste oom-watcher-item
-    # per component is het laatste dat de tuner deed.
+    # What the tuner has already done. Free, because it stands in the project file that is
+    # loaded above anyway, and unlike the measurement it outlives every retention period.
+    # Newest first, so the first oom-watcher entry per component is the tuner's last act.
     tunes: list[dict[str, Any]] = []
     for comp in deployment.get("components") or []:
         reference = comp.get("reference")
@@ -2575,21 +2382,21 @@ async def oom_status_fragment(request: Request, project_name: str, deployment_na
     )
 
 
-#: De reeksen die het metingenfragment tekent. Een meting kan ook alleen limieten
-#: bevatten (cpu_limit, memory_limit): die komen uit de deploymentdefinitie en niet uit
-#: een meting, dus ze tellen niet mee voor "is er iets gemeten".
-METINGREEKSEN = ("cpu", "memory", "network_in", "network_out", "disk_read", "disk_write")
+#: The series the metrics fragment draws. A measurement can also hold limits only, and those
+#: come from the deployment definition and not from a measurement, so they do not count
+#: towards "is anything measured".
+METRIC_SERIES = ("cpu", "memory", "network_in", "network_out", "disk_read", "disk_write")
 
 
-def _heeft_metingen(metrics: dict[str, dict[str, Any]], pvc_storage: dict[str, dict[str, Any]]) -> bool:
-    """Heeft Prometheus ergens een waarde teruggegeven?
+def _has_measurements(metrics: dict[str, dict[str, Any]], pvc_storage: dict[str, dict[str, Any]]) -> bool:
+    """Did Prometheus return a value anywhere?
 
-    Zo niet, dan is dat een TOESTAND ("nog niets gemeten") en geen leegte, en zegt het
-    fragment dat met een melding in plaats van met zes lege grafieken.
+    If not, that is a STATE and not emptiness, and the fragment says so with a notice instead
+    of with six empty charts.
     """
     if any(pvc.get("values") for pvc in pvc_storage.values()):
         return True
-    return any(meting.get(reeks) for meting in metrics.values() for reeks in METINGREEKSEN)
+    return any(measurement.get(series) for measurement in metrics.values() for series in METRIC_SERIES)
 
 
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
@@ -2598,13 +2405,11 @@ def _heeft_metingen(metrics: dict[str, dict[str, Any]], pvc_storage: dict[str, d
 async def deployment_metrics_fragment(
     request: Request, project_name: str, deployment_name: str, duration: int = 60
 ) -> HTMLResponse:
-    """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
-
-    # Validate and compute step interval based on duration
+    """The metrics of a single deployment, lazily loaded over HTMX."""
     allowed_durations = {60, 120, 360, 720, 1440}
     if duration not in allowed_durations:
         duration = 60
-    # Scale step to keep ~12-20 data points per chart
+    # The step scales with the duration, to keep roughly 12 to 20 points per chart.
     if duration <= 120:
         step = 5
     elif duration <= 360:
@@ -2625,15 +2430,7 @@ async def deployment_metrics_fragment(
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project.data or {}
-    deployments = project_data.get("deployments", [])
-
-    # Find the requested deployment
-    deployment = None
-    for d in deployments:
-        if d.get("name") == deployment_name:
-            deployment = d
-            break
-
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
@@ -2644,81 +2441,74 @@ async def deployment_metrics_fragment(
 
     metrics: dict[str, dict[str, Any]] = {}
     discovered_workloads: list[dict[str, Any]] = []
-    pvc_storage: dict[str, dict[str, Any]] = {}
-    # Prometheus die niet antwoordt is iets anders dan Prometheus die antwoordt met niets,
-    # en het fragment hoort die twee niet dezelfde melding te geven. Zonder deze vlag zag
-    # de lezer in beide gevallen zes lege grafieken.
-    prometheus_bereikbaar = True
+    deployment_volumes: dict[str, dict[str, Any]] = {}
+    # A Prometheus that does not answer is something else than one that answers with nothing,
+    # and the fragment must not give those two the same notice.
+    prometheus_reachable = True
 
     if base_namespace and cluster:
         try:
             from opi.connectors.prometheus import get_metrics_connector
             from opi.core.cluster_config import get_prefixed_namespace
+            from opi.services.metrics_queries import (
+                TimeWindow,
+                deployment_pod_prefixes,
+                discover_workloads,
+                pvc_storage,
+                timeseries_per_workload,
+                workload_pod_prefixes,
+            )
 
             prom = await get_metrics_connector()
-            prometheus_bereikbaar = prom.is_connected
+            prometheus_reachable = prom.is_connected
             if prom.is_connected:
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+                window = TimeWindow(duration_minutes=duration, step_minutes=step)
 
                 if components:
                     component_names = [c.get("reference") for c in components if c.get("reference")]
                     if component_names:
-                        metrics = await prom.get_deployment_component_metrics_timeseries(
-                            namespace=k8s_namespace,
-                            components=component_names,
-                            deployment_name=deployment_name,
-                            duration_minutes=duration,
-                            step_minutes=step,
+                        metrics = await timeseries_per_workload(
+                            prom, k8s_namespace, deployment_pod_prefixes(deployment_name, component_names), window
                         )
                 elif helm_charts:
-                    workloads = await prom.discover_workloads_in_namespace(k8s_namespace)
+                    workloads = await discover_workloads(prom, k8s_namespace)
                     if workloads:
                         discovered_workloads = workloads
-                        metrics = await prom.get_discovered_workload_metrics_timeseries(
-                            namespace=k8s_namespace,
-                            workloads=workloads,
-                            duration_minutes=duration,
-                            step_minutes=step,
+                        metrics = await timeseries_per_workload(
+                            prom, k8s_namespace, workload_pod_prefixes(workloads), window
                         )
 
                 try:
-                    pvc_data = await prom.get_pvc_storage_by_namespace(
-                        namespace=k8s_namespace,
-                        duration_minutes=duration,
-                        step_minutes=step,
-                    )
+                    pvc_data = await pvc_storage(prom, k8s_namespace, window)
                     if pvc_data:
-                        # Filter PVCs to only those belonging to this deployment
-                        # PVC names follow the pattern: {deployment_name}-{component_name}-...
+                        # Only the PVCs of this deployment; a PVC name starts with its name.
                         prefix = f"{deployment_name}-"
-                        pvc_storage = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
-                except Exception as pvc_error:
+                        deployment_volumes = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
+                except Exception as pvc_error:  # noqa: BLE001  # the outer boundary of this page; it must still render
                     logging.getLogger(__name__).warning(
                         f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
                     )
-        except Exception as metrics_error:
-            # Een bevraging die stukloopt is geen "nog geen metingen": er is niets
-            # opgehaald omdat de meting zelf faalde.
-            prometheus_bereikbaar = False
+        except Exception as metrics_error:  # noqa: BLE001  # a failed metrics query leaves the figure empty
+            # A query that breaks is not "nothing measured yet": nothing was fetched because
+            # the measurement itself failed.
+            prometheus_reachable = False
             logging.getLogger(__name__).warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
 
-    # Build a deployment-like object for the template (needs .name and .components attributes)
+    # The template reads ``.name`` and ``.components`` as attributes.
     class DeploymentContext:
-        def __init__(self, name: str, components: list):
+        def __init__(self, name: str, components: list) -> None:
             self.name = name
             self.components = [type("C", (), {"reference": c.get("reference")})() for c in components]
 
     deployment_ctx = DeploymentContext(deployment_name, components)
 
-    # Een deployment op een ANDER cluster levert hier geen metingen op, want deze OPI
-    # bevraagt alleen de Prometheus van zijn eigen cluster. Zonder deze vlag zou dat als
-    # "geen data" lezen, en dan zoekt de lezer de fout bij zijn applicatie. Deze melding
-    # stond in het dienstblok van de metrics-scraper op het tabblad Deployments; dat blok
-    # is weg omdat het dezelfde grafieken dubbel toonde, en de melding hoort thuis waar de
-    # grafieken staan.
+    # A deployment on ANOTHER cluster yields no measurements here, because this OPI only
+    # queries the Prometheus of its own cluster. Without this flag that would read as "no
+    # data", and the reader would look for the fault in their application.
     from opi.core.config import settings
 
-    ander_cluster = cluster if cluster and cluster != settings.CLUSTER_MANAGER else ""
+    other_cluster = cluster if cluster and cluster != settings.CLUSTER_MANAGER else ""
 
     return render(
         request,
@@ -2729,21 +2519,21 @@ async def deployment_metrics_fragment(
             "deployment": deployment_ctx,
             "metrics": metrics,
             "discovered_workloads": discovered_workloads,
-            "pvc_storage": pvc_storage,
+            "pvc_storage": deployment_volumes,
             "duration": duration,
-            "prometheus_bereikbaar": prometheus_bereikbaar,
-            "ander_cluster": ander_cluster,
+            "prometheus_bereikbaar": prometheus_reachable,
+            "ander_cluster": other_cluster,
             "eigen_cluster": settings.CLUSTER_MANAGER,
-            "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
+            "metingen_leeg": not _has_measurements(metrics, deployment_volumes),
         },
     )
 
 
 def _projects_for_user(user: dict) -> list[dict]:
-    """De projecten waar deze gebruiker bij mag, met de gegevens die het overzicht toont.
+    """The projects this user may see, with the data the overview shows.
 
-    Apart van de route zodat de opbouw op een plek staat: /projects levert zowel de hele
-    pagina als - via hx-select - het stuk dat het zoekveld ververst.
+    Apart from the route so the build sits in one place: /projects serves both the whole page
+    and, over hx-select, the part the search field refreshes.
     """
     user_email = user.get("email", "").lower()
 
@@ -2767,7 +2557,7 @@ def _projects_for_user(user: dict) -> list[dict]:
                     "deployments": project_data.get("deployments", []),
                 }
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # the outer boundary of this page; it must still render
             logger.warning(f"Failed to load project data for {project_name}: {e}")
             continue
 
@@ -2779,10 +2569,10 @@ def _projects_for_user(user: dict) -> list[dict]:
 @action(Action.PORTAL_READ)
 @requires_sso
 async def platform_map(request: Request) -> Response:
-    """De kaart van het platform: de Operations Manager en de systemen eromheen.
+    """The map of the platform: the Operations Manager and the systems around it.
 
-    Voor iedereen die ingelogd is en toegang heeft tot ZAD, niet publiek: de echte poort
-    is de middleware (``is_email_allowed``), zoals bij /projects.
+    For everyone who is signed in and has access to ZAD, not public: the real gate is the
+    middleware, as it is for /projects.
     """
     user = get_current_user(request)
     return render(
@@ -2801,34 +2591,22 @@ async def platform_map(request: Request) -> Response:
 @action(Action.PORTAL_READ)
 @requires_sso
 async def platform_map_json(request: Request) -> JSONResponse:
-    """De graaf achter /platform, uit het ingecheckte platform.json."""
+    """The graph behind /platform, from the platform.json in the repo."""
     return JSONResponse(platform_graph().as_json())
 
 
 @web_router.get("/projects", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def projects_overview(request: Request):
-    """
-    Serve the projects overview page with table layout.
-    Shows only projects where the current user's email is in the users list.
-
-    Project data is automatically refreshed from Git if stale (older than 30 seconds).
-
-    Args:
-        request: The HTTP request
-
-    Returns:
-        HTML response with a table showing user's projects and their status
-    """
+async def projects_overview(request: Request) -> Response:
+    """The projects overview: only the projects whose member list holds this user."""
     try:
-        # `or {}` omdat get_current_user None kan geven. Dat valt hier veilig uit: een lege
-        # gebruiker heeft geen e-mailadres, is_platform_admin weigert een lege string en
-        # geen enkel projectlidmaatschap matcht erop, dus de lijst wordt leeg in plaats van
-        # volledig. Dezelfde vorm als de andere aanroepers van get_current_user.
+        # ``or {}`` because get_current_user can give None. That falls out safely here: an
+        # empty user has no email address, no project membership matches on it, so the list
+        # comes out empty rather than complete.
         user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
-        laatst_gewijzigd = await get_project_store().last_modified_all()
+        last_modified = await get_project_store().last_modified_all()
 
         return render(
             request,
@@ -2838,7 +2616,7 @@ async def projects_overview(request: Request):
                 "menu_items": get_menu_items(user),
                 "projects": user_projects,
                 "user": user,
-                **build_lotc_projects(request, user=user, projects=user_projects, laatst_gewijzigd=laatst_gewijzigd),
+                **build_lotc_projects(request, user=user, projects=user_projects, last_modified=last_modified),
             },
         )
 
@@ -2853,27 +2631,27 @@ async def projects_overview(request: Request):
 @web_router.get("/cli", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def cli_pagina(request: Request):
-    """De ZAD CLI: wat het is, hoe je hem installeert, wat je ermee doet.
+async def cli_pagina(request: Request) -> Response:
+    """The ZAD CLI: what it is, how to install it, what it does.
 
-    Een wegwijzer en geen handleiding - de repository houdt zijn eigen documentatie bij,
-    en die loopt vooruit op wat hier zou staan.
+    A signpost and not a manual: the repository keeps its own documentation, which runs ahead
+    of anything that would stand here.
     """
-    return _wegwijzer(request, "cli.html.j2", "bg/cli.html.j2", "/cli")
+    return _signpost(request, "cli.html.j2", "bg/cli.html.j2", "/cli")
 
 
 @web_router.get("/actions", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def actions_pagina(request: Request):
-    """De ZAD Actions: uitrollen vanuit je eigen pijplijn."""
-    return _wegwijzer(request, "actions.html.j2", "bg/actions.html.j2", "/actions")
+async def actions_pagina(request: Request) -> Response:
+    """The ZAD Actions: deploying from your own pipeline."""
+    return _signpost(request, "actions.html.j2", "bg/actions.html.j2", "/actions")
 
 
-def _wegwijzer(request: Request, roos: str, lotc: str, pad: str, **context: object):
-    """Een pagina zonder projectgegevens: de schil, zijn navigatie en wat ``context`` meegeeft."""
+def _signpost(request: Request, roos: str, lotc: str, path: str, **context: object) -> Response:
+    """A page without project data: the shell, its navigation and whatever ``context`` adds."""
     user = get_current_user(request)
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return render(
         request,
@@ -2881,7 +2659,7 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str, **context: obje
         context={
             "request": request,
             "menu_items": get_menu_items(user),
-            "navigation": get_navigation(user, current_path=pad),
+            "navigation": get_navigation(user, current_path=path),
             **context,
         },
     )
@@ -2890,16 +2668,14 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str, **context: obje
 @web_router.get("/account", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def account_pagina(request: Request):
-    """Je eigen account: wat er in de sessie staat, plus je tweede factor.
+async def account_pagina(request: Request) -> Response:
+    """Your own account: what is in the session, plus your second factor.
 
-    De naam rechtsboven linkte naar /account en die route bestond niet - een 404 op een
-    link die in elke schil staat. ZAD houdt zelf geen profiel bij; naam en e-mailadres
-    komen uit de inlogdienst. De tweede factor is het enige dat hier WEL in te stellen
-    is, en staat daarom op deze pagina (RC-329).
+    ZAD keeps no profile of its own; the name and the email address come from the login
+    service. The second factor is the only thing that CAN be set here.
     """
     user = get_current_user(request)
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     otp_status = await UserOtpService().status(str(user.get("email", "")).lower())
 
@@ -2921,48 +2697,48 @@ async def account_pagina(request: Request):
 
 
 @web_router.get("/weergave")
-async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
-    """Onthoud de weergavekeuze (systeem, licht, donker) en ga terug waar je vandaan kwam.
+async def kies_weergave(request: Request, scheme: str = "", terug: str = "/") -> RedirectResponse:
+    """Remember the colour-scheme choice and go back where you came from.
 
-    BEWUST ZONDER ``@requires_sso``: de keuze zet alleen een koekje en leest geen gegevens.
+    DELIBERATELY WITHOUT ``@requires_sso``: the choice only sets a cookie and reads no data.
 
-    Server-side en niet in localStorage, om dezelfde reden als de layoutschakelaar: dan
-    rendert de server de pagina meteen in de goede stand en flitst er niets. NLDD leest
-    ``data-scheme`` op ``<html>``; de schil zet dat uit dit koekje.
+    Server-side and not in localStorage, so the server renders the page in the right state at
+    once and nothing flashes. NLDD reads ``data-scheme`` on ``<html>``, which the shell sets
+    from this cookie.
 
-    ``terug`` komt uit de URL en wordt daarom streng gehouden: alleen een pad op deze
-    site. Een waarde die met ``//`` begint is geen relatief pad maar een ander domein, en
-    dat zou van deze route een open doorverwijzing maken.
+    The return path comes from the URL and is therefore held strictly to a path on this site:
+    a value starting with ``//`` is not a relative path but another domain, which would make
+    this route an open redirect.
     """
-    from opi.web.lotc_switch import SCHEME_COOKIE, SCHEMES
+    from opi.http.render.lotc_switch import SCHEME_COOKIE, SCHEMES
 
-    bestemming = local_redirect_path(terug)
-    antwoord = RedirectResponse(url=bestemming, status_code=303)
-    antwoord.set_cookie(
+    destination = local_redirect_path(terug)
+    response = RedirectResponse(url=destination, status_code=303)
+    response.set_cookie(
         SCHEME_COOKIE,
         scheme if scheme in SCHEMES else "",
         max_age=60 * 60 * 24 * 365,
         samesite="lax",
         httponly=False,
     )
-    return antwoord
+    return response
 
 
 @web_router.get("/about")
 async def about_platform() -> RedirectResponse:
-    """Over ZAD is opgegaan in de introductie; oude links blijven werken.
+    """The about page has become the introduction; the old links keep working.
 
-    BEWUST ZONDER ``@requires_sso``: een redirect naar de introductie, die zelf open staat.
+    DELIBERATELY WITHOUT ``@requires_sso``: a redirect to the introduction, which is open too.
     """
     return RedirectResponse(url="/introductie", status_code=301)
 
 
 @web_router.get("/security", response_class=HTMLResponse)
 async def security_policy(request: Request) -> HTMLResponse:
-    """Het beveiligingsbeleid, ``SECURITY.md`` als pagina.
+    """The security policy, ``SECURITY.md`` as a page.
 
-    BEWUST ZONDER ``@requires_sso``: wie een kwetsbaarheid wil melden is meestal niet
-    ingelogd.
+    DELIBERATELY WITHOUT ``@requires_sso``: whoever wants to report a vulnerability is usually
+    not signed in.
     """
     user = get_current_user(request)
     return render(
@@ -2980,10 +2756,10 @@ async def security_policy(request: Request) -> HTMLResponse:
 @dev_router.get("/test-template-variables", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def test_template_variables(request: Request):
-    """Test route for debugging Jinja variables in componenttags."""
+async def test_template_variables(request: Request) -> Response:
+    """Test route for debugging Jinja variables in component tags."""
     try:
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -3006,13 +2782,8 @@ async def test_template_variables(request: Request):
 @dev_router.get("/example", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def example_page(request: Request):
-    """
-    Serve a simple example page with just a header.
-
-    Returns:
-        HTML response with a basic c-page template
-    """
+async def example_page(request: Request) -> Response:
+    """A simple example page with just a header."""
     try:
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -3032,13 +2803,8 @@ async def example_page(request: Request):
 @web_router.get("/tools", response_class=HTMLResponse)
 @action(Action.TOOLS_USE)
 @requires_sso
-async def tools_page(request: Request):
-    """
-    Serve the AGE encryption/decryption tools page.
-
-    Returns:
-        HTML response with AGE tooling interface
-    """
+async def tools_page(request: Request) -> Response:
+    """The AGE encryption and decryption tools page."""
     try:
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -3058,13 +2824,8 @@ async def tools_page(request: Request):
 @web_router.post("/tools/encrypt")
 @action(Action.TOOLS_USE)
 @requires_sso
-async def encrypt_text(request: Request):
-    """
-    Encrypt text using AGE public key.
-
-    Returns:
-        JSON response with encrypted content or error
-    """
+async def encrypt_text(request: Request) -> JSONResponse:
+    """Encrypt text with an AGE public key."""
     try:
         from fastapi.responses import JSONResponse
 
@@ -3086,9 +2847,9 @@ async def encrypt_text(request: Request):
 
     except Exception:
         logger.exception("Versleutelen mislukt")
-        bericht = "Versleutelen is niet gelukt. Controleer de publieke sleutel en de invoer."
+        message = "Versleutelen is niet gelukt. Controleer de publieke sleutel en de invoer."
         return JSONResponse(
-            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            content={"error": with_reference(message, reference_for(request))},
             status_code=500,
         )
 
@@ -3096,13 +2857,8 @@ async def encrypt_text(request: Request):
 @web_router.post("/tools/decrypt")
 @action(Action.TOOLS_USE)
 @requires_sso
-async def decrypt_text(request: Request):
-    """
-    Decrypt AGE-encrypted text using private key.
-
-    Returns:
-        JSON response with decrypted content or error
-    """
+async def decrypt_text(request: Request) -> JSONResponse:
+    """Decrypt AGE-encrypted text with a private key."""
     try:
         from fastapi.responses import JSONResponse
 
@@ -3124,9 +2880,9 @@ async def decrypt_text(request: Request):
 
     except Exception:
         logger.exception("Ontsleutelen mislukt")
-        bericht = "Ontsleutelen is niet gelukt. Controleer de private sleutel en of de invoer echt AGE-versleuteld is."
+        message = "Ontsleutelen is niet gelukt. Controleer de private sleutel en of de invoer echt AGE-versleuteld is."
         return JSONResponse(
-            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            content={"error": with_reference(message, reference_for(request))},
             status_code=500,
         )
 
@@ -3162,9 +2918,8 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
 
     return {
         "progress": task.get("progress_percent", 0),
-        # Een leeggemaakte taak heeft geen stapregel meer; "Verwerking gestart..." zou die
-        # dan als lopend tonen.
-        "current_step": stap_label(task.get("current_step"))
+        # A purged task has no step line left, and the default would show it as running.
+        "current_step": step_label(task.get("current_step"))
         or ("Details niet meer beschikbaar" if details_purged else "Verwerking gestart..."),
         "tasks": task_hierarchy,
         "total_duration_seconds": _total_duration_seconds(subtasks) if template_status == "completed" else None,
@@ -3172,22 +2927,22 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
         "error": error,
         "component_failures": component_failures,
         "project_name": project_name,
-        # De werkgegevens van een afgeronde taak gaan na een uur leeg (RC-282), dus
-        # geen stappen/logboek meer te tonen zonder deze vlag.
+        # The working data of a finished task is purged after an hour, so there are no steps
+        # or log left to show.
         "details_purged": details_purged,
     }
 
 
 def _step_duration_seconds(step: dict) -> float | None:
-    """De duur van een afgeronde stap in seconden, of None als die niet te bepalen is."""
+    """The duration of a finished step in seconds, or None when it cannot be determined."""
     started, completed = step.get("started_at"), step.get("completed_at")
     if not started or not completed:
         return None
     try:
-        duur = datetime.fromisoformat(completed) - datetime.fromisoformat(started)
+        duration = datetime.fromisoformat(completed) - datetime.fromisoformat(started)
     except ValueError:
         return None
-    return max(duur.total_seconds(), 0.0)
+    return max(duration.total_seconds(), 0.0)
 
 
 def _total_duration_seconds(subtasks: list[dict]) -> float | None:
@@ -3200,16 +2955,16 @@ def _total_duration_seconds(subtasks: list[dict]) -> float | None:
 
 
 def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") -> list[dict]:
-    """Convert flat V2 subtask list to nested task hierarchy for the template.
+    """Turn the flat subtask list into the nested hierarchy the template renders.
 
-    A step with steps under it that is still marked running in a task that already ended
-    shows the task's outcome, since a handler that raised never closed its phase.
+    A step with steps under it that is still marked running in a task that already ended shows
+    the task's outcome, because a handler that raised never closed its phase.
     """
     main_tasks = []
     children: dict[str, list] = {}
     for st in subtasks:
-        # ``subject`` is absent from steps written before it existed, and from every
-        # step that runs once per project; .get keeps both cases a plain None.
+        # ``subject`` is absent from a step written before it existed and from every step
+        # that runs once per project, so .get keeps both cases a plain None.
         entry = {
             "name": st.get("name", ""),
             "status": st.get("status", "pending"),
@@ -3232,9 +2987,9 @@ def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") ->
 def _require_task_access(request: Request, task: dict, project_name: str) -> None:
     """Raise 403 unless this user may follow this task.
 
-    Either the user is authorized for the project, or they are the one who started the
-    task -- which is what keeps a delete followable (the project is gone from the store
-    before the task ends) and a creation too (it is not in the store yet).
+    Either the user is authorized for the project, or they started the task themselves, which
+    is what keeps a delete followable, the project being gone from the store before the task
+    ends, and a creation too, it not being in the store yet.
     """
     user_email = (get_current_user(request) or {}).get("email", "").lower()
     if (task.get("created_by") or "").lower() != user_email and not is_user_authorized_for_project(
@@ -3243,14 +2998,15 @@ def _require_task_access(request: Request, task: dict, project_name: str) -> Non
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
 
-async def _require_task_of_project(request: Request, task_service: Any, project_name: str, task_id: str) -> dict | None:
+async def _require_task_of_project(
+    request: Request, task_service: AsyncTaskService, project_name: str, task_id: str
+) -> dict | None:
     """The task with this id, but only if it is this project's and this user's to see.
 
-    The task id alone used to be enough to read any task's steps, from any account with
-    a session. Both fragment routes sit under ``/projects/{project_name}/``, so scope
-    them to it: the task must be that project's own, and the user must pass
-    ``_require_task_access``. Returns None when there is no such task, so the caller
-    answers 404.
+    The task id alone must not be enough to read any task's steps. Both fragment routes sit
+    under ``/projects/{project_name}/``, so they are scoped to it: the task has to be that
+    project's own, and the user has to pass ``_require_task_access``. Returns None when there
+    is no such task, so the caller answers 404.
     """
     task = await task_service.get_task(task_id)
     if task is None or task.get("project_name") != project_name:
@@ -3268,12 +3024,8 @@ async def _require_task_of_project(request: Request, task_service: Any, project_
 @action(Action.PORTAL_READ)
 @requires_sso
 async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
-    """Generic task progress fragment for HTMX polling.
-
-    Reads task state from the V2 async task service (database-backed)
-    and renders an HTML fragment for HTMX polling.
-    """
-    from opi.core.task_helpers import get_task_service
+    """The generic task-progress fragment HTMX polls."""
+    from opi.http.task_helpers import get_task_service
 
     task_service = get_task_service(request)
     task = await _require_task_of_project(request, task_service, project_name, task_id)
@@ -3285,6 +3037,6 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     context["progress_url"] = f"/projects/{project_name}/task-progress/{task_id}"
     context["on_complete"] = on_complete_for(task.get("task_type"))
 
-    # Rendered once on purpose -- see render_progress_fragment for why a second pass
-    # over the rendered HTML would execute task text as Jinja.
+    # Rendered once on purpose; see render_progress_fragment for why a second pass over the
+    # rendered HTML would execute task text as Jinja.
     return HTMLResponse(content=render_progress_fragment(request, context))

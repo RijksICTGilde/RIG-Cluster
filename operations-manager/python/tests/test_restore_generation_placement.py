@@ -27,8 +27,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.restore_router import restore_router
-from opi.handlers.project_file_handler import create_project_file_handler
+from opi.core.backup_constants import ResourceType
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
+from opi.manager.backup.restore import GenerationUpdate, set_restored_generation
+from opi.services.project_file_handler import create_project_file_handler
 from opi.services.schema_migration import relocate_resource_generations_to_deployment
 
 API_KEY = "test-restore-api-key"
@@ -95,7 +97,11 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
     manager.get_contents = AsyncMock(return_value=project_data)
     manager.save_and_commit_project = AsyncMock()
     manager.process_project_from_git = AsyncMock(return_value=True)
-    with patch("opi.api.restore_router.ProjectManager", return_value=manager):
+    manager.close = AsyncMock()
+    with (
+        patch("opi.manager.backup.restore_run.ProjectManager", return_value=manager),
+        patch("opi.runtime.backup.backup_tasks.create_project_manager", return_value=manager),
+    ):
         yield manager
 
 
@@ -103,10 +109,32 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
 def mock_store(project_data: dict[str, Any]) -> Any:
     store = _FakeStore(project_data)
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.restore_router.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.manager.backup.restore_targets.get_project_store", return_value=store),
+        patch("opi.manager.backup.run.get_project_store", return_value=store),
     ):
         yield store
+
+
+@pytest.fixture(autouse=True)
+def inline_task() -> Any:
+    """Run the restore task the route queues inline; the routes answer through the queue."""
+    from opi.runtime.backup.task_handlers_backup import handle_restore
+
+    answers: dict[str, Any] = {}
+
+    async def create(request: Any, task_type: str, project_name: str, deployment_name: str, payload: Any) -> Any:
+        answers["result"] = await handle_restore(payload, MagicMock())
+        return {"task_id": "restore-task"}
+
+    async def finished(request: Any, task_id: str, answer_key: str) -> Any:
+        return {"task_id": task_id, "status": "completed", "result": answers.get("result")}
+
+    with (
+        patch("opi.api.restore_router.create_async_task", side_effect=create),
+        patch("opi.api.restore_router.wait_for_task_answer", side_effect=finished),
+    ):
+        yield answers
 
 
 @pytest.fixture
@@ -152,10 +180,14 @@ def restore_environment(postgres_connector: Any, minio_connector: Any) -> Any:
         patch("opi.connectors.minio_mc.create_minio_connector", return_value=minio_connector),
         patch("opi.core.cluster_config.get_database_server", return_value="postgres.local"),
         patch("opi.api.restore_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
-        patch("opi.api.restore_router.create_kubectl_connector", return_value=MagicMock()),
-        patch("opi.api.restore_router.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
+        patch("opi.manager.backup.run.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
+        patch("opi.manager.backup.restore_targets.create_kubectl_connector", return_value=MagicMock()),
+        patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
+        patch("opi.manager.backup.restore.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         patch("opi.api.restore_router.create_database_backup_manager", return_value=database_backup_manager),
+        patch("opi.manager.backup.restore.create_database_backup_manager", return_value=database_backup_manager),
         patch("opi.api.restore_router.create_bucket_backup_manager", return_value=bucket_backup_manager),
+        patch("opi.manager.backup.restore.create_bucket_backup_manager", return_value=bucket_backup_manager),
     ):
         yield {
             "database_backup_manager": database_backup_manager,
@@ -511,3 +543,59 @@ class TestDeploymentServiceGenerationSetter:
         services = data["deployments"][0]["services"]
         assert len(services) == 1, "a second entry for the same service hides the first from the getter"
         assert handler.get_deployment_service_generation(data, DEPLOYMENT, "minio-storage") == 7
+
+
+class TestSetRestoredGeneration:
+    """``set_restored_generation`` dispatches by ``ResourceType`` to the setter that
+    matches where that resource's generation lives (component-level for a PVC,
+    deployment-level for a database or a bucket). Merged from three hand-written copies
+    in ``restore_router.py`` and ``backup_tasks.py`` (RC-472); this pins the dispatch
+    itself so the three ResourceType branches stay distinct."""
+
+    def test_pvc_is_written_at_the_component_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="data",
+                resource_type=ResourceType.PVC,
+                new_generation=3,
+            ),
+        )
+        handler = create_project_file_handler()
+        assert handler.get_storage_generation(data, DEPLOYMENT, "web", "data") == 3
+        assert handler.get_database_generation(data, DEPLOYMENT) is None
+
+    def test_database_is_written_at_the_deployment_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="db",
+                resource_type=ResourceType.DATABASE,
+                new_generation=4,
+            ),
+        )
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) == 4
+
+    def test_bucket_is_written_at_the_deployment_level(self) -> None:
+        data = _project_file()
+        set_restored_generation(
+            create_project_file_handler(),
+            data,
+            GenerationUpdate(
+                deployment=DEPLOYMENT,
+                component="web",
+                reference="bucket",
+                resource_type=ResourceType.BUCKET,
+                new_generation=5,
+            ),
+        )
+        assert create_project_file_handler().get_bucket_generation(data, DEPLOYMENT) == 5
+        assert create_project_file_handler().get_database_generation(data, DEPLOYMENT) is None

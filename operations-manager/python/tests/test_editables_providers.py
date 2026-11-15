@@ -6,7 +6,6 @@ import pytest
 from opi.core.actor import ACTOR_UNKNOWN, actor, set_actor, user_actor
 from opi.core.cluster_config import get_supported_domain_names
 from opi.core.config import settings
-from opi.core.project_schema import validate_project_schema
 from opi.forms.visualizers.providers import (
     CUSTOM_DOMAIN_SENTINEL,
     BaseDomainOptionsProvider,
@@ -22,6 +21,7 @@ from opi.forms.visualizers.providers import (
     StorageTypeOptionsProvider,
     UserRoleOptionsProvider,
 )
+from opi.services.project_schema import validate_project_schema
 
 
 class TestStorageTypeOptionsProvider:
@@ -51,7 +51,7 @@ class TestKeycloakTemplateOptionsProvider:
     def test_returns_options(self):
         provider = KeycloakTemplateOptionsProvider()
         options = provider.get_options()
-        assert len(options) == 3
+        assert len(options) == 4
         assert all("value" in o and "label" in o for o in options)
 
     def test_includes_expected_template_values(self):
@@ -60,6 +60,7 @@ class TestKeycloakTemplateOptionsProvider:
         assert "sso-support" in values
         assert "sso-only" in values
         assert "sso-support-otp" in values
+        assert "local-only" in values
 
 
 class TestPullPolicyOptionsProvider:

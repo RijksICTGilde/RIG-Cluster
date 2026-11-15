@@ -72,9 +72,6 @@ services:
       # Authentication (disabled for local dev)
       - OIDC_DISABLED=true
 
-      # Git monitoring (disabled for local dev)
-      - ENABLE_GIT_MONITOR=false
-
       # Cluster settings (for development)
       - CLUSTER_MANAGER=local
 

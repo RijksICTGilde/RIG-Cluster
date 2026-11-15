@@ -33,7 +33,7 @@ het secret `prometheus-metrics-auth` (sleutel `token`) en onze Prometheus stuurt
 de job `kubernetes-pods`, dus de scrape hoefde er niet voor te veranderen.
 
 De controle zit in de route zelf (`validate_metrics_scrape_token` in
-`opi/api/endpoint_util.py`), niet in de SSO-middleware: Prometheus heeft geen sessie, dus die
+`opi/http/auth/endpoint_util.py`), niet in de SSO-middleware: Prometheus heeft geen sessie, dus die
 middleware blijft `/metrics` overslaan.
 
 | situatie | antwoord |

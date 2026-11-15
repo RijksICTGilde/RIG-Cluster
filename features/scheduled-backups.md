@@ -204,16 +204,16 @@ Legacy tasks created before the `trigger` field existed are treated as `schedule
 
 | File | Purpose |
 |------|---------|
-| `opi/core/backup_scheduler.py` | Background scheduler |
+| `opi/runtime/backup/backup_scheduler.py` | Background scheduler |
 | `opi/services/backup_schedule_report.py` | Per-deployment age of the last scheduled backup |
-| `opi/core/task_handlers_backup.py` | Backup execution handler |
-| `opi/core/async_task_service.py` | Task queue (PostgreSQL) |
+| `opi/runtime/backup/task_handlers_backup.py` | Backup execution handler |
+| `opi/services/tasks/async_task_service.py` | Task queue (PostgreSQL) |
 | `opi/forms/editables/fields/deployments.py` | Editable definitions (schedule + resource_types) |
 | `opi/forms/visualizers/fields/deployments.py` | Visualizer definitions (labels, widgets) |
 | `opi/forms/visualizers/wizard_sections.py` | Section builder with processing order |
 | `opi/forms/visualizers/providers.py` | `BackupResourceTypesOptionsProvider`, `BackupDeploymentOptionsProvider` |
 | `opi/forms/editables/converters.py` | `RRuleFrequencyConverter`, `RRuleTimeConverter`, etc. |
-| `opi/utils/rrule_utils.py` | Shared RRULE parsing and formatting |
+| `opi/core/rrule_utils.py` | Shared RRULE parsing and formatting |
 | `static/js/wizard.js` | `data-rerender` JS listener |
 | `tests/test_backup_pipeline.py` | Pipeline tests |
 | `tests/test_backup_schema_bewaking.py` | Metrics and overdue-ERROR tests |

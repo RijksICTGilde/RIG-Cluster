@@ -22,7 +22,8 @@ from fastapi.testclient import TestClient
 from freezegun import freeze_time
 from itsdangerous import TimestampSigner
 from opi.api.auth_routes import auth_router
-from opi.middleware.server_side_session import ServerSideSession, ServerSideSessionMiddleware
+from opi.http.session import ServerSideSession
+from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from tests.inmemory_session_store import InMemorySessionStore
 
 SECRET = "middleware-test-secret"

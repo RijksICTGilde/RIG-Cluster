@@ -210,9 +210,9 @@ spec:
 
 ### Phase 3: Template Variable Population
 
-**File**: `opi/manager/manifest_manager.py` (modify)
+**File**: `opi/manager/project/manifests/application.py` (modify)
 
-The manifest manager needs to populate the new template variables by inspecting the project's service configuration:
+`ApplicationManifests` needs to populate the new template variables by inspecting the project's service configuration:
 
 ```python
 def get_network_policy_context(
@@ -268,7 +268,7 @@ manifests.append(render("default-deny-network-policy.yaml.jinja", {
     "project_name": project_name,
 }))
 
-np_context = manifest_manager.get_network_policy_context(project_data, deployment, component)
+np_context = application_manifests.get_network_policy_context(project_data, deployment, component)
 manifests.append(render("deployment-network-policy.yaml.jinja", {
     "name": deployment_name,
     "namespace": namespace,
@@ -421,7 +421,7 @@ NETWORK_POLICY_ALLOW_EXTERNAL_HTTPS: bool = True
 
 | File | Change |
 |------|--------|
-| `opi/manager/manifest_manager.py` | Add `get_network_policy_context()` to derive service dependencies |
+| `opi/manager/project/manifests/application.py` | Add `get_network_policy_context()` to derive service dependencies |
 | `opi/manager/project_manager.py` | Replace allow-all generation with restrictive policy generation |
 | `opi/core/config.py` | Add `NETWORK_POLICY_MODE`, `NETWORK_POLICY_ALLOW_EXTERNAL_HTTPS` |
 

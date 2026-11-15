@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.state import WizardState
@@ -112,7 +112,7 @@ def _inzending(*getekende_reeksen: str, **config: Any) -> dict[str, Any]:
     """
     body: dict[str, Any] = {"_services-config": {"keycloak": {"config": {"template": "sso-only", **config}}}}
     if getekende_reeksen:
-        body[GERENDERDE_REEKSEN_VELD] = list(getekende_reeksen)
+        body[RENDERED_SEQUENCES_FIELD] = list(getekende_reeksen)
     return body
 
 
@@ -198,4 +198,4 @@ def test_het_gerenderde_formulier_meldt_elke_reeks() -> None:
     )
 
     for pad in (VIRT_REDIRECT_URIS_PAD, VIRT_CLIENTS_PAD):
-        assert f'name="{GERENDERDE_REEKSEN_VELD}[]" value="{pad}"' in html, f"reeks {pad} meldt zich niet"
+        assert f'name="{RENDERED_SEQUENCES_FIELD}[]" value="{pad}"' in html, f"reeks {pad} meldt zich niet"

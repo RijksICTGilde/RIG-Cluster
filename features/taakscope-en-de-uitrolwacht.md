@@ -42,7 +42,7 @@ een tijdelijke leesfout en polde door tot de timeout vol was: een verdwenen app 
 onbereikbare ArgoCD zagen er identiek uit.
 
 De lus houdt nu bij of de applicatie in **deze** wacht ooit met succes is uitgelezen. Is dat zo
-en komt er daarna een leeg antwoord, dan volgt `ApplicationGone` (een `RuntimeError`, dus de
+en komt er daarna een leeg antwoord, dan volgt `ApplicationGoneError` (een `RuntimeError`, dus de
 bestaande `except RuntimeError, TimeoutError: raise` laat hem door). Is de app nog nooit gezien,
 dan is doorpollen juist goed: hij moet nog verschijnen.
 
@@ -55,7 +55,7 @@ gevolg van iets dat hij zelf startte.
 ### Een bevroren status trekken we zelf los
 
 Staat de status 60 seconden op `Progressing`, dan vraagt de wachtlus zelf opnieuw een refresh
-(`HERVERVERS_ELKE_SECONDEN`). De teruggegeven `reconciledAt` gaat mee in `refreshed_after`, want
+(`REFRESH_EVERY_SECONDS`). De teruggegeven `reconciledAt` gaat mee in `refreshed_after`, want
 dat is de drempel die bepaalt of een status vers genoeg is om er terminale toestanden op te
 baseren; zonder bijwerken zou een oude status alsnog als vers tellen. Alleen op `Progressing`:
 `Degraded` heeft verderop zijn eigen afhandeling en die moet niet uitgesteld worden.
@@ -193,19 +193,19 @@ gemigreerde.
 
 | Bestand | Wat |
 |---|---|
-| `opi/manager/argo_manager.py` | `ApplicationGone`, de `seen`-vlag, en de herverversing op `Progressing` |
+| `opi/manager/argo_manager.py` | `ApplicationGoneError`, de `seen`-vlag, en de herverversing op `Progressing` |
 | `opi/manager/project_manager.py` | de uitkomst `removed` en de verwerking daarvan |
 | `opi/migrations/versions/005_add_affects_deployments.py` | de kolom en de GIN-index |
 | `opi/core/async_task_schema.py` | dezelfde tabel voor een verse database |
 | `opi/services/persistence/async_tasks.py` | de kolom in het model (postgresql-`ARRAY`, want alleen die heeft `.overlap()`) |
-| `opi/core/async_task_service.py` | `scope_of()` bij het aanmaken, `_scopes_overlap()`, de twee claim-clausules, `find_blocking_task()` |
-| `opi/core/task_supersede.py` | `covers()` leest de kolom in plaats van opnieuw af te leiden |
-| `opi/core/task_worker.py` | de scope van de lopende taak komt uit de kolom |
+| `opi/services/tasks/async_task_service.py` | `scope_of()` bij het aanmaken, `_scopes_overlap()`, de twee claim-clausules, `find_blocking_task()` |
+| `opi/services/tasks/task_supersede.py` | `covers()` leest de kolom in plaats van opnieuw af te leiden |
+| `opi/runtime/tasks/task_worker.py` | de scope van de lopende taak komt uit de kolom |
 | `opi/api/task_models.py`, `opi/api/task_router.py` | `waiting_for` en de afgeleide `current_step` |
 
 ## Tests
 
-- `tests/test_argo_manager.py` - een verdwenen app levert `ApplicationGone` binnen één
+- `tests/test_argo_manager.py` - een verdwenen app levert `ApplicationGoneError` binnen één
   pollinterval; een app die nog moet verschijnen niet; de refresh na 60s Progressing en het
   meebewegen van `refreshed_after`; geen refresh op `Degraded`.
 - `tests/test_verdwenen_applicatie_tijdens_wacht.py` - de mpfb-situatie tot in de uitkomst:

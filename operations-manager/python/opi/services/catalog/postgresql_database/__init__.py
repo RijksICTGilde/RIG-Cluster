@@ -23,13 +23,15 @@ from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
 from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
+from opi.services.secrets import DatabaseSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="DatabaseSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
@@ -57,9 +59,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     # project model so its committed fragment documents the user config.
     config_model = PostgresqlDatabaseProjectConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): with no config the database is a shared-scope database,
-    # which is the default a project gets when it selects the service by hand. Choosing
-    # project scope or extra schemas stays an explicit act.
+    # May enrol itself: with no config the database is a shared-scope database, which is the
+    # default a project gets when it selects the service by hand. Choosing project scope or
+    # extra schemas stays an explicit act.
     allows_implicit_project_selection = True
     config_section_id = "postgresql-schemas-config"
     modal_flow_id = "modal-edit-postgresql-schemas"
@@ -82,8 +84,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         return None
 
     def config_settings(self) -> tuple[ConfigSetting, ...]:
-        # De CNPG-velden gelden alleen voor scope: project; op een shared database staan ze
-        # niet in de config en worden ze dus niet getoetst.
+        # The CNPG fields apply only to scope: project.
         return (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS)
 
     def _config_selected(self, project_data: dict) -> bool:
@@ -94,7 +95,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             from opi.services.catalog.postgresql_database.editables import POSTGRESQL_SCHEMAS_EDITABLES
             from opi.services.catalog.postgresql_database.visualizers import CONNECTION_LIMIT_FIELD
@@ -106,7 +107,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             return [DEPLOYMENT_CONNECTION_LIMIT_FIELD.editable]
         return []
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is ConfigLayer.DEPLOYMENT:
             return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
@@ -153,7 +154,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             self._config_section_cache = cached
         return cached
 
-    def deployment_form_section(self, deployment_index: int | None = None):
+    def deployment_form_section(self, deployment_index: int | None = None) -> FormSection:
         """The per-deployment connection limit; without an index it describes the layer."""
         from opi.forms.editables.reindex import materialize_wildcard_visualizer
         from opi.forms.layout import Fieldset
@@ -174,11 +175,11 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         )
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """Of de extra schema's voor ELKE deployment een naam opleveren die past.
+        """Whether the extra schemas yield a name that fits for EVERY deployment.
 
-        Leeg voor een project zonder deze dienst: dan zijn er geen schema's.
+        Empty for a project without this service: there are no schemas then.
         """
-        # Lazy: ``postgres_scope`` leest via de dienstenlijst dit pakket.
+        # Lazy: ``postgres_scope`` reads this package through the services list.
         from opi.services.catalog.postgresql_database.schema_names import validate_database_schema_names
 
         return validate_database_schema_names(project_data)
@@ -205,7 +206,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             SecretFileSpec(
                 secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=creds.to_k8s_secret_data(),
-                secret_type="database",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+                secret_type="database",  # noqa: S106  # the name of the key or the secret class, not a secret
                 resolve_aliases=True,
                 register_secret=creds,
             )

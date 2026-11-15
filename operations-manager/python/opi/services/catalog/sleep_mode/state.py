@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from opi.services.project import Project
+
 logger = logging.getLogger(__name__)
 
 #: The three sleep states. ``waking`` is the transitional state where both the app and
@@ -47,16 +49,9 @@ def parse_expiry(value: str | None) -> datetime | None:
         return None
 
 
-def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
-    for deployment in project_data.get("deployments", []) or []:
-        if deployment.get("name") == deployment_name:
-            return deployment
-    return None
-
-
 def read(project_data: dict[str, Any], deployment_name: str) -> SleepState:
     """Read a deployment's sleep state; defaults to ``awake`` when absent."""
-    deployment = _find_deployment(project_data, deployment_name)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     sleep = (deployment or {}).get(DEPLOYMENT_KEY) or {}
     return SleepState(
         state=sleep.get("state", STATE_AWAKE),
@@ -71,7 +66,7 @@ def write(project_data: dict[str, Any], deployment_name: str, sleep_state: Sleep
     An ``awake`` state with no expiry and no token clears the whole ``sleep`` block, so
     a deployment that never sleeps carries no runtime noise in its project file.
     """
-    deployment = _find_deployment(project_data, deployment_name)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         logger.warning(f"Deployment '{deployment_name}' not found for sleep-state update")
         return False

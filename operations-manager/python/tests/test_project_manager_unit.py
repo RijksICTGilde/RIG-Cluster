@@ -3,91 +3,148 @@
 Focuses on: async correctness, command construction, edge cases in deployment processing.
 """
 
+import ast
 import inspect
+import pathlib
 
 import pytest
+from opi.manager.project.aliases import generate_storage_env_vars_from_services, get_service_category_name
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
+from tests import project_manager_sources
 
 
 class TestLooksLikeRenderFailure:
     """The manifests-endpoint body classifier that decides whether to block the deploy."""
 
     def test_generation_error_is_render_failure(self):
-        from opi.manager.project_manager import _looks_like_render_failure
+        from opi.manager.project.rollout import looks_like_render_failure
 
         body = (
             "Failed to load target state: failed to generate manifests in 'x': rpc error: "
             "code = Unknown desc = kustomize build failed exit status 1: may not add resource ..."
         )
-        assert _looks_like_render_failure(body) is True
+        assert looks_like_render_failure(body) is True
 
     def test_real_manifests_endpoint_body_is_render_failure(self):
         # Exact shape from a live sandbox 500 manifests-endpoint response.
-        from opi.manager.project_manager import _looks_like_render_failure
+        from opi.manager.project.rollout import looks_like_render_failure
 
         body = (
             '{"error":"plugin sidecar failed. error generating manifests in cmp: rpc error: '
             "code = Unknown desc = error generating manifests: `/bin/bash -c ...` failed exit status 1: "
             "ERROR: Namespace 'rig-x' does not exist\"}"
         )
-        assert _looks_like_render_failure(body) is True
+        assert looks_like_render_failure(body) is True
 
     def test_auth_or_network_error_is_not_render_failure(self):
-        from opi.manager.project_manager import _looks_like_render_failure
+        from opi.manager.project.rollout import looks_like_render_failure
 
-        assert _looks_like_render_failure("401 Unauthorized") is False
-        assert _looks_like_render_failure("connection refused") is False
-        assert _looks_like_render_failure("") is False
-        assert _looks_like_render_failure(None) is False
+        assert looks_like_render_failure("401 Unauthorized") is False
+        assert looks_like_render_failure("connection refused") is False
+        assert looks_like_render_failure("") is False
+        assert looks_like_render_failure(None) is False
 
 
 class TestAsyncCorrectness:
     """All calls to async functions must use await - missing await silently returns a coroutine object."""
 
     def test_decrypt_age_content_calls_are_awaited(self):
-        """Every call to decrypt_age_content in project_manager must be awaited.
+        """Every call to decrypt_age_content must be awaited, in project_manager and in the
+        groups split out of it.
 
         Missing await causes the coroutine to be stringified as '<coroutine object ...>'
         instead of the actual decrypted value.
         """
-        source = inspect.getsource(ProjectManager)
+        for path, source in project_manager_sources.sources():
+            for i, line in enumerate(source.split("\n"), 1):
+                stripped = line.strip()
+                if "decrypt_age_content(" in stripped and not stripped.startswith("#"):
+                    # Skip import lines
+                    if "import" in stripped:
+                        continue
+                    assert "await" in stripped, (
+                        f"{path.name} line {i}: decrypt_age_content() is async but called without await: {stripped}"
+                    )
 
-        # Find all lines with decrypt_age_content calls
-        lines = source.split("\n")
-        for i, line in enumerate(lines, 1):
-            stripped = line.strip()
-            if "decrypt_age_content(" in stripped and not stripped.startswith("#"):
-                # Skip import lines
-                if "import" in stripped:
+
+class TestTestsImportNamesWhereTheyLive:
+    """No test may import a name from ``project_manager`` that only passes through it.
+
+    ``project_manager`` imports plenty from elsewhere, and a test that takes such a name from
+    there breaks the day the import goes. The name has a home module; the test imports it
+    from that home.
+    """
+
+    def test_no_test_borrows_a_name_from_project_manager(self):
+        defined = project_manager_sources.defined_in_project_manager()
+        elsewhere = project_manager_sources.borrowed_by_project_manager()
+
+        borrowed: list[str] = []
+        for path in sorted(pathlib.Path(__file__).parent.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.module != "opi.manager.project_manager":
                     continue
-                assert "await" in stripped, (
-                    f"Line {i}: decrypt_age_content() is async but called without await: {stripped}"
-                )
+                for alias in node.names:
+                    if alias.name not in defined:
+                        home = elsewhere.get(alias.name, "an unknown module")
+                        borrowed.append(f"{path.name} imports {alias.name}, which lives in {home}")
+
+        assert borrowed == []
+
+
+class TestExistingDeploymentWorkspace:
+    """The accessor that reaches the already-opened workspaces without name mangling.
+
+    ``_project_level_already_applied`` needs that map. Reading it as ``self.__deployment_workspaces``
+    only works inside ``ProjectManager``: from another class the mangled name is a different
+    attribute, and on a MagicMock host it silently answers with a mock.
+    """
+
+    def test_returns_the_opened_workspace_and_none_for_an_unknown_name(self):
+        manager = ProjectManager.__new__(ProjectManager)
+        workspace = object()
+        manager._ProjectManager__deployment_workspaces = {"main-repo": workspace}
+
+        assert manager.get_existing_deployment_workspace("main-repo") is workspace
+        assert manager.get_existing_deployment_workspace("other-repo") is None
+
+    @pytest.mark.asyncio
+    async def test_already_applied_is_false_without_an_opened_workspace(self):
+        """Without a workspace there is nothing to compare the applied revision against."""
+        manager = ProjectManager.__new__(ProjectManager)
+        manager._ProjectManager__deployment_workspaces = {}
+        manager._project_level_manifests_changed = False
+        manager._project_level_repo = "main-repo"
+        manager._project_level_path = "sandboxed-local/demo/project"
+
+        assert await ArgoCDSync(manager)._project_level_already_applied("demo-project") is False
 
 
 class TestResolveDeploymentFilter:
     """The single/plural deployment-filter normalizer underpins scoped redeploys."""
 
     def test_none_when_both_absent(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter(None, None) is None
+        assert resolve_deployment_filter(None, None) is None
 
     def test_single_name_wraps_to_list(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", None) == ["dev"]
+        assert resolve_deployment_filter("dev", None) == ["dev"]
 
     def test_list_takes_precedence_over_single(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", ["a", "b"]) == ["a", "b"]
+        assert resolve_deployment_filter("dev", ["a", "b"]) == ["a", "b"]
 
     def test_empty_list_preserved_not_collapsed_to_none(self):
         """Empty list means 'zero deployments', must not become None ('all')."""
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", []) == []
+        assert resolve_deployment_filter("dev", []) == []
 
 
 class TestGetDeploymentsListFilter:
@@ -138,9 +195,8 @@ class TestMissingFStrings:
 
     def test_storage_type_error_includes_actual_type(self):
         """ValueError for unknown storage type must include the actual type value, not literal '{storage_type}'."""
-        pm = ProjectManager.__new__(ProjectManager)
         with pytest.raises(ValueError, match="bogus_type"):
-            pm._generate_storage_env_vars_from_services([{"mount-path": "/data", "type": "bogus_type"}])
+            generate_storage_env_vars_from_services([{"mount-path": "/data", "type": "bogus_type"}])
 
     def test_no_deployments_warning_includes_project_name(self):
         """Log strings with {var} placeholders must use f-string prefix to interpolate variables."""
@@ -156,10 +212,10 @@ class TestMissingFStrings:
 
 
 class TestServiceCategoryMapping:
-    """Regression tests for _get_service_category_name.
+    """Regression tests for get_service_category_name.
 
     The category map is consumed by alias categorisation
-    (project_manager._categorize_alias). Because RedisVariables / DatabaseVariables
+    (``aliases.categorize_alias``). Because RedisVariables / DatabaseVariables
     are shared between the regular and NAMESPACE_* service definitions, the
     var_to_service lookup ends up keyed by whichever variant comes last in
     SERVICE_DEFINITIONS dict iteration order. If both variants don't collapse
@@ -168,20 +224,16 @@ class TestServiceCategoryMapping:
     """
 
     def test_redis_and_namespace_redis_collapse_to_redis_category(self):
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)  # bypass __init__
-        assert m._get_service_category_name(ServiceType.REDIS) == "redis"
-        assert m._get_service_category_name(ServiceType.NAMESPACE_REDIS) == "redis"
+        assert get_service_category_name(ServiceType.REDIS) == "redis"
+        assert get_service_category_name(ServiceType.NAMESPACE_REDIS) == "redis"
 
     def test_postgresql_and_namespace_postgresql_collapse_to_database_category(self):
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)
-        assert m._get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
-        assert m._get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
+        assert get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
+        assert get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
 
     def test_minio_and_seaweedfs_collapse_to_minio_category(self):
         """seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde val als redis.
@@ -190,12 +242,10 @@ class TestServiceCategoryMapping:
         "seaweedfs-storage" en verdwijnt hij stil uit het minio-secret, ook bij een
         bestaand project dat seaweedfs niet eens gebruikt.
         """
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)
-        assert m._get_service_category_name(ServiceType.MINIO_STORAGE) == "minio"
-        assert m._get_service_category_name(ServiceType.SEAWEEDFS_STORAGE) == "minio"
+        assert get_service_category_name(ServiceType.MINIO_STORAGE) == "minio"
+        assert get_service_category_name(ServiceType.SEAWEEDFS_STORAGE) == "minio"
 
 
 def _valid_project_for_save() -> dict:
@@ -280,7 +330,7 @@ class TestSaveAndCommitProjectValidation:
         """A schema violation must abort before the file write and the commit run."""
         from unittest.mock import patch
 
-        from opi.core.project_schema import ProjectSchemaError
+        from opi.services.project_schema import ProjectSchemaError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
@@ -303,7 +353,7 @@ class TestSaveAndCommitProjectValidation:
     @pytest.mark.asyncio
     async def test_structural_dangling_reference_raises(self):
         """A deployment referencing an undefined component is a structural rejection."""
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         project = _valid_project_for_save()
@@ -315,7 +365,7 @@ class TestSaveAndCommitProjectValidation:
     @pytest.mark.asyncio
     async def test_structural_duplicate_component_raises(self):
         """Two components with the same name is a structural rejection."""
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         project = _valid_project_for_save()
@@ -405,7 +455,7 @@ class TestSaveAndCommitProjectValidation:
         project has pre-existing structural drift; validation runs but only warns."""
         from unittest.mock import AsyncMock, patch
 
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
@@ -431,7 +481,7 @@ class TestSaveAndCommitProjectValidation:
         """A user-driven edit that introduces drift is rejected before any write."""
         from unittest.mock import AsyncMock, patch
 
-        from opi.core.project_schema import ProjectIntegrityError
+        from opi.services.project_schema import ProjectIntegrityError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"

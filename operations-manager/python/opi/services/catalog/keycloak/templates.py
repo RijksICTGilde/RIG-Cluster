@@ -1,10 +1,8 @@
-"""De realmblauwdrukken waaruit een project kiest, en wat ze over lokale accounts zeggen.
+"""The realm blueprints a project picks from, and what they say about local accounts.
 
-Eén plek, want de regel "deze blauwdruk laat een lokaal account inloggen" werd op twee
-manieren gesteld: ``template != "sso-only"`` in ``InviteAuthMethodOptionsProvider`` en een
-opsomming ``["sso-support"]`` in de ``show_when`` van de uitnodigingsvelden. Met een derde
-blauwdruk erbij spreken die twee elkaar tegen: de opsomming laat de nieuwe eruit en de
-toets laat hem erin.
+One place for the rule "this blueprint lets a local account sign in": a second statement of
+it (a listing of blueprint names in a ``show_when``, say) disagrees with this one as soon as
+a blueprint is added -- the listing leaves the new one out while the check lets it in.
 """
 
 from __future__ import annotations
@@ -12,20 +10,28 @@ from __future__ import annotations
 #: SSO redirect only; Keycloak shows no login screen. Default template when omitted.
 SSO_ONLY_TEMPLATE = "sso-only"
 
-#: Het inlogscherm van Keycloak laat de keuze: SSO Rijk of een lokaal account.
+#: Keycloak's login screen offers the choice: SSO Rijk or a local account.
 SSO_SUPPORT_TEMPLATE = "sso-support"
 
-#: Zelfde keuze, maar een lokaal account geeft naast zijn wachtwoord een OTP.
+#: The same choice, but a local account supplies an OTP alongside its password.
 SSO_SUPPORT_OTP_TEMPLATE = "sso-support-otp"
 
-#: De blauwdrukken waarin een lokaal account een weg naar binnen is.
-LOCAL_ACCOUNT_TEMPLATES = (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE)
+#: Only local accounts, supplied by the project or created through an invite; no SSO Rijk.
+LOCAL_ONLY_TEMPLATE = "local-only"
+
+#: The blueprints in which a local account is a way in.
+LOCAL_ACCOUNT_TEMPLATES = (SSO_SUPPORT_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE, LOCAL_ONLY_TEMPLATE)
 
 
 def allows_local_accounts(template: str | None) -> bool:
-    """Of deze blauwdruk een inlogscherm toont waarop een lokaal account past.
+    """Whether this blueprint shows a login screen a local account fits on.
 
-    Een leeg template betekent ``sso-only``: dat is de standaard van
-    ``KeycloakConfig.template`` en dus wat de realm werkelijk krijgt.
+    An empty template means ``sso-only``: that is the default of ``KeycloakConfig.template``
+    and therefore what the realm really gets.
     """
     return (template or SSO_ONLY_TEMPLATE) in LOCAL_ACCOUNT_TEMPLATES
+
+
+def allows_sso(template: str | None) -> bool:
+    """Whether this blueprint federates to SSO Rijk. An empty template means ``sso-only``."""
+    return (template or SSO_ONLY_TEMPLATE) != LOCAL_ONLY_TEMPLATE

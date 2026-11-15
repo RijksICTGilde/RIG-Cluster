@@ -1,4 +1,4 @@
-"""De deploymentknoppen van seaweedfs-storage: de grens op oude versies per bucket (RC-380)."""
+"""The deployment buttons of seaweedfs-storage: the limit on noncurrent versions per bucket."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from opi.services.services_enums import ServiceType
 
 
 def seaweedfs_storage_actions(project_data: dict[str, Any], deployment_name: str) -> list[DeploymentAction]:
-    # Zelfde afweging als bij minio: de knop staat er zodra het project de dienst gebruikt,
-    # want of de bucket echt versioning heeft vraagt SeaweedFS zelf.
+    # The same weighing as with minio: the button is there as soon as the project uses the
+    # service, because whether the bucket really has versioning means asking SeaweedFS itself.
     action = deployment_modal_action(
         project_data,
         deployment_name,

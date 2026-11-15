@@ -13,7 +13,6 @@ from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
@@ -21,8 +20,9 @@ from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import resolve_active_sections
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
-from opi.manager.project_validation import validate_project_structure
 from opi.services.approvals import ensure_approval_requests
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 from opi.services.services import service_entry_config, service_entry_name
 from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections
@@ -250,10 +250,19 @@ class TestDeStoreWeigertEenBesluitZonderMarkering:
 
 
 class TestAlleenDeGoedkeuringsrouteMarkeert:
-    """De sweep over alle aanroepen: een tweede markeerder haalt de guard net zo stil weg."""
+    """De sweep over alle aanroepen: een tweede markeerder haalt de guard net zo stil weg.
+
+    Sinds RC-483 loopt de goedkeuringsroute via ``record_approval_decision``, dus de
+    markering staat een laag lager. De eigenschap blijft greppable in twee stappen: er is
+    precies een opslag die zich als besluit meldt, en precies een ingang die om die opslag
+    vraagt. Zonder de tweede helft kon elke ingang de use case met de markering aanroepen.
+    """
 
     #: Waar de markering hoort te staan, en hoe vaak.
-    VERWACHTE_MARKEERDERS: ClassVar[set[tuple[str, int]]] = {("web/router_approvals.py", 1)}
+    VERWACHTE_MARKEERDERS: ClassVar[set[tuple[str, int]]] = {("manager/project/update.py", 1)}
+
+    #: The one entrance allowed to ask for that save.
+    VERWACHTE_AANROEPERS: ClassVar[set[str]] = {"web/router_approvals.py"}
 
     @staticmethod
     def _save_calls() -> list[tuple[str, ast.Call]]:
@@ -286,3 +295,16 @@ class TestAlleenDeGoedkeuringsrouteMarkeert:
             markeerders[pad] = markeerders.get(pad, 0) + 1
 
         assert set(markeerders.items()) == self.VERWACHTE_MARKEERDERS
+
+    def test_only_the_approval_route_asks_for_that_save(self) -> None:
+        """The use case carries the marking, so the second half is who calls it."""
+        callers = {
+            str(pad.relative_to(OPI))
+            for pad in sorted(OPI.rglob("*.py"))
+            for knoop in ast.walk(ast.parse(pad.read_text()))
+            if isinstance(knoop, ast.Call)
+            and isinstance(knoop.func, ast.Name)
+            and knoop.func.id == "record_approval_decision"
+        }
+
+        assert callers == self.VERWACHTE_AANROEPERS

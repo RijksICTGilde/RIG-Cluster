@@ -18,20 +18,20 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.leden import LidSoort
 from opi.services import api_token_service as mod
 from opi.services.api_token_service import (
-    TokenAanvraagGeweigerd,
-    geef_token_uit,
-    is_projectbeheerder,
-    leden_overzicht,
-    roteer_token,
+    TokenRequestRefusedError,
+    add_service_account,
+    is_project_admin,
+    issue_token,
+    members_overview,
+    remove_service_account,
+    revoke_token,
+    rotate_token,
     set_member_roles,
-    trek_token_in,
-    verwijder_service_account,
-    voeg_service_account_toe,
 )
-from opi.services.project_leden import TOKEN_PREFIX, hash_van
+from opi.services.members import MemberKind
+from opi.services.project_members import TOKEN_PREFIX, hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 pytestmark = pytest.mark.asyncio
@@ -49,7 +49,7 @@ def _bestand() -> dict[str, Any]:
             {
                 "email": BEHEERDER,
                 "roles": ["admin", "ops"],
-                "tokens": [{"name": "cli", "expires": "2030-01-01T00:00:00+00:00", "hash": hash_van("zad_oud")}],
+                "tokens": [{"name": "cli", "expires": "2030-01-01T00:00:00+00:00", "hash": hash_of("zad_oud")}],
             },
             {"email": DEV, "roles": ["developer"]},
             {"type": "service-account", "name": "bouwstraat", "roles": ["developer"], "tokens": []},
@@ -66,10 +66,10 @@ def _summary() -> ProjectSummary:
             ProjectUser(
                 email=BEHEERDER,
                 roles=["admin", "ops"],
-                tokens=[ProjectToken(name="cli", expires=vervalt, hash=hash_van("zad_oud"))],
+                tokens=[ProjectToken(name="cli", expires=vervalt, hash=hash_of("zad_oud"))],
             ),
             ProjectUser(email=DEV, roles=["developer"]),
-            ProjectUser(type=LidSoort.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
+            ProjectUser(type=MemberKind.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
         ],
     )
 
@@ -99,7 +99,7 @@ def store():
         yield bestand
 
 
-def _lid(bestand: dict[str, Any], naam: str) -> dict[str, Any] | None:
+def _member(bestand: dict[str, Any], naam: str) -> dict[str, Any] | None:
     for lid in bestand["users"]:
         if (lid.get("name") or lid.get("email")) == naam:
             return lid
@@ -110,34 +110,34 @@ def _lid(bestand: dict[str, Any], naam: str) -> dict[str, Any] | None:
 
 
 async def test_een_beheerder_voegt_een_service_account_toe(store) -> None:
-    await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["developer"], door=BEHEERDER)
+    await add_service_account(project_name=PROJECT, name="nachtploeg", roles=["developer"], by=BEHEERDER)
 
-    account = _lid(store, "nachtploeg")
+    account = _member(store, "nachtploeg")
     assert account == {"type": "service-account", "name": "nachtploeg", "roles": ["developer"], "tokens": []}
 
 
 async def test_een_ontwikkelaar_voegt_er_geen_toe(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="beheerder"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["admin"], door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="beheerder"):
+        await add_service_account(project_name=PROJECT, name="nachtploeg", roles=["admin"], by=DEV)
 
 
 async def test_een_naam_die_geen_dns_label_is_wordt_geweigerd(store) -> None:
     """De naam reist mee in de actor en in de git-trailer."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="kleine letters"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="Nacht Ploeg", rollen=["admin"], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="kleine letters"):
+        await add_service_account(project_name=PROJECT, name="Nacht Ploeg", roles=["admin"], by=BEHEERDER)
 
 
 async def test_een_onbekende_rol_bij_het_toevoegen_wordt_geweigerd(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["superuser"], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="Onbekende rol"):
+        await add_service_account(project_name=PROJECT, name="nachtploeg", roles=["superuser"], by=BEHEERDER)
 
 
 async def test_een_service_account_die_al_bestaat_toevoegen_is_een_stille_no_op(store) -> None:
     """Geen fout, geen tweede rij, en geen commit: de store ziet een no-op ``None`` terug."""
-    voor = copy.deepcopy(_lid(store, "bouwstraat"))
+    voor = copy.deepcopy(_member(store, "bouwstraat"))
     nep = mod.get_project_store()
 
-    await voeg_service_account_toe(project_name=PROJECT, naam="bouwstraat", rollen=["admin"], door=BEHEERDER)
+    await add_service_account(project_name=PROJECT, name="bouwstraat", roles=["admin"], by=BEHEERDER)
 
     rijen = [lid for lid in store["users"] if lid.get("name") == "bouwstraat"]
     assert rijen == [voor]
@@ -147,14 +147,14 @@ async def test_een_service_account_die_al_bestaat_toevoegen_is_een_stille_no_op(
 async def test_een_service_account_verwijderen_neemt_zijn_tokens_mee(store) -> None:
     store["users"][2]["tokens"] = [{"name": "pijplijn", "expires": "2030-01-01T00:00:00+00:00", "hash": "f" * 64}]
 
-    await verwijder_service_account(project_name=PROJECT, naam="bouwstraat", door=BEHEERDER)
+    await remove_service_account(project_name=PROJECT, name="bouwstraat", by=BEHEERDER)
 
-    assert _lid(store, "bouwstraat") is None
+    assert _member(store, "bouwstraat") is None
 
 
 async def test_een_onbestaand_service_account_verwijderen_is_een_stille_no_op(store) -> None:
     nep = mod.get_project_store()
-    await verwijder_service_account(project_name=PROJECT, naam="bestaat-niet", door=BEHEERDER)
+    await remove_service_account(project_name=PROJECT, name="bestaat-niet", by=BEHEERDER)
 
     assert nep.mutate.await_count == 1
     assert len(store["users"]) == 3
@@ -164,148 +164,146 @@ async def test_een_onbestaand_service_account_verwijderen_is_een_stille_no_op(st
 async def test_een_mens_verwijderen_via_deze_route_is_een_stille_no_op(store) -> None:
     """Deze route haalt alleen een SERVICE ACCOUNT weg; een mens met die naam blijft staan."""
     nep = mod.get_project_store()
-    await verwijder_service_account(project_name=PROJECT, naam=DEV, door=BEHEERDER)
+    await remove_service_account(project_name=PROJECT, name=DEV, by=BEHEERDER)
 
-    assert _lid(store, DEV) is not None
+    assert _member(store, DEV) is not None
     assert nep.laatste_change_resultaat is None
 
 
 async def test_rollen_wijzigen_raakt_alleen_de_rollen(store) -> None:
-    await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["ops"], door=BEHEERDER)
+    await set_member_roles(project_name=PROJECT, name="bouwstraat", roles=["ops"], by=BEHEERDER)
 
-    assert _lid(store, "bouwstraat")["roles"] == ["ops"]
+    assert _member(store, "bouwstraat")["roles"] == ["ops"]
 
 
 async def test_de_laatste_admin_weghalen_wordt_geweigerd(store) -> None:
     """Zonder admin kan niemand nog leden of tokens beheren (ontwerp paragraaf 7)."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een lid met de rol admin"):
-        await set_member_roles(project_name=PROJECT, naam=BEHEERDER, rollen=["developer"], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="minstens een lid met de rol admin"):
+        await set_member_roles(project_name=PROJECT, name=BEHEERDER, roles=["developer"], by=BEHEERDER)
 
 
 async def test_een_lege_lijst_rollen_wordt_geweigerd(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een rol"):
-        await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=[], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="minstens een rol"):
+        await set_member_roles(project_name=PROJECT, name="bouwstraat", roles=[], by=BEHEERDER)
 
 
 async def test_een_onbekende_rol_wordt_geweigerd(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["operator"], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="Onbekende rol"):
+        await set_member_roles(project_name=PROJECT, name="bouwstraat", roles=["operator"], by=BEHEERDER)
 
 
 async def test_dezelfde_rol_opnieuw_zetten_is_een_stille_no_op(store) -> None:
     nep = mod.get_project_store()
-    await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["developer"], door=BEHEERDER)
+    await set_member_roles(project_name=PROJECT, name="bouwstraat", roles=["developer"], by=BEHEERDER)
 
     assert nep.mutate.await_count == 1
-    assert _lid(store, "bouwstraat")["roles"] == ["developer"]
+    assert _member(store, "bouwstraat")["roles"] == ["developer"]
     assert nep.laatste_change_resultaat is None
 
 
 async def test_een_onbestaand_lid_een_rol_geven_wordt_geweigerd(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        await set_member_roles(project_name=PROJECT, naam="bestaat-niet", rollen=["admin"], door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="geen lid"):
+        await set_member_roles(project_name=PROJECT, name="bestaat-niet", roles=["admin"], by=BEHEERDER)
 
 
 # --- wie mag beheren --------------------------------------------------------
 
 
 def test_een_beheerder_mag_leden_en_tokens_beheren(store) -> None:
-    assert is_projectbeheerder(PROJECT, BEHEERDER) is True
+    assert is_project_admin(PROJECT, BEHEERDER) is True
 
 
 def test_een_ontwikkelaar_mag_dat_niet(store) -> None:
-    assert is_projectbeheerder(PROJECT, DEV) is False
+    assert is_project_admin(PROJECT, DEV) is False
 
 
 def test_een_platformbeheerder_die_geen_lid_is_mag_dat_ook_niet(store) -> None:
     """Zonder deze check zag een platformbeheerder beheerknoppen die altijd weigeren
     (het tabblad Team leest deze functie om te kiezen of hij ze toont)."""
-    assert is_projectbeheerder(PROJECT, "platformbeheerder@rijksoverheid.nl") is False
+    assert is_project_admin(PROJECT, "platformbeheerder@rijksoverheid.nl") is False
 
 
 def test_een_onbestaand_project_heeft_ook_geen_beheerder(store) -> None:
-    assert is_projectbeheerder("bestaat-niet", BEHEERDER) is False
+    assert is_project_admin("bestaat-niet", BEHEERDER) is False
 
 
 # --- tokens ----------------------------------------------------------------
 
 
 async def test_een_beheerder_geeft_een_service_account_een_token(store) -> None:
-    waarde = await geef_token_uit(
-        project_name=PROJECT, naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=BEHEERDER
-    )
+    waarde = await issue_token(project_name=PROJECT, name="bouwstraat", token_name="pijplijn", days=30, by=BEHEERDER)
 
     assert waarde.startswith(TOKEN_PREFIX)
-    token = _lid(store, "bouwstraat")["tokens"][0]
+    token = _member(store, "bouwstraat")["tokens"][0]
     assert token["name"] == "pijplijn"
-    assert token["hash"] == hash_van(waarde)
+    assert token["hash"] == hash_of(waarde)
     assert waarde not in str(store), "de waarde zelf hoort nergens in het bestand te staan"
 
 
 async def test_een_mens_geeft_zichzelf_een_token(store) -> None:
-    waarde = await geef_token_uit(project_name=PROJECT, naam=DEV, tokennaam="cli", dagen=30, door=DEV)
+    waarde = await issue_token(project_name=PROJECT, name=DEV, token_name="cli", days=30, by=DEV)
 
-    assert _lid(store, DEV)["tokens"][0]["hash"] == hash_van(waarde)
+    assert _member(store, DEV)["tokens"][0]["hash"] == hash_of(waarde)
 
 
 async def test_niemand_maakt_een_token_voor_een_ander_mens(store) -> None:
     """Ook een beheerder niet: dat zou een bewijsmiddel zijn dat iemand draagt zonder te
     weten dat het bestaat."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="voor jezelf"):
-        await geef_token_uit(project_name=PROJECT, naam=DEV, tokennaam="cli", dagen=30, door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="voor jezelf"):
+        await issue_token(project_name=PROJECT, name=DEV, token_name="cli", days=30, by=BEHEERDER)
 
 
 async def test_een_ontwikkelaar_geeft_geen_service_accounttoken_uit(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="beheerder"):
-        await geef_token_uit(project_name=PROJECT, naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="beheerder"):
+        await issue_token(project_name=PROJECT, name="bouwstraat", token_name="pijplijn", days=30, by=DEV)
 
 
 async def test_een_token_boven_het_platformmaximum_wordt_geweigerd(store) -> None:
     """Het maximum is platformbeleid, geen keuze van wie het token aanvraagt."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="hoogstens"):
-        await geef_token_uit(project_name=PROJECT, naam=DEV, tokennaam="cli", dagen=9999, door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="hoogstens"):
+        await issue_token(project_name=PROJECT, name=DEV, token_name="cli", days=9999, by=DEV)
 
 
 async def test_een_token_van_nul_dagen_bestaat_niet(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een dag"):
-        await geef_token_uit(project_name=PROJECT, naam=DEV, tokennaam="cli", dagen=0, door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="minstens een dag"):
+        await issue_token(project_name=PROJECT, name=DEV, token_name="cli", days=0, by=DEV)
 
 
 async def test_een_tokennaam_met_een_rare_letter_wordt_geweigerd(store) -> None:
     """De naam komt op het scherm en in het logboek terecht, dus geen vrije tekst."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="korte naam"):
-        await geef_token_uit(project_name=PROJECT, naam=DEV, tokennaam="cli/<script>", dagen=30, door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="korte naam"):
+        await issue_token(project_name=PROJECT, name=DEV, token_name="cli/<script>", days=30, by=DEV)
 
 
 async def test_twee_tokens_met_dezelfde_naam_kan_niet(store) -> None:
     """Anders is er geen manier om er een van de twee in te trekken."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="al een token"):
-        await geef_token_uit(project_name=PROJECT, naam=BEHEERDER, tokennaam="cli", dagen=30, door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="al een token"):
+        await issue_token(project_name=PROJECT, name=BEHEERDER, token_name="cli", days=30, by=BEHEERDER)
 
 
 async def test_intrekken_haalt_het_token_uit_het_bestand(store) -> None:
-    await trek_token_in(project_name=PROJECT, naam=BEHEERDER, tokennaam="cli", door=BEHEERDER)
+    await revoke_token(project_name=PROJECT, name=BEHEERDER, token_name="cli", by=BEHEERDER)
 
-    assert _lid(store, BEHEERDER)["tokens"] == []
+    assert _member(store, BEHEERDER)["tokens"] == []
 
 
 async def test_een_beheerder_trekt_ook_het_token_van_een_mens_in(store) -> None:
     """Offboarding moet kunnen zonder op die persoon te wachten."""
     nep = mod.get_project_store()
-    await trek_token_in(project_name=PROJECT, naam=BEHEERDER, tokennaam="cli", door=BEHEERDER)
+    await revoke_token(project_name=PROJECT, name=BEHEERDER, token_name="cli", by=BEHEERDER)
     assert nep.mutate.await_count == 1
 
 
 async def test_een_ontwikkelaar_trekt_andermans_token_niet_in(store) -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="beheerder"):
-        await trek_token_in(project_name=PROJECT, naam=BEHEERDER, tokennaam="cli", door=DEV)
+    with pytest.raises(TokenRequestRefusedError, match="beheerder"):
+        await revoke_token(project_name=PROJECT, name=BEHEERDER, token_name="cli", by=DEV)
 
 
 async def test_intrekken_bij_een_lid_dat_niet_bestaat_is_een_stille_no_op(store) -> None:
-    """De beheerder is zelf lid (de grens die ``_eis_lid`` toetst); het DOEL van deze
+    """De beheerder is zelf lid (de grens die ``_require_member`` toetst); het DOEL van deze
     intrekking bestaat niet meer, en dat geeft geen fout, alleen geen wijziging."""
     nep = mod.get_project_store()
-    await trek_token_in(project_name=PROJECT, naam="vertrokken-collega", tokennaam="cli", door=BEHEERDER)
+    await revoke_token(project_name=PROJECT, name="vertrokken-collega", token_name="cli", by=BEHEERDER)
 
     assert nep.mutate.await_count == 1
     assert len(store["users"]) == 3
@@ -313,12 +311,12 @@ async def test_intrekken_bij_een_lid_dat_niet_bestaat_is_een_stille_no_op(store)
 
 
 async def test_intrekken_van_een_tokennaam_die_niet_bestaat_is_een_stille_no_op(store) -> None:
-    voor = copy.deepcopy(_lid(store, BEHEERDER)["tokens"])
+    voor = copy.deepcopy(_member(store, BEHEERDER)["tokens"])
     nep = mod.get_project_store()
 
-    await trek_token_in(project_name=PROJECT, naam=BEHEERDER, tokennaam="bestaat-niet", door=BEHEERDER)
+    await revoke_token(project_name=PROJECT, name=BEHEERDER, token_name="bestaat-niet", by=BEHEERDER)
 
-    assert _lid(store, BEHEERDER)["tokens"] == voor
+    assert _member(store, BEHEERDER)["tokens"] == voor
     assert nep.laatste_change_resultaat is None
 
 
@@ -331,16 +329,16 @@ async def test_een_niet_lid_trekt_ook_zijn_eigen_token_hier_niet_in(store) -> No
     """
     vreemde = "vreemde@rijksoverheid.nl"
     nep = mod.get_project_store()
-    with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        await trek_token_in(project_name=PROJECT, naam=vreemde, tokennaam="x", door=vreemde)
+    with pytest.raises(TokenRequestRefusedError, match="geen lid"):
+        await revoke_token(project_name=PROJECT, name=vreemde, token_name="x", by=vreemde)
 
     assert nep.mutate.await_count == 0
 
 
 async def test_een_onbestaand_project_weigert_net_zo(store) -> None:
     """Zelfde melding als een bestaand project waar je geen lid van bent: geen orakel."""
-    with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        await trek_token_in(project_name="bestaat-niet", naam=BEHEERDER, tokennaam="cli", door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="geen lid"):
+        await revoke_token(project_name="bestaat-niet", name=BEHEERDER, token_name="cli", by=BEHEERDER)
 
 
 async def test_een_beheerder_die_andermans_token_roteert_maakt_het_niet_kwijt(store) -> None:
@@ -353,10 +351,10 @@ async def test_een_beheerder_die_andermans_token_roteert_maakt_het_niet_kwijt(st
     store["users"][1]["tokens"] = [laptop]
     nep = mod.get_project_store()
 
-    with pytest.raises(TokenAanvraagGeweigerd, match="alleen een token voor jezelf"):
-        await roteer_token(project_name=PROJECT, naam=DEV, tokennaam="laptop", dagen=30, door=BEHEERDER)
+    with pytest.raises(TokenRequestRefusedError, match="alleen een token voor jezelf"):
+        await rotate_token(project_name=PROJECT, name=DEV, token_name="laptop", days=30, by=BEHEERDER)
 
-    assert _lid(store, DEV)["tokens"] == [laptop]
+    assert _member(store, DEV)["tokens"] == [laptop]
     assert nep.mutate.await_count == 0
 
 
@@ -365,24 +363,24 @@ async def test_een_mens_roteert_zijn_eigen_token_en_houdt_de_naam(store) -> None
     oud = {"name": "laptop", "expires": VERVALT, "hash": "c" * 64}
     store["users"][1]["tokens"] = [oud]
 
-    waarde = await roteer_token(project_name=PROJECT, naam=DEV, tokennaam="laptop", dagen=30, door=DEV)
+    waarde = await rotate_token(project_name=PROJECT, name=DEV, token_name="laptop", days=30, by=DEV)
 
-    tokens = _lid(store, DEV)["tokens"]
+    tokens = _member(store, DEV)["tokens"]
     assert [t["name"] for t in tokens] == ["laptop"]
-    assert tokens[0]["hash"] == hash_van(waarde)
+    assert tokens[0]["hash"] == hash_of(waarde)
     assert tokens[0]["hash"] != oud["hash"]
 
 
 async def test_een_beheerder_roteert_het_token_van_een_service_account(store) -> None:
     """Uitgeven voor een service account mag een beheerder wel, dus de rotatie slaagt."""
     oud = {"name": "pijplijn", "expires": VERVALT, "hash": "d" * 64}
-    _lid(store, "bouwstraat")["tokens"] = [oud]
+    _member(store, "bouwstraat")["tokens"] = [oud]
 
-    waarde = await roteer_token(project_name=PROJECT, naam="bouwstraat", tokennaam="pijplijn", dagen=30, door=BEHEERDER)
+    waarde = await rotate_token(project_name=PROJECT, name="bouwstraat", token_name="pijplijn", days=30, by=BEHEERDER)
 
-    tokens = _lid(store, "bouwstraat")["tokens"]
+    tokens = _member(store, "bouwstraat")["tokens"]
     assert [t["name"] for t in tokens] == ["pijplijn"]
-    assert tokens[0]["hash"] == hash_van(waarde)
+    assert tokens[0]["hash"] == hash_of(waarde)
 
 
 # --- overzicht -------------------------------------------------------------
@@ -390,7 +388,7 @@ async def test_een_beheerder_roteert_het_token_van_een_service_account(store) ->
 
 async def test_het_overzicht_draagt_geen_hashes(store) -> None:
     """Wie een hash heeft kan een geraden token offline toetsen."""
-    overzicht = leden_overzicht(PROJECT)
+    overzicht = members_overview(PROJECT)
 
     assert [lid["naam"] for lid in overzicht] == [BEHEERDER, DEV, "bouwstraat"]
     assert "hash" not in str(overzicht)

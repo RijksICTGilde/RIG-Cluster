@@ -24,7 +24,7 @@ This downloads the Chromium binary that E2E tests use. Without it, any `@pytest.
 ## `PROJECT_REPO_PASSWORD` (for the wizard E2E tests)
 
 De wizardtests laten de app een projectbestand schrijven, en
-`generate_self_service_project_yaml` (`opi/utils/project_utils.py`) weigert met een HTTP 500
+`generate_self_service_project_yaml` (`opi/services/project_utils.py`) weigert met een HTTP 500
 zolang `PROJECT_REPO_PASSWORD` niet gezet is. De e2e-testserver zet die instelling zelf
 (`tests/e2e/testserver.py`), dus een kale pytest-run werkt:
 

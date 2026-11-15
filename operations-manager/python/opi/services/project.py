@@ -1,38 +1,27 @@
-"""Project -- one generic entry point to read/query/mutate a project dict.
+"""Project: the one generic entry point to read, query and mutate a project dict.
 
-Rationale (RC-5): the project file is read ~110 different ways today -- hand-rolled
-``for x in components: if x.get("name") == n`` loops, ``next(iter(dict))`` key
-extractions, three competing path engines. Project consolidates the
-*read/locate/mutate* side into a single generic entry point, the counterpart to
-``project_store`` (the single entry point for *persisting* the file).
+The counterpart to ``project_store``, which is the one entry point for persisting the
+file. Two kinds of method live here, both generic: path and reference access
+(``get``/``set``/``delete``/``find`` over any path or collection), and service-generic
+access (``service_config(name)``, ``service_config_model(name)``: "give me X of service
+Y", parameterised by service NAME).
 
-Scope (settled with the reviewer): this is the one entry point and the uniform way
-we access project-file data. Two kinds of method live here, both generic:
+A method hardcoded to one service (a ``get_keycloak_config()``) does NOT belong here, and
+Project holds no service meaning: ``service_config_model`` locates the raw config
+generically and DELEGATES validation to that service's provider object.
 
-* **Path / reference access** -- ``get``/``set``/``delete``/``find`` over any path
-  or collection.
-* **Service-generic access** -- ``service_config(name)`` / ``service_config_model(name)``
-  etc.: "give me X of service Y", parameterised by service *name*. This is wanted.
+Two invariants:
 
-What does NOT belong here is a method hardcoded to one specific service (a
-``get_keycloak_config()``). And Project holds no service *meaning*: methods like
-``service_config_model`` locate the raw config generically and **delegate**
-validation to that service's provider object (where the meaning lives).
+* **The dict stays the source of truth.** Project wraps the dict by reference and mutates
+  it in place through the order-preserving path engine, so ruamel ``CommentedMap`` and
+  ``CommentedSeq`` order and comments survive. Persist through ``project_store``; never
+  round-trip the whole file through models.
+* **Look up by stable identifiers only** (``name``, ``reference``, ``cluster``), never by
+  generated values (realm names, passwords, generation counters).
 
-Design invariants:
-
-* **The dict stays the source of truth.** Project wraps the dict by reference
-  and mutates it in place through the order-preserving path engine, so ruamel
-  ``CommentedMap``/``CommentedSeq`` order and comments survive. Persist via
-  ``project_store``; never round-trip the whole file through models.
-* **Look up by stable identifiers only** -- ``name`` / ``reference`` / ``cluster`` --
-  never by generated values (realm names, passwords, generation counters).
-
-It wraps the existing path engine (``opi/forms/editables/path.py`` +
-``service_path.py``), which already does field-match (``{F=V}``), mixed string|dict
-service lists (``{K}``), and order-preserving find-or-create. That engine is
-dependency-light (no forms/services imports), so wrapping it here creates no import
-cycle; a later cleanup may relocate it out of ``forms/``.
+It wraps the path engine in ``opi/forms/editables/path.py`` and ``service_path.py``, which
+already does field-match (``{F=V}``), mixed string-or-dict service lists (``{K}``) and
+order-preserving find-or-create.
 """
 
 from __future__ import annotations
@@ -73,8 +62,7 @@ class Project:
         """The wrapped dict (the source of truth), for persistence."""
         return self._data
 
-    # --- generic path access -----------------------------------------------------
-    def get(self, path: str, default: Any = None) -> Any:
+    def get(self, path: str, default: Any = None) -> Any:  # noqa: ANN401  # a project-file value
         """Read a value by path, e.g. ``components{name=api}/ports/inbound[0]`` or
         ``services/keycloak/config/template``. Returns ``default`` if absent.
 
@@ -89,7 +77,7 @@ class Project:
         """Whether a path resolves to a present (truthy) value."""
         return smart_path_exists(self._data, path)
 
-    def set(self, path: str, value: Any) -> Project:
+    def set(self, path: str, value: Any) -> Project:  # noqa: ANN401  # a project-file value
         """Set a value by path, creating intermediates and preserving list order.
         Chainable."""
         smart_set_value(self._data, path, value)
@@ -99,11 +87,10 @@ class Project:
         """Delete the value/key at a path (no-op if absent)."""
         smart_delete_value(self._data, path)
 
-    # --- reference-aware record lookup -------------------------------------------
     # Programmatic find-by-identifier over a list of records. The path syntax
     # `{F=V}` matches a single field; these support multiple fields and "find all".
     @staticmethod
-    def locate(items: list[Any], **by: Any) -> dict[str, Any] | None:
+    def locate(items: list[Any], **by: Any) -> dict[str, Any] | None:  # noqa: ANN401  # a project-file value
         """First dict in ``items`` whose fields equal all of ``by``, or None. Look
         up by stable identifiers only. E.g. ``locate(deployment["components"],
         reference="frontend")``."""
@@ -113,21 +100,20 @@ class Project:
         return None
 
     @staticmethod
-    def locate_all(items: list[Any], **by: Any) -> list[dict[str, Any]]:
+    def locate_all(items: list[Any], **by: Any) -> list[dict[str, Any]]:  # noqa: ANN401  # a project-file value
         """All dicts in ``items`` matching ``by`` (order preserved)."""
         return [item for item in items or [] if isinstance(item, dict) and all(item.get(k) == v for k, v in by.items())]
 
-    def find(self, collection: str, **by: Any) -> dict[str, Any] | None:
+    def find(self, collection: str, **by: Any) -> dict[str, Any] | None:  # noqa: ANN401  # a project-file value
         """First record in a top-level collection (``components``, ``deployments``,
         ``users``, ``repositories``, ...) matching ``by`` -- by stable identifier
         (``name``/``reference``), never a generated value."""
         return self.locate(self._data.get(collection) or [], **by)
 
-    def find_all(self, collection: str, **by: Any) -> list[dict[str, Any]]:
+    def find_all(self, collection: str, **by: Any) -> list[dict[str, Any]]:  # noqa: ANN401  # a project-file value
         """All records in a top-level collection matching ``by`` (order preserved)."""
         return self.locate_all(self._data.get(collection) or [], **by)
 
-    # --- service-generic access ("give me X of service Y", by name) --------------
     # Generic over ALL services (name is a parameter). No service is special-cased.
     def service_entry(self, name: str) -> dict[str, Any] | str | None:
         """The raw services-list entry for ``name`` (a bare string, a
@@ -142,7 +128,7 @@ class Project:
         """Whether the project declares the service at all (string or dict form)."""
         return self.service_entry(name) is not None
 
-    def service_config(self, name: str) -> Any:
+    def service_config(self, name: str) -> Any:  # noqa: ANN401  # a project-file value
         """The raw config of a project-level service (dict/list), or None if the
         service is absent or has no config block."""
         return smart_get_value(self._data, f"services/{name}/config")
@@ -166,18 +152,15 @@ class Project:
             return None
         return get_service(service_type).validate_config(self.service_config(name))
 
-    # --- typed projection --------------------------------------------------------
     def get_summary(self, filename: str) -> ProjectSummary | None:
         """Lightweight typed projection of this project (name, members, api-key).
 
-        This is the aggregate root producing its edge DTO: consumers that only need
-        the summary fields (the store's cache index, API responses) call this instead
-        of a separate parallel model. Returns None when the project lacks a name.
+        Returns None when the project lacks a name.
 
-        De api-key komt terug ZOALS OPGESLAGEN (dus mogelijk AGE-versleuteld); het
-        ontsleutelen is een cryptozorg die bij de aanroeper blijft (ProjectService). Vanaf
-        schemaversie 2.12 staat hij er niet meer en is het veld None: de sleutel is dan een
-        token van het service account ``project-api``.
+        The api-key comes back AS STORED, so possibly AGE-encrypted: decrypting it stays
+        with the caller (ProjectService). From schema version 2.12 on it is absent and the
+        field is None, because the key is then a token of the ``project-api`` service
+        account.
         """
         # Lazy import avoids the project <-> project_service cycle.
         from opi.services.project_service import ProjectSummary
@@ -188,7 +171,7 @@ class Project:
         if not name:
             return None
         users_data = self._data.get("users") or []
-        users = [lid for lid in (lid_uit(entry) for entry in users_data) if lid is not None]
+        users = [member for member in (member_from(entry) for entry in users_data) if member is not None]
         return ProjectSummary(
             name=str(name),
             api_key=str(api_key) if api_key else None,
@@ -198,14 +181,13 @@ class Project:
         )
 
 
-def lid_uit(entry: Any) -> ProjectUser | None:
-    """Een lid uit de ruwe lijst, of None als het er geen is.
+def member_from(entry: Any) -> ProjectUser | None:  # noqa: ANN401  # a project-file value
+    """One member out of the raw list, or None when the entry is not one.
 
-    Een lid dat niet klopt wordt overgeslagen en niet opgeworpen: een halve regel in
-    ``users`` zou anders het HELE project uit de cache houden, en daarmee ook zijn API
-    onbereikbaar maken.
+    A member that does not parse is skipped and not raised: half a line in ``users`` would
+    otherwise keep the WHOLE project out of the cache, and its API unreachable with it.
     """
-    # Lazy import, zelfde cyclusreden als in get_summary.
+    # Lazy import, same cycle reason as in get_summary.
     from opi.services.project_service import ProjectUser
 
     if not isinstance(entry, dict):

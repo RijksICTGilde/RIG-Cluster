@@ -1,4 +1,4 @@
-"""Resolve cross-domain rules to NetworkPolicy peer selectors (RC-15, pure function).
+"""Resolve cross-domain rules to NetworkPolicy peer selectors (pure function).
 
 ``resolve_rules`` turns direction-independent ``MergedRule``s into ``ResolvedRule``s that
 name a namespace and a pod selector. ``lookup_project`` is injected (in production
@@ -6,10 +6,10 @@ name a namespace and a pod selector. ``lookup_project`` is injected (in producti
 stays unit-testable. Generation must never fail on a broken reference: every unresolvable
 rule is logged and skipped, never raised.
 
-A peer project this instance does not know is NOT such a broken reference (RC-42). The
-service is called cross-DOMAIN: the other side may be managed elsewhere, or may simply not
-exist yet. Such a rule still produces its policy, on the convention that a project's
-namespace is its own name -- see ``_conventional_peer``.
+A peer project this instance does not know is NOT such a broken reference. The service is
+called cross-DOMAIN: the other side may be managed elsewhere, or may simply not exist yet.
+Such a rule still produces its policy, on the convention that a project's namespace is its
+own name -- see ``_conventional_peer``.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.services.project import Project
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
@@ -44,22 +45,15 @@ class PeerSelector:
 class ResolvedRule:
     """A rule ready to render: my component may talk to/from ``peer`` on ``port``.
 
-    ``peer`` is None for an OPEN inbound rule (RC-142): the port is opened to every source,
-    so there is no selector to build. Only an inbound rule whose peer project is the
-    wildcard (``from: {project: "*"}``) can produce this; a peer that could not be resolved
-    is skipped, never turned into None.
+    ``peer`` is None for an OPEN inbound rule: the port is opened to every source, so there
+    is no selector to build. Only an inbound rule whose peer project is the wildcard
+    (``from: {project: "*"}``) can produce this; a peer that could not be resolved is
+    skipped, never turned into None.
     """
 
     local_component: str
     peer: PeerSelector | None
     port: int
-
-
-def _find_deployment(project_data: dict, deployment_name: str) -> dict | None:
-    for deployment in project_data.get("deployments", []) or []:
-        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-            return deployment
-    return None
 
 
 def _component_in_deployment(deployment: dict, component_name: str) -> bool:
@@ -89,9 +83,9 @@ def _selector(cluster: str, rule: MergedRule, namespace: str) -> PeerSelector:
     A wildcard rule never reaches here: it is turned into a peerless ``ResolvedRule`` before
     resolution starts, which is what these three narrowings record.
     """
-    assert rule.peer_deployment is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
-    assert rule.peer_component is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
-    assert rule.peer_project is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
+    assert rule.peer_deployment is not None  # noqa: S101  # type narrowing, a wildcard rule never reaches here
+    assert rule.peer_component is not None  # noqa: S101  # type narrowing, a wildcard rule never reaches here
+    assert rule.peer_project is not None  # noqa: S101  # type narrowing, a wildcard rule never reaches here
     return PeerSelector(
         namespace=get_prefixed_namespace(cluster, namespace),
         pod_labels={
@@ -102,7 +96,7 @@ def _selector(cluster: str, rule: MergedRule, namespace: str) -> PeerSelector:
 
 
 def _conventional_peer(cluster: str, rule: MergedRule) -> PeerSelector:
-    """The peer selector for a project this instance cannot read (RC-42).
+    """The peer selector for a project this instance cannot read.
 
     Naming a peer is not granting it anything: a NetworkPolicy peer only says which pods MAY
     talk, and the receiving side decides with its own policy whether it lets that in. So a
@@ -135,7 +129,7 @@ def resolve_rules(
     convention (``_conventional_peer``). The result is deduplicated and sorted so the render
     is stable.
 
-    An OPEN rule (RC-142) resolves to a rule with no peer: there is nothing to look up, and
+    An OPEN rule resolves to a rule with no peer: there is nothing to look up, and
     it can never be skipped for a reference that does not exist.
 
     A rule may name the resolving project itself. The tenant baseline isolates per
@@ -146,7 +140,7 @@ def resolve_rules(
     resolved: dict[tuple, ResolvedRule] = {}
     for rule in rules:
         if rule.is_open:
-            # Nothing to look up: an open rule names no peer on purpose (RC-142).
+            # Nothing to look up: an open rule names no peer on purpose.
             entry = ResolvedRule(local_component=rule.local_component, peer=None, port=rule.port)
             resolved.setdefault(_key(entry), entry)
             continue
@@ -165,7 +159,7 @@ def resolve_rules(
             continue
         assert rule.peer_deployment is not None  # noqa: S101  # to_merged_rule dropped the open ones
         assert rule.peer_component is not None  # noqa: S101  # required on a complete rule
-        deployment = _find_deployment(project_data, rule.peer_deployment)
+        deployment = Project(project_data).find("deployments", name=rule.peer_deployment)
         if deployment is None:
             logger.warning(
                 "cross-domain rule '%s': deployment '%s' not found in project '%s', skipped",

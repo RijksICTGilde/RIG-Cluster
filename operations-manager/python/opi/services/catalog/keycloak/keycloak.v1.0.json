@@ -1,7 +1,7 @@
 {
   "$defs": {
     "AccountLink": {
-      "description": "De standen die iets DOEN.\n\nHier stond ook ``VERIFY``, en die deed niets: ``keycloak_yaml_handler`` bouwt alleen\nvoor ``automatic`` en ``confirm`` een eigen first-broker-login-flow en laat de rest op\nKeycloaks eigen flow staan - precies wat je krijgt als je niets kiest. Wie ``verify``\nkoos kreeg dus dezelfde uitkomst als wie het veld leeg liet, terwijl de keuzelijst\ndeed alsof er een verschil was.",
+      "description": "The settings that DO something.\n\n``keycloak_yaml_handler`` builds a first-broker-login flow of its own for ``automatic``\nand ``confirm`` only; every other value leaves Keycloak's own flow in place, which is\nexactly what choosing nothing gives.",
       "enum": [
         "automatic",
         "confirm"
@@ -49,7 +49,7 @@
     },
     "KeycloakRealm": {
       "additionalProperties": true,
-      "description": "Per-realm admin connection (OPI-managed, one per cluster).\n\nRelocated verbatim from the old project-level ``config.keycloak`` (RC-5 B). Kept\nas-is -- matched by ``realm`` (deterministic ``{project}-{cluster}``) as before.\n``extra=\"allow\"`` tolerates fields written over time (e.g. ``service_client_secret``);\npassword is stored AGE-encrypted or ``plain:``-prefixed, so it's just a string here.",
+      "description": "Per-realm admin connection (OPI-managed, one per cluster).\n\nMatched by ``realm`` (deterministic ``{project}-{cluster}``). ``extra=\"allow\"`` tolerates\nfields written over time (e.g. ``service_client_secret``).",
       "properties": {
         "host": {
           "description": "Keycloak base URL this realm lives on. Written by the platform.",
@@ -57,7 +57,8 @@
           "type": "string"
         },
         "password": {
-          "description": "That account's password, AGE-encrypted or 'plain:'-prefixed.",
+          "description": "That account's password, AGE-encrypted.",
+          "pattern": "^\\s*(-----BEGIN AGE ENCRYPTED FILE-----\\s[A-Za-z0-9+/=\\s]+-----END AGE ENCRYPTED FILE-----|base64\\+age:[A-Za-z0-9+/=]+)\\s*$",
           "title": "Password",
           "type": "string"
         },
@@ -69,6 +70,7 @@
         "totp_secret": {
           "anyOf": [
             {
+              "pattern": "^\\s*(-----BEGIN AGE ENCRYPTED FILE-----\\s[A-Za-z0-9+/=\\s]+-----END AGE ENCRYPTED FILE-----|base64\\+age:[A-Za-z0-9+/=]+)\\s*$",
               "type": "string"
             },
             {
@@ -76,7 +78,7 @@
             }
           ],
           "default": null,
-          "description": "Shared TOTP seed for the realm-admin account, stored like the password. Only present when the cluster provisions admin OTP.",
+          "description": "Shared TOTP seed for the realm-admin account, stored like the password: AGE-encrypted. Only present when the cluster provisions admin OTP.",
           "title": "Totp Secret"
         },
         "username": {
@@ -274,7 +276,7 @@
     },
     "template": {
       "default": "sso-only",
-      "description": "Realm template the realm is created from: 'sso-only' is single sign-on without extras, 'sso-support' adds a login screen where a local account can sign in, and 'sso-support-otp' also requires an OTP from such a local account.",
+      "description": "Realm template the realm is created from: 'sso-only' is single sign-on without extras, 'sso-support' adds a login screen where a local account can sign in, 'sso-support-otp' also requires an OTP from such a local account, and 'local-only' has no single sign-on: only local accounts, supplied by the project or created through an invite.",
       "title": "Template",
       "type": "string"
     },

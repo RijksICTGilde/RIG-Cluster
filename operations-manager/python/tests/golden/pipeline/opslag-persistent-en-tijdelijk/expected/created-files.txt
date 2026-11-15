@@ -1,0 +1,6 @@
+web-deployment.yaml
+web-service.yaml
+web-ingress.yaml
+web-data-pvc.yaml
+web-platform-secret.yaml
+productie-tenant-baseline-network-policy.yaml

@@ -14,6 +14,7 @@ These two calls must pass the resolved scope via `deployment_names=`.
 import ast
 import inspect
 
+from opi.manager.project.rollout import DeploymentRollout
 from opi.manager.project_manager import ProjectManager
 
 _MUST_BE_SCOPED = ("_process_application_manifests", "create_argocd_resources")
@@ -45,17 +46,17 @@ def test_manifest_and_argocd_generation_receive_deployment_names() -> None:
 def test_de_wacht_op_argocd_staat_op_dezelfde_scope() -> None:
     """Wachten op de health van ELKE deployment maakte een gerichte ronde weer projectbreed.
 
-    De deployments waarop ``process_project_from_git`` wacht komen uit
+    De deployments waarop de uitrol wacht komen uit
     ``get_deployments(cluster_filter=True, deployment_names=targets)``. Zonder die tweede
     sleutel wacht een wijziging aan een deployment op de pods van alle andere.
     """
-    source = inspect.getsource(ProjectManager.process_project_from_git)
+    source = inspect.getsource(DeploymentRollout.run)
     module = ast.parse(source.strip())
     calls = [
         node
         for node in ast.walk(module)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_deployments"
     ]
-    assert calls, "expected process_project_from_git to call get_deployments()"
+    assert calls, "expected the rollout to call get_deployments()"
     gescoopt = [call for call in calls if "deployment_names" in {kw.arg for kw in call.keywords}]
-    assert gescoopt, "get_deployments() in process_project_from_git must receive deployment_names=<scope>"
+    assert gescoopt, "get_deployments() in the rollout must receive deployment_names=<scope>"

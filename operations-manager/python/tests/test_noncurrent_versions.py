@@ -13,10 +13,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.connectors.minio_mc import NONCURRENT_VERSION_RULE_ID, MinioConnector, MinioExecutionError
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.visualizers.bridge import editable_to_form_field
 from opi.manager.minio_manager import MinioManager
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.minio.actions import minio_storage_actions
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.catalog.seaweedfs.actions import seaweedfs_storage_actions
@@ -28,6 +26,8 @@ from opi.services.catalog.shared.noncurrent_versions import (
     project_max_noncurrent_versions,
     project_noncurrent_expire_days,
 )
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 

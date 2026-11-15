@@ -2,9 +2,11 @@
 
 from enum import StrEnum
 
-from opi.core.project_environment import Omgeving
-from opi.services.catalog.approval import ApprovalStatus
 from pydantic import BaseModel, ConfigDict, Field
+
+from opi.core.errors import ErrorCategory
+from opi.services.catalog.approval import ApprovalStatus
+from opi.services.project_environment import Omgeving
 
 
 class DeploymentStatus(StrEnum):
@@ -18,8 +20,8 @@ class DeploymentStatus(StrEnum):
 
     ``Disabled`` is ours too, and it is not an Argo verdict at all: a deployment
     whose components are all switched off runs zero replicas, which Argo reports as
-    Healthy because nothing is failing. Reporting that as Healthy is untrue, so the
-    intent recorded in the project file replaces it -- and only it (RC-31).
+    Healthy because nothing is failing. Reporting that as Healthy is untrue, so the intent
+    recorded in the project file replaces it, and replaces only it.
     """
 
     Healthy = "Healthy"
@@ -34,43 +36,6 @@ class DeploymentStatus(StrEnum):
     Unknown = "Unknown"  # status backend itself reports Unknown
 
 
-class ErrorCategory(StrEnum):
-    """Programmatic categorization of a cluster error. Use ``message`` for the raw text.
-
-    Categories are intentionally broader than literal Kubernetes reasons (e.g.
-    ``ImagePull`` covers ``ImagePullBackOff``, ``ErrImagePull``, manifest-unknown
-    pulls, etc.) so app-level categories can be added later without breaking
-    consumers tied to specific K8s state names.
-    """
-
-    ImagePull = "ImagePull"
-    CrashLoop = "CrashLoop"
-    # The destination the caller named could not be used: it did not resolve, refused
-    # the connection, or rejected the credentials. Not a cluster state at all -- it is
-    # what makes "your input" separable from "our platform" on a failed restore, so a
-    # pipeline can stop retrying a typo (RC-82). Only ever set when the caller supplied
-    # the destination; a restore into the project's own service can never be this.
-    InvalidTarget = "InvalidTarget"
-    # What the caller sent cannot be acted on: a name that does not exist, a service that
-    # needs a project-level decision first, a value the schema rejects. Retrying it changes
-    # nothing, and that is the point of separating it out (gemeld door zad-cli, punt 26):
-    # without a category a client must treat every failure as unattributable, so a plain
-    # input mistake came out of the CLI as "could not be attributed" instead of "your call
-    # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
-    # destination the caller supplied.
-    InvalidInput = "InvalidInput"
-    # Het platform zelf struikelde: een database die niet antwoordt, een connector die
-    # afbreekt, een sjabloon dat niet rendert. Bewust apart van ``Unknown``, want dat zegt
-    # "niet toe te wijzen" terwijl dit juist wel is toegewezen -- aan ons. Voor de aanroeper
-    # is dat het verschil tussen "corrigeer je verzoek" en "wacht even en probeer opnieuw".
-    InternalError = "InternalError"
-    OutOfMemory = "OutOfMemory"
-    HealthCheck = "HealthCheck"
-    SyncFailed = "SyncFailed"
-    ComparisonError = "ComparisonError"
-    Unknown = "Unknown"
-
-
 #: ``error_type`` values that mean "the request itself was wrong". The field is a free
 #: string written at a couple of dozen call sites, so this is the translation into the
 #: closed set a client can switch on. Everything not in here stays ``Unknown``: a category
@@ -78,13 +43,10 @@ class ErrorCategory(StrEnum):
 #: Deliberately absent: ``conflict`` (two writers raced, which is nobody's mistake and may
 #: well succeed on a retry), ``processing_failed`` (the rollout itself did not come up
 #: healthy, which can be the user's image or the cluster; ``component_failures`` carries
-#: which one, so a category here would be a guess) and ``internal_error``.
-#:
-#: ``internal_error`` is not a caller mistake, so it does not belong in this set. There is
-#: now an ``InternalError`` member that names it -- but it is used by the HTTP error envelope
-#: (:class:`ProblemDetail`) only. Moving a task's ``internal_error`` onto it would change an
-#: ``error_category`` value that clients already switch on, and that is an API change of its
-#: own, not a side effect of rewriting error pages.
+#: which one, so a category here would be a guess) and ``internal_error``, which is not a
+#: caller mistake. The ``InternalError`` member that names it belongs to the HTTP error
+#: envelope (:class:`ProblemDetail`); putting a task's ``internal_error`` on it would change
+#: an ``error_category`` value clients already switch on, which is an API change of its own.
 _CALLER_ERROR_TYPES: frozenset[str] = frozenset(
     {
         "already_exists",
@@ -122,34 +84,30 @@ def error_category_for(error_type: str | None) -> ErrorCategory:
 
 
 def category_for_status(status_code: int) -> ErrorCategory:
-    """De categorie van een gefaald HTTP-antwoord, afgeleid uit de status.
+    """The category of a failed HTTP answer, derived from its status.
 
-    Alleen 5xx krijgt de envelop, en 5xx betekent precies een ding voor de aanroeper:
-    het lag niet aan zijn verzoek en opnieuw proberen kan helpen. Alles daarbuiten is
-    geen belofte die we kunnen waarmaken, dus ``Unknown``.
+    Only a 5xx gets the envelope, and a 5xx means exactly one thing to the caller: it was not
+    their request and a retry may help. Anything outside that is a promise we cannot keep, so
+    ``Unknown``.
     """
     return ErrorCategory.InternalError if status_code >= 500 else ErrorCategory.Unknown
 
 
-#: Drie keuzes in :class:`ProblemDetail` die het vermelden waard zijn, en die in de
-#: veldbeschrijvingen niet passen omdat ze in het OPENAPI-document terechtkomen:
+#: Three things about :class:`ProblemDetail` that do not fit in a field description, because
+#: those land in the OpenAPI document:
 #:
-#: * ``detail`` blijft staan en blijft een gewone zin. Dat is het veld dat elke bestaande
-#:   client vandaag afdrukt (zad-cli voorop) en het is ook het veld waar RFC 7807 de
-#:   menselijke uitleg wil hebben, dus de envelop is een uitbreiding en geen breuk. Wat er
-#:   NIET in staat is de onbewerkte uitzondering: die reisde tot nu toe mee naar buiten en
-#:   nam het interne IP-adres en de databasepoort mee.
-#: * ``reference`` is het kenmerk uit :mod:`opi.core.flow_id`, hetzelfde dat op het scherm
-#:   staat en op elke logregel van dit verzoek. Dat is wat een melding bruikbaar maakt
-#:   zonder iets prijs te geven.
-#: * er is GEEN ``explanation`` naast ``detail``, zoals :class:`StatusError` die wel heeft.
-#:   Daar staat in ``message`` de ruwe clustertekst en in ``explanation`` de uitleg; hier is
-#:   er geen ruwe tekst -- dat is de hele reparatie -- dus zou ``explanation`` een tweede
-#:   kopie van ``detail`` zijn.
+#: * ``detail`` is a plain sentence and never the raw exception. A raw one carried the
+#:   internal IP address and the database port to the outside.
+#: * ``reference`` is the mark from :mod:`opi.core.flow_id`, the same one on the screen and on
+#:   every log line of this request, which is what makes a message usable without giving
+#:   anything away.
+#: * there is NO ``explanation`` beside ``detail``, unlike :class:`StatusError`, which keeps
+#:   the raw cluster text in ``message``. There is no raw text here, so an ``explanation``
+#:   would be a second copy of ``detail``.
 class ProblemDetail(BaseModel):
-    """Wat een gefaald HTTP-antwoord meestuurt: RFC 7807, plus een categorie en een kenmerk.
+    """What a failed HTTP answer carries: RFC 7807, plus a category and a mark.
 
-    Alleen bij een 5xx. Een 4xx houdt het kale ``{"detail": ...}`` dat clients vandaag lezen.
+    Only on a 5xx. A 4xx keeps the bare ``{"detail": ...}`` that clients read today.
     """
 
     type: str = Field(
@@ -192,18 +150,11 @@ class AsyncTaskAcceptedResponse(BaseModel):
 class CreateProjectRequest(BaseModel):
     """Everything needed to create a project from outside the browser.
 
-    **The technical name is not an input.** It is derived from the display name,
-    by the same function the portal uses: initials or the first few characters,
-    plus a random suffix. This request used to require it and to make the display
-    name optional, which had the two fields exactly the wrong way around -- the
-    generated one mandatory, the human one an afterthought that defaulted to a
-    technical string.
-
-    Letting a caller choose the technical name costs more than it looks. The
-    random suffix is what makes the name unique by construction; without it,
-    uniqueness becomes first-come-first-served and short names can be squatted.
-    It also makes the two roads produce differently shaped names, so a name no
-    longer tells you it came from ZAD.
+    **The technical name is not an input.** It is derived from the display name, by the same
+    function the portal uses: initials or the first few characters, plus a random suffix.
+    That suffix is what makes the name unique by construction; letting a caller choose the
+    name would turn uniqueness into first-come-first-served, would let short names be
+    squatted, and would make the two roads produce differently shaped names.
 
     The generated name is in the response, as ``project_name``.
     """
@@ -253,12 +204,11 @@ class CreateProjectAcceptedResponse(BaseModel):
 class ProjectListItem(BaseModel):
     """One project a caller may see, with what they need to act on it.
 
-    Carries the project's API key only when the caller's role in the project is
-    ``admin`` or ``owner``. That is the same gate the project detail page puts in
-    front of the same secret, and the same gate the web UI puts in front of every
-    project mutation -- the key itself knows no roles, so a ``developer`` holding
-    it could do through the API what the UI refuses them. A caller holds a secret
-    after reading this and should treat the response accordingly.
+    Carries the project's API key only when the caller's role in the project is ``admin`` or
+    ``owner``. That is the same gate the project detail page puts in front of the same secret,
+    and the same gate the web UI puts in front of every project mutation: the key itself knows
+    no roles, so a ``developer`` holding it could do through the API what the UI refuses them.
+    A caller holds a secret after reading this and should treat the response accordingly.
     """
 
     name: str = Field(..., description="The technical project name", examples=["mijn-project"])
@@ -321,11 +271,6 @@ class ProjectApiKeyResponse(BaseModel):
         description="SECRET. The project's API key, for the X-API-Key header on every per-project call",
         examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
     )
-
-
-# ---------------------------------------------------------------------------
-# Read-only deployment detail models
-# ---------------------------------------------------------------------------
 
 
 class DeploymentComponentDetail(BaseModel):
@@ -394,28 +339,21 @@ class PendingRolloutResponse(BaseModel):
 
 
 class ApprovalNoticeStatus(StrEnum):
-    """De stand van een goedkeuring die deze deployment nog NIET heeft.
+    """The state of an approval this deployment does NOT have yet.
 
-    Een echte enum en geen kale string, want dit veld is bedoeld om op te vertakken: een
-    pijplijn hoort te falen op een AFGEWEZEN aanvraag en te wachten op een LOPENDE. Op
-    drie woorden vertakken die de spec niet belooft is stil kapotgaan zodra er een vierde
-    bijkomt, dus staat de verzameling nu in ``/openapi.json``.
+    An enum and not a bare string, because this field is meant to be branched on and the
+    whole set therefore belongs in ``/openapi.json``. What each value means for a client:
 
-    Wat elke waarde betekent, en wat een client ermee moet:
+    * ``requested``: the request is open and waiting for an admin. Nothing is wrong, waiting
+      is the right behaviour, and it can take days.
+    * ``denied``: an admin refused the request. This will not come good by itself, so a
+      pipeline belongs to fail here. ``by``, ``date`` and ``message`` carry the verdict.
+    * ``none``: nothing has been requested for this value yet. This is not approved either,
+      so the consequence in ``text`` holds in full, but nobody is waiting on it.
 
-    * ``requested`` -- de aanvraag staat open en wacht op een beheerder. Er is niets mis;
-      wachten of zwijgen is het juiste gedrag. De aanvraag kan dagen lopen.
-    * ``denied`` -- een beheerder heeft de aanvraag afgewezen. Dit gaat vanzelf niet meer
-      goed komen: hier hoort een pijplijn op te falen. ``by``, ``date`` en ``message``
-      dragen het oordeel.
-    * ``none`` -- er staat nog geen aanvraag op naam van deze waarde. Ook dit is niet
-      goedgekeurd, dus het gevolg in ``text`` geldt onverkort, maar er is nog niemand die
-      erop zit te wachten.
-
-    ``approved`` ontbreekt met opzet: deze lijst bevat alleen wat een deployment nog niet
-    heeft, dus wat is goedgekeurd staat er niet in. De leden zijn afgeleid van
-    :class:`ApprovalStatus`, de levenscyclus die in het projectbestand staat, zodat de
-    spelling hier niet los kan raken van de opgeslagen waarde.
+    ``approved`` is deliberately absent: this list holds only what a deployment does not have
+    yet. The members derive from :class:`ApprovalStatus`, the lifecycle in the project file,
+    so the spelling here cannot drift from the stored value.
     """
 
     NONE = ApprovalStatus.NONE
@@ -424,15 +362,14 @@ class ApprovalNoticeStatus(StrEnum):
 
 
 class ApprovalNoticeResponse(BaseModel):
-    """Een goedkeuring die deze deployment nodig heeft en (nog) niet heeft.
+    """An approval this deployment needs and does not have (yet).
 
-    Het tegenhangertje van ``pending_rollout``: dat zegt dat een opgeslagen wijziging nog
-    niet op de cluster staat, dit zegt dat een deployment op een oordeel van een beheerder
-    wacht. Domeinen en subdomeinen zijn op aanvraag, dus een schrijfactie die er een claimt
-    maakt de aanvraag aan en meldt hem hier terug -- anders is "er verschijnt geen ingress"
-    het eerste dat een client ervan merkt.
+    The counterpart of ``pending_rollout``: that one says a saved change is not on the cluster
+    yet, this one says a deployment is waiting on an admin's verdict. Domains and subdomains
+    are on request, so a write that claims one creates the request and reports it back here;
+    without that, "no ingress appears" is the first a client hears of it.
 
-    De lijst is leeg wanneer alles wat de deployment vraagt is goedgekeurd.
+    The list is empty when everything the deployment asks for is approved.
     """
 
     service: str = Field(
@@ -466,8 +403,7 @@ class ApprovalNoticeResponse(BaseModel):
     message: str | None = Field(default=None, description="De toelichting die bij dat oordeel is gegeven.")
 
 
-#: Gedeelde beschrijving, zodat het veld op de leesantwoorden en op de taakantwoorden
-#: hetzelfde belooft.
+#: Shared description, so the field promises the same on a read answer and on a task answer.
 APPROVALS_DESCRIPTION = (
     "Goedkeuringen die deze deployment nog niet heeft. Leeg wanneer alles is goedgekeurd. "
     "Een niet-goedgekeurd domein of subdomein blokkeert de deployment niet: die publiceert "
@@ -477,12 +413,12 @@ APPROVALS_DESCRIPTION = (
 
 
 class RunningSync(BaseModel):
-    """De sync die ArgoCD op dit moment uitvoert, of als laatste uitvoerde zonder af te ronden.
+    """The sync ArgoCD is running right now, or last ran without finishing.
 
-    Dit is ArgoCD's eigen uitrol en NIET ZAD's wachtrij: die staat in
-    ``pending_rollout.rollout_in_progress`` en gaat over taken die nog naar git moeten
-    schrijven. Hier is de commit al in git en past de cluster hem toe. De twee kunnen los van
-    elkaar aanstaan.
+    This is ArgoCD's own rollout and NOT ZAD's queue: that one lives in
+    ``pending_rollout.rollout_in_progress`` and is about tasks that still have to write to
+    git. Here the commit is in git already and the cluster is applying it. The two can be on
+    independently of each other.
     """
 
     phase: str = Field(..., description="ArgoCD's operation phase: Running of Terminating.")
@@ -630,7 +566,7 @@ class DeploymentListResponse(BaseModel):
 
 
 class ClusterDomainOption(BaseModel):
-    """Een keuze voor ``base-domain`` op een deployment."""
+    """One choice for ``base-domain`` on a deployment."""
 
     value: str = Field(
         description=(
@@ -657,7 +593,7 @@ class ClusterDomainOption(BaseModel):
 
 
 class ClusterInfo(BaseModel):
-    """Een cluster waar dit project op kan draaien, met wat het aan domeinen aanbiedt."""
+    """A cluster this project can run on, with the domains it offers."""
 
     name: str = Field(description="Naam van het cluster, zoals in deployments[].cluster.", examples=["odcn-production"])
     manager: bool = Field(description="Of deze OPI-instantie dit cluster beheert.", examples=[True])
@@ -735,9 +671,8 @@ class SubdomainCheckResponse(BaseModel):
 class ClusterListResponse(BaseModel):
     """Response for GET /projects/{project_name}/clusters.
 
-    Bestaat omdat ``base-domain`` een keuzelijst heeft die per cluster verschilt: het
-    OpenAPI-document kan die niet opsommen (dat zou een momentopname van een willekeurig
-    cluster zijn) en verwees daarom naar een endpoint dat er niet was.
+    The choices for ``base-domain`` differ per cluster, which the OpenAPI document cannot
+    enumerate (that would be one arbitrary cluster's snapshot), so it points at this endpoint.
     """
 
     project: str

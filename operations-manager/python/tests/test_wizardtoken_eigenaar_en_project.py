@@ -38,6 +38,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import WizardState
+from opi.utils.age import generate_age_key_pair
 from opi.web import router_approvals, router_detail_edit
 from opi.web.router_detail_edit import _SESSION_EXPIRED
 from opi.web.router_wizard_attachments import stage_attachment
@@ -48,6 +49,10 @@ OTHER_EMAIL = "iemand-anders@example.com"
 PROJECT_NAME = "eigen-project"
 OTHER_PROJECT = "ander-project"
 FLOW_ID = "modal-edit-identity"
+
+#: Every real wizard session owns an AGE key pair from its first step, and the staging store
+#: encrypts an upload with it, so a state built here carries one too.
+_, SESSION_PUBLIC_KEY = generate_age_key_pair()
 
 OPI_ROOT = Path(__file__).resolve().parent.parent / "opi"
 
@@ -74,12 +79,18 @@ def _request(email: str | None = OWNER_EMAIL, token: str | None = None, flow_coo
         }
     )
     if flow_cookie:
-        save_wizard_state(request, WizardState(flow_id=flow_cookie, current_step="attachments"))
+        save_wizard_state(request, _state_with_key(WizardState(flow_id=flow_cookie, current_step="attachments")))
     return request
 
 
+def _state_with_key(state: WizardState) -> WizardState:
+    state.base_data = {"config": {"age-public-key": SESSION_PUBLIC_KEY}}
+    return state
+
+
 def _token_of(owner: str = OWNER_EMAIL, project: str = PROJECT_NAME) -> str:
-    token, _ = init_modal_state_tokenized(FLOW_ID, "identity", ["identity"], project, owner)
+    token, state = init_modal_state_tokenized(FLOW_ID, "identity", ["identity"], project, owner)
+    save_modal_state_by_token(token, _state_with_key(state))
     return token
 
 

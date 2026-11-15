@@ -21,7 +21,7 @@ een overname van de data van een ander project, niet alleen een naamconflict.
 
 ## Twee lagen
 
-`composite_name_collision` in `opi/manager/clone_validation.py` is de enige plek waar de
+`composite_name_collision` in `opi/services/clone_validation.py` is de enige plek waar de
 beslissing valt. De functie roept de echte naamfuncties uit `opi/utils/naming.py` aan in
 plaats van hun formaat te kopiëren, zodat een gewijzigd formaat de guard niet stil kan laten
 afwijken van de naam die hij beschermt.

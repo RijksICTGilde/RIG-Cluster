@@ -1,18 +1,10 @@
-"""
-Project file form model matching actual project YAML structure.
-
-This module defines Pydantic models that directly map to the project
-file YAML structure used in rig-cluster-projects, enabling form-based
-editing of project configurations.
-"""
+"""Pydantic models that map one-to-one onto the project file YAML, for form-based editing."""
 
 from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from opi.core.leden import LidSoort
-from opi.core.project_environment import Omgeving
 from opi.forms.layout import (
     ButtonGroup,
     Column,
@@ -22,6 +14,9 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.schema import FormMeta
+from opi.services.members import MemberKind
+from opi.services.project_environment import Omgeving
+from opi.utils.patterns import PROJECT_NAME_PYDANTIC
 
 
 class DomainHistoryEntry(BaseModel):
@@ -36,8 +31,8 @@ class DomainHistoryEntry(BaseModel):
 class AllowedDomainEntry(BaseModel):
     """A domain approved (or requested) for use in a project.
 
-    Used for ALL non-default domains — both platform and custom.
-    The cluster default domain doesn't need an entry.
+    Used for ALL non-default domains, platform and custom alike. The cluster default domain
+    needs no entry.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -75,10 +70,10 @@ class DomainsModel(BaseModel):
 
 
 class ApiTokenModel(BaseModel):
-    """Een uitgegeven API-token van een lid, zoals het in het projectbestand staat.
+    """An issued API token of a member, as the project file holds it.
 
-    Alleen de hash, nooit de waarde: na uitgifte leest niemand het token meer terug, ook de
-    uitgever niet. Intrekken is dit blok weghalen, en dat is dus een commit met historie.
+    Only the hash, never the value: after issuing, nobody reads the token back, the issuer
+    included. Revoking is removing this block, so it is a commit with history.
     """
 
     name: str = Field(min_length=1, max_length=64)
@@ -87,14 +82,14 @@ class ApiTokenModel(BaseModel):
 
 
 class ProjectUserModel(BaseModel):
-    """Een lid van een project: een mens, of een service account.
+    """A member of a project: a person, or a service account.
 
-    Een service account is geen tweede soort naast de leden maar een lid met een andere
-    soort naam: dezelfde rollen, dezelfde tokens, alleen geen mens erachter. Daardoor is er
-    een lijst die zegt wie bij dit project hoort, in plaats van twee die uit de pas lopen.
+    A service account is not a second kind beside the members but a member with another kind
+    of name: the same roles, the same tokens, only no human behind it. So one list says who
+    belongs to this project, instead of two that drift apart.
     """
 
-    type: LidSoort = Field(default=LidSoort.PERSOON)
+    type: MemberKind = Field(default=MemberKind.PERSON)
 
     email: Annotated[
         str | None,
@@ -106,8 +101,8 @@ class ProjectUserModel(BaseModel):
         ),
     ] = Field(default=None)
 
-    #: Alleen bij een service account, en dan een DNS-label: de naam reist mee in de
-    #: actor en in de git-trailer, dus hij moet overal als een label te schrijven zijn.
+    #: Only on a service account, and then a DNS label: the name travels along in the actor
+    #: and in the git trailer, so it has to be writable as a label everywhere.
     name: str | None = Field(default=None, pattern=r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
 
     roles: Annotated[
@@ -123,14 +118,14 @@ class ProjectUserModel(BaseModel):
     tokens: list[ApiTokenModel] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_naam_past_bij_soort(self) -> ProjectUserModel:
-        """Een mens heeft een e-mailadres, een service account een naam, nooit allebei.
+    def validate_name_matches_kind(self) -> ProjectUserModel:
+        """A person has an email address, a service account a name, never both.
 
-        Een e-mailadres op een service account zou hem als mens laten doorgaan bij elke
-        lezer die alleen naar ``email`` kijkt, en dat is precies de verwarring die
-        :func:`opi.services.project_leden.human_members` moet voorkomen.
+        An email address on a service account would let it pass for a person with every
+        reader that only looks at ``email``, which is the confusion
+        :func:`opi.services.project_members.human_members` exists to prevent.
         """
-        if self.type is LidSoort.SERVICE_ACCOUNT:
+        if self.type is MemberKind.SERVICE_ACCOUNT:
             if not self.name:
                 raise ValueError("Een service account heeft een name nodig")
             if self.email:
@@ -196,14 +191,13 @@ class ResourcesModel(BaseModel):
 class SecurityConfig(BaseModel):
     """Pod-level security context overrides for a component.
 
-    Hidden YAML-only feature: not exposed in the OPI wizard or detail-edit
-    UI. Users opt in by editing the project YAML directly. All three fields
-    are optional; each defaults to 1001 inside the deployment template
-    (preserving the previous hardcoded sandbox behaviour).
+    A hidden YAML-only feature: not in the wizard or the detail-edit UI, so a user opts in by
+    editing the project YAML. All three fields are optional and each defaults to 1001 inside
+    the deployment template.
 
-    Production (OpenShift) deployments IGNORE these overrides because SCC
-    admission injects a random UID per namespace. The template only emits
-    the override when ``cluster`` is ``local`` or ``sandboxed-local``.
+    A production (OpenShift) deployment IGNORES these overrides, because SCC admission injects
+    a random UID per namespace; the template only emits the override when ``cluster`` is
+    ``local`` or ``sandboxed-local``.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -314,14 +308,13 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default=None, alias="user-env-vars")
 
-    # Hidden YAML-only feature — intentionally has no FormMeta so it does not
-    # appear in the wizard / detail-edit UI. Users add it by editing YAML.
+    # A hidden YAML-only feature: no FormMeta, so it stays out of the wizard and the
+    # detail-edit UI and a user adds it by editing the YAML.
     security: SecurityConfig | None = Field(default=None)
 
-    # Hidden YAML-only feature: override the container's entrypoint without
-    # needing a wrap image. Maps directly to K8s `containers[].command`
-    # (a list — no shell parsing). Deployment-level override (see
-    # DeploymentComponentModel.command) wins over this default when both set.
+    # A hidden YAML-only feature: override the container's entrypoint without a wrap image.
+    # Maps straight onto K8s `containers[].command`, a list with no shell parsing. With both
+    # set, the deployment-level override (DeploymentComponentModel.command) wins over this.
     command: list[str] | None = Field(default=None, min_length=1)
 
 
@@ -432,26 +425,16 @@ class DeploymentModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    data_retention_period: Annotated[
-        str | None,
-        FormMeta(
-            label="deployment.data_retention_period",
-            description="deployment.data_retention_period.description",
-            widget="text",
-            placeholder="0h",
-        ),
-    ] = Field(default=None, alias="data-retention-period")
 
-
-#: Regel: features/repository-pad.md; ``$defs/repository/path`` in ``project_v2.json`` draagt hetzelfde
-#: patroon. Zonder lookahead en met ``\z``, want pydantic valideert met de Rust-regex.
+#: The rule: features/repository-pad.md; ``$defs/repository/path`` in ``project_v2.json``
+#: carries the same pattern. Without a lookahead and with ``\z``, because pydantic validates
+#: with the Rust regex engine.
 REPOSITORY_PATH_PATTERN = (
     r"^(?:(?:[^./\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])(?:[^.\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])*)?\.?\z"
 )
 
 
-#: Alleen https: de link wordt in de browser aangeklikt, en http, ssh of git@ leveren daar
-#: niets bruikbaars op.
+#: Only https: the link is clicked in a browser, where http, ssh or git@ gives nothing usable.
 SOURCE_CODE_URL_PATTERN = r'^https://[^\s\u0000"<>]+\z'
 
 SOURCE_CODE_URL_MAX_LENGTH = 500
@@ -557,12 +540,7 @@ class RepositoryModel(BaseModel):
 
 
 class ProjectFileModel(BaseModel):
-    """
-    Complete project file model matching the YAML structure.
-
-    This model represents the full structure of a project file as used
-    in rig-cluster-projects repositories.
-    """
+    """The full structure of a project file, as a ``zad-projects`` repository holds it."""
 
     # Basic info
     name: Annotated[
@@ -575,7 +553,7 @@ class ProjectFileModel(BaseModel):
             section="basic",
             readonly_on_edit=True,  # Project name cannot be changed after creation
         ),
-    ] = Field(min_length=1, pattern=r"^[a-z][a-z0-9-]*$")
+    ] = Field(min_length=1, pattern=PROJECT_NAME_PYDANTIC)
 
     display_name: Annotated[
         str,
@@ -678,32 +656,33 @@ class ProjectFileModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    # Domain restrictions (not editable via forms — managed manually or by admin)
+    # Domain restrictions, not editable through a form: an admin manages them.
     domains: DomainsModel | None = Field(default=None)
 
     model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def validate_admin_user_exists(self) -> ProjectFileModel:
-        """Ensure at least one HUMAN member has admin role.
+        """Ensure at least one HUMAN member has the admin role.
 
-        Een service account meetellen laat een project achter zonder mens die nog een token
-        kan intrekken of een rol kan wijzigen, terwijl zijn eigen token doorloopt.
+        Counting a service account would leave a project without a person who can still revoke
+        a token or change a role, while its own token keeps working.
         """
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
 
-        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not LidSoort.SERVICE_ACCOUNT]
+        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not MemberKind.SERVICE_ACCOUNT]
         if not admin_users:
             raise ValueError("At least one user must have the 'admin' role")
         return self
 
     @model_validator(mode="after")
     def validate_source_code_urls_are_unique(self) -> ProjectFileModel:
-        """Weigert twee keer dezelfde url.
+        """Refuse the same url twice.
 
-        ``uniqueItems`` op het schemaveld vergelijkt hele objecten en laat dezelfde url met
-        een andere naam dus door; hier en in ``UniqueSourceCodeUrlEnforcer`` telt alleen de url.
+        ``uniqueItems`` on the schema field compares whole objects and so lets the same url
+        through under another name; here and in ``UniqueSourceCodeUrlEnforcer`` only the url
+        counts.
         """
         urls = [link.url for link in self.source_code]
         duplicates = sorted({url for url in urls if urls.count(url) > 1})
@@ -711,30 +690,9 @@ class ProjectFileModel(BaseModel):
             raise ValueError(f"Dubbele broncodelinks: {', '.join(duplicates)}")
         return self
 
-    @classmethod
-    def from_yaml_dict(cls, data: dict) -> ProjectFileModel:
-        """
-        Create a ProjectFileModel from a parsed YAML dict.
-
-        Handles the translation of YAML keys to model field names.
-        """
-        return cls.model_validate(data)
-
-    def to_yaml_dict(self) -> dict:
-        """
-        Convert to a dict suitable for YAML serialization.
-
-        Uses the alias names for YAML compatibility.
-        """
-        return self.model_dump(by_alias=True, exclude_none=True)
-
 
 def get_project_file_form_layout() -> Fieldset:
-    """
-    Get the layout for editing a project file.
-
-    Returns a hierarchical layout structure for the project file form.
-    """
+    """The layout for editing a project file."""
     return Fieldset(
         legend="project.edit.title",
         children=[

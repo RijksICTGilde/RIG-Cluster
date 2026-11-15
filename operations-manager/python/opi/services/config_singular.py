@@ -1,53 +1,33 @@
-"""Een lijst in een serviceconfig die de API als ÉÉN object toont.
+"""A list in a service config that the API presents as ONE object.
 
-TIJDELIJKE CONSTRUCTIE -- lees dit voordat je erop voortbouwt.
-=============================================================
+A TEMPORARY facade: read this before building on it.
 
-De aanleiding is ``invite.active``. Een project heeft er vandaag altijd precies één, en
-het formulier pint dat ook af (``INVITE_ACTIVE_EDITABLE``: min == max == 1, geen
-toevoeg-/verwijderknop). Een lijst van één maakt elke client lelijker dan nodig: wie via
-de CLI of een agent een uitnodiging zet, schrijft ``{"active": [{...}]}`` met een
-haakjespaar dat nooit een tweede element krijgt, en moet bij het lezen op index 0 duiken
-voor het enige dat er is.
+``invite.active`` is the case. A project has exactly one today, and the form pins that down
+(``INVITE_ACTIVE_EDITABLE``: min == max == 1, no add or remove button). The API therefore
+presents the singular, while STORAGE stays a list everywhere: in the project file, in the
+config model, in ``project_v2.json`` and in the recorded schema fragment. There is no
+migration and no schema change, so taking the name out of ``Service.api_singular_lists``
+brings the list surface back without touching anything on disk.
 
-Dus liegt de API: hij toont het enkelvoud. De OPSLAG blijft onaangeroerd een lijst -- in
-het projectbestand, in het configmodel, in ``project_v2.json`` en in het vastgelegde
-schemafragment. Er is geen migratie, geen tweede vorm en geen schemawijziging, precies
-omdat we NIET weten of er nog invite-soorten bij komen. Komt dat er, dan gaat de naam uit
-``Service.api_singular_lists`` en is het lijstoppervlak terug; er verandert niets aan wat
-er op schijf staat.
+THE FACADE MAY ONLY EXIST WHILE IT IS TRUE. With two or more entries in the file, by hand
+or through the PATCH route, this layer must NOT show the first and overwrite the rest: for
+an invite that loss is unrecoverable, because the project file is the only place that
+invitation lives and an overwritten invitation link is invalid at once for everyone who
+already had it.
 
-De grens die deze gevel eerlijk houdt
--------------------------------------
+``overflowing_list`` is that detection. Its callers (the read route and the PUT in
+``opi/api/v2/router.py``) refuse on it with a 409 that names the way that does work: the
+PATCH on the list, which handles entries one at a time.
 
-Een gevel mag alleen bestaan zolang hij waar is. Staan er twee of meer entries in het
-bestand -- met de hand toegevoegd, of via de PATCH-route -- dan mag deze laag NIET de
-eerste tonen en de rest overschrijven. Dat is het verschil tussen een nette gevel en stil
-dataverlies, en bij een invite is dat verlies onherstelbaar: het projectbestand is de enige
-plek waar die uitnodiging staat, en een overschreven uitnodigingslink is per direct
-ongeldig voor iedereen die hem al had.
+THE PATCH THEREFORE MAY NOT ADD A SECOND ONE. The limit sits with the action that creates
+the second entry: ``ServiceAdapter.patch_service_config_list`` refuses an ADDITION that
+takes the list above one. Removing stays allowed, which is why a file that already holds
+more does not lock up: take one out and the facade is true again. Replacing is allowed too,
+because it does not change the count.
 
-``overflowing_list`` is die detectie. De aanroepers (de leesroute en de PUT in
-``opi/api/v2/router.py``) weigeren erop met een 409 die vertelt wat er aan de hand is en
-welke weg wel werkt: de PATCH op de lijst, die entries één voor één aanpakt.
-
-De PATCH mag er daarom zelf geen tweede bij zetten
---------------------------------------------------
-
-Dat kon aanvankelijk wel, en dan was de gevel binnen twee geldige aanroepen onwaar: twee
-keer een invite toevoegen is allebei een prima verzoek, en pas de VOLGENDE lezer kreeg de
-409 -- met een uitweg die vroeg wat die read hem zou vertellen, namelijk welke sleutel hij
-moet weghalen (gemeld door de zad-cli, punt 13). De grens ligt nu bij de handeling die de
-tweede entry maakt: ``ServiceAdapter.patch_service_config_list`` weigert een TOEVOEGING die
-de lijst boven één brengt.
-
-Verwijderen blijft altijd toegestaan, en dat is de reden dat een bestand dat er al meer
-heeft niet vastloopt: haal er een weg en de gevel klopt weer. Vervangen mag ook, want dat
-verandert het aantal niet.
-
-De DELETE valt hier bewust buiten. Die zegt "wis dit configblok" en doet dat ook, met of
-zonder gevel; hij houdt zich niet voor dat er één entry is. Hem óók weigeren zou een
-project met meerdere invites zonder enige weg naar een schone lei zetten.
+The DELETE falls outside this on purpose. It says "wipe this config block" and does that,
+facade or no facade; it does not pretend there is one entry. Refusing it as well would
+leave a project with several invites no way to a clean slate.
 """
 
 from __future__ import annotations
@@ -58,29 +38,27 @@ from pydantic import BaseModel, Field, create_model
 
 from opi.services.config_lists import list_item_type
 
-#: Markering in ``/openapi.json`` op een veld dat hier enkelvoudig staat en in het
-#: projectbestand een lijst is. Naast ``x-platform-managed`` en met dezelfde bedoeling: een
-#: client ziet de afwijking in het document in plaats van hem te ontdekken.
+#: Marker in ``/openapi.json`` on a field that is singular here and a list in the project
+#: file, so a client sees the deviation in the document instead of discovering it.
 SINGULAR_MARKER = "x-api-singular"
 
-#: Gebouwde gevelmodellen, zodat twee routes van dezelfde dienst één schema in het
-#: OpenAPI-document delen in plaats van twee gelijknamige.
+#: Built facade models, so two routes of the same service share ONE schema in the OpenAPI
+#: document instead of two with the same name.
 _MODELS: dict[tuple[type[BaseModel], frozenset[str]], type[BaseModel]] = {}
 
 
 def _fields_by_key(config_model: type[BaseModel]) -> dict[str, tuple[str, Any]]:
-    """De velden van *config_model* op hun sleutel op schijf (de alias, anders de naam)."""
+    """The fields of *config_model* by their on-disk key: the alias, or else the name."""
     return {(field.alias or name): (name, field) for name, field in config_model.model_fields.items()}
 
 
 def singular_config_model(config_model: type[BaseModel], names: frozenset[str]) -> type[BaseModel]:
-    """*config_model*, maar met elk veld uit *names* als één entry in plaats van een lijst.
+    """*config_model*, with every field in *names* as one entry instead of a list.
 
-    Een subklasse van het echte model, dus alle andere velden, hun aliassen en de
-    ``model_config`` (``extra="forbid"``, ``populate_by_name``) zijn per definitie
-    dezelfde. Een naam die geen lijstveld van het model is, is een fout en geen stille
-    no-op: hetzelfde argument als bij ``ITEM_KEYS`` -- een typefout zou anders ongemerkt
-    het lijstoppervlak laten staan.
+    A subclass of the real model, so every other field, its aliases and the ``model_config``
+    (``extra="forbid"``, ``populate_by_name``) are the same by definition. A name that is not
+    a list field of the model raises rather than quietly doing nothing: a typo would
+    otherwise leave the list surface in place unnoticed.
     """
     key = (config_model, names)
     cached = _MODELS.get(key)
@@ -120,10 +98,10 @@ def singular_config_model(config_model: type[BaseModel], names: frozenset[str]) 
     return built
 
 
-def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | None:
-    """De eerste lijst uit *names* in *config* met meer dan één entry, en hoeveel het er zijn.
+def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | None:  # noqa: ANN401  # a project-file value
+    """The first list from *names* in *config* with more than one entry, and how many.
 
-    ``None`` als de gevel klopt: nul of één entry per lijst, of niets van deze dienst.
+    ``None`` when the facade is true: zero or one entry per list, or nothing of this service.
     """
     if not isinstance(config, dict):
         return None
@@ -134,11 +112,11 @@ def overflowing_list(config: Any, names: frozenset[str]) -> tuple[str, int] | No
     return None
 
 
-def to_singular(config: Any, names: frozenset[str]) -> Any:
-    """Opslagvorm -> API-vorm: de lijst wordt zijn enige entry, of ``None`` als hij leeg is.
+def to_singular(config: Any, names: frozenset[str]) -> Any:  # noqa: ANN401  # a project-file value
+    """Stored form -> API form: the list becomes its only entry, or ``None`` when empty.
 
-    Roep dit pas aan als ``overflowing_list`` niets vond; met meer dan één entry zou dit
-    de rest verzwijgen, en dat is precies wat hier niet mag gebeuren.
+    Call this only once ``overflowing_list`` found nothing: with more than one entry this
+    would hide the rest.
     """
     if not isinstance(config, dict):
         return config
@@ -150,12 +128,12 @@ def to_singular(config: Any, names: frozenset[str]) -> Any:
     return result
 
 
-def to_stored(config: Any, names: frozenset[str]) -> Any:
-    """API-vorm -> opslagvorm: de ene entry wordt een lijst van één.
+def to_stored(config: Any, names: frozenset[str]) -> Any:  # noqa: ANN401  # a project-file value
+    """API form -> stored form: the one entry becomes a list of one.
 
-    Een veld dat de afzender niet noemde staat er (``exclude_unset``) niet in en blijft
-    er niet in: wat hij niet stuurde, schrijft hij niet. Een expliciete ``null`` betekent
-    "geen entry" en wordt de lege lijst, want de opslag kent geen enkelvoud.
+    A field the sender did not name is absent (``exclude_unset``) and stays absent: what they
+    did not send, they do not write. An explicit ``null`` means "no entry" and becomes the
+    empty list, because storage has no singular.
     """
     if not isinstance(config, dict):
         return config

@@ -1,0 +1,8 @@
+web-authorization-wall-configmap.yaml
+web-deployment.yaml
+web-service.yaml
+web-ingress.yaml
+productie-keycloak-secret.to-sops.yaml
+web-platform-secret.yaml
+productie-web-oauth2-cookie-secret.to-sops.yaml
+productie-tenant-baseline-network-policy.yaml

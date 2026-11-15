@@ -67,7 +67,7 @@ def store_and_remote(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Any:
 
     monkeypatch.setattr(ProjectManager, "process_project_from_git", _processed)
     monkeypatch.setattr(ProjectManager, "close", _closed)
-    monkeypatch.setattr("opi.core.simple_background._monitor_argocd_and_deployment", _monitored)
+    monkeypatch.setattr("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", _monitored)
     monkeypatch.setattr("opi.core.config.settings.OOM_WATCHER_ENABLED", False)
 
     return store, remote
@@ -94,7 +94,7 @@ def _make_progress() -> MagicMock:
 
 
 async def _run_task(payload: dict[str, Any]) -> tuple[dict[str, Any], MagicMock]:
-    from opi.core.task_handlers_project import handle_create_project
+    from opi.runtime.tasks.task_handlers_project import handle_create_project
 
     progress = _make_progress()
     result = await handle_create_project(payload, progress)
@@ -171,7 +171,7 @@ async def test_without_a_base_version_the_old_behaviour_is_kept(
     as_rendered = await store.read_version(version)
     assert as_rendered is not None
 
-    with caplog.at_level(logging.WARNING, logger="opi.core.task_handlers_project"):
+    with caplog.at_level(logging.WARNING, logger="opi.runtime.tasks.task_handlers_project"):
         result, _progress = await _run_task(_submission(as_rendered, None, **{"display-name": "zonder token"}))
 
     assert result["status"] == "success", result.get("error")

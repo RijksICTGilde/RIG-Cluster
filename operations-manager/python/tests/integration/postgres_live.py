@@ -21,8 +21,8 @@ from urllib.parse import urlparse
 import asyncpg
 import pytest
 from opi.connectors.postgres import PostgresConnector
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
+from opi.services.project_file_handler import ProjectFileHandler
 from tests.integration.live import POSTGRES
 
 if TYPE_CHECKING:

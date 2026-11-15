@@ -1,9 +1,28 @@
 """Tests for the deployment sanitization API endpoint."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS
+from opi.connectors.prometheus import PrometheusConnector
+from opi.services.project_file_handler import IMAGE_PULL_REASONS
+
+
+def sandbox_backend(restarts: list[dict[str, Any]]) -> PrometheusConnector:
+    """The real sandbox backend, with only its library client faked.
+
+    The restart check ran against an ``AsyncMock`` for a long time, and that mock answered
+    an await that the sandbox backend could not: the check never worked there.
+    """
+    connector = PrometheusConnector.__new__(PrometheusConnector)
+    connector._initialized = True
+    connector._prometheus_url = "http://prometheus:9090"
+    connector.prom = MagicMock()
+    connector.prom.custom_query.side_effect = lambda query, **_: (
+        restarts if "kube_pod_container_status_restarts_total" in query else []
+    )
+    PrometheusConnector.is_connected = True
+    return connector
 
 
 class TestSanitizeUnhealthyPods:
@@ -49,16 +68,10 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl.get_deployment_status.return_value = [{"ready": "0/1", "replicas": "1"}]
         mock_kubectl_cls.return_value = mock_kubectl
 
-        # Prometheus returns 15 restarts
-        mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = [
-            {
-                "metric": {"pod": "production-api-abc123"},
-                "value": [0, "15"],
-            }
-        ]
-        mock_connector.custom_query.return_value = []  # No OOM kills
-        mock_get_connector.return_value = mock_connector
+        # Prometheus reports 15 restarts, and no OOM kills
+        mock_get_connector.return_value = sandbox_backend(
+            [{"metric": {"pod": "production-api-abc123"}, "value": [0, "15"]}]
+        )
 
         from opi.api.resource_router import sanitize_deployment
 
@@ -112,16 +125,10 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl.get_deployment_status.return_value = [{"ready": "1/1", "replicas": "1"}]
         mock_kubectl_cls.return_value = mock_kubectl
 
-        # Prometheus returns low restarts
-        mock_connector = MagicMock()
-        mock_connector.get_pod_restarts.return_value = [
-            {
-                "metric": {"pod": "production-api-abc123"},
-                "value": [0, "2"],
-            }
-        ]
-        mock_connector.custom_query.return_value = []
-        mock_get_connector.return_value = mock_connector
+        # Prometheus reports restarts below the threshold
+        mock_get_connector.return_value = sandbox_backend(
+            [{"metric": {"pod": "production-api-abc123"}, "value": [0, "2"]}]
+        )
 
         from opi.api.resource_router import sanitize_deployment
 
@@ -178,8 +185,7 @@ class TestSanitizeUnhealthyPods:
 
         # Prometheus: restarts below the threshold, but OOM kills present.
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = [{"metric": {"pod": "production-api-abc123"}, "value": [0, "2"]}]
-        mock_connector.custom_query.return_value = [{"value": [0, "1"]}]
+        mock_connector.query.return_value = [{"value": [0, "1"]}]
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -297,8 +303,7 @@ class TestSanitizeUnhealthyPods:
 
         # Prometheus: no restarts, no OOM
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -381,8 +386,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -453,8 +457,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -519,8 +522,139 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        response = await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert len(result["disabled"]) == 0
+        assert "api" in result["healthy"]
+
+
+class TestSanitizeConnectorErrors:
+    """The narrowed excepts around kubectl calls: expected errors stay swallowed,
+    anything else is a bug and must surface instead of silently skipping the check."""
+
+    @staticmethod
+    def _project_setup(mock_get_service, mock_pm_cls):
+        project_data = {
+            "name": "my-project",
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "local",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+        return project_data
+
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
+    async def test_a_connector_error_on_the_status_check_stays_a_warning(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
+    ):
+        """A connection error on get_deployment_status is in the narrowed set: it is
+        logged, and sanitize answers as if the component had no status to report."""
+        from opi.connectors.kubectl import KubectlConnectionError
+
+        self._project_setup(mock_get_service, mock_pm_cls)
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.side_effect = KubectlConnectionError("cluster unreachable")
+        mock_kubectl.get_namespace_events.return_value = []
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        mock_connector = AsyncMock()
+        mock_connector.query.return_value = []
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        response = await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert len(result["disabled"]) == 0
+        assert "api" in result["healthy"]
+
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
+    async def test_an_unexpected_error_on_the_status_check_is_not_swallowed(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
+    ):
+        """An error outside the narrowed set (a bug, not a known kubectl failure mode) is
+        meant to propagate instead of being read as "no status". Narrowing the set is the
+        point of this cleanup round; widening it back to swallow this would make this red."""
+        self._project_setup(mock_get_service, mock_pm_cls)
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.side_effect = RuntimeError("programming error, not a kubectl failure")
+        mock_kubectl.get_namespace_events.return_value = []
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        mock_connector = AsyncMock()
+        mock_connector.query.return_value = []
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        with pytest.raises(RuntimeError, match="programming error"):
+            await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
+    async def test_a_connector_error_on_the_event_check_stays_a_warning(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
+    ):
+        """A kubectl error on get_namespace_events is in the narrowed set: image-pull
+        detection is skipped for this component instead of failing the whole request."""
+        from opi.connectors.kubectl import KubectlExecutionError
+
+        self._project_setup(mock_get_service, mock_pm_cls)
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.return_value = [{"ready": "1/1", "replicas": "1"}]
+        mock_kubectl.get_namespace_events.side_effect = KubectlExecutionError("kubectl exited non-zero")
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        mock_connector = AsyncMock()
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment

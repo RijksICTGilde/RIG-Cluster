@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.core.leden import LidSoort
-from opi.services.project_leden import hash_van
+from opi.services.members import MemberKind
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 if TYPE_CHECKING:
@@ -475,7 +475,7 @@ class TestGetTaskWithBearerToken:
         mock_task_service: AsyncMock,
     ) -> None:
         """A token that does not verify is no token at all."""
-        from opi.api.user_token_auth import UserTokenError
+        from opi.http.auth.user_token_auth import UserTokenError
 
         mock_task_service.get_task.return_value = _make_task(status="running", created_by=self.CREATOR)
 
@@ -490,7 +490,7 @@ class TestGetTaskWithBearerToken:
 
 class TestGetTaskWithApiToken:
     """Een ``zad_`` token loopt sinds dit plan langs hetzelfde handhavingspunt als de
-    projectsleutel (``opi.api.endpoint_util.handhaaf``), dus taken zijn er ook mee te
+    projectsleutel (``opi.http.auth.endpoint_util.enforce``), dus taken zijn er ook mee te
     pollen. Het aangrenzende geval: een token dat WEL herkend wordt maar de handeling
     niet mag, geeft 403 en valt niet terug op de maker-bearer, ook niet als die er ook
     bij staat -- anders zou een herkend maar te krap token zich via de bearer alsnog
@@ -506,14 +506,14 @@ class TestGetTaskWithApiToken:
             filename=f"projects/{SAMPLE_PROJECT}.yaml",
             users=[
                 ProjectUser(
-                    type=LidSoort.SERVICE_ACCOUNT,
+                    type=MemberKind.SERVICE_ACCOUNT,
                     name="bouwstraat",
                     role=rol,
                     tokens=[
                         ProjectToken(
                             name="pijplijn",
                             expires=datetime.now(UTC) + timedelta(days=30),
-                            hash=hash_van(self.TOKEN),
+                            hash=hash_of(self.TOKEN),
                         )
                     ],
                 )

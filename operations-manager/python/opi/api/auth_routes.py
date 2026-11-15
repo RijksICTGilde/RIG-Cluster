@@ -1,9 +1,4 @@
-"""
-Authentication routes for Keycloak SSO integration.
-
-This module provides the login, logout, and OAuth callback endpoints
-for handling user authentication via Keycloak.
-"""
+"""The login, logout and OAuth callback endpoints of the Keycloak SSO flow."""
 
 import logging
 import time
@@ -12,11 +7,12 @@ from urllib.parse import quote_plus
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from opi.middleware.server_side_session import ServerSideSession
-from opi.services.session_revocation_service import revoke_sessions
-from opi.services.user_service import get_user_service
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import Response
+
+from opi.http.session import ServerSideSession
+from opi.services.session_revocation_service import revoke_sessions
+from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +21,10 @@ auth_router = APIRouter(prefix="/auth", tags=["authentication"])
 
 @auth_router.get("/login")
 async def login(request: Request) -> Response:
-    """
-    Initiate the OAuth login flow with Keycloak.
-
-    This endpoint starts the OAuth authorization flow by redirecting
-    the user to Keycloak's authorization endpoint.
-
-    Args:
-        request: The FastAPI request object
-
-    Returns:
-        Redirect response to Keycloak authorization endpoint
-    """
+    """Start the OAuth flow by redirecting to Keycloak's authorization endpoint."""
     try:
-        # Get the OAuth client from the app state
         oauth = request.app.state.oauth
 
-        # OAuth client should always be registered after startup completes
         if not hasattr(oauth, "keycloak"):
             raise HTTPException(
                 status_code=500, detail="Authentication system not initialized - startup may have failed"
@@ -49,17 +32,14 @@ async def login(request: Request) -> Response:
 
         keycloak = oauth.keycloak
 
-        # Build the redirect URI for the callback
         redirect_uri = str(request.url_for("auth_callback"))
         logger.info(f"Initiating OAuth login with redirect URI: {redirect_uri}")
 
-        # Generate the authorization URL and redirect the user
         return await keycloak.authorize_redirect(request, redirect_uri)
 
     except Exception as e:
         logger.exception("Error initiating OAuth login")
 
-        # Add more context about what might be causing DNS resolution errors
         if "Name or service not known" in str(e):
             logger.error(
                 "DNS resolution failed during OAuth login - this indicates the discovery URL cannot be resolved"
@@ -72,9 +52,8 @@ async def login(request: Request) -> Response:
                 "For production, it should typically be an external URL like: https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration"
             )
 
-        # De oorzaak staat hierboven in de log, bij het kenmerk van dit verzoek. Wat de
-        # gebruiker krijgt is de zin eronder: die noemt datzelfde kenmerk en geeft niets
-        # prijs over waar de inlogdienst staat.
+        # The cause is in the log above, under the mark of this request. What the user gets
+        # names that same mark and gives nothing away about where the login service lives.
         raise HTTPException(
             status_code=500, detail="Inloggen is niet gelukt. Probeer het over een minuut opnieuw."
         ) from e
@@ -82,27 +61,13 @@ async def login(request: Request) -> Response:
 
 @auth_router.get("/callback")
 async def auth_callback(request: Request) -> Response:
-    """
-    Handle the OAuth callback from Keycloak.
-
-    This endpoint processes the authorization code returned by Keycloak
-    and exchanges it for user information.
-
-    Args:
-        request: The FastAPI request object containing the authorization code
-
-    Returns:
-        Redirect response to the dashboard or original destination
-    """
+    """Exchange the authorization code from Keycloak for the user and open a session."""
     try:
-        # Get the OAuth client from the app state
         oauth = request.app.state.oauth
         keycloak = oauth.keycloak
 
-        # Exchange the authorization code for an access token and user info
         token = await keycloak.authorize_access_token(request)
 
-        # Get user info from the token response
         user_info = None
 
         if token.get("userinfo"):
@@ -116,24 +81,22 @@ async def auth_callback(request: Request) -> Response:
         logger.debug(f"User info received: {list(user_info.keys())}")
 
         # Authorization keys entirely on the email claim (allowlist + admin gating), so an
-        # unverified email must never establish a session. Accepting one would let a login
-        # whose email is not authoritatively verified impersonate any allowed or admin user.
-        # BZK-federated users are trustEmail=true, so they carry email_verified=true and are
-        # unaffected; this refuses any account whose email is not verified.
+        # unverified email must never establish a session: it would let a login impersonate
+        # any allowed or admin user. BZK-federated users are trustEmail=true and carry
+        # email_verified=true, so they pass.
         if user_info.get("email_verified") is not True:
             logger.warning(f"Refusing login: email_verified is not true for {user_info.get('email', 'unknown')}")
-            # Pass the denial reason server-side as a one-shot flash, not via a URL query param.
-            # No "user" is stored, so this does not grant access; it only tells the denied page why.
+            # The reason travels server-side as a one-shot flash and not as a query parameter.
+            # No "user" is stored, so this grants nothing; it only tells the denied page why.
             request.session["denied_reason"] = "email-not-verified"
             return RedirectResponse(url="/permission-denied", status_code=302)
 
-        # Sessiefixatie: nieuw sessie-id op het privilegescharnier, zodat een geplant id
-        # (cookie tossing vanaf een sibling-subdomain) dood is voordat de identiteit erin landt.
+        # Session fixation: a new session id on the privilege hinge, so a planted id (cookie
+        # tossing from a sibling subdomain) is dead before the identity lands in it.
         session = request.session
         if isinstance(session, ServerSideSession):
             await session.regenerate()
 
-        # Store user information in the session
         request.session["user"] = {
             "sub": user_info.get("sub"),
             "email": user_info.get("email"),
@@ -141,34 +104,30 @@ async def auth_callback(request: Request) -> Response:
             "given_name": user_info.get("given_name"),
             "family_name": user_info.get("family_name"),
             "preferred_username": user_info.get("preferred_username"),
-            # Authenticatietijdstip: voor absolute levensduur en intrekken.
+            # The moment of authentication, read by the absolute session lifetime and by revocation.
             "login_at": time.time(),
         }
 
-        # Store id_token for proper Keycloak logout
+        # Keycloak's end-session endpoint wants this token back on logout.
         if token.get("id_token"):
             request.session["id_token"] = token["id_token"]
 
-        # Store the user in our user service
         user_service = get_user_service()
         user_service.store_user(request.session["user"])
 
-        # Redirect to dashboard after successful login
         return RedirectResponse(url="/dashboard", status_code=302)
 
     except OAuthError as e:
-        # A rejected or aborted login (invalid_scope, access_denied, stale callback,
-        # ...) is a handled user-side condition, not a server fault - log one concise
-        # warning and redirect the user to a friendly error page.
+        # A rejected or aborted login (invalid_scope, access_denied, a stale callback) is a
+        # user-side condition and not a server fault, so it warns instead of raising.
         error_description = getattr(e, "description", "Unknown OAuth error")
         error_code = getattr(e, "error", "unknown_error")
         logger.warning(f"OAuth callback failed: {error_code} - {error_description}")
 
-        # Redirect to login page with error message
         error_param = quote_plus(f"OAuth error: {error_description}")
         return RedirectResponse(url=f"/?error={error_param}", status_code=302)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the outer boundary of this request; it must still answer
         logger.error(f"Unexpected error during OAuth callback: {e}")
         error_param = quote_plus("Authentication failed. Please try again.")
         return RedirectResponse(url=f"/?error={error_param}", status_code=302)
@@ -176,41 +135,28 @@ async def auth_callback(request: Request) -> Response:
 
 @auth_router.get("/logout")
 async def logout(request: Request) -> Response:
-    """
-    Log out the current user.
-
-    This endpoint clears the user session and optionally redirects
-    to Keycloak's logout endpoint for complete SSO logout.
-
-    Args:
-        request: The FastAPI request object
-
-    Returns:
-        Redirect response to the home page or Keycloak logout
-    """
+    """Log the user out here, and at Keycloak's end-session endpoint when there is one."""
     try:
-        # Get current user info before clearing session
         user = request.session.get("user")
         id_token = request.session.get("id_token")
         user_email = user.get("email", "unknown") if user else "anonymous"
 
         logger.info(f"Logging out user: {user_email}")
 
-        # Remove user from our user service, and make every session this user still has
-        # open elsewhere invalid: clearing the cookie only ends the session in this browser.
+        # Clearing the cookie only ends the session in this browser, so every session this
+        # user has open elsewhere is revoked as well.
         if user and user.get("email"):
             user_service = get_user_service()
             user_service.remove_user(user["email"])
             try:
                 await revoke_sessions(user["email"])
             except SQLAlchemyError as e:
-                # Database-fout mag logout niet afbreken, anders Keycloak end-session overslaan.
+                # A database fault may not break off the logout: the end-session call below
+                # would be skipped and the SSO session would stay open.
                 logger.error(f"Sessies van {user['email']} niet ingetrokken: {e}")
 
-        # Clear the session
         request.session.clear()
 
-        # Redirect to Keycloak's end-session endpoint for full SSO logout
         oauth = request.app.state.oauth
         if hasattr(oauth, "keycloak"):
             metadata = await oauth.keycloak.load_server_metadata()
@@ -228,31 +174,19 @@ async def logout(request: Request) -> Response:
         logger.info("User logged out successfully (local session only)")
         return RedirectResponse(url="/", status_code=302)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the outer boundary of this request; it must still answer
         logger.error(f"Error during logout: {e}")
-        # Even if logout fails, clear the session and redirect
+        # The session goes even when the logout failed.
         request.session.clear()
         return RedirectResponse(url="/", status_code=302)
 
 
-# TODO: probably remove. Unused manual debug endpoint: returns the session user, has
-# no frontend or code caller, and is only referenced in docs/KEYCLOAK_SETUP.md as a
-# manual SSO/Keycloak-attributes check.
-# response_class=JSONResponse: returns a dict, and auth_router inherits the app's
-# HTMLResponse default, which would try to .encode() the dict and raise a 500.
+# Called by hand, not by a frontend or by code: docs/keycloak/opi-sso-setup.md uses it to
+# check the SSO attributes. response_class=JSONResponse because auth_router inherits the
+# app's HTMLResponse default, which would .encode() this dict and raise a 500.
 @auth_router.get("/user", response_class=JSONResponse)
 async def get_current_user_info(request: Request) -> dict:
-    """
-    Get information about the currently authenticated user.
-
-    This is a utility endpoint for debugging and frontend use.
-
-    Args:
-        request: The FastAPI request object
-
-    Returns:
-        User information dictionary
-    """
+    """The user of the current session, as the session holds it."""
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

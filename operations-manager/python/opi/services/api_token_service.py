@@ -1,17 +1,15 @@
-"""Leden en hun tokens beheren: wie mag wat, en wat is een geldige aanvraag.
+"""Manage members and their tokens: who may do what, and what is a valid request.
 
-Een laag boven :class:`opi.services.project_store.ProjectStore`, zodat de API en het
-formulier hetzelfde logicapad lopen: de vervaldatum, de rol van de aanvrager en de vorm van
-een naam staan hier en niet in een route.
+A layer over :class:`opi.services.project_store.ProjectStore`, so the API and the form walk
+the same path: the expiry date, the requester's role and the shape of a name live here and
+not in a route.
 
-Lidmaatschap in het projectbestand is de enige bron van wat iemand hier mag. Ook een
-platformbeheerder die geen lid van dit project is beheert er geen leden en geen tokens:
-een token is nooit meer dan het lid waar het bij hoort, en wie geen lid is heeft er geen.
+Membership in the project file is the only source of what anyone may do here. A platform
+admin who is not a member of this project manages no members and no tokens either: a token
+is never more than the member it belongs to, and whoever is not a member has none.
 
-Alles wat hier gebeurt is een COMMIT op het projectbestand. Dat is de prijs voor tokens die
-naast hun lid staan in plaats van in een eigen tabel, en het is ook de winst: uitgeven,
-intrekken en een rol veranderen staan daarmee in dezelfde reviewbare historie als de rest
-van de samenstelling van een project.
+Everything that happens here is a COMMIT on the project file, so issuing, revoking and
+changing a role sit in the same reviewable history as the rest of a project.
 """
 
 from __future__ import annotations
@@ -23,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 from opi.core.actor import user_actor
 from opi.core.authz.engine import Role, effective_roles
 from opi.core.config import settings
-from opi.core.leden import LidSoort
-from opi.services.project_leden import TOKEN_PREFIX, hash_van, is_verlopen, lid_met_naam, nieuw_token, vervaldatum
+from opi.services.members import MemberKind
+from opi.services.project_members import TOKEN_PREFIX, expiry_date, hash_of, is_expired, member_named, new_token
 from opi.services.project_roles import roles_from_value
 from opi.services.project_store import get_project_store
 
@@ -33,326 +31,322 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from opi.services.project_service import ProjectUser
+    from opi.services.project_store import ChangeFunction
 
 logger = logging.getLogger(__name__)
 
-#: De rollen die een lid kan hebben, als sleutels. Uit het register, zodat een rol die
-#: daar bijkomt hier niet vergeten kan worden.
-ROLLEN: tuple[str, ...] = tuple(rol.value for rol in Role)
+#: The roles a member can hold, as keys. Read from the register, so a role added there
+#: cannot be forgotten here.
+ROLES: tuple[str, ...] = tuple(role.value for role in Role)
 
-#: De rollen die een nieuw lid vooraf gekozen krijgt (B12). Een voorinvulling, geen vaste
-#: toekenning: de admin die het lid toevoegt kiest.
-STANDAARD_ROLLEN: tuple[str, ...] = (Role.DEVELOPER.value,)
+#: The roles a new member gets preselected. A prefill and not a fixed grant: the admin who
+#: adds the member chooses.
+DEFAULT_ROLES: tuple[str, ...] = (Role.DEVELOPER.value,)
 
-#: Een service-accountnaam is een DNS-label: hij reist mee in de actor en in de
-#: git-trailer, dus hij moet overal als een label te schrijven zijn.
-NAAM_PATROON = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
+#: A service-account name is a DNS label: it travels along in the actor and in the git
+#: trailer, so it has to be writable as a label everywhere.
+NAME_PATTERN = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
 
-_TOKENNAAM_PATROON = re.compile(r"^[\w .-]{1,64}$")
-
-
-class TokenAanvraagGeweigerd(Exception):
-    """De aanvraag klopt niet, of de aanvrager mag hem niet doen. Boodschap is voor de gebruiker."""
+_TOKEN_NAME_PATTERN = re.compile(r"^[\w .-]{1,64}$")
 
 
-def _vervaldatum(dagen: int, maximum: int) -> datetime:
-    """De vervaldatum van een nieuw token, of een weigering.
-
-    Er is geen tak zonder vervaldatum: een uitzondering die eenmaal bestaat wordt de norm.
-    """
-    if dagen < 1:
-        raise TokenAanvraagGeweigerd("Een token moet minstens een dag geldig zijn.")
-    if dagen > maximum:
-        raise TokenAanvraagGeweigerd(f"Een token mag hoogstens {maximum} dagen geldig zijn.")
-    return vervaldatum(dagen)
+class TokenRequestRefusedError(Exception):
+    """The request is invalid, or the requester may not make it. The message is for the user."""
 
 
-def _lid(project_name: str, naam: str) -> ProjectUser | None:
-    """Het lid dat zo heet in dit project, of None als het er niet staat."""
+def _token_expiry(days: int, maximum: int) -> datetime:
+    """The expiry date of a new token, or a refusal. There is no branch without an expiry."""
+    if days < 1:
+        raise TokenRequestRefusedError("Een token moet minstens een dag geldig zijn.")
+    if days > maximum:
+        raise TokenRequestRefusedError(f"Een token mag hoogstens {maximum} dagen geldig zijn.")
+    return expiry_date(days)
+
+
+def _member(project_name: str, name: str) -> ProjectUser | None:
+    """The member of this project that goes by this name, or None when it is not there."""
     project = get_project_store().get(project_name)
-    return lid_met_naam(project, naam) if project is not None else None
+    return member_named(project, name) if project is not None else None
 
 
-def _rollen(project_name: str, naam: str) -> list[str]:
-    """De huidige rollen van dit lid in dit project; leeg als het geen lid is."""
-    lid = _lid(project_name, naam)
-    return list(lid.roles) if lid is not None else []
+def _roles_of(project_name: str, name: str) -> list[str]:
+    """This member's current roles in this project; empty when it is not a member."""
+    member = _member(project_name, name)
+    return list(member.roles) if member is not None else []
 
 
-def _eis_lid(project_name: str, door: str) -> None:
-    """Weiger wie geen lid is van dit project, ook een platformbeheerder.
+def _require_member(project_name: str, by: str) -> None:
+    """Refuse whoever is not a member of this project, a platform admin included.
 
-    Zonder deze eis gaf een intrekking op een BESTAAND project een stille no-op en op een
-    onbestaand een 500, en dat verschil leest als "bestaat deze projectnaam".
+    Without this, a revoke on an EXISTING project was a silent no-op and on a non-existent
+    one a 500, and that difference reads as "does this project name exist".
     """
-    if not _rollen(project_name, door):
-        raise TokenAanvraagGeweigerd("Je bent geen lid van dit project.")
+    if not _roles_of(project_name, by):
+        raise TokenRequestRefusedError("Je bent geen lid van dit project.")
 
 
-def is_projectbeheerder(project_name: str, naam: str) -> bool:
-    """Of dit lid de leden en tokens van dit project mag beheren.
+def is_project_admin(project_name: str, name: str) -> bool:
+    """Whether this member may manage the members and tokens of this project.
 
-    Voor de interface, zodat een knop dezelfde bron leest als de weigering erachter: een
-    platformbeheerder die geen lid is krijgt hier False en ziet de knoppen dus niet.
+    For the interface, so a button reads the same source as the refusal behind it: a platform
+    admin who is not a member gets False here and so does not see the buttons.
     """
-    return Role.ADMIN in effective_roles(roles_from_value(_rollen(project_name, naam)))
+    return Role.ADMIN in effective_roles(roles_from_value(_roles_of(project_name, name)))
 
 
-def _eis_beheerder(project_name: str, door: str) -> None:
-    if Role.ADMIN not in effective_roles(roles_from_value(_rollen(project_name, door))):
-        raise TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")
+def _require_admin(project_name: str, by: str) -> None:
+    if Role.ADMIN not in effective_roles(roles_from_value(_roles_of(project_name, by))):
+        raise TokenRequestRefusedError("Alleen een beheerder van dit project kan dit doen.")
 
 
-def _leden(data: dict[str, Any]) -> list[dict[str, Any]]:
-    leden = data.get("users")
-    if not isinstance(leden, list):
-        raise TokenAanvraagGeweigerd("Dit projectbestand heeft geen ledenlijst.")
-    return leden
+def _members(data: dict[str, Any]) -> list[dict[str, Any]]:
+    members = data.get("users")
+    if not isinstance(members, list):
+        raise TokenRequestRefusedError("Dit projectbestand heeft geen ledenlijst.")
+    return members
 
 
-def _zoek_lid(data: dict[str, Any], naam: str) -> dict[str, Any] | None:
-    for lid in _leden(data):
-        if not isinstance(lid, dict):
+def _find_member(data: dict[str, Any], name: str) -> dict[str, Any] | None:
+    for member in _members(data):
+        if not isinstance(member, dict):
             continue
-        eigen = lid.get("name") if lid.get("type") == LidSoort.SERVICE_ACCOUNT.value else lid.get("email")
-        if str(eigen or "").lower() == naam.lower():
-            return lid
+        own = member.get("name") if member.get("type") == MemberKind.SERVICE_ACCOUNT.value else member.get("email")
+        if str(own or "").lower() == name.lower():
+            return member
     return None
 
 
-def _eis_tokennaam(naam: str) -> str:
-    schoon = naam.strip()
-    if not _TOKENNAAM_PATROON.match(schoon):
-        raise TokenAanvraagGeweigerd("Geef het token een korte naam van letters, cijfers, spatie, punt of streepje.")
-    return schoon
+def _require_token_name(name: str) -> str:
+    cleaned = name.strip()
+    if not _TOKEN_NAME_PATTERN.match(cleaned):
+        raise TokenRequestRefusedError("Geef het token een korte naam van letters, cijfers, spatie, punt of streepje.")
+    return cleaned
 
 
-async def _wijzig(project_name: str, change: Any, *, bericht: str, door: str) -> None:
-    await get_project_store().mutate(project_name, change, message=bericht, actor=user_actor(door))
+async def _mutate(project_name: str, change: ChangeFunction, *, message: str, by: str) -> None:
+    await get_project_store().mutate(project_name, change, message=message, actor=user_actor(by))
 
 
-async def voeg_service_account_toe(*, project_name: str, naam: str, rollen: list[str], door: str) -> None:
-    """Zet een service account in de ledenlijst van dit project."""
-    _eis_beheerder(project_name, door)
-    if not NAAM_PATROON.match(naam):
-        raise TokenAanvraagGeweigerd(
+async def add_service_account(*, project_name: str, name: str, roles: list[str], by: str) -> None:
+    """Put a service account in this project's member list."""
+    _require_admin(project_name, by)
+    if not NAME_PATTERN.match(name):
+        raise TokenRequestRefusedError(
             "Een naam bestaat uit kleine letters, cijfers en streepjes, en begint met een letter."
         )
-    gekozen = schoon_rollen(rollen)
+    chosen = clean_roles(roles)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        if _zoek_lid(data, naam) is not None:
+        if _find_member(data, name) is not None:
             return None
-        _leden(data).append({"type": LidSoort.SERVICE_ACCOUNT.value, "name": naam, "roles": gekozen, "tokens": []})
+        _members(data).append({"type": MemberKind.SERVICE_ACCOUNT.value, "name": name, "roles": chosen, "tokens": []})
         return data
 
-    await _wijzig(project_name, change, bericht=f"Service account '{naam}' toegevoegd", door=door)
+    await _mutate(project_name, change, message=f"Service account '{name}' toegevoegd", by=by)
 
 
-async def verwijder_service_account(*, project_name: str, naam: str, door: str) -> None:
-    """Haal een service account uit de ledenlijst. Zijn tokens gaan er mee uit."""
-    _eis_beheerder(project_name, door)
+async def remove_service_account(*, project_name: str, name: str, by: str) -> None:
+    """Take a service account out of the member list. Its tokens go with it."""
+    _require_admin(project_name, by)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        lid = _zoek_lid(data, naam)
-        if lid is None or lid.get("type") != LidSoort.SERVICE_ACCOUNT.value:
+        member = _find_member(data, name)
+        if member is None or member.get("type") != MemberKind.SERVICE_ACCOUNT.value:
             return None
-        _leden(data).remove(lid)
+        _members(data).remove(member)
         return data
 
-    await _wijzig(project_name, change, bericht=f"Service account '{naam}' verwijderd", door=door)
+    await _mutate(project_name, change, message=f"Service account '{name}' verwijderd", by=by)
 
 
-def schoon_rollen(rollen: Iterable[str]) -> list[str]:
-    """De gekozen rollen als geldige, ontdubbelde, gesorteerde lijst.
+def clean_roles(roles: Iterable[str]) -> list[str]:
+    """The chosen roles as a valid, deduplicated, sorted list.
 
-    Raises:
-        TokenAanvraagGeweigerd: Bij een lege lijst of een rol die niet bestaat.
+    Raises TokenRequestRefusedError on an empty list or a role that does not exist.
     """
-    gekozen = sorted({str(rol) for rol in rollen if str(rol)})
-    if not gekozen:
-        raise TokenAanvraagGeweigerd("Kies minstens een rol.")
-    onbekend = [rol for rol in gekozen if rol not in ROLLEN]
-    if onbekend:
-        raise TokenAanvraagGeweigerd(f"Onbekende rol: {', '.join(onbekend)}.")
-    return gekozen
+    chosen = sorted({str(role) for role in roles if str(role)})
+    if not chosen:
+        raise TokenRequestRefusedError("Kies minstens een rol.")
+    unknown = [role for role in chosen if role not in ROLES]
+    if unknown:
+        raise TokenRequestRefusedError(f"Onbekende rol: {', '.join(unknown)}.")
+    return chosen
 
 
-def eis_een_admin(data: dict[str, Any]) -> None:
-    """Weiger een ledenlijst waarin niemand de rol admin heeft.
+def require_an_admin(data: dict[str, Any]) -> None:
+    """Refuse a member list in which nobody holds the admin role.
 
-    De ENE lezer van die eis: zowel een rolwijziging per lid als de team-wizard, die de
-    hele lijst in een keer schrijft, lopen hier langs.
+    The ONE reader of that rule: both a per-member role change and the team wizard, which
+    writes the whole list at once, pass through here.
 
-    Raises:
-        TokenAanvraagGeweigerd: Als er geen lid met de rol admin overblijft.
+    Raises TokenRequestRefusedError when no member with the admin role is left.
     """
-    if not any(isinstance(lid, dict) and Role.ADMIN.value in (lid.get("roles") or []) for lid in _leden(data)):
-        raise TokenAanvraagGeweigerd("Een project houdt minstens een lid met de rol admin.")
+    if not any(
+        isinstance(member, dict) and Role.ADMIN.value in (member.get("roles") or []) for member in _members(data)
+    ):
+        raise TokenRequestRefusedError("Een project houdt minstens een lid met de rol admin.")
 
 
-def zet_rollen_in_data(data: dict[str, Any], naam: str, rollen: list[str]) -> dict[str, Any] | None:
-    """Zet de rollen van dit lid in de projectdata. None als er niets verandert.
+def set_roles_in_data(data: dict[str, Any], name: str, roles: list[str]) -> dict[str, Any] | None:
+    """Set this member's roles in the project data; None when nothing changes.
 
-    Apart van :func:`set_member_roles`, omdat die het bestand uitleest en wegschrijft en
-    deze stap alleen de data raakt; de taakomgeving van de wijziging hoort niet in de
-    guard.
+    Apart from :func:`set_member_roles`, which reads and writes the file: this step only
+    touches the data.
 
-    Raises:
-        TokenAanvraagGeweigerd: Als het lid er niet is, of als het project zonder admin
-            zou achterblijven.
+    Raises TokenRequestRefusedError when the member is not there, or when the project would
+    be left without an admin.
     """
-    lid = _zoek_lid(data, naam)
-    if lid is None:
-        raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
-    if list(lid.get("roles") or []) == rollen:
+    member = _find_member(data, name)
+    if member is None:
+        raise TokenRequestRefusedError(f"'{name}' is geen lid van dit project.")
+    if list(member.get("roles") or []) == roles:
         return None
-    was = lid.get("roles")
-    lid["roles"] = rollen
+    previous = member.get("roles")
+    member["roles"] = roles
     try:
-        eis_een_admin(data)
-    except TokenAanvraagGeweigerd:
-        lid["roles"] = was
+        require_an_admin(data)
+    except TokenRequestRefusedError:
+        member["roles"] = previous
         raise
     return data
 
 
-async def set_member_roles(*, project_name: str, naam: str, rollen: list[str], door: str) -> None:
-    """Geef een lid andere rollen. Zijn tokens volgen die rollen meteen.
+async def set_member_roles(*, project_name: str, name: str, roles: list[str], by: str) -> None:
+    """Give a member other roles. Its tokens follow those roles at once.
 
-    De ENE schrijfweg voor rollen (ontwerp paragraaf 7): de Team-kaart, de API-route en
-    de team-wizard lopen hier langs, zodat de drie niet uit elkaar kunnen lopen op wat
-    een geldige rol is of op de eis dat er een admin overblijft.
+    The ONE write path for roles: the Team card, the API route and the team wizard all pass
+    through here, so the three cannot drift apart on what a valid role is or on the rule that
+    an admin has to be left.
     """
-    _eis_beheerder(project_name, door)
-    gekozen = schoon_rollen(rollen)
+    _require_admin(project_name, by)
+    chosen = clean_roles(roles)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        return zet_rollen_in_data(data, naam, gekozen)
+        return set_roles_in_data(data, name, chosen)
 
-    await _wijzig(project_name, change, bericht=f"Rollen van '{naam}' zijn nu {gekozen}", door=door)
+    await _mutate(project_name, change, message=f"Rollen van '{name}' zijn nu {chosen}", by=by)
 
 
-def _eis_mag_uitgeven(project_name: str, naam: str, door: str) -> int:
-    """Weiger wie dit lid geen token mag geven, en geef het platformmaximum terug.
+def _require_may_issue(project_name: str, name: str, by: str) -> int:
+    """Refuse whoever may not give this member a token, and return the platform maximum.
 
-    Een beheerder doet dat voor een service account van zijn project; een mens doet het
-    voor zichzelf. Een mens kan dus geen token voor een ander maken: dat zou een
-    bewijsmiddel zijn dat iemand anders draagt maar niet weet te hebben.
+    An admin does that for a service account of their project; a human does it for
+    themselves. A human therefore cannot make a token for someone else: that would be a
+    credential another person carries without knowing they have it.
 
-    Apart van :func:`geef_token_uit`, zodat :func:`roteer_token` deze regel kan toetsen
-    VOORDAT het oude token eruit gaat. Anders was een geweigerde rotatie het token kwijt.
+    Apart from :func:`issue_token`, so :func:`rotate_token` can check this rule BEFORE the
+    old token goes out. Otherwise a refused rotation would have lost the token.
     """
-    _eis_lid(project_name, door)
-    doellid = _lid(project_name, naam)
-    if doellid is None:
-        raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
+    _require_member(project_name, by)
+    target = _member(project_name, name)
+    if target is None:
+        raise TokenRequestRefusedError(f"'{name}' is geen lid van dit project.")
 
-    if doellid.type is LidSoort.SERVICE_ACCOUNT:
-        _eis_beheerder(project_name, door)
+    if target.type is MemberKind.SERVICE_ACCOUNT:
+        _require_admin(project_name, by)
         return settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT
-    if naam.lower() != door.lower():
-        raise TokenAanvraagGeweigerd("Je kunt alleen een token voor jezelf maken.")
+    if name.lower() != by.lower():
+        raise TokenRequestRefusedError("Je kunt alleen een token voor jezelf maken.")
     return settings.TOKEN_MAX_DAGEN_PERSOONLIJK
 
 
-async def geef_token_uit(*, project_name: str, naam: str, tokennaam: str, dagen: int, door: str) -> str:
-    """Geef een token uit aan het lid ``naam``. De waarde komt hier een keer vandaan."""
-    tokennaam = _eis_tokennaam(tokennaam)
-    maximum = _eis_mag_uitgeven(project_name, naam, door)
-    verloopt = _vervaldatum(dagen, maximum)
-    waarde, hash_hex = nieuw_token()
+async def issue_token(*, project_name: str, name: str, token_name: str, days: int, by: str) -> str:
+    """Issue a token to the member ``name``. The value comes from here once and never again."""
+    token_name = _require_token_name(token_name)
+    maximum = _require_may_issue(project_name, name, by)
+    expires = _token_expiry(days, maximum)
+    value, hash_hex = new_token()
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        lid = _zoek_lid(data, naam)
-        if lid is None:
-            raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
-        tokens = lid.setdefault("tokens", [])
-        if any(isinstance(t, dict) and t.get("name") == tokennaam for t in tokens):
-            raise TokenAanvraagGeweigerd(f"'{naam}' heeft al een token dat '{tokennaam}' heet.")
-        tokens.append({"name": tokennaam, "expires": verloopt.isoformat(), "hash": hash_hex})
+        member = _find_member(data, name)
+        if member is None:
+            raise TokenRequestRefusedError(f"'{name}' is geen lid van dit project.")
+        tokens = member.setdefault("tokens", [])
+        if any(isinstance(t, dict) and t.get("name") == token_name for t in tokens):
+            raise TokenRequestRefusedError(f"'{name}' heeft al een token dat '{token_name}' heet.")
+        tokens.append({"name": token_name, "expires": expires.isoformat(), "hash": hash_hex})
         return data
 
-    await _wijzig(project_name, change, bericht=f"Token '{tokennaam}' uitgegeven aan '{naam}'", door=door)
-    logger.info("Token '%s' uitgegeven aan '%s' in project '%s' door '%s'", tokennaam, naam, project_name, door)
-    return waarde
+    await _mutate(project_name, change, message=f"Token '{token_name}' uitgegeven aan '{name}'", by=by)
+    logger.info("Token '%s' uitgegeven aan '%s' in project '%s' door '%s'", token_name, name, project_name, by)
+    return value
 
 
-async def trek_token_in(*, project_name: str, naam: str, tokennaam: str, door: str) -> None:
-    """Trek een token in door het uit het projectbestand te halen.
+async def revoke_token(*, project_name: str, name: str, token_name: str, by: str) -> None:
+    """Revoke a token by taking it out of the project file.
 
-    Een beheerder trekt elk token van zijn project in, ook dat van een mens; een mens trekt
-    zijn eigen tokens in. Beide zijn lid van het project: een platformbeheerder die dat niet
-    is trekt hier niets in. Intrekken is een commit, en daarmee zichtbaar in de historie.
+    An admin revokes every token of their project, a human's included; a human revokes their
+    own tokens. Both are members of the project: a platform admin who is not revokes nothing
+    here. Revoking is a commit, and so visible in the history.
     """
-    _eis_lid(project_name, door)
-    if naam.lower() != door.lower():
-        _eis_beheerder(project_name, door)
+    _require_member(project_name, by)
+    if name.lower() != by.lower():
+        _require_admin(project_name, by)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        lid = _zoek_lid(data, naam)
-        if lid is None:
+        member = _find_member(data, name)
+        if member is None:
             return None
-        tokens = lid.get("tokens") or []
-        over = [t for t in tokens if not (isinstance(t, dict) and t.get("name") == tokennaam)]
-        if len(over) == len(tokens):
+        tokens = member.get("tokens") or []
+        remaining = [t for t in tokens if not (isinstance(t, dict) and t.get("name") == token_name)]
+        if len(remaining) == len(tokens):
             return None
-        lid["tokens"] = over
+        member["tokens"] = remaining
         return data
 
-    await _wijzig(project_name, change, bericht=f"Token '{tokennaam}' van '{naam}' ingetrokken", door=door)
-    logger.info("Token '%s' van '%s' ingetrokken door '%s'", tokennaam, naam, door)
+    await _mutate(project_name, change, message=f"Token '{token_name}' van '{name}' ingetrokken", by=by)
+    logger.info("Token '%s' van '%s' ingetrokken door '%s'", token_name, name, by)
 
 
-async def roteer_token(*, project_name: str, naam: str, tokennaam: str, dagen: int, door: str) -> str:
-    """Trek dit token in en geef er een nieuw uit onder dezelfde naam.
+async def rotate_token(*, project_name: str, name: str, token_name: str, days: int, by: str) -> str:
+    """Revoke this token and issue a new one under the same name.
 
-    Eerst toetsen of het uitgeven mag: intrekken staat een beheerder voor ELK lid toe en
-    uitgeven alleen voor een service account, dus zonder deze toets raakte een beheerder
-    die het token van een collega roteerde dat token kwijt op een antwoord dat zei dat er
-    niets gebeurd was.
+    Issuing is checked FIRST: revoking is allowed to an admin for EVERY member and issuing
+    only for a service account, so without that check an admin rotating a colleague's token
+    lost it on a response that said nothing had happened.
     """
-    _eis_mag_uitgeven(project_name, naam, door)
-    _eis_tokennaam(tokennaam)
-    await trek_token_in(project_name=project_name, naam=naam, tokennaam=tokennaam, door=door)
-    return await geef_token_uit(project_name=project_name, naam=naam, tokennaam=tokennaam, dagen=dagen, door=door)
+    _require_may_issue(project_name, name, by)
+    _require_token_name(token_name)
+    await revoke_token(project_name=project_name, name=name, token_name=token_name, by=by)
+    return await issue_token(project_name=project_name, name=name, token_name=token_name, days=days, by=by)
 
 
-def leden_overzicht(project_name: str) -> list[dict[str, Any]]:
-    """De leden van dit project met hun tokens, voor de interface en de API.
+def members_overview(project_name: str) -> list[dict[str, Any]]:
+    """This project's members with their tokens, for the interface and the API.
 
-    Zonder hashes: een hash is geen geheim maar ook geen gegeven dat op een pagina hoort,
-    en wie hem heeft kan een geraden token offline toetsen.
+    Without hashes: whoever holds a hash can check a guessed token offline.
     """
     project = get_project_store().get(project_name)
     return [
         {
-            "naam": lid.principaal,
-            "soort": lid.type.value,
-            "rollen": list(lid.roles),
-            "rol_labels": lid.rol_labels,
-            "tokens": [{"naam": t.name, "vervalt": t.expires, "verlopen": is_verlopen(t.expires)} for t in lid.tokens],
+            "naam": member.principal,
+            "soort": member.type.value,
+            "rollen": list(member.roles),
+            "rol_labels": member.rol_labels,
+            "tokens": [
+                {"naam": t.name, "vervalt": t.expires, "verlopen": is_expired(t.expires)} for t in member.tokens
+            ],
         }
-        for lid in (project.users or [] if project else [])
+        for member in (project.users or [] if project else [])
     ]
 
 
 __all__ = [
-    "NAAM_PATROON",
-    "ROLLEN",
-    "STANDAARD_ROLLEN",
+    "DEFAULT_ROLES",
+    "NAME_PATTERN",
+    "ROLES",
     "TOKEN_PREFIX",
-    "TokenAanvraagGeweigerd",
-    "eis_een_admin",
-    "geef_token_uit",
-    "hash_van",
-    "is_projectbeheerder",
-    "leden_overzicht",
-    "roteer_token",
-    "schoon_rollen",
+    "TokenRequestRefusedError",
+    "add_service_account",
+    "clean_roles",
+    "hash_of",
+    "is_project_admin",
+    "issue_token",
+    "members_overview",
+    "remove_service_account",
+    "require_an_admin",
+    "revoke_token",
+    "rotate_token",
     "set_member_roles",
-    "trek_token_in",
-    "verwijder_service_account",
-    "voeg_service_account_toe",
-    "zet_rollen_in_data",
+    "set_roles_in_data",
 ]

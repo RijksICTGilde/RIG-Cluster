@@ -200,6 +200,64 @@ class TestWritingOnTheComponent:
         assert commit.commits == []
 
 
+class TestReplacingTheWholeSet:
+    """What the env-vars window asks for: the editor's text IS the set (RC-481)."""
+
+    @pytest.mark.asyncio
+    async def test_replace_drops_what_is_no_longer_in_the_set(self, manager) -> None:
+        instance, commit = manager
+        await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"A": "1", "B": "2"}
+        )
+
+        result = await instance.set_component_values(
+            "user-env-vars", "component", "replace", component_name="backend", values={"A": "9", "C": "3"}
+        )
+
+        assert result["success"], result
+        assert decode(_component(commit.data)["user-env-vars"], commit.data) == {"A": "9", "C": "3"}
+
+    @pytest.mark.asyncio
+    async def test_replace_with_nothing_removes_the_property(self, manager) -> None:
+        instance, commit = manager
+        await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"A": "1"}
+        )
+
+        await instance.set_component_values("user-env-vars", "component", "replace", component_name="backend")
+
+        assert "user-env-vars" not in _component(commit.data)
+
+    @pytest.mark.asyncio
+    async def test_replacing_the_same_set_commits_nothing(self, manager) -> None:
+        """The window re-saves on every step-up, and AGE would give a new ciphertext each time."""
+        instance, commit = manager
+        await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"A": "1"}
+        )
+        before = len(commit.commits)
+
+        result = await instance.set_component_values(
+            "user-env-vars", "component", "replace", component_name="backend", values={"A": "1"}
+        )
+
+        assert result["changed"] is False
+        assert len(commit.commits) == before
+
+    @pytest.mark.asyncio
+    async def test_a_value_the_storage_form_would_change_is_refused(self, manager) -> None:
+        """The window used to store these raw; the canonical form refuses them (S1, S2)."""
+        instance, commit = manager
+
+        result = await instance.set_component_values(
+            "user-env-vars", "component", "replace", component_name="backend", values={"A": '"quoted"'}
+        )
+
+        assert not result["success"]
+        assert result["error_type"] == "invalid_values"
+        assert commit.commits == []
+
+
 class TestTheTwoLayersStaySeparate:
     """Finding 5 of the 7 August sandbox run, measured on the layer this API writes."""
 

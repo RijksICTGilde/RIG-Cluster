@@ -34,7 +34,7 @@ die zijn eigen oorzaak overleeft.
 
 ## De classificatie is gebleven, gedegradeerd
 
-`classify_image_pull_failure()` in `opi/handlers/project_file_handler.py` leest de
+`classify_image_pull_failure()` in `opi/services/project_file_handler.py` leest de
 kubelet-melding en geeft een van drie klassen terug. Hij bepaalt hoe iets geformuleerd en
 geteld wordt, en nooit meer of er iets naar nul gaat. Een heuristiek in een zin is prima;
 een heuristiek die een pod weghaalt niet.
@@ -77,7 +77,7 @@ De gegevens komen uit de telling hieronder, dus de kaart kost er geen clusteraan
 
 `opi/services/image_pull_report.py` telt elke minuut (`IMAGE_PULL_OBSERVE_INTERVAL_SECONDS`)
 met een `kubectl get pods --all-namespaces` hoeveel applicatiepods hun image niet kunnen
-ophalen. De collector in `opi/core/metrics.py` geeft dat uit als:
+ophalen. `image_pull_metrics` in datzelfde bestand geeft dat uit als:
 
 | metriek | labels | wanneer |
 |---|---|---|
@@ -192,7 +192,7 @@ log.
 ### In de log en in de uitrol
 
 De fire-and-forget check (`oom_watcher`) logt per component een WARNING met de volledige
-kubelet-melding en de reden-klasse. Het uitrolpad (`project_manager`) zet elke image-pull-
+kubelet-melding en de reden-klasse. Het uitrolpad (`project/rollout.py`) zet elke image-pull-
 fout in `health_warnings`, met de volledige melding, achter de regel
 `Runtime pod-health issue(s) after sync`. Dat is de regel waarmee de storing van
 30 september te reconstrueren was.
@@ -236,14 +236,13 @@ replicas zonder waker, en geen daarvan was een slachtoffer van die storing.
 
 | bestand | waarvoor |
 |---|---|
-| `opi/handlers/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
-| `opi/services/image_pull_report.py` | de telling, de momentopname en wat de kaart ervan leest |
-| `opi/core/metrics.py` | de drie gauges |
+| `opi/services/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
+| `opi/services/image_pull_report.py` | de telling, de momentopname, de drie gauges en wat de kaart ervan leest |
 | `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | de twee alarmen |
 | `opi/templates_lotc/bg/_argocd-deployment-card.html.j2` | het blok op de deploymentkaart |
 | `opi/services/event_interpreter.py` | de tekst per fout op de detailpagina |
 | `opi/services/oom_watcher.py` | de fire-and-forget check die het meldt |
-| `opi/manager/project_manager.py` | het uitrolpad dat het meldt |
+| `opi/manager/project/rollout.py` | het uitrolpad dat het meldt |
 | `opi/api/resource_router.py` | de sanitize, die het component overslaat |
 
 ## Verwant

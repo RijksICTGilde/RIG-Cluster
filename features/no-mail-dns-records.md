@@ -46,8 +46,8 @@ Er staat alleen `router` in, per zone, en dat is met reden:
 |---|---|
 | De gewenste toestand (namen, inhoud, TTL) | `opi/core/dns_config.py` |
 | De TransIP REST API v6 | `opi/connectors/transip.py` |
-| De reconciler | `opi/core/no_mail_reconciler.py` |
-| De aanroep bij het opstarten | `opi/core/startup.py` (fase 7) |
+| De reconciler | `opi/runtime/periodic/no_mail_reconciler.py` |
+| De aanroep bij het opstarten | `opi/runtime/startup/startup.py` (fase 7) |
 
 Een eigen reconciler naast die van CAA, niet een tweede systeem: hij gebruikt dezelfde
 connector en dezelfde twee poorten. De records, de vergelijking en de vraag "ontvangt deze

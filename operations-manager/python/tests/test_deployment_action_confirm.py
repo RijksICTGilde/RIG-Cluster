@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 import opi
 import pytest
 from fastapi import HTTPException
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.registry import (
     SERVICES,
     collect_deployment_actions,

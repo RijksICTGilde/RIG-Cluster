@@ -7,8 +7,8 @@
 ## Wat het is
 
 Elk tijdstip dat het portaal toont, gaat door één filter: `dutch_date`
-(`format_dutch_date` in `opi/core/template_helpers.py`, geregistreerd in
-`opi/core/templates_lotc.py`). Dat filter doet twee dingen die geen enkel sjabloon zelf
+(`format_dutch_date` in `opi/http/render/template_helpers.py`, geregistreerd in
+`opi/http/render/templates_lotc.py`). Dat filter doet twee dingen die geen enkel sjabloon zelf
 hoort te doen:
 
 1. **Omrekenen naar onze tijd.** Alles wat we opslaan staat in UTC; het filter zet het om

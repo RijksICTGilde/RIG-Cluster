@@ -21,8 +21,8 @@ kunt delen en dat ook werkt voor iemand die al is ingelogd.
 ## De harde eis: alleen wat waar is
 
 Zo'n pagina schrijft zichzelf vol met beloftes, en een belofte die niet klopt is erger dan
-geen pagina. Daarom staat de dienstenlijst er **niet als tekst**: `build_lotc_introductie`
-(`opi/web/lotc_switch.py`) leest `SERVICE_DEFINITIONS` uit, en naam, technische naam,
+geen pagina. Daarom staat de dienstenlijst er **niet als tekst**: `build_lotc_introduction`
+(`opi/http/render/lotc_switch.py`) leest `SERVICE_DEFINITIONS` uit, en naam, technische naam,
 omschrijving en icoon zijn letterlijk die van de dienst zelf.
 
 De catalogus wordt in twee lijsten gesplitst, want dat is precies het verschil dat de
@@ -60,7 +60,7 @@ belanden.
 | bestand | rol |
 |---|---|
 | `opi/web/router.py` | `root()` en `introductie()` |
-| `opi/web/lotc_switch.py` | `build_lotc_introductie()`: de catalogus in de vorm die de pagina leest |
+| `opi/http/render/lotc_switch.py` | `build_lotc_introduction()`: de catalogus in de vorm die de pagina leest |
 | `opi/templates_lotc/bg/introductie.html.j2` | de indeling: welke panelen, in welke volgorde |
 | `opi/templates_lotc/bg/_introductie-blokken.html.j2` | wat er in die panelen staat |
 | `opi/web/lotc_fixtures.py` | de proefopstelling, met de echte catalogus |
@@ -101,8 +101,7 @@ Niet overgenomen: de pagina was 1999 regels Engels, met `rvo-`klassen waar in de
 geen regel bij hoort (`base.css` komt niet mee), 85 inline stijlen, een `mermaid`-script van
 een CDN, en een hero die niets rendert. Dat is geen lange pagina maar een pagina uit een
 ander systeem; er valt niets aan te knippen. Het bestand
-(`opi/templates_lotc/architecture-overview.html.j2`) staat er nog en heeft nog steeds geen
-route.
+(`opi/templates_lotc/architecture-overview.html.j2`) is met RC-441 weggehaald.
 
 Ook niet overgenomen: de promotievideo (`static/promo.mp4`) en de wolkenfoto
 (`static/cloud.jpg`). Van de video kan niemand zeggen welke versie van het platform erin te

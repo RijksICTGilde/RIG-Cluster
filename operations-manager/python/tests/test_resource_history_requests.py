@@ -19,7 +19,7 @@ ongeldig.
 """
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 
 
 def _project(entry: dict) -> dict:

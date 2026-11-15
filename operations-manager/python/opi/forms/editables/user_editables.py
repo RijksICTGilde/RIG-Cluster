@@ -5,8 +5,6 @@ from opi.forms.editables.validators import EmailValidator, MinMaxLengthValidator
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
-# --- Editables (data logic) ---
-
 USER_EMAIL_EDITABLE = Editable(
     yaml_path="email",
     required=True,
@@ -19,8 +17,6 @@ USER_FULL_NAME_EDITABLE = Editable(
     validator=MinMaxLengthValidator(min_length=2, max_length=200),
 )
 
-# --- Visualizers (UI) ---
-
 USER_EMAIL_VISUALIZER = EditableVisualizer(
     editable=USER_EMAIL_EDITABLE,
     widget=WidgetType.TEXT,
@@ -32,8 +28,6 @@ USER_FULL_NAME_VISUALIZER = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Volledige naam",
 )
-
-# --- Section ---
 
 USER_SECTION = FormSection(
     section_id="user-details",

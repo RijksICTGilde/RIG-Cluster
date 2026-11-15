@@ -54,9 +54,8 @@ from opi.core.cluster_config import (
     get_mail_relay_port,
 )
 from opi.core.config import settings
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.mail_manager import MailAccountNameError, MailManager
-from opi.manager.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
 from opi.services.catalog.send_email import (
@@ -64,10 +63,13 @@ from opi.services.catalog.send_email import (
     RELAY_POD_LABELS,
     RELAY_POD_PORT,
     SendEmailService,
+    deployment_from_address,
     deployment_messages_per_day,
 )
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
+from opi.services.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.registry import get_service
+from opi.services.secrets import SendEmailSecret
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     MAIL_LOCAL_PART_MAX_LENGTH,
@@ -78,7 +80,6 @@ from opi.utils.naming import (
     generate_deployment_mail_sender_address,
     generate_mail_account_name,
 )
-from opi.utils.secrets import SendEmailSecret
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -163,7 +164,7 @@ def _mail_manager(
     De echte handler, want "gebruikt deze deployment de dienst" is juist de vraag die hier
     geen tweede, simpeler antwoord mag krijgen.
     """
-    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.project_file_handler import ProjectFileHandler
 
     async def get_name() -> str:
         return project_name
@@ -939,7 +940,7 @@ class TestEenOnleesbareSecretRoteertNiets:
         """En het blijft non-critical: de taak vangt ``KubectlExecutionError`` al, dus de
         boot gaat door en de volgende opstart leest de Secret gewoon terug."""
         from opi.connectors.kubectl import KubectlConnector
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(KubectlConnector, "get_secret", AsyncMock(return_value=None))
         monkeypatch.setattr(KubectlConnector, "secret_exists", AsyncMock(return_value=None))
@@ -975,7 +976,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
 
     @pytest.mark.asyncio
     async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise aiohttp.ClientConnectorError(
@@ -989,7 +990,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
     @pytest.mark.asyncio
     async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
         from opi.connectors.mail import MailRelayError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise MailRelayError("POST /api/principal gaf 500")
@@ -1001,7 +1002,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
     async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``socket.gaierror`` is an ``OSError``, and it is what an unknown relay hostname
         gives before aiohttp has anything of its own to raise."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise OSError("Name or service not known")
@@ -1015,7 +1016,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
         is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
         API-server is (nog) niet bereikbaar terwijl OPI opstart."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlConnectionError("kubectl connection is not available")
@@ -1028,7 +1029,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
         """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
         nog niet te ontsleutelen is geeft een kale ``ValueError``. Dat is de waarschijnlijke
         eerste toestand na het aanzetten van ``MAIL_RELAY_API_URL``, geen randgeval."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise ValueError("Failed to decrypt password: no matching AGE key")
@@ -1066,7 +1067,7 @@ class TestTheSecretHandedToTheApplication:
         assert names == {"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"}
 
     def test_the_secret_renders_those_keys(self) -> None:
-        from opi.utils.secrets import SendEmailSecret
+        from opi.services.secrets import SendEmailSecret
 
         data = SendEmailSecret(
             host="rig-mail-relay.rig-ron.svc.cluster.local",
@@ -1349,8 +1350,8 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
         ["admin/approvals/_aanvragen.html.j2", "wizard/partials/approval_items.html.j2"],
     )
     def test_beide_schermen_noemen_de_aanvraag_bij_naam(self, sjabloon: str) -> None:
-        from opi.core.templates_lotc import templates_lotc
-        from opi.web.router_approvals import groepeer_per_dienst
+        from opi.http.render.templates_lotc import templates_lotc
+        from opi.web.router_approvals import group_by_service
 
         item = self._item()
         html = templates_lotc.env.get_template(sjabloon).render(
@@ -1361,7 +1362,7 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
                 {
                     "project_name": "myproject",
                     "approval_items": [item],
-                    "approval_groups": groepeer_per_dienst([item]),
+                    "approval_groups": group_by_service([item]),
                 }
             ],
             _approval_items=[item],
@@ -1953,7 +1954,7 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
         return connector
 
     def _project_met_adres(self, status: str | None, blok_adres: str | None = None) -> dict:
-        from opi.utils.sops import generate_sops_key_pair
+        from opi.utils.age import generate_age_key_pair
 
         adres = "noreply@rijksoverheid.nl"
         project = _project(
@@ -1966,7 +1967,7 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
                 "status": status,
                 "history": [],
             }
-        _, public_key = generate_sops_key_pair()
+        _, public_key = generate_age_key_pair()
         project["config"] = {"age-public-key": public_key}
         return project
 
@@ -2024,7 +2025,7 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
         blok_waarde: int | None = None,
         laatst_goedgekeurd: int | None = None,
     ) -> dict:
-        from opi.utils.sops import generate_sops_key_pair
+        from opi.utils.age import generate_age_key_pair
 
         config: dict[str, Any] = {} if getal is None else {"messages-per-day": getal}
         project = _project(component_services=[ServiceType.SEND_EMAIL.value], config=config)
@@ -2037,7 +2038,7 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
             if laatst_goedgekeurd is not None:
                 blok["approved-value"] = str(laatst_goedgekeurd)
             project["services"][0]["config"]["messages-per-day-approval"] = blok
-        _, public_key = generate_sops_key_pair()
+        _, public_key = generate_age_key_pair()
         project["config"] = {"age-public-key": public_key}
         return project
 
@@ -2678,8 +2679,8 @@ class TestEenPodwisselKostGeenUitrol:
             os_error=OSError("Connection refused"),
         )
         pogingen = AsyncMock(side_effect=[fout, {"data": {"id": 1, "name": "project-demo"}}])
-        monkeypatch.setattr(MailConnector, "_eenmalig_verzoek", pogingen)
-        monkeypatch.setattr("opi.utils.connect_retry.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr(MailConnector, "_single_request", pogingen)
+        monkeypatch.setattr("opi.core.connect_retry.asyncio.sleep", AsyncMock())
 
         resultaat = await connector.get_principal("project-demo")
 
@@ -3171,7 +3172,7 @@ class TestDeWeergavenaamWordtGetoetst:
         """De laatste laag is de connector, die de naam in een gegenereerd sieve-script zet.
 
         Deze toets bestaat omdat de twee lijsten UIT ELKAAR kunnen lopen, en dat gebeurde:
-        ``$`` stond wel in ``_NAAM_VERBODEN`` en niet in ``FROM_NAME_PATTERN``, dus een naam
+        ``$`` stond wel in ``_NAME_FORBIDDEN`` en niet in ``FROM_NAME_PATTERN``, dus een naam
         met een dollarteken kwam door het formulier en door het model heen en viel pas om in
         ``ensure_account`` -- midden in het verwerken van een project, waar niets die fout
         vangt. Een naam die hierboven mag, moet hier ook mogen, en andersom.
@@ -3778,7 +3779,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
     @pytest.mark.asyncio
     async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise aiohttp.ClientConnectorError(
@@ -3792,7 +3793,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     @pytest.mark.asyncio
     async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
         from opi.connectors.mail import MailRelayError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise MailRelayError("POST /api/principal gaf 500")
@@ -3804,7 +3805,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``socket.gaierror`` is een ``OSError``, en het is wat een onbekende relayhostnaam
         geeft voordat aiohttp iets eigens te werpen heeft."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise OSError("Name or service not known")
@@ -3817,7 +3818,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
         """Deze weg LEEST een Secret in plaats van er een te schrijven, en een cluster dat
         die leesactie weigert moet gewoon opstarten zonder Keycloak-mail."""
         from opi.connectors.kubectl import KubectlExecutionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlExecutionError('secrets "keycloak-mail-credentials" is forbidden')
@@ -3831,7 +3832,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
         is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
         API-server is tijdens het opstarten nog niet bereikbaar."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlConnectionError("kubectl connection is not available")
@@ -3843,7 +3844,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     async def test_an_undecryptable_admin_password_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
         nog niet te ontsleutelen is geeft een kale ``ValueError``."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise ValueError("Failed to decrypt password: no matching AGE key")
@@ -3858,14 +3859,14 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
         RC-261 maakte dat verschil dragend: de opstart-herhaallus probeert een ``False``
         opnieuw en zou op een cluster zonder relay anders eeuwig blijven tikken."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=None))
         assert await startup.ensure_keycloak_mail_account() is None
 
     @pytest.mark.asyncio
     async def test_een_ingericht_account_meldt_true(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         account = MailAccount(
             username=settings.MAIL_KEYCLOAK_ACCOUNT,
@@ -3885,7 +3886,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
         Twee hops sinds RC-261: de boot roept ``_setup_mail_accounts`` aan en die roept beide
         accounts aan. Een toets op alleen de laatste zou een losgeraakte boot niet zien."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         assert "_setup_mail_accounts(" in inspect.getsource(startup.run_startup_tasks)
         bron = inspect.getsource(startup._setup_mail_accounts)
@@ -3906,7 +3907,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
     @pytest.fixture(autouse=True)
     def _snel(self, monkeypatch):
         """Zonder wachttijd, anders duurt elke ronde van de lus een minuut."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(startup, "STARTUP_RETRY_INTERVAL", 0)
 
@@ -3921,7 +3922,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
 
     @pytest.mark.asyncio
     async def test_een_onbereikbare_relay_wordt_opnieuw_geprobeerd_en_de_lus_stopt_na_succes(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         pogingen: list[int] = []
 
@@ -3948,7 +3949,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         """De tegenproef, en de reden dat ``None`` iets anders moet betekenen dan ``False``:
         zonder dat verschil zou deze lus op zo'n cluster eeuwig elke minuut een regel
         schrijven."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         platform = AsyncMock(return_value=None)
         keycloak = AsyncMock(return_value=None)
@@ -3966,7 +3967,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
     async def test_de_lus_blijft_proberen_zolang_een_van_de_twee_faalt(self, monkeypatch) -> None:
         """Keycloak faalt en het platformaccount staat al: dat is nog niet afgehandeld. Zonder
         deze eis zou inlogmail stil wegblijven terwijl de portalmail werkt."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(MailManager, "ensure_platform_account", AsyncMock(return_value=self._account()))
         pogingen: list[int] = []
@@ -3990,8 +3991,8 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         """De schakel die het geheel pas laat werken: zonder doorgeven start de lus met
         ``mail_accounts_done=True`` (de standaard) en probeert hij de accounts nooit."""
         from fastapi import FastAPI
-        from opi.core import startup
         from opi.core.readiness import get_readiness_state
+        from opi.runtime.startup import startup
 
         for dienst in get_readiness_state().get_all_services():
             dienst.mark_ready()
@@ -4025,3 +4026,20 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         await app.state.startup_retry_task
 
         assert meegegeven == [False]
+
+
+class TestOnbekendeDeployment:
+    """A name the project does not know reads as "deployment fills in nothing"."""
+
+    def test_from_address_falls_back_to_the_project(self) -> None:
+        project = {"deployments": [{"name": "productie"}]}
+        assert deployment_from_address(project, "ghost") == ""
+
+    def test_messages_per_day_falls_back_to_the_project(self) -> None:
+        project = {"deployments": [{"name": "productie"}]}
+        assert deployment_messages_per_day(project, "ghost") == deployment_messages_per_day(project, "productie")
+
+    def test_non_dict_deployment_entry_is_skipped(self) -> None:
+        assert deployment_messages_per_day({"deployments": ["productie"]}, "productie") == deployment_messages_per_day(
+            {"deployments": []}, "productie"
+        )

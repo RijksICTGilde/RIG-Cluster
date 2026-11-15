@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from typing import Any
 
@@ -9,11 +10,6 @@ import pytest
 import yaml
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_validation import (
-    ProjectIntegrityError,
-    validate_approval_decisions,
-    validate_service_configs,
-)
 from opi.services.approvals import apply_approval_verdicts, collect_approval_items
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
@@ -26,14 +22,24 @@ from opi.services.catalog.image_registries.config_model import (
 from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL, effective_quota_gib
 from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
 from opi.services.config_lists import patchable_lists
+from opi.services.project_utils import deployments_touched
+from opi.services.project_validation import (
+    ProjectIntegrityError,
+    validate_approval_decisions,
+    validate_service_configs,
+)
 from opi.services.services import ServiceAdapter
-from opi.web.router_approvals import _redeploy_scope
 from pydantic import ValidationError
 
 CLUSTER_DEFAULT = 10
 
+#: Since schema version 2.18 the token field only takes an encrypted form.
+ENCRYPTED_TOKEN = "base64+age:dG9rZW4="
+
 
 def _registry(name: str, quota: int | None = None) -> dict[str, Any]:
+    # A readable token: the render tests below DECRYPT it, and the question here is the
+    # quota. ``TestModel`` judges the stored form and sets it itself.
     registry: dict[str, Any] = {"name": name, "upstream": f"ghcr.io/{name}", "password": "plain:token"}
     if quota is not None:
         registry["quota-gib"] = quota
@@ -79,16 +85,21 @@ def _quota(project: dict[str, Any], name: str = "nldd") -> int:
 
 
 class TestModel:
+    @staticmethod
+    def _entry(name: str, quota: int | None = None) -> dict[str, Any]:
+        """The stored shape: a token in a project file is encrypted (schema version 2.18)."""
+        return {**_registry(name, quota), "password": ENCRYPTED_TOKEN}
+
     def test_accepts_a_quota_within_bounds(self) -> None:
-        assert RegistryEntry.model_validate(_registry("nldd", QUOTA_MAX_GIB)).quota_gib == QUOTA_MAX_GIB
+        assert RegistryEntry.model_validate(self._entry("nldd", QUOTA_MAX_GIB)).quota_gib == QUOTA_MAX_GIB
 
     @pytest.mark.parametrize("quota", [0, QUOTA_MAX_GIB + 1])
     def test_refuses_a_quota_out_of_bounds(self, quota: int) -> None:
         with pytest.raises(ValidationError):
-            RegistryEntry.model_validate(_registry("nldd", quota))
+            RegistryEntry.model_validate(self._entry("nldd", quota))
 
     def test_without_the_field_it_is_unset(self) -> None:
-        assert RegistryEntry.model_validate(_registry("nldd")).quota_gib is None
+        assert RegistryEntry.model_validate(self._entry("nldd")).quota_gib is None
 
 
 class TestEffectiveQuota:
@@ -258,26 +269,43 @@ class TestApprovalIsPlatformManaged:
 
 
 class TestTheVerdictReachesTheCluster:
+    """The approval route reads its rollout scope off the two states, like every save.
+
+    Since RC-483 (P2) that is ``deployments_touched`` and no longer a scope of its own: the
+    approval state of every spec lives under the service config, a top-level key the project
+    manifests and every deployment read, so a verdict is project-wide. A domain verdict used
+    to narrow to the deployments publishing on it; that narrowing needs a spec that can say
+    which deployments its item affects, and there is no such declaration.
+    """
+
     def test_a_quota_verdict_redeploys_the_whole_project(self) -> None:
         """The organization is a PROJECT manifest, and those are only generated in a round
         that does at least one deployment. Scoped to zero it never left the project file."""
         project = _project(_registry("nldd", 15))
         project["deployments"] = [{"name": "prod", "base-domain": "voorbeeld.nl", "subdomain": "app"}]
         QUOTA_APPROVAL.ensure_requested(project)
-        items = [i for i in collect_approval_items(project) if i["type"] == "quota-gib"]
-        for item in items:
-            item["status"] = "approved"
-        assert _redeploy_scope(project, items) is None
+        before = copy.deepcopy(project)
+        _decide(project, "approved")
 
-    def test_a_domain_verdict_stays_scoped_to_its_deployments(self) -> None:
-        project = {"deployments": [{"name": "prod", "base-domain": "voorbeeld.nl", "subdomain": "app"}]}
-        items = [{"type": "domain", "domain": "voorbeeld.nl", "status": "approved"}]
-        assert _redeploy_scope(project, items) == ["prod"]
+        assert deployments_touched(before, project) is None
+
+    def test_a_domain_verdict_is_project_wide_as_well(self) -> None:
+        project: dict[str, Any] = {
+            "name": "demo",
+            "deployments": [{"name": "prod", "base-domain": "voorbeeld.nl", "subdomain": "app"}],
+            "services": [{"name": "publish-on-web", "config": {"domains": {}}}],
+        }
+        before = copy.deepcopy(project)
+        project["services"][0]["config"]["domains"] = {"voorbeeld.nl": {"status": "approved"}}
+
+        assert deployments_touched(before, project) is None
 
     def test_an_undecided_item_scopes_nothing(self) -> None:
+        """Nothing was written, so no deployment has anything to do."""
         project = _project(_registry("nldd", 15))
-        items = [{"type": "quota-gib", "domain": "15", "status": "skip"}]
-        assert _redeploy_scope(project, items) == []
+        QUOTA_APPROVAL.ensure_requested(project)
+
+        assert deployments_touched(copy.deepcopy(project), project) == []
 
 
 class TestTheFormLeavesTheQuotaAlone:

@@ -1,24 +1,17 @@
-"""Maakt zichtbaar wanneer de asyncio event loop stilstaat, en waardoor.
+"""Makes visible when the asyncio event loop stalls, and what holds it.
 
-WAAROM DIT BESTAAT
+FastAPI, the TaskWorker and every scheduler share one loop, so a synchronous block hits web
+requests, every running task and the schedulers at once. The health probes do not see it:
+those run on a thread of their own (``opi/core/probe_server.py``).
 
-FastAPI, de TaskWorker en alle schedulers delen een loop. Een synchrone blokkade raakt dus
-webverzoeken, alle lopende taken en de schedulers tegelijk, maar er was nergens een signaal
-van. De health-probes zien het bewust niet: die draaien op een eigen draad
-(``opi/core/probe_server.py``). Op 15 oktober 2026 stond de loop in productie 14 s stil,
-liep een ArgoCD-poll van een andere taak op zijn timeout af en faalde die taak, en het
-enige spoor was de afwezigheid van logregels.
+A heartbeat task on the loop writes a timestamp every ``_HEARTBEAT`` seconds. Whatever sits
+above ``_HEARTBEAT`` is the time the loop did not get round to the task, and the task knows it
+exactly as soon as it gets its turn again. Those seconds go onto a counter that only goes up;
+``current_lag`` adds what a stall that is still running costs so far.
 
-HOE HET MEET
-
-Een hartslagtaak op de loop zet elke ``_HARTSLAG`` seconden een tijdstempel. Wat er boven
-``_HARTSLAG`` overheen zit is de tijd dat de loop niet aan de taak toekwam, en de taak
-weet dat precies zodra hij weer aan de beurt komt. Die seconden gaan op een teller die
-alleen oploopt; ``huidige_lag`` vult aan wat een nog lopende stilstand nu al kost.
-
-De waarschuwing komt van een daemon-draad die dezelfde tijdstempel leest. Die MOET een
-draad zijn: tijdens de stilstand is er geen taak die iets kan melden, en juist dan is de
-stack van de hoofdthread het antwoord op de vraag welke regel de loop vasthoudt.
+The warning comes from a daemon thread that reads the same timestamp. That MUST be a thread:
+during the stall there is no task that can report anything, and that is exactly when the stack
+of the main thread is the answer to which line holds the loop.
 """
 
 from __future__ import annotations
@@ -34,127 +27,125 @@ from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-#: Hoe vaak de hartslagtaak de klok zet, en hoe vaak de draad kijkt. Honderd keer per
-#: seconde een float schrijven kost niets en maakt een stilstand van 200 ms al zichtbaar.
-_HARTSLAG = 0.1
+#: How often the heartbeat task sets the clock, and how often the thread looks. Writing a
+#: float a hundred times a second costs nothing and makes a stall of 200 ms visible already.
+_HEARTBEAT = 0.1
 
-_hartslag_taak: asyncio.Task[None] | None = None
-_draad: threading.Thread | None = None
-_stoppen = threading.Event()
+_heartbeat_task: asyncio.Task[None] | None = None
+_thread: threading.Thread | None = None
+_stopping = threading.Event()
 
-#: Laatste tijdstempel van de hartslagtaak, en de hoofdthread waarvan de stack ertoe doet.
-#: Beide worden door een draad gelezen; een float en een int lezen is atomair genoeg, een
-#: lock zou hier alleen de meting zelf kunnen laten wachten.
-_laatste_hartslag: float = 0.0
-_hoofdthread_id: int = 0
+#: Last timestamp of the heartbeat task, and the main thread whose stack matters. Both are
+#: read by a thread; reading a float and an int is atomic enough, and a lock here could only
+#: make the measurement itself wait.
+_last_heartbeat: float = 0.0
+_main_thread_id: int = 0
 
-#: Cumulative achterstand en stilstandenteller. Zie metrics.py over waarom /metrics
-#: een counter nodig heeft zonder reset-bij-lezen.
-_totale_lag: float = 0.0
-_stilstanden: int = 0
-_slot = threading.Lock()
+#: Cumulative lag and the stall counter. See metrics.py on why /metrics needs a counter
+#: without reset-on-read.
+_total_lag: float = 0.0
+_stalls: int = 0
+_lock = threading.Lock()
 
 
-def _tel_lag_op(lag: float) -> None:
-    global _totale_lag
+def _add_lag(lag: float) -> None:
+    global _total_lag
     if lag <= 0:
         return
-    with _slot:
-        _totale_lag += lag
+    with _lock:
+        _total_lag += lag
 
 
-def totale_lag() -> float:
-    """Alle achterstand die de loop sinds het starten heeft opgelopen, in seconden."""
-    with _slot:
-        return _totale_lag
+def total_lag() -> float:
+    """All lag the loop has run up since it started, in seconds."""
+    with _lock:
+        return _total_lag
 
 
-def aantal_stilstanden() -> int:
-    """Hoe vaak de achterstand boven ``EVENT_LOOP_LAG_WARNING_SECONDS`` uitkwam."""
-    with _slot:
-        return _stilstanden
+def stall_count() -> int:
+    """How often the lag came out above ``EVENT_LOOP_LAG_WARNING_SECONDS``."""
+    with _lock:
+        return _stalls
 
 
-def huidige_lag() -> float:
-    """De achterstand op dit moment: hoe lang de hartslag al niet aan de beurt is geweest.
+def current_lag() -> float:
+    """The lag right now: how long the heartbeat has gone without its turn.
 
-    Een stilstand die tijdens de scrape nog loopt zit nog niet in ``totale_lag``, want de
-    hartslag telt hem pas op zodra hij weer draait. Hier is hij wel al te zien.
+    A stall that is still running during the scrape is not in ``total_lag`` yet, because the
+    heartbeat only adds it once it runs again. Here it is already visible.
     """
-    if not _laatste_hartslag:
+    if not _last_heartbeat:
         return 0.0
-    return max(0.0, time.monotonic() - _laatste_hartslag - _HARTSLAG)
+    return max(0.0, time.monotonic() - _last_heartbeat - _HEARTBEAT)
 
 
-async def _hartslag() -> None:
-    global _laatste_hartslag
+async def _heartbeat() -> None:
+    global _last_heartbeat
     while True:
-        nu = time.monotonic()
-        # De taak zelf meet het gat exact: de bewaker ziet alleen wat er op zijn
-        # bemonsteringsmoment al verstreken was, en mist dus tot een hartslag van de staart.
-        _tel_lag_op(nu - _laatste_hartslag - _HARTSLAG)
-        _laatste_hartslag = nu
-        await asyncio.sleep(_HARTSLAG)
+        now = time.monotonic()
+        # The task itself measures the gap exactly: the watcher only sees what had passed at
+        # its sampling moment, and so misses up to one heartbeat of the tail.
+        _add_lag(now - _last_heartbeat - _HEARTBEAT)
+        _last_heartbeat = now
+        await asyncio.sleep(_HEARTBEAT)
 
 
-def _bewaak() -> None:
-    global _stilstanden
-    gemeld = False
-    while not _stoppen.wait(_HARTSLAG):
-        lag = huidige_lag()
+def _watch() -> None:
+    global _stalls
+    reported = False
+    while not _stopping.wait(_HEARTBEAT):
+        lag = current_lag()
         if lag < settings.EVENT_LOOP_LAG_WARNING_SECONDS:
-            gemeld = False
+            reported = False
             continue
-        if gemeld:
-            # Eenmaal per stilstand, niet elke 100 ms opnieuw: de stack verandert niet
-            # zolang dezelfde regel de loop vasthoudt.
+        if reported:
+            # Once per stall, not again every 100 ms: the stack does not change as long as
+            # the same line holds the loop.
             continue
-        gemeld = True
-        with _slot:
-            _stilstanden += 1
-        logger.warning(
-            "De event loop staat %.1fs stil. Stack van de hoofdthread:\n%s", lag, _stack_van_de_hoofdthread()
-        )
+        reported = True
+        with _lock:
+            _stalls += 1
+        logger.warning("De event loop staat %.1fs stil. Stack van de hoofdthread:\n%s", lag, _main_thread_stack())
 
 
-def _stack_van_de_hoofdthread() -> str:
-    frame = sys._current_frames().get(_hoofdthread_id)
+def _main_thread_stack() -> str:
+    frame = sys._current_frames().get(_main_thread_id)
     if frame is None:
         return "  (hoofdthread niet gevonden)"
     return "".join(traceback.format_stack(frame))
 
 
 def start_loop_watchdog() -> None:
-    """Start de hartslag en de bewaker. Veilig om vaker aan te roepen."""
-    global _hartslag_taak, _draad, _hoofdthread_id, _laatste_hartslag
+    """Start the heartbeat and the watcher. Safe to call more than once."""
+    global _heartbeat_task, _thread, _main_thread_id, _last_heartbeat
 
-    if _hartslag_taak is None or _hartslag_taak.done():
-        _laatste_hartslag = time.monotonic()
-        _hartslag_taak = asyncio.create_task(_hartslag())
+    if _heartbeat_task is None or _heartbeat_task.done():
+        _last_heartbeat = time.monotonic()
+        _heartbeat_task = asyncio.create_task(_heartbeat())
 
-    if _draad is None or not _draad.is_alive():
-        _hoofdthread_id = threading.main_thread().ident or 0
-        _stoppen.clear()
-        _draad = threading.Thread(target=_bewaak, name="loop-watchdog", daemon=True)
-        _draad.start()
+    if _thread is None or not _thread.is_alive():
+        _main_thread_id = threading.main_thread().ident or 0
+        _stopping.clear()
+        _thread = threading.Thread(target=_watch, name="loop-watchdog", daemon=True)
+        _thread.start()
         logger.info(
             "Event-loop watchdog gestart (hartslag %.1fs, waarschuwing vanaf %.1fs)",
-            _HARTSLAG,
+            _HEARTBEAT,
             settings.EVENT_LOOP_LAG_WARNING_SECONDS,
         )
 
 
 def stop_loop_watchdog() -> None:
-    """Stop de hartslag en de bewaker."""
-    global _hartslag_taak, _draad, _laatste_hartslag
+    """Stop the heartbeat and the watcher."""
+    global _heartbeat_task, _thread, _last_heartbeat
 
-    _stoppen.set()
-    if _hartslag_taak is not None and not _hartslag_taak.done():
-        _hartslag_taak.cancel()
-    _hartslag_taak = None
-    # Zonder dit blijft de laatste tijdstempel staan en groeit huidige_lag door: een scrape
-    # tijdens het afsluiten zou een stilstand melden die er niet is.
-    _laatste_hartslag = 0.0
-    if _draad is not None:
-        _draad.join(timeout=1.0)
-    _draad = None
+    _stopping.set()
+    if _heartbeat_task is not None and not _heartbeat_task.done():
+        _heartbeat_task.cancel()
+    _heartbeat_task = None
+    # Without this the last timestamp stays put and current_lag keeps growing: a scrape
+    # during the shutdown would report a stall that is not there.
+    _last_heartbeat = 0.0
+    if _thread is not None:
+        _thread.join(timeout=1.0)
+    _thread = None

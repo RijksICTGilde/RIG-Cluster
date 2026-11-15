@@ -12,14 +12,14 @@ Achtergrond en fasering: `plans/roos-eruit.md` en `features/lotc-bouwlijn.md`.
 |---|---|
 | `opi/templates/` | 155 sjablonen, de hele roos-boom |
 | de schakelaar | `chosen_layout()`, `wants_lotc()`, `DEFAULT_LAYOUT`, `?layout=`, het koekje `zad_layout` |
-| de roos-omgeving | `opi/core/templates.py` heet nu `opi/core/template_helpers.py` en draagt alleen nog filters, paden en `static_url()` |
+| de roos-omgeving | `opi/core/templates.py` heet nu `opi/http/render/template_helpers.py` en draagt alleen nog filters, paden en `static_url()` |
 | de afhankelijkheid | `jinja-roos-components` uit `pyproject.toml` en `uv.lock` |
 | de assets | de mount `/static/roos/dist`, en `unpkg.com` uit de CSP (daar kwam de HTMX van roos vandaan; die komt uit `static/js/`) |
 | de tweede adapter | `opi/forms/widgets/roos.py` is `fields.py` geworden: alleen nog de gedeelde veldvoorbereiding, zonder eigen Jinja-omgeving |
 | de dubbele dienstsjablonen | elke dienst had `section-x.html.j2` en `section-x-lotc.html.j2`; er is er nog een, en `lotc_counterpart()` is daarmee overbodig |
 | de omzetter | `scripts/lotc_convert_templates.py` en `scripts/lotc_coexistence_probe.py` hadden geen invoer meer |
 
-`opi/web/lotc_switch.py` bestaat nog. Wat erin zit is `render()`/`render_fragment()` -
+`opi/http/render/lotc_switch.py` bestaat nog. Wat erin zit is `render()`/`render_fragment()` -
 een gewone render van een sjabloon uit `opi/templates_lotc/` - plus de functies die de
 gegevens van een route in de vorm zetten die de hertekende pagina leest, en de
 weergavekeuze licht/donker.

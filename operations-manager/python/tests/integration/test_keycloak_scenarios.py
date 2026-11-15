@@ -26,7 +26,6 @@ import pytest
 from opi.connectors.keycloak import PLATFORM_IDP_ALIAS, role_gate_flow_alias
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.keycloak_manager import KeycloakManager
 from opi.services.catalog.keycloak.templates import (
@@ -35,6 +34,7 @@ from opi.services.catalog.keycloak.templates import (
     SSO_SUPPORT_TEMPLATE,
 )
 from opi.services.project import Project
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 from opi.utils.totp import totp_now
 from tests.integration.keycloak_image import (
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     import httpx
     from opi.connectors.keycloak import KeycloakConnector
-    from opi.utils.secrets import BaseSecret
+    from opi.services.secrets import BaseSecret
 
     class HarnessFactory(Protocol):
         def __call__(
@@ -96,9 +96,8 @@ class FakeProjectManager:
     file, writing it back, and the secrets map the deployment client lands in.
     """
 
-    def __init__(self, project_data: dict[str, Any], keycloak_url: str) -> None:
+    def __init__(self, project_data: dict[str, Any]) -> None:
         self.project_data = project_data
-        self.keycloak_url = keycloak_url
         self.commits: list[str] = []
         self._secrets: dict[str, dict[str, BaseSecret]] = {}
         self._project_file_handler = ProjectFileHandler()
@@ -114,14 +113,6 @@ class FakeProjectManager:
     ) -> None:
         self.project_data = project_data
         self.commits.append(message)
-
-    async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
-        realms = Project(self.project_data).get("services/keycloak/config/realms") or []
-        expected = generate_project_realm_name(await self.get_name(), cluster)
-        return next((entry for entry in realms if entry.get("realm") == expected), None)
-
-    def _get_keycloak_url_for_cluster(self, cluster: str) -> str:
-        return self.keycloak_url
 
     def _add_secret_to_create(self, deployment_name: str, secret_type: str, secret_data: BaseSecret) -> None:
         self._secrets.setdefault(deployment_name, {})[secret_type] = secret_data
@@ -294,7 +285,7 @@ def make_harness(scenario_settings: None, api: AdminApi, keycloak_url: str) -> I
             # instead of on a ConnectError for a hostname that does not resolve.
             extra_redirect_uri=f"{keycloak_url}/rc433-done" if with_browser_redirect else None,
         )
-        harness = Harness(project, FakeProjectManager(project_data, keycloak_url), api)
+        harness = Harness(project, FakeProjectManager(project_data), api)
         made.append(harness)
         return harness
 
@@ -442,7 +433,7 @@ async def test_deleting_the_project_removes_the_realm_and_its_admin(
     manager = object.__new__(DeleteProjectManager)
     manager.project_manager = harness.project_manager
     results: dict[str, Any] = {"operations": [], "errors": [], "success": True}
-    kc_config = await harness.project_manager._get_project_keycloak_config_for_cluster(CLUSTER)
+    kc_config = await KeycloakManager(harness.project_manager)._get_project_keycloak_config_for_cluster(CLUSTER)
     assert kc_config is not None
     await manager._cleanup_project_keycloak_realm(
         project_name=harness.project,

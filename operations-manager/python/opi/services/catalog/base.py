@@ -1,24 +1,13 @@
-"""Service base class (RC-5 Phase 1).
+"""Service base class.
 
-The RC-5 migration ("Uniform, Declarative Platform Services") replaces the ~14
-hand-maintained per-service edit sites with a single declarative unit per service:
-a ``Service`` subclass, registered once in
-``opi.services.registry.SERVICES``. Generic code then iterates the registry
-instead of hand-synced wizard/flow/provisioning/cleanup/manifest lists.
+One ``Service`` subclass per service, registered in ``opi.services.registry.SERVICES``;
+generic code iterates that registry. A service carries its ``ServiceDefinition`` plus, when
+it is configurable, a typed ``config_model``.
 
-This module is intentionally dependency-light -- it imports only the service
-metadata (``ServiceDefinition``) and the ``ServiceType`` enum, never forms,
-managers or connectors. That keeps the provider protocol free of the circular
-imports the plan warns about (forms reference providers; providers must not, at
-import time, reference forms or managers). Behaviour hooks (config shape,
-provisioning, cleanup, manifest contribution) are added to this base class in later
-phases, when generic code actually consumes them, so their context types can be
-imported lazily / under ``TYPE_CHECKING`` at that point.
-
-Each provider carries its existing ``ServiceDefinition`` (unchanged) plus, for
-configurable services, a typed ``config_model`` (Phase 2). ``database_manager``
-already validates namespace-postgres config through its provider; the remaining
-config models are wired into the read path in Phase 3.
+Keep this module dependency-light: it imports the service metadata and the ``ServiceType``
+enum, never forms, managers or connectors. Forms reference services, so an import of forms
+or managers here closes a cycle; context types a hook needs are imported under
+``TYPE_CHECKING``.
 """
 
 from __future__ import annotations
@@ -31,9 +20,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from pydantic import ValidationError
 
-from opi.core.project_schema import parse_schema_version
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
+from opi.services.project_schema import parse_schema_version
 from opi.services.services import ServiceDefinition, service_entry_name
 
 if TYPE_CHECKING:
@@ -41,13 +30,37 @@ if TYPE_CHECKING:
 
     from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
     from opi.services.catalog.config_settings import ConfigSetting
+    from opi.services.secrets import BaseSecret
     from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
-    from opi.utils.secrets import BaseSecret
+
+
+#: The three JSON Schema annotations a config field carries into the API document. Here
+#: because the catalog produces those schemas; ``opi/api/openapi_choices.py`` writes them.
+CHOICES_KEY = "x-choices"
+"""The values this field offers, as ``{const, title, description}``."""
+
+CHOICES_SOURCE_KEY = "x-choices-source"
+"""Where the values come from when they differ per project."""
+
+CHOICES_PROVIDER_KEY = "x-choices-provider"
+"""Declaration ON a model field: which provider yields the choices of this field.
+
+For the service config that coupling comes out of the editables of the service, which covers
+everything arriving through ``/services/{service}/config/...``. The same field also exists
+outside those routes: ``base-domain`` stands both on the publish-on-web config and on the
+request to create a deployment. A field names its provider in ``json_schema_extra`` and the
+annotation below makes the same ``x-choices`` or ``x-choices-source`` of it as for a config
+field, so a new request model gets it by declaring one line.
+
+The declaration is internal and is removed again after annotating: the name of a Python class
+is of no use to a client.
+"""
 
 
 class ConfigLayer(Enum):
@@ -70,9 +83,6 @@ class ConfigLayer(Enum):
 class ConfigRole(Enum):
     """What a service's config at a layer *is*: a definition, a use, or a binding.
 
-    "Service config" was one word for three different things, and attachments is the
-    first service where they visibly come apart:
-
     * ``DEFINE`` -- put something into the project that is not used by itself. The
       attachments catalog (a file with an ``id``, a ``filename`` and its encrypted
       ``content``) is defined at project level and used nowhere until a component
@@ -80,16 +90,15 @@ class ConfigRole(Enum):
       not under ``config``.
     * ``USE`` -- "this component/deployment uses this service (this thing)". For most
       services the use is the bare service name in a ``services:`` list and there is
-      nothing to define, which is why the distinction never had to be made before.
-      For attachments the use names *which* definition: ``reference: my-cert``.
+      nothing to define; for attachments it names *which* definition:
+      ``reference: my-cert``.
     * ``BIND`` -- *how* the used thing reaches the workload: ``provide-as``, ``path``,
       ``env-name``. A binding is meaningless without a use.
 
     A service answers per layer (``config_roles``), so generic code can ask "does this
-    service define something here" without knowing which service it is talking to. The
-    roles are documentation of the contract *and* the reason a layer does or does not
-    deserve an endpoint: a DEFINE layer needs a way to put the thing in, which is not
-    the same request as configuring how it is used.
+    service define something here" without knowing which service it is talking to. A
+    DEFINE layer needs a way to put the thing in, which is not the same request as
+    configuring how it is used.
     """
 
     DEFINE = "define"
@@ -107,9 +116,7 @@ _LAYER_PATH_PREFIX: dict[ConfigLayer, str] = {
     # No braces on the deployment-component layer: its ``services`` is a real map keyed by
     # service name (``$defs/deployment-component/properties/services``), not the mixed
     # string/dict LIST the project and component layers carry, so the path resolves by
-    # plain traversal and needs no virtualization. Every deployment-component path written
-    # by hand already had this shape; the prefix said otherwise, which made the layer's
-    # documented ``yaml_path`` describe a location the file never has.
+    # plain traversal and needs no virtualization.
     ConfigLayer.DEPLOYMENT_COMPONENT: "deployments[*]/components[*]/services/{svc}",
 }
 
@@ -120,19 +127,16 @@ def config_path(layer: ConfigLayer, service: ServiceType, *segments: str) -> str
     ``config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner")``
     -> ``"services/authorization-wall/config/banner"``. The layer determines the
     prefix (project / component / deployment), the ServiceType fills the service
-    segment, and ``segments`` are the config keys. This keeps service identity and
-    layer as enums (typed, greppable, documented) rather than scattered path literals.
+    segment, and ``segments`` are the config keys.
     """
     prefix = _LAYER_PATH_PREFIX[layer].format(svc=service.value)
     return "/".join([prefix, *segments]) if segments else prefix
 
 
 #: The REST counterpart of ``_LAYER_PATH_PREFIX``: the path suffix of the generated
-#: config-write route, per layer. It sits here and not in the v2 router because two very
-#: different callers need the same string -- the router, which registers the route, and an
-#: error message that has to tell a caller which request to make instead. An endpoint typed
-#: out by hand in an error message is one that goes stale without anyone noticing.
-#: ``DEPLOYMENT_COMPONENT`` is absent on purpose: no write route is generated for it.
+#: config-write route, per layer. Two callers need the same string: the v2 router, which
+#: registers the route, and an error message that tells a caller which request to make
+#: instead. ``DEPLOYMENT_COMPONENT`` is absent on purpose: no write route is generated for it.
 _LAYER_ENDPOINT_SUFFIX: dict[ConfigLayer, str] = {
     ConfigLayer.PROJECT: "/config/project",
     ConfigLayer.COMPONENT: "/config/component/{component_name}",
@@ -146,9 +150,8 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
     ``config_endpoint_path(ConfigLayer.PROJECT, "authorization-wall", "mijn-project")``
     -> ``"/api/v2/projects/mijn-project/services/authorization-wall/config/project"``.
 
-    Takes the service as a plain name rather than a ``ServiceType``, because a caller
-    that only holds the name out of a project file should not have to rebuild the enum
-    to name the endpoint. Raises ``KeyError`` for a layer that has no write route.
+    Takes the service as a plain name, so a caller holding only the name out of a project
+    file can name the endpoint. Raises ``KeyError`` for a layer that has no write route.
     """
     return f"/api/v2/projects/{project_name}/services/{service_name}{_LAYER_ENDPOINT_SUFFIX[layer]}"
 
@@ -157,19 +160,17 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
 
-#: Eén migratiestap: neemt een config van de vorige versie en geeft hem terug op de versie waarmee hij is gestempeld.
+#: One migration step: takes a config of the previous version and returns it on the version it is stamped with.
 ConfigMigrationStep = Callable[[ServiceConfigData], ServiceConfigData]
 
 
 @dataclass
 class ProvisionContext:
-    """Inputs a provider needs to provision one deployment's resources (RC-5 Phase 4).
+    """Inputs a provider needs to provision one deployment's resources.
 
-    Carries the *already-resolved* managers so a provider delegates to its manager
-    without importing it -- keeping provider.py free of manager imports. The managers
-    keep their own self-guards (e.g. ``_deployment_uses_postgresql``) and are
-    replay-safe, so dispatching through providers stays byte-identical to the old
-    fixed sequence.
+    Carries the *already-resolved* managers so a provider delegates to its manager without
+    importing it. The managers keep their own self-guards (e.g.
+    ``_deployment_uses_postgresql``) and are replay-safe.
     """
 
     project_data: dict[str, Any]
@@ -181,22 +182,20 @@ class ProvisionContext:
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
-    # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
+    # An earlier run started this deployment's clone and never recorded it as finished.
     clone_interrupted: bool = False
-    #: Diensten (``ServiceType``-waarden) waarvan het geheim deze ronde vervangen moet worden
-    #: in plaats van hergebruikt. Leeg bij een gewone ronde.
+    #: Services (``ServiceType`` values) whose secret has to be replaced this round instead of
+    #: reused. Empty on an ordinary round.
     rotate_credentials: frozenset[str] = frozenset()
 
 
 @dataclass
 class RemovalContext:
-    """Inputs for cleaning up one service removed from one deployment (RC-5 Phase 5).
+    """Inputs for cleaning up one service removed from one deployment.
 
     Carries the diff-driven removal args plus ``get_manager`` -- an async resolver
-    (``DeleteProjectManager._get_manager_for_service``) so a provider reaches its
-    manager lazily by key, exactly as the old ``_SERVICE_TYPE_MANAGER_ATTR`` dispatch
-    did. All managers share the ``handle_service_removal`` signature, so the base
-    provider dispatch stays byte-identical.
+    (``DeleteProjectManager._get_manager_for_service``) so a provider reaches its manager
+    lazily by key. Every manager shares the ``handle_service_removal`` signature.
     """
 
     project_name: str
@@ -209,15 +208,11 @@ class RemovalContext:
 
 @dataclass
 class ManifestContext:
-    """Inputs a provider needs to contribute to one component's manifests (RC-5 Phase 6).
+    """Inputs a provider needs to contribute to one component's manifests.
 
-    Grows per sub-phase rather than speculatively front-loading fields. Phase 6a needs
-    only ``deployment_name`` (envFrom secret names). Phase 6b adds ``project_data`` +
-    ``unique_name`` (auth-wall reads the banner from project services and names the
-    cookie secret) and ``get_secret`` -- a resolver for an already-provisioned
-    per-deployment secret (``ProjectManager._get_secret_from_map``), so the auth-wall
-    provider reaches the keycloak secret without importing the manager, exactly like
-    RemovalContext.get_manager.
+    ``get_secret`` (``ProjectManager._get_secret_from_map``) resolves an
+    already-provisioned per-deployment secret, so a provider reaches it without importing
+    the manager.
     """
 
     deployment_name: str
@@ -238,12 +233,10 @@ class ManifestContext:
 #: this key with a value naming its role. Anything asking "how is the application doing"
 #: must therefore exclude pods that carry it.
 #:
-#: Sleep-mode is why this is named at platform level. Its waker answers to the sleeping
-#: component's ``app`` label, so the health check found the waker, read its
-#: ImagePullBackOff, and reported "frontend: image ophalen mislukt" for a component that
-#: was not running and does not use that image -- while ArgoCD reported the application
-#: Synced and Healthy. Worse, that path disables a component on an image-pull failure, so
-#: a waker that briefly cannot pull could take the real component out.
+#: A selector on ``app`` alone is not enough: sleep-mode's waker answers to the sleeping
+#: component's ``app`` label, so a health check that does not exclude this key reads the
+#: waker's state as the component's -- and that path disables a component on an image-pull
+#: failure.
 SERVICE_ROLE_LABEL_KEY = "zad-role"
 
 
@@ -302,7 +295,7 @@ def is_application_pod(labels: dict[str, str]) -> bool:
 
 @dataclass
 class SecretFileSpec:
-    """A SOPS secret manifest a service needs written for a deployment (RC-5 Phase 6c).
+    """A SOPS secret manifest a service needs written for a deployment.
 
     A service declares *what* secret it needs; the shared writer
     (``ProjectManager._write_secret_file``) does the actual write -- to_k8s aliases,
@@ -333,11 +326,6 @@ class SecretFileSpec:
     #: then keeps it out of the config-hash that restarts application pods when their
     #: configuration changes; a service says what its secret IS, and never has to know
     #: that such a hash exists.
-    #:
-    #: Sleep-mode is why this is here. Its waker token Secret exists only while a
-    #: deployment sleeps, so pruning it on wake changed the hash and restarted the
-    #: application a second time right after it came back up -- while nothing the
-    #: application reads had changed at all.
     include_in_config_hash: bool = True
     #: When True, a value already in this secret's previous ciphertext wins over the one
     #: in ``secret_pairs``, which is then only the value for the first write.
@@ -346,7 +334,7 @@ class SecretFileSpec:
 
 @dataclass
 class ManifestContribution:
-    """What a provider adds to a component's manifests (RC-5 Phase 6).
+    """What a provider adds to a component's manifests.
 
     A declarative description the generic component loop merges into the template
     context -- the provider never touches the manifest generator itself. Two merge
@@ -357,37 +345,33 @@ class ManifestContribution:
     * ``template_vars`` is an **override** (the loop ``update``s the base template
       context, so e.g. auth-wall replaces ``service_port`` 8080 -> 4180).
 
-    With a single override provider today the order is moot; when several providers
-    override the same key (e.g. two proxies chained in front) ``manifest_order`` will
-    define precedence. Phase 6c adds the secret-file anchor, because a service's secret
-    files conceptually belong to that service.
+    ``manifest_order`` decides precedence when several providers override the same key
+    (e.g. two proxies chained in front).
     """
 
     #: Secret names to append to the pod's ``envFrom`` list, in ``manifest_order``.
     env_from_secrets: list[str] = field(default_factory=list)
     #: Plain (non-secret) environment variables to add to the container, in
-    #: ``manifest_order``. **Additive**, merged into the ``env_vars`` template var
-    #: rather than replacing it -- which is why this is a field of its own and not a
-    #: ``template_vars`` entry: ``template_vars`` is an override, so a service putting
-    #: ``env_vars`` there would wipe the component's own variables. For a value that
-    #: IS a secret use ``secret_files`` + ``env_from_secrets``; encrypting a public
-    #: cluster address only makes it harder to read what a pod was told.
+    #: ``manifest_order``. **Additive**, merged into the ``env_vars`` template var rather
+    #: than replacing it. Not a ``template_vars`` entry: that one is an override, so a
+    #: service putting ``env_vars`` there wipes the component's own variables. For a value
+    #: that IS a secret use ``secret_files`` + ``env_from_secrets``.
     env_vars: dict[str, str] = field(default_factory=dict)
     #: Template-context keys to override (merged with ``dict.update``).
     template_vars: dict[str, Any] = field(default_factory=dict)
     #: Sidecar names to append to the pod's ``sidecars`` list.
     sidecars: list[str] = field(default_factory=list)
-    #: SOPS secret manifests this service needs written (RC-5 Phase 6c).
+    #: SOPS secret manifests this service needs written.
     secret_files: list[SecretFileSpec] = field(default_factory=list)
 
 
 @dataclass
 class ComponentHealth:
-    """Observed pod health for one component after a sync (task 8).
+    """Observed pod health for one component after a sync.
 
-    A uniform, caller-agnostic shape: both the inline deploy path (from
-    ``DeploymentHealthError.failures``) and the fire-and-forget watcher (from
-    ``PodHealthResult``) build this, so an observation hook reads one thing.
+    Both the inline deploy path (from ``DeploymentHealthError.failures``) and the
+    fire-and-forget watcher (from ``PodHealthResult``) build this, so an observation hook
+    reads one shape.
     """
 
     oom_detected: bool = False
@@ -400,17 +384,14 @@ class ComponentHealth:
 
 @dataclass
 class DeploymentObservationContext:
-    """Inputs an after-sync observation handler needs (task 8, ``ActionEvent.AFTER_SYNC``).
+    """Inputs an after-sync observation handler needs (``ActionEvent.AFTER_SYNC``).
 
-    Mirrors ``ProvisionContext`` / ``ManifestContext``. The hook observes the running
-    deployment's pod health and may mutate ``project_data`` in place, but it never
-    commits: the generic runner does a single ``save_and_commit_project`` for all hook
-    outcomes together, so two services on this hook cannot race to two commits.
+    The hook observes the running deployment's pod health and may mutate ``project_data``
+    in place, but it never commits: the generic runner does a single
+    ``save_and_commit_project`` for all hook outcomes together, so two services on this
+    hook cannot race to two commits.
 
-    ``component_health`` is keyed by component reference. Fields are added when a hook
-    needs them (as ``ManifestContext`` grew), which is why there is no ``get_manager``
-    yet -- the one hook today (resource-tuning) reaches Prometheus/kubectl through its
-    own business module, not a manager.
+    ``component_health`` is keyed by component reference.
     """
 
     project_name: str
@@ -423,8 +404,7 @@ class DeploymentObservationContext:
 
 @dataclass
 class ObservationOutcome:
-    """What an observation hook reports back (task 8), declarative like
-    ``ManifestContribution``.
+    """What an observation hook reports back.
 
     The runner aggregates these across services: it commits once if any hook changed
     ``project_data``, queues a refresh if any asked, and surfaces failures/notices.
@@ -446,13 +426,11 @@ class ObservationOutcome:
 @dataclass
 class DeploymentStateContext:
     """Inputs a service needs to answer "what do you know about this deployment"
-    (RC-28, ``UIEvent.DEPLOYMENT_STATE``).
+    (``UIEvent.DEPLOYMENT_STATE``).
 
-    The question is answered from the PROJECT FILE, not from the cluster: the project
-    file is where a service records what it did (sleep-mode's ``deployments[].sleep``),
-    and asking the cluster would mean deriving the answer from the very observation the
-    asker is trying to interpret. That also keeps the hook synchronous and free of
-    connectors, so a page render can ask it as cheaply as the health check does.
+    Answer from the PROJECT FILE, not from the cluster: the project file is where a service
+    records what it did (sleep-mode's ``deployments[].sleep``). The hook is synchronous and
+    gets no connector, so a page render can ask it as cheaply as the health check does.
     """
 
     project_name: str
@@ -467,23 +445,21 @@ class DeploymentStateContext:
 
 @dataclass
 class DeploymentStateFact:
-    """One thing a service knows about a deployment (RC-28).
+    """One thing a service knows about a deployment.
 
-    A **fact**, deliberately not a health verdict. A service says "this deployment is
-    asleep and therefore has no application pods"; whether that makes the deployment
-    healthy is the health check's judgement, made from the fact. Without that split,
-    "I am asleep" quietly becomes "so everything is fine" and a service with a stale
-    state hides a real outage. There is therefore no ``healthy`` field here, and
-    ``tests/test_deployment_state.py`` holds the shape to it.
+    A **fact**, never a health verdict. A service says "this deployment is asleep and
+    therefore has no application pods"; whether that makes the deployment healthy is the
+    health check's judgement, made from the fact. So there is no ``healthy`` field here,
+    and ``tests/test_deployment_state.py`` holds the shape to it: a service with a stale
+    state would otherwise hide a real outage.
 
     ``expects_no_application_pods`` is the one operational consequence a service may
-    state, and it is narrow on purpose: it says the application's own pods are meant to
-    be absent. It never excuses a problem observed on a pod that IS there.
+    state: the application's own pods are meant to be absent. It never excuses a problem
+    observed on a pod that IS there.
 
-    ``badge`` is the second thing a service may say about the display (RC-35): the one
-    word that belongs on the deployment card. It is text only -- no colour, no icon --
-    because a card full of service-chosen styling stops reading as one platform.
-    Together with ``expects_no_application_pods`` it decides where that word lands:
+    ``badge`` is the one word that belongs on the deployment card, text only -- no colour,
+    no icon. Together with ``expects_no_application_pods`` it decides where that word
+    lands:
 
     * badge + ``expects_no_application_pods`` -- nothing of the application is supposed
       to run, so the green "Healthy" that zero pods produce is the untruth this word
@@ -494,14 +470,6 @@ class DeploymentStateFact:
     Only the green Healthy is ever replaced: Degraded, Progressing and Unknown are
     something really observed, and a state that hid them would make switching a
     component off a way to make a failure disappear.
-
-    ``superseded_by_component_details`` is the third and last, and it exists because the
-    card had to guess it. A display that already lists the individual components does not
-    need a second, general sentence about the same thing, so the card suppressed that
-    sentence -- by grepping the summary for the words "uitgeschakeld" and "staat uit".
-    Rewording a summary would have broken the deduplication silently. A service knows
-    whether it is repeating a per-component listing; a template reading its prose does
-    not. So the service says it, and the display decides whether the condition holds.
     """
 
     #: ``ServiceType.value`` of the service that knows this.
@@ -523,14 +491,9 @@ class DeploymentStateFact:
     def service_name(self) -> str:
         """The reporting service's display name, for a template that shows the fact.
 
-        Resolved here and not in the template. The card used to do the registry lookup
-        itself (``ServiceAdapter.get_service_definition(...)``), which meant it only
-        rendered when a route happened to put ``ServiceAdapter`` in the context -- the
-        lazily loaded ArgoCD card did not, so every deployment that had a fact to report
-        answered with a 500. A fact that carries its own name cannot be rendered wrong.
-
-        Falls back to the raw ``ServiceType`` value for a service that is not in the
-        registry: a display name is not worth failing a page over.
+        Resolved here, so a template needs no registry lookup of its own. Falls back to the
+        raw ``ServiceType`` value for a service that is not in the registry: a display name
+        is not worth failing a page over.
         """
         from opi.services.services import ServiceAdapter
         from opi.services.services_enums import ServiceType
@@ -544,20 +507,17 @@ class DeploymentStateFact:
 
 @dataclass
 class RedeployContext:
-    """Inputs a service needs when new content is rolled out onto a deployment (RC-37,
-    ``ActionEvent.REDEPLOY``).
+    """Inputs a service needs when new content is rolled out onto a deployment
+    (``ActionEvent.REDEPLOY``).
 
     The writing counterpart of ``DeploymentStateContext``: that hook asks a service what
     state it put a deployment in, this one tells it that the state describes content that
-    is no longer there. Deliberately about the ACTION, not about the image: an image
-    update and a deployment upsert are the same event as far as recorded state is
-    concerned, and a context named after the image would have made the second one an
-    exception.
+    is no longer there. It is about the ACTION, not about the image: an image update and a
+    deployment upsert are the same event as far as recorded state is concerned.
 
     ``project_data`` is the in-memory dict the caller is about to commit, and a hook
-    mutates it in place -- exactly like ``DeploymentObservationContext``, and for the same
-    reason: the caller does ONE commit for the rollout and every state cleanup together,
-    so two services cannot race to two commits.
+    mutates it in place: the caller does ONE commit for the rollout and every state
+    cleanup together, so two services cannot race to two commits.
     """
 
     project_name: str
@@ -580,13 +540,11 @@ class RedeployContext:
 
 @dataclass
 class DetailPageSection:
-    """A read-only section a service renders on the project-details page (WP2).
+    """A read-only section a service renders on the project-details page.
 
-    The service owns both the template and its data; the detail page loops over what
-    the project's selected services return instead of hardcoding a per-service
-    ``{% include %}``. This is the read-only counterpart of ``config_form_section``:
-    without it a section (like the Keycloak realm block) drifts away from its config
-    whenever that config moves, because the template still points at the old location.
+    The service owns both the template and its data; the detail page loops over what the
+    project's selected services return instead of hardcoding a per-service
+    ``{% include %}``. The read-only counterpart of ``config_form_section``.
 
     ``template`` is any path the app Jinja environment can resolve. Service-owned
     templates live next to the service under ``opi/services/catalog/<svc>/`` and are
@@ -605,10 +563,6 @@ class ProjectPageContext:
     """Inputs a service needs to render its project-level detail-page block
     (``UIEvent.PROJECT_SECTIONS``).
 
-    One payload object instead of the two loose arguments this hook used to take (RC-39):
-    a payload is a type the checker really checks, and a block that later needs a third
-    input grows a field here instead of a new argument at every call site.
-
     ``project_data`` is the DECRYPTED project dict, so a service can surface the
     credentials it manages; ``can`` answers whether this caller may perform an action, so
     a block that shows a secret reads the same rule as the route behind it instead of
@@ -621,12 +575,11 @@ class ProjectPageContext:
 
 @dataclass
 class DeploymentPageContext:
-    """Inputs a service needs to render its per-deployment detail-page block (RC-24).
+    """Inputs a service needs to render its per-deployment detail-page block.
 
-    ``UIEvent.PROJECT_SECTIONS`` covers the project level; backups, metrics and the
-    deployment action buttons belong to ONE deployment, so they need their own hook.
-    Same shape on the way out (a list of ``DetailPageSection``), one context object on
-    the way in, because a deployment block needs more than the project dict.
+    ``UIEvent.PROJECT_SECTIONS`` covers the project level; this hook runs per deployment
+    (backups, metrics, the deployment action buttons) and returns the same list of
+    ``DetailPageSection``.
 
     ``project_data`` is the DECRYPTED project dict and ``deployment`` the deployment
     being rendered. ``backend_available`` carries the optional back-ends the view
@@ -645,7 +598,7 @@ class DeploymentPageContext:
 
 @dataclass
 class DeploymentManifestContext:
-    """Inputs a service needs to contribute deployment-wide manifests (RC-15).
+    """Inputs a service needs to contribute deployment-wide manifests.
 
     Unlike ``ManifestContext`` (which runs once per component), this runs once per
     deployment, after the component loop. A service that needs a resource scoped to the
@@ -664,7 +617,7 @@ class DeploymentManifestContext:
 
 @dataclass
 class DeploymentManifestSpec:
-    """One deployment-wide manifest a service asks the generic emitter to write (RC-15).
+    """One deployment-wide manifest a service asks the generic emitter to write.
 
     The service returns a declarative spec; ``project_manager`` renders ``template_path``
     with ``values`` and writes ``<filename>.yaml``. ``filename`` MUST start with
@@ -714,18 +667,16 @@ class ProjectManifestSpec:
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
-    A subclass sets ``service_type`` AND its own ``definition`` (RC-36): the metadata
-    of a service lives in that service's own package, next to its config model, its
-    editables and its templates, so taking a service over is "copy the directory".
-    ``ServiceAdapter.SERVICE_DEFINITIONS`` is derived from what the services declare
-    here (see ``opi.services.registry``), not the other way around, so there is no
-    shared list to keep in sync. ``__init_subclass__`` enforces the pairing.
+    A subclass sets ``service_type`` AND its own ``definition``: the metadata of a service
+    lives in that service's own package, next to its config model, its editables and its
+    templates. ``ServiceAdapter.SERVICE_DEFINITIONS`` is derived from what the services
+    declare here (see ``opi.services.registry``), not the other way around.
+    ``__init_subclass__`` enforces the pairing.
 
-    Config shape + versioning (RC-5 Phase 2)
-    ----------------------------------------
-    A configurable service owns its config as a self-contained, independently
-    versioned unit, mirroring the Kubernetes CRD model (envelope + discriminator +
-    hub-and-spoke conversion):
+    Config shape + versioning
+    -------------------------
+    A configurable service owns its config as a self-contained, independently versioned
+    unit:
 
     * ``config_model`` -- a Pydantic model that is both the value guardrail and the
       source of the service's JSON-schema fragment. The service's config in the
@@ -753,36 +704,33 @@ class Service(ABC):
     #: its directory. ``__init_subclass__`` rejects a subclass that forgets it.
     definition: ClassVar[ServiceDefinition]
 
-    #: De dienst die deze dienst opvolgt, of None. Zie ``replaced_on_cluster``.
-    #: Niet te verwarren met ``superseded_by_component_details``, dat een feit op de
-    #: deploymentkaart is en niets over de catalogus zegt.
+    #: The service succeeding this one, or None. See ``replaced_on_cluster``. Not to be
+    #: confused with ``superseded_by_component_details``, which is a fact on the deployment
+    #: card and says nothing about the catalog.
     replaced_by: ClassVar[ServiceType | None] = None
 
     #: Pydantic model for this service's config, or None if it takes no config.
     config_model: ClassVar[type[BaseModel] | None] = None
     #: Current config schema version (major.minor), or None for a service that takes no
-    #: config. Inheriting a default "1.0" made every behaviour-only service look like it
-    #: had a versioned contract; the pairing with config_model is enforced by
+    #: config. The pairing with config_model is enforced by
     #: tests/test_service_config_schema.py.
     config_schema_version: ClassVar[str | None] = None
-    #: Migratiestappen in oplopende volgorde, elk gestempeld met de versie waar hij naar voert.
-    #: De laatste landt op ``config_schema_version``. ``__init_subclass__`` handhaaft dat,
-    #: stempels vergeleken als ``SchemaVersion``.
+    #: Migration steps in ascending order, each stamped with the version it leads to. The last
+    #: one lands on ``config_schema_version``. ``__init_subclass__`` enforces that, stamps
+    #: compared as ``SchemaVersion``.
     config_migration_steps: ClassVar[tuple[tuple[str, ConfigMigrationStep], ...]] = ()
 
-    #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
-    #: service has no config UI. The FormSection object itself lives in the forms
-    #: layer (wizard_sections); this is only the declarative link, so provider.py
-    #: stays free of forms imports. The forms layer derives SERVICE_CONFIG_SECTIONS /
-    #: EDIT_SECTIONS by iterating the registry instead of a hand-synced dict.
+    #: Wizard/edit config-section id for this service, or None if the service has no config
+    #: UI. The FormSection object itself lives in the forms layer (wizard_sections); this is
+    #: only the declarative link, so this module stays free of forms imports. The forms layer
+    #: derives SERVICE_CONFIG_SECTIONS / EDIT_SECTIONS by iterating the registry.
     config_section_id: ClassVar[str | None] = None
     #: Modal-edit flow id for this service's config, or None. SERVICE_CONFIG_MODAL_FLOWS
     #: is derived from this.
     modal_flow_id: ClassVar[str | None] = None
 
     #: Display order of this service's ``config_component_layout()`` nodes within the
-    #: per-component form; lower shows first. A static ordering for now -- a
-    #: user-facing priority is a deferred future refinement.
+    #: per-component form; lower shows first.
     config_component_order: ClassVar[int] = 100
 
     #: Whether the CONFIG of this service at the component layer is at the same time its
@@ -791,10 +739,9 @@ class Service(ABC):
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
-    #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer
-    #: that is API-only on purpose. The point is that the choice is written down: without
-    #: it a missing form section is indistinguishable from a forgotten one, which is
-    #: exactly how half the catalog ended up with config nobody could edit.
+    #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer that
+    #: is API-only on purpose. Writing the reason down is what keeps a missing form section
+    #: distinguishable from a forgotten one.
     #: ``tests/test_service_config_layers.py`` holds every service to this.
     form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
 
@@ -805,59 +752,48 @@ class Service(ABC):
     #: services list", which is the normal case.
     owned_property: ClassVar[str | None] = None
 
-    #: Whether that owned property is a key/value map the API can manage entry by entry
-    #: (RC-55). Set together with ``owned_property``; False means "not a values map",
-    #: and then no ``/values/...`` endpoints are generated. The layers those endpoints
-    #: cover are the ones the service already declares (``config_layers()``), so the API
-    #: can never address a layer the project schema has no place for -- which is why
-    #: ``aliases`` gets component-level endpoints only.
-    #:
-    #: This used to name a storage SHAPE (``ValueStorage``), because ``aliases`` was
-    #: stored as a mapping with each value encrypted on its own while ``user-env-vars``
-    #: was one block. Since RC-106 both are one AGE block whose plaintext is
-    #: ``KEY=value`` lines, so there is no shape left to choose and the declaration is a
-    #: yes/no. ``opi/services/component_values.py`` is the one implementation of it.
+    #: Whether that owned property is a key/value map the API can manage entry by entry.
+    #: Set together with ``owned_property``; False means "not a values map", and then no
+    #: ``/values/...`` endpoints are generated. The layers those endpoints cover are the ones
+    #: the service already declares (``config_layers()``), so the API can never address a
+    #: layer the project schema has no place for -- which is why ``aliases`` gets
+    #: component-level endpoints only. ``opi/services/component_values.py`` implements it.
     owned_values_map: ClassVar[bool] = False
 
-    #: TIJDELIJKE GEVEL, en met opzet één zichtbare schakelaar. De configsleutels waarvan
-    #: dit een lijst IS in het projectbestand, maar die de API als ÉÉN object toont: de
-    #: PUT-body neemt de entry zelf, de GET geeft de entry zelf terug.
+    #: A TEMPORARY FACADE: the config keys this IS a list of in the project file, but which
+    #: the API shows as ONE object -- the PUT body takes the entry itself, the GET returns the
+    #: entry itself. Today there is always exactly one (``invite.active``: the form pins it to
+    #: min == max == 1).
     #:
-    #: Er staat er vandaag altijd precies één (``invite.active``: het formulier pint hem al
-    #: af op min == max == 1), en een lijst van één maakt elk CLI- en agentgebruik lelijker
-    #: dan nodig. Het is nadrukkelijk GEEN ontwerpbesluit dat de eindvorm voorstelt: we
-    #: weten niet of er nog entries bij komen, dus het schema blijft ONGEWIJZIGD -- de
-    #: opslag, ``config_model`` en het vastgelegde schemafragment zijn en blijven een lijst.
-    #: Haal de naam hier weg en het lijstoppervlak is terug, zonder migratie en zonder dat
-    #: er iets op schijf verandert.
+    #: The schema, the storage, ``config_model`` and the committed schema fragment are and
+    #: stay a list. Take the name out here and the list surface is back, without a migration
+    #: and without anything changing on disk.
     #:
-    #: De gevel mag alleen bestaan zolang hij waar is: staan er meer entries in het bestand,
-    #: dan weigeren de lees- en schrijfroute met een 409 in plaats van de eerste te tonen en
-    #: de rest te overschrijven -- bij een invite is dat verlies onherstelbaar, want het
-    #: projectbestand is de enige plek waar die uitnodiging staat en een overschreven link
-    #: is per direct ongeldig voor wie hem al had. De PATCH op de lijst blijft bestaan en is
-    #: de uitweg. Alles daarvan zit op één plek, ``opi/services/config_singular.py``.
+    #: The facade may only exist while it is true: when the file holds more entries, the read
+    #: and write route refuse with a 409 instead of showing the first and overwriting the rest.
+    #: With an invite that loss is unrecoverable, because the project file is the only place
+    #: that invitation lives and an overwritten link is invalid at once for whoever already had
+    #: it. The PATCH on the list stays and is the way out. All of that sits in one place,
+    #: ``opi/services/config_singular.py``.
     api_singular_lists: ClassVar[frozenset[str]] = frozenset()
 
-    #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
-    #: meaningful for providers that override ``provision``. The defaults on the four
-    #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
-    #: sequence.
+    #: Order in the generic provisioning loop; lower runs first. Only meaningful for
+    #: providers that override ``provision``. The four provisioning providers run
+    #: db -> minio -> keycloak -> redis.
     provision_order: ClassVar[int] = 100
 
-    #: Manager key for server-side cleanup on removal (RC-5 Phase 5), or None if the
-    #: service has no server-side resources to clean up. Resolved via
-    #: RemovalContext.get_manager; replaces the _SERVICE_TYPE_MANAGER_ATTR map.
+    #: Manager key for server-side cleanup on removal, or None if the service has no
+    #: server-side resources to clean up. Resolved via RemovalContext.get_manager.
     cleanup_manager_key: ClassVar[ManagerKey | None] = None
 
     #: Per-deployment secret whose name is added to the pod's ``envFrom`` when a
-    #: component uses this service (RC-5 Phase 6a), or None. The base
+    #: component uses this service, or None. The base
     #: ``contribute_manifest_context`` derives the name via
     #: ``manifest_secret_class.get_secret_name(deployment_name)``.
     manifest_secret_class: ClassVar[type[BaseSecret] | None] = None
     #: Order of this provider's contribution in the generic manifest loop; lower runs
-    #: first. Pins today's fixed envFrom append order (db 10, minio 20, keycloak 30,
-    #: redis 40, metrics 50) so the golden renders stay byte-identical.
+    #: first. The envFrom append order is db 10, minio 20, keycloak 30, redis 40,
+    #: metrics 50.
     manifest_order: ClassVar[int] = 100
     #: Service types that activate this provider's manifest contribution. Empty means
     #: "just my own service_type"; the shared postgres/redis providers override this to
@@ -866,10 +802,8 @@ class Service(ABC):
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
 
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
-    #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
-    #: included) by ``__init_subclass__``, so participation cannot drift from
-    #: implementation and ``registry`` can index listeners without scanning for overridden
-    #: method names.
+    #: order=)`` order. Derived from the decorated methods of the class (mixins included)
+    #: by ``__init_subclass__``.
     event_handlers: ClassVar[dict[ServiceEvent, list[tuple[str, int]]]] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -893,11 +827,11 @@ class Service(ABC):
 
     @classmethod
     def _check_config_migration_steps(cls) -> None:
-        """Check dat migratiestappen in oplopende volgorde eindigen op de huidige versie.
+        """Check that migration steps end on the current version, in ascending order.
 
-        Een tekstsortering zet 1.10 voor 1.9, dus de stempels worden vergeleken als
-        ``SchemaVersion``; een onleesbare stempel faalt hier, bij het laden, in plaats van bij
-        het eerste projectbestand dat hem draagt.
+        A text sort puts 1.10 before 1.9, so the stamps are compared as ``SchemaVersion``; an
+        unreadable stamp fails here, at load time, instead of on the first project file that
+        carries it.
         """
         versions = [parse_schema_version(version) for version, _ in cls.config_migration_steps]
         if versions != sorted(set(versions)):
@@ -934,25 +868,17 @@ class Service(ABC):
         entry, because it is not configuration of a use -- it is the thing being used.
         Only a service with a ``ConfigRole.DEFINE`` layer has one; everything else
         returns None and is skipped by the validation walk.
-
-        Separate from ``config_model_for`` on purpose: a service can both define
-        something at project level and be configured at component level, with two
-        different shapes, and one hook cannot answer both.
         """
         return None
 
-    def summarize_data(self, data: Any, private_key: str) -> Any:
+    def summarize_data(self, data: Any, private_key: str) -> Any:  # noqa: ANN401  # the DEFINE payload of a service
         """What a read may show of this service's DEFINE-side payload at that layer.
 
         A definition is the thing being used, so it is the one place in a project file
         where the payload IS the secret -- for attachments, the file. The read endpoints
-        therefore drop ``data`` wholesale and always have, which is right and is also why
-        a client could not check anything about it at all.
-
-        This is the narrow way back: the service, and only the service, says what of its
-        definition may be described. Default None -- nothing, for the same reason the
-        blanket drop existed. A service that answers must never return content; it
-        returns facts *about* the content.
+        drop ``data`` wholesale, and the service, and only the service, says what of its
+        definition may still be described. Default None, nothing. A service that answers
+        must never return content; it returns facts *about* the content.
 
         *private_key* is the project's decoded AGE private key, because a definition is
         stored encrypted and there is nothing to describe without opening it.
@@ -975,15 +901,14 @@ class Service(ABC):
         return (ConfigRole.USE,) if layer in self.config_layers() else ()
 
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
-        """Zet een oudere config vooruit naar ``config_schema_version`` (hub).
+        """Bring an older config forward to ``config_schema_version`` (the hub).
 
-        Alleen vooruit (spoke -> hub): voert elke stap uit ``config_migration_steps`` uit die
-        de opgeslagen versie nog niet gehad heeft, in volgorde. Een dienst die nog op zijn
-        eerste versie staat declareert geen stappen, en dit is dan de identiteit. Houd elke
-        stap eenvoudig en verliesvrij waar mogelijk (de Kubernetes-conversieregel).
+        Forward only (spoke -> hub): runs every step from ``config_migration_steps`` the stored
+        version has not had yet, in order. A service still on its first version declares no
+        steps, and this is then the identity. Keep every step simple and lossless.
 
-        ``config`` is een dict voor de meeste diensten, of een lijst voor diensten waarvan de
-        config een reeks is (bijvoorbeeld storage mounts).
+        ``config`` is a dict for most services, or a list for services whose config is a
+        sequence (storage mounts, for instance).
         """
         stored = parse_schema_version(from_version)
         for step_version, step in self.config_migration_steps:
@@ -1024,18 +949,15 @@ class Service(ABC):
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated, context=context)
 
-    # --- config field ownership (RC-5 "service owns its fields") ----------------
-    # A service owns the fields it needs and exposes them per layer + per consumer.
-    # ``config_editables`` is the DATA (yaml_path + validator + default) for a service's
-    # config at a layer; ``config_form_section`` is the wizard/embed UI view;
-    # ``config_api_fields`` the field names the API/YAML accepts (derived from the model
-    # via ``config_model_field_names`` for modelled services). ``config_api_fields`` and
-    # ``config_editables`` are consumed by the config-validation chokepoint
-    # (``manager/project_validation.py``) to report a service's accepted config fields
-    # when its config fails validation. Defaults are empty, so a service with no config,
-    # or one not yet migrated to owning its fields, keeps working. Concrete providers
-    # import the forms building blocks lazily (inside the method) so provider.py /
-    # registry.py stay free of forms imports at load time.
+    # Config field ownership: a service owns the fields it needs and exposes them per layer
+    # and per consumer. ``config_editables`` is the DATA (yaml_path + validator + default)
+    # for a service's config at a layer; ``config_form_section`` is the wizard/embed UI view;
+    # ``config_api_fields`` the field names the API/YAML accepts (derived from the model via
+    # ``config_model_field_names`` for modelled services). The config-validation chokepoint
+    # (``manager/project_validation.py``) reads the last two to report a service's accepted
+    # config fields when its config fails validation; the defaults are empty, so a service
+    # with no config keeps working. A service imports the forms building blocks inside the
+    # method, so this module and registry.py stay free of forms imports at load time.
 
     def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         """The DATA editables this service contributes at ``layer`` (default none)."""
@@ -1045,15 +967,11 @@ class Service(ABC):
         """The config fields a project may set, each with the room this service allows.
 
         A bound on a user-settable field is a platform decision, so it belongs to the
-        service and not to whoever writes the project file. Declaring it here puts it in
-        ONE place: the merge (``resolve_setting``), the project-file validation and the
-        wizard field all read this, instead of a ``le=`` in the model, a number in a
-        connector and a dropdown each carrying their own copy.
+        service and not to whoever writes the project file. The merge (``resolve_setting``),
+        the project-file validation and the wizard field all read this one declaration.
 
-        The default is no settings at all, which is exactly the behaviour a service had
-        before this hook existed: nothing declared means nothing extra is checked and
-        nothing extra is settable.
-        See ``opi/services/catalog/config_settings.py`` for the three kinds of bound.
+        Nothing declared means nothing extra is checked and nothing extra is settable. See
+        ``opi/services/catalog/config_settings.py`` for the three kinds of bound.
         """
         return ()
 
@@ -1061,9 +979,7 @@ class Service(ABC):
         """The declaration for one field, or a refusal.
 
         What a service does not declare is not settable -- there is no "it happens to be
-        in the model, so you can set it". A caller that asks for the room of an
-        undeclared field gets told it has none, rather than a silent None it can read
-        past.
+        in the model, so you can set it".
 
         Raises:
             SettingError: if this service does not open ``path`` up at all.
@@ -1080,16 +996,15 @@ class Service(ABC):
     def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         """The wizard/edit config section this service contributes at ``layer``, or None.
 
-        The forms layer sources its per-service sections from here instead of
-        hand-authoring them. A PROJECT-level section is a standalone wizard step and the
-        service builds it itself (keycloak, sleep-mode, ...).
+        The forms layer sources its per-service sections from here. A PROJECT-level section
+        is a standalone wizard step and the service builds it itself (keycloak,
+        sleep-mode, ...).
 
         The component and deployment-component layers are different: those fields are
-        *embedded* in the per-component form rather than shown as their own step, so
-        there is nothing per-service to author. This default builds that section from
-        what the service already declares for the layer (its visualizers + its layout
-        nodes), which is why every component-level service answers the hook without a
-        line of its own code. A service with no fields at the layer still returns None.
+        *embedded* in the per-component form rather than shown as their own step. This
+        default builds that section from what the service already declares for the layer
+        (its visualizers + its layout nodes). A service with no fields at the layer still
+        returns None.
 
         Answering the hook at the layer where the config actually lives is what
         ``tests/test_service_config_layers.py`` locks: a service that carries config
@@ -1123,18 +1038,10 @@ class Service(ABC):
     def api_actions(self) -> list[ServiceAction]:
         """Extra API actions this service declares beyond the generic config endpoints.
 
-        Editables are the starting point of the API surface and stay so: for most of the
-        catalog "configure this service here" is the whole story, and generating that from
-        the fields the wizard already declares keeps the two in step. But editables and the
-        API will never coincide exactly, and they do not have to -- the point is that they
-        live next to each other and that a difference is deliberate and visible.
-
-        An action is where a service says "I can do something the form has no field for".
-        Uploading an attachment is the first one: a file is not a config block, it arrives
-        as multipart, and without it an API client could reference an attachment it had no
-        way to create. The declaration (``opi/services/catalog/actions.py``) carries the
-        fields, their meaning, their verbs and an example; route and documentation are
-        derived from it.
+        An action is where a service says "I can do something the form has no field for" --
+        uploading an attachment, say: a file is not a config block and arrives as multipart.
+        The declaration (``opi/services/catalog/actions.py``) carries the fields, their
+        meaning, their verbs and an example; route and documentation are derived from it.
         """
         return []
 
@@ -1147,37 +1054,23 @@ class Service(ABC):
 
         Default: no rule. ``user-env-vars`` deliberately has none -- a dollar sign in a
         password is not a typo -- while ``aliases`` requires its value to reference a
-        platform variable that exists (RC-66).
+        platform variable that exists.
         """
 
     def owned_value_is_secret(self, key: str, value: str) -> bool:
-        """Whether a stored value must be masked when it is read back (RC-66).
+        """Whether a stored value must be masked when it is read back.
 
         Default: yes. A stored value is a secret until the service that owns it says
-        otherwise, and the only service that says otherwise is ``aliases``, whose values
-        are references: the value IS the coupling, so masking it hides exactly what the
-        reader asked about. Called with the DECRYPTED value, because that is the only
-        form in which the question can be answered -- everything in the file is
-        encrypted, which is why one shared storage-shape rule could not tell a secret
-        from a pointer.
+        otherwise. Called with the DECRYPTED value, the only form in which the question can
+        be answered.
 
-        **This default is a decision, not a gap, and it is the place someone will want
-        to undo.** The values of ``user-env-vars`` are never handed back, and there is
-        deliberately no flag, no opt-in and no per-value exception to that. A read path
-        was asked for -- a caller cannot check a value they just wrote, so a typo in a
-        variable that holds nothing secret is only findable by asking the running
-        workload -- and it was weighed and refused: those values CAN hold secrets, and a
-        way to read them back is exactly as easy for an automated client that has been
-        talked into asking as it is for the person who owns the project. The convenience
-        of reading one back does not buy off that risk. You can set and change these
-        values; you cannot get them out again.
-
-        ``aliases`` is the one exception and stays it, because its values are not
-        secrets: an alias value is a reference to a platform variable
-        (``$DATABASE_SERVER_HOST``), the reference IS the coupling, and masking it hides
-        the only thing a reader was asking about. That difference between the two
-        near-identical features is intentional; do not "make them consistent" by opening
-        up the env-var side.
+        ``aliases`` is the one service that says otherwise: its values are references to a
+        platform variable (``$DATABASE_SERVER_HOST``), the reference IS the coupling, and
+        masking it hides the only thing a reader was asking about. The values of
+        ``user-env-vars`` are never handed back, and there is no flag, no opt-in and no
+        per-value exception: those values CAN hold secrets, and a read path is exactly as
+        easy for an automated client that has been talked into asking as for the person who
+        owns the project. Do not "make the two consistent" by opening up the env-var side.
         """
         return True
 
@@ -1187,8 +1080,7 @@ class Service(ABC):
         A layer counts when the service declares editables for it, accepts API fields
         for it, hooks layout nodes into that layer's form, opens a config setting up on
         it, or carries a DEFINE-side payload there. Derived rather than declared, so it
-        cannot drift from the implementation -- the same trick
-        ``registry.provisioning_services()`` uses.
+        cannot drift from the implementation.
         """
         layers = []
         for layer in ConfigLayer:
@@ -1207,20 +1099,17 @@ class Service(ABC):
                 layers.append(layer)
         return layers
 
-    # --- implicit project selection (RC-84 "a service that may enrol itself") -----
-    # Hanging a service on a component or deployment while the project has not selected
-    # it is either a needless extra step or a missing decision, and which of the two it
-    # is depends on the service. The base answer is the safe one -- no, select it at
-    # project level first -- so a new service is never implicitly enrolled because
-    # nobody thought about it. A service that may enrol itself says so, and says what
-    # its project-level entry then contains.
+    # Implicit project selection. The base answer is the safe one -- no, select the service
+    # at project level first -- so a new service is never implicitly enrolled because nobody
+    # thought about it. A service that may enrol itself says so, and says what its
+    # project-level entry then contains.
 
     #: Whether hanging this service on a component/deployment may also add it to the
     #: project's ``services`` list, without anyone selecting it there. False (the safe
     #: answer) for every service that does not say otherwise; a service whose approvals
     #: say the implicit config needs a request is never implicit, whatever it sets here.
     #: Only asked of a service that HAS a project layer -- without one there is no
-    #: decision to protect (RC-103).
+    #: decision to protect.
     allows_implicit_project_selection: ClassVar[bool] = False
 
     def implicit_project_config(self) -> ServiceConfigData | None:
@@ -1247,10 +1136,9 @@ class Service(ABC):
         Three rules are enforced here rather than left to each service:
 
         * a service without a project layer in ``config_layers()`` is always a bare
-          selection (RC-103). There is no project-level decision to make and no endpoint
-          to make it with, so refusing would send the caller to a layer that does not
-          exist -- a promise the API cannot keep. This outranks the two rules below,
-          which both exist to protect a project-level decision;
+          selection: there is no project-level decision to make and no endpoint to make it
+          with, so refusing would send the caller to a layer that does not exist. This
+          outranks the two rules below, which both protect a project-level decision;
         * a service may never enrol itself into a state that needs approving. Not the
           mere presence of an ``ApprovalSpec``: the spec is asked whether the config the
           service would enrol with needs a request (``requires_approval``). A
@@ -1297,28 +1185,19 @@ class Service(ABC):
         return {"name": self.service_type.value, "config": config}
 
     def web_routers(self) -> list[Any]:
-        """The ``APIRouter``s carrying this service's own web endpoints (default none).
+        """The ``APIRouter``s for this service's blocks (fragments, modals).
 
-        A service that delivers a section does not stop at the HTML: the backups block
-        lazy-loads its rows over ``hx-get``, the database console and the job runner are
-        modals with their own start/status/stop routes. Without this hook half the block
-        stays behind in the general router. ``registry.collect_service_routers()``
-        gathers them and ``opi/web/router.py`` mounts them.
-
-        Return the SAME router object from every service that shares it (the backup
-        fragment belongs to all backupable services); the collector mounts each distinct
-        router once. Typed loosely so this module stays free of a FastAPI import.
+        Return the SAME router object from every owner; the collector mounts it once.
         """
         return []
 
-    def config_component_layout(self) -> list[Any]:
+    def config_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).
 
         Component-level services (storage, metrics-scraper, ...) don't get a standalone
         wizard step -- their fields live inside the component definition. This is the
         hook point: the component form assembly collects each service's nodes and
-        inserts them. (Display ordering across services is registry order for now; an
-        explicit priority is a later refinement.)
+        inserts them, in registry order.
         """
         return []
 
@@ -1327,40 +1206,35 @@ class Service(ABC):
 
         The visualizer counterpart of ``config_editables(ConfigLayer.COMPONENT)``: the
         component-form aggregation (``COMPONENTS_SEQUENCE``) collects each service's
-        visualizers in ``config_component_order`` instead of a hand-synced list, so a
-        component-level service owns the display of its own fields."""
+        visualizers in ``config_component_order``."""
         return []
 
     def component_form_notices(self) -> list[EditableVisualizer]:
-        """Informatieblokken die deze dienst aan het componentformulier meegeeft.
+        """Information blocks this service hands to the component form.
 
-        Een dienst kan iets te MELDEN hebben op een niveau waar hij niets te CONFIGUREREN
-        heeft. De authorization wall is het geval waarvoor deze haak bestaat: je zet hem per
-        component aan (daar komt de oauth2-proxy voor de pod) terwijl zijn enige instelling
-        projectbreed is, dus in het componentformulier is er wel iets uit te leggen en niets
-        in te vullen.
+        A service may have something to SAY at a layer where it has nothing to CONFIGURE. The
+        authorization wall is the case this hook exists for: it is switched on per component
+        (that is where the oauth2-proxy joins the pod) while its only setting is project wide,
+        so in the component form there is something to explain and nothing to fill in.
 
-        Waarom niet ``config_component_visualizers`` + ``config_component_layout``: die twee
-        horen bij elkaar en de layouthaak telt mee in ``config_layers()``. Een dienst die er
-        alleen tekst in wil hangen, zou daarmee een configlaag claimen die hij niet heeft, en
-        de API krijgt er een configroute bij voor iets wat je niet kunt instellen. Deze haak
-        raakt ``config_layers()`` niet, dus een mededeling blijft een mededeling.
+        Do not hang such a block on ``config_component_visualizers`` plus
+        ``config_component_layout`` instead: the layout hook counts towards
+        ``config_layers()``, so the service would claim a config layer it does not have and
+        the API would gain a config route for something that cannot be set. This hook does
+        not touch ``config_layers()``.
 
-        Elk blok is een readonly visualizer op een eigen pad; readonly betekent dat de
-        verwerking het overslaat, dus er komt niets van in het projectbestand. Het
-        componentformulier zet ze onder de dienstenkeuze neer, elk als eigen kaart, in
-        ``config_component_order``.
+        Every block is a readonly visualizer on a path of its own; readonly means processing
+        skips it, so none of it reaches the project file. The component form puts them below
+        the service picker, each as a card of its own, in ``config_component_order``.
         """
         return []
 
-    def config_deployment_component_layout(self) -> list[Any]:
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         """Layout node(s) this service hooks into the per-deployment component form.
 
         The deployment-component counterpart of ``config_component_layout()``: fields a
-        deployment overrides on one of its components (``user-env-vars`` today). Until
-        RC-25 this layer had no service-owned hook at all and its fields were
-        hand-authored in ``forms/editables/fields/deployments.py``; a service that owns
-        config here now declares it, in ``config_component_order``.
+        deployment overrides on one of its components (``user-env-vars`` today), in
+        ``config_component_order``.
         """
         return []
 
@@ -1372,18 +1246,16 @@ class Service(ABC):
         """The config field names the API accepts at ``layer`` (default none).
 
         Services with a ``config_model`` derive these from the model (see
-        ``config_model_field_names``) rather than re-declaring them, so the API
-        surface stays in lock-step with the schema."""
+        ``config_model_field_names``) rather than re-declaring them."""
         return []
 
     def config_model_field_names(self, layer: ConfigLayer | None = None) -> list[str]:
         """The field names of this service's config model at ``layer`` (alias-aware), or [].
 
-        The single source for "which config keys does this service have" - reused by
-        ``config_api_fields`` so the API surface is not a second hand-maintained copy.
-        ``layer`` is for a service whose layers carry different shapes (send-email, whose
-        deployment layer overrides three of the project's fields); without it the answer is
-        about ``config_model``."""
+        The single source for "which config keys does this service have", also behind
+        ``config_api_fields``. ``layer`` is for a service whose layers carry different
+        shapes (send-email, whose deployment layer overrides three of the project's
+        fields); without it the answer is about ``config_model``."""
         model = self.config_model if layer is None else self.config_model_for(layer)
         if model is None:
             return []
@@ -1394,8 +1266,8 @@ class Service(ABC):
 
         The rule is absolute and generic: **the API can never clear and never change
         config data OPI sets itself.** For keycloak that is the realm, its credentials
-        and the OTP seed; a service that declares nothing gets an empty set and behaves
-        exactly as before. The boundary is the API, not the code -- OPI's own writers
+        and the OTP seed; a service that declares nothing gets an empty set. The boundary
+        is the API, not the code -- OPI's own writers
         (``keycloak_manager``, the approval flow) go a different way and keep writing
         these fields, otherwise no rollout could create a realm.
 
@@ -1410,11 +1282,9 @@ class Service(ABC):
     def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
         """Fill in the values this service generates when the writer left them empty.
 
-        The wizard has always done this for the one case there is -- an invite key left
-        blank becomes a generated 128-bit key -- through the form's ``post_merge``. The
-        API write path never ran that, so a caller who left the key empty (the portal
-        invites you to) got an invitation whose link was literally ``/invite/``. Nothing
-        was masked and nothing was cleared: no key was ever made.
+        The one case today: an invite key left blank becomes a generated 128-bit key. Both
+        the wizard (through the form's ``post_merge``) and the API write path go through
+        this, so a caller who leaves the key empty still gets a usable invitation.
 
         Mutates ``project_data`` in place and returns ``{yaml path: generated value}``.
         The return value is not bookkeeping: it is the ONLY place a caller learns a value
@@ -1426,7 +1296,7 @@ class Service(ABC):
         """
         return {}
 
-    # --- approval ownership (RC-5 "service owns what needs approving") -----------
+    # Approval ownership.
     # A service declares, as data, which of the values it manages need approval before
     # they take effect, and supplies the rule that reads the stored approval state back.
     # Generic code (a catalog-driven approval interface, enforcers) consumes these
@@ -1449,11 +1319,11 @@ class Service(ABC):
         return list(seen.values())
 
     def enabling_needs_approval(self) -> bool:
-        """Of het AANZETTEN van deze dienst zelf een aanvraag is.
+        """Whether SWITCHING ON this service is itself a request.
 
-        Niet de aanwezigheid van een spec: een goedkeuring over een CONFIGWAARDE geldt
-        pas bij die waarde, en de dienst aanzetten vraagt dan niets. Dezelfde vraag als
-        in ``implicit_project_entry``, voor de kaart en de uitleg in het formulier.
+        Not the presence of a spec: an approval about a CONFIG VALUE only applies at that
+        value, and switching the service on then asks nothing. The same question as in
+        ``implicit_project_entry``, for the card and the explanation in the form.
         """
         config = self.implicit_project_config() or {}
         return any(spec.requires_approval(config) for spec in self.approval_specs())
@@ -1474,25 +1344,20 @@ class Service(ABC):
         than event-shaped -- it reads the project as it now stands and adds the entries
         that are missing -- so every writer can call it after its write without knowing
         which fields it touched, and calling it twice creates one request.
-
-        It lives on the service and not on the spec because one pass over the project
-        can produce several kinds of request at once (publish-on-web reads a deployment's
-        domain and its subdomain together, and the second only matters given the first).
         """
         return None
 
     async def provision(self, ctx: ProvisionContext) -> None:
-        """Provision this service's deployment-level resources (RC-5 Phase 4).
+        """Provision this service's deployment-level resources.
 
         Default no-op -- for services with no deployment-level provisioning (storage,
-        publish-on-web, ...). The four provisioning services override this to delegate
-        to their manager's ``create_resources_for_deployment`` (self-guarded and
-        replay-safe), so the generic loop is byte-identical to the old fixed sequence.
+        publish-on-web, ...). The four provisioning services override this to delegate to
+        their manager's ``create_resources_for_deployment`` (self-guarded and replay-safe).
         """
         return
 
     def applies_to(self, project_data: dict[str, Any], deployment_name: str) -> bool:
-        """Whether this service applies to this project/deployment (task 9).
+        """Whether this service applies to this project/deployment.
 
         A ``SYSTEM`` service always runs; a ``USER`` service runs only when the project
         selected it (project-level or referenced by a component). Generic code filters
@@ -1514,15 +1379,14 @@ class Service(ABC):
 
         Runtime state is what the service itself wrote about one deployment -- not user
         config. It describes the deployment that is there, so it must never travel to
-        another one. Generic code that copies a deployment (the clone behind a PR
-        preview) drops these keys instead of naming a service, which is the same reason
-        ``ActionEvent.REDEPLOY`` exists.
+        another one. Generic code that copies a deployment (the clone behind a PR preview)
+        drops these keys instead of naming a service.
 
         A service that records nothing returns the default empty tuple.
         """
         return ()
 
-    # --- events: the one way a service hooks in (RC-39) --------------------------
+    # Events are the one way a service hooks in.
     # A service declares what it listens to with ``@on(event)`` on the method that does
     # the work (see ``opi.services.catalog.events``); these two dispatches -- one per
     # family -- are how generic code asks it. There is deliberately no third: an event
@@ -1552,11 +1416,9 @@ class Service(ABC):
 
         The overloads above are the typed contract: an event is paired with exactly one
         payload type, so a ``DeploymentPageContext`` where a ``DeploymentStateContext``
-        belongs is ``No overloads for "handle_ui" match the provided arguments``. Measured
-        with ``reportCallIssue`` / ``reportArgumentType`` on; this repo has both OFF, so
-        the error is suppressed here today -- exactly as it was for the loose arguments of
-        the named methods this replaces. The difference is that the pairing is now a real
-        type, so switching those checks on starts enforcing it without another change.
+        belongs is ``No overloads for "handle_ui" match the provided arguments``. This repo
+        has ``reportCallIssue`` and ``reportArgumentType`` OFF, so such a mismatch is not
+        reported today.
 
         Every handler this service declares for the event contributes, in ``order``, and
         the results are concatenated: a service that is backupable AND brings its own
@@ -1595,13 +1457,12 @@ class Service(ABC):
 
     async def handle_service_removal(self, ctx: RemovalContext) -> dict[str, Any]:
         """Clean up this service's server-side resources when it is removed from a
-        deployment (RC-5 Phase 5).
+        deployment.
 
-        Generic by default: a service with a ``cleanup_manager_key`` resolves that
-        manager via the context and delegates to its ``handle_service_removal`` (all
-        managers share the signature), byte-identical to the old
-        ``_SERVICE_TYPE_MANAGER_ATTR`` dispatch. A service with no server-side
-        resources (``cleanup_manager_key is None``) returns an empty result.
+        Generic by default: a service with a ``cleanup_manager_key`` resolves that manager
+        via the context and delegates to its ``handle_service_removal`` (all managers share
+        the signature). A service with no server-side resources
+        (``cleanup_manager_key is None``) returns an empty result.
         """
         if self.cleanup_manager_key is None:
             return {}
@@ -1628,13 +1489,13 @@ class Service(ABC):
         return True
 
     def replaced_on_cluster(self, cluster: str) -> bool:
-        """Of deze dienst op ``cluster`` vervangen is door ``replaced_by``.
+        """Whether this service is replaced by ``replaced_by`` on ``cluster``.
 
-        Alleen waar de opvolger er echt is: zolang die op een cluster ontbreekt, is er
-        niets om naar over te stappen en verandert daar niets. Dezelfde twee lezers als
-        ``available_on_cluster``, met een zachtere uitkomst: de kiezer laat de kaart weg
-        voor wie de dienst nog niet heeft, en de validatie weigert alleen een deployment
-        die hem erbij krijgt.
+        Only where the successor really exists: while it is missing on a cluster there is
+        nothing to move to and nothing changes there. The same two readers as
+        ``available_on_cluster``, with a softer outcome: the picker leaves the card out for
+        whoever does not have the service yet, and the validation only refuses a deployment
+        that gains it.
         """
         if self.replaced_by is None:
             return False
@@ -1643,7 +1504,7 @@ class Service(ABC):
         return get_service(self.replaced_by).available_on_cluster(cluster)
 
     def replacement_name(self) -> str | None:
-        """De weergavenaam van de opvolger, voor een melding die hem noemt."""
+        """The successor's display name, for a message that names it."""
         if self.replaced_by is None:
             return None
         from opi.services.registry import get_service
@@ -1651,18 +1512,17 @@ class Service(ABC):
         return get_service(self.replaced_by).definition.name
 
     def manifest_activation_types(self) -> tuple[ServiceType, ...]:
-        """Service types whose presence in a component activates this provider's
-        manifest contribution (RC-5 Phase 6). Defaults to just this provider's own
-        service_type; shared providers (postgres, redis) override ``manifest_activated_by``
-        to also fire for their namespace variant.
+        """Service types whose presence in a component activates this provider's manifest
+        contribution. Defaults to just this provider's own service_type; shared providers
+        (postgres, redis) override ``manifest_activated_by`` to also fire for their
+        namespace variant.
         """
         return self.manifest_activated_by or (self.service_type,)
 
     @classmethod
     def contributes_to_manifests(cls) -> bool:
-        """Whether this provider contributes anything to a component's manifests
-        (RC-5 Phase 6): either a per-deployment envFrom secret (6a) or an overridden
-        ``contribute_manifest_context`` (6b: auth-wall sidecar + service_port override).
+        """Whether this provider contributes anything to a component's manifests: either a
+        per-deployment envFrom secret or an overridden ``contribute_manifest_context``.
         ``registry.manifest_services()`` uses this to build the contributor set.
         """
         return (
@@ -1671,13 +1531,12 @@ class Service(ABC):
         )
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
-        """This service's contribution to a component's manifests (RC-5 Phase 6).
+        """This service's contribution to a component's manifests.
 
-        Phase 6a: a service with a ``manifest_secret_class`` contributes that secret's
-        name to the pod's ``envFrom`` -- byte-identical to the hand-written append
-        block it replaces. Services with no manifest contribution inherit the empty
-        default. Later sub-phases extend ``ManifestContribution`` (sidecars, template
-        vars, secret files) and override this hook accordingly.
+        A service with a ``manifest_secret_class`` contributes that secret's name to the
+        pod's ``envFrom``; a service with no manifest contribution inherits the empty
+        default. A service that adds a sidecar or overrides a template var overrides this
+        hook.
         """
         contribution = ManifestContribution()
         if self.manifest_secret_class is not None:
@@ -1686,14 +1545,13 @@ class Service(ABC):
         return contribution
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
-        """SOPS secret manifests this service needs for the deployment (RC-5 Phase 6c).
+        """SOPS secret manifests this service needs for the deployment.
 
-        Default none. The credential services (postgres, minio, redis, metrics)
-        override this to build their typed secret from ``ctx.get_secret`` /
-        ``ctx.cluster`` / settings and return a spec; the shared writer
-        (``ProjectManager._write_secret_file``) does the actual write. A service that
-        cannot build its secret (no provisioned credentials) returns ``[]`` and logs,
-        matching the old warn-and-skip branches.
+        Default none. The credential services (postgres, minio, redis, metrics) override
+        this to build their typed secret from ``ctx.get_secret`` / ``ctx.cluster`` /
+        settings and return a spec; the shared writer
+        (``ProjectManager._write_secret_file``) does the actual write. A service that cannot
+        build its secret (no provisioned credentials) returns ``[]`` and logs.
         """
         return []
 
@@ -1711,17 +1569,17 @@ class Service(ABC):
         return []
 
     def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
-        """Regels van deze dienst op wat de save VERANDERT, als meldingen (standaard geen).
+        """This service's rules on what the save CHANGES, as messages (none by default).
 
-        De zuster van ``validate_project`` voor een regel die alleen kan oordelen met de
-        versie die vervangen wordt in de hand: een striktere grens op een NIEUWE waarde, want
-        een waarde die al een jaar in het projectbestand staat moet blijven valideren, anders
-        kan de eigenaar niet meer opslaan. ``ConfigSetting``'s ``grow_only`` dekt dat voor een
-        scalar met een getalsgrens (zie ``validate_service_setting_changes``); dit is voor een
-        regel die niet in een declaratie past.
+        The sister of ``validate_project`` for a rule that can only judge with the version
+        being replaced in hand: a stricter bound on a NEW value, because a value that has been
+        in the project file for a year has to keep validating, otherwise the owner can no
+        longer save. ``ConfigSetting``'s ``grow_only`` covers that for a scalar with a numeric
+        bound (see ``validate_service_setting_changes``); this is for a rule that does not fit
+        in a declaration.
 
-        ``previous`` is de vastgelegde versie, en ``{}`` op een aanmaak: een bestand dat
-        niets vervangt heeft niets opgeslagen, dus elke waarde daarin is nieuw.
+        ``previous`` is the recorded version, and ``{}`` on a create: a file replacing nothing
+        has nothing stored, so every value in it is new.
         """
         return []
 
@@ -1734,13 +1592,13 @@ class Service(ABC):
         return []
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
-        """Deployment-wide manifests this service contributes (RC-15, default none).
+        """Deployment-wide manifests this service contributes (default none).
 
         Runs once per deployment (after the per-component loop), for resources that belong
-        to the whole deployment rather than a single component. cross-domain-access is the
-        first user: it returns one NetworkPolicy spec per own component that has rules. A
-        service with nothing to add inherits the empty default; the generic emitter and the
-        service-manifest prune both skip it.
+        to the whole deployment rather than a single component: cross-domain-access returns
+        one NetworkPolicy spec per own component that has rules. A service with nothing to
+        add inherits the empty default; the generic emitter and the service-manifest prune
+        both skip it.
         """
         return []
 

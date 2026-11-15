@@ -29,12 +29,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
-from opi.core import progress_steps
-from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
+from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
+from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.server import app
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS
 from opi.services.oom_watcher import _queue_refresh_task as queue_oom_refresh_task
+from opi.services.tasks import progress_steps
 from tests.test_verdwenen_applicatie_tijdens_wacht import _progress, _project_manager
 
 PROJECT = "dd-mco"
@@ -85,8 +87,8 @@ class TestDeDrempelOpHetRefreshPad:
     async def test_een_jonge_operation_wordt_bij_een_refresh_wel_beeindigd(self, age_seconds: int) -> None:
         manager = _manager(age_seconds)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once_with(APP, ARGO_NS)
@@ -98,9 +100,7 @@ class TestDeDrempelOpHetRefreshPad:
         mogelijkheid."""
         manager = _manager(age_seconds)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_not_awaited()
 
@@ -108,9 +108,7 @@ class TestDeDrempelOpHetRefreshPad:
         """Wat RC-250 bouwde blijft staan: op de drempel breekt de gewone push wel af."""
         manager = _manager(STUCK_OPERATION_THRESHOLD_SECONDS)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once()
 
@@ -118,8 +116,7 @@ class TestDeDrempelOpHetRefreshPad:
         """De knop zit op het project, dus de grote hamer is de bedoeling."""
         manager = _manager(5)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [
                 {"name": DEPLOYMENT, "cluster": "odcn-production"},
                 {"name": "productie", "cluster": "odcn-production"},
@@ -150,13 +147,13 @@ class TestDeVlagLooptDoorDeKeten:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": PROJECT})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock()
         fake.get_deployments = AsyncMock(return_value=[])
         fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock()
 
         deployments = [{"name": DEPLOYMENT, "cluster": "odcn-production", "namespace": PROJECT}]
-        await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments, vlag)
+        with patch.object(RepositoryManifests, "process_deployment_manifests", AsyncMock()):
+            await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments, vlag)
 
         fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments, reset_running_sync=vlag)
 
@@ -167,11 +164,10 @@ class TestDeVlagLooptDoorDeKeten:
         fake.get_name = AsyncMock(return_value=PROJECT)
         fake.get_repositories = AsyncMock(return_value=[{"name": "main-repo"}])
         fake.get_deployments = AsyncMock(return_value=deployments)
-        fake._process_repository_manifests = AsyncMock()
+        with patch.object(RepositoryManifests, "process_repository_manifests", AsyncMock()) as repository_round:
+            await ProjectManager._process_application_manifests(fake, reset_running_sync=vlag)
 
-        await ProjectManager._process_application_manifests(fake, reset_running_sync=vlag)
-
-        assert fake._process_repository_manifests.await_args.kwargs["reset_running_sync"] is vlag
+        assert repository_round.await_args.kwargs["reset_running_sync"] is vlag
 
     @pytest.mark.parametrize("vlag", [True, False])
     async def test_process_project_geeft_hem_door_aan_de_manifestronde(
@@ -233,7 +229,7 @@ class TestWieDeVlagZet:
         instance = MagicMock()
         instance.get.return_value = project
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=instance),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=instance),
             patch("opi.api.v2.router.get_project_store", return_value=instance),
         ):
             yield instance
@@ -308,7 +304,7 @@ class TestWieDeVlagZet:
         """Met opzet AAN: een verwijdering moet landen, en een sync op de oude staat hoort dat
         niet te vertragen. Deze toets legt vast dat het een keuze was en geen erfenis: zou de
         handler het gedrag zelf aanzetten, dan stond hier niets om op te wijzen."""
-        from opi.core.task_handlers_components import handle_delete_component
+        from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
         progress = MagicMock()
         progress.add_task.return_value = "t"
@@ -320,7 +316,7 @@ class TestWieDeVlagZet:
             # De import is functie-lokaal, dus de patch hoort bij de definierende module.
             patch("opi.manager.project_manager.ProjectManager", return_value=manager),
             patch(
-                "opi.core.task_handlers_operations.handle_refresh_project",
+                "opi.runtime.tasks.task_handlers_operations.handle_refresh_project",
                 new=AsyncMock(return_value={"status": "completed"}),
             ) as refresh,
         ):
@@ -351,8 +347,8 @@ class TestDeTaakuitkomst:
         manager._begin_step = MagicMock(return_value="stap-1")
         manager._end_step = MagicMock()
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
@@ -365,9 +361,7 @@ class TestDeTaakuitkomst:
         manager._begin_step = MagicMock(return_value="stap-1")
         manager._end_step = MagicMock()
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         assert manager._terminated_sync_operations == [DEPLOYMENT]
@@ -377,9 +371,7 @@ class TestDeTaakuitkomst:
         manager = _manager(5)
         manager._begin_step = MagicMock(return_value="stap-1")
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._begin_step.assert_not_called()
         assert manager._terminated_sync_operations == []
@@ -387,8 +379,7 @@ class TestDeTaakuitkomst:
     async def test_de_opruimronde_onthoudt_wat_ze_afbrak(self) -> None:
         manager = _manager(5)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [{"name": DEPLOYMENT, "cluster": "odcn-production"}, {"name": "productie", "cluster": "odcn-production"}],
             True,
         )
@@ -412,8 +403,8 @@ class TestDeTaakuitkomst:
         manager = _manager(5)
         manager._kubectl_connector.terminate_argocd_application_operation = AsyncMock(return_value=False)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         assert manager._terminated_sync_operations == []
@@ -524,7 +515,7 @@ async def _drive_handler(handler: Any, manager: MagicMock, extra_payload: dict[s
     progress.add_task.return_value = "t"
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         patch("opi.manager.project_manager.create_project_manager", return_value=manager),
         patch("opi.services.oom_watcher.schedule_oom_check"),
         patch("opi.services.oom_watcher.reset_oom_tune_attempts"),

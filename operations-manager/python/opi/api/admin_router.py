@@ -1,15 +1,8 @@
-"""Admin API router for cleanup, reconciliation, and maintenance operations.
+"""The endpoints for cleanup, reconciliation and maintenance of the platform itself.
 
-Provides endpoints for managing resource lifecycle operations that are
-separate from the normal project API. Authenticated with the bearer token of a
-platform admin, and every route that CHANGES something also wants a fresh code in
-a fresh step-up (``POST /api/v2/step-up``); see ``features/platformbeheer-via-de-api.md``.
-
-Endpoints:
-    GET  /api/v2/admin/marked-for-deletion          - List marked resources
-    POST /api/v2/admin/cleanup/trigger               - Trigger cleanup (purge expired)
-    POST /api/v2/admin/reconciliation/trigger         - Trigger full reconciliation
-    DELETE /api/v2/admin/marked-for-deletion/{mark_id} - Remove a specific mark
+Every route here wants the bearer token of a platform admin, and every route that CHANGES
+something also wants a fresh code in a fresh step-up (``POST /api/v2/step-up``); see
+``features/platformbeheer-via-de-api.md``.
 """
 
 import logging
@@ -17,14 +10,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.user_token_auth import validate_platform_admin_token
-from opi.core.auth_decorators import requires_step_up
+
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.core.step_up import StepUpAction
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.http.auth.step_up_conditions import always_requires_step_up
+from opi.http.auth.user_token_auth import validate_platform_admin_token
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
-from opi.services.step_up_conditions import vraagt_altijd_step_up
+from opi.services.step_up import StepUpAction
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +35,6 @@ admin_router: APIRouter = APIRouter(
 
 
 def _get_marked_for_deletion_service() -> MarkedForDeletionService:
-    """Get a MarkedForDeletionService instance (ORM-backed)."""
     return MarkedForDeletionService()
 
 
@@ -82,7 +75,7 @@ async def list_marked_for_deletion(
 @admin_router.post("/cleanup/trigger")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.CLEANUP_START)
+@requires_step_up(always_requires_step_up, action=StepUpAction.CLEANUP_START)
 async def trigger_cleanup(
     request: Request,
     project_name: str = Query(..., description="Project name to clean up (required)"),
@@ -118,7 +111,7 @@ async def trigger_cleanup(
 @admin_router.post("/reconciliation/trigger")
 @action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.RECONCILIATION_START)
+@requires_step_up(always_requires_step_up, action=StepUpAction.RECONCILIATION_START)
 async def trigger_reconciliation(
     request: Request,
     dry_run: bool = Query(True, description="Preview actions without executing (default: true)"),
@@ -129,7 +122,6 @@ async def trigger_reconciliation(
     Reconciliation performs three operations:
     1. Unmarks resources that reappeared in project YAMLs (git revert recovery).
     2. Purges resources that are marked AND past the grace period.
-    3. (Future) Detects newly orphaned resources.
 
     Uses all currently loaded project YAML definitions as the source of truth.
 
@@ -141,7 +133,6 @@ async def trigger_reconciliation(
     """
     from opi.jobs.reconciliation import reconcile
 
-    # Build project YAML list from all loaded projects
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
@@ -166,7 +157,7 @@ async def trigger_reconciliation(
 @admin_router.delete("/marked-for-deletion/{mark_id}")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.MARKING_REVOKE)
+@requires_step_up(always_requires_step_up, action=StepUpAction.MARKING_REVOKE)
 async def delete_mark(
     request: Request,
     mark_id: str,
@@ -222,7 +213,7 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 @admin_router.post("/orphans/confirm")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ORPHANS_CONFIRM)
+@requires_step_up(always_requires_step_up, action=StepUpAction.ORPHANS_CONFIRM)
 async def confirm_orphans(request: Request) -> JSONResponse:
     """Mark confirmed orphan candidates for grace-period deletion.
 
@@ -312,12 +303,12 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 @admin_router.post("/projects/:reconcile")
 @action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.PROJECTS_RELOAD)
+@requires_step_up(always_requires_step_up, action=StepUpAction.PROJECTS_RELOAD)
 async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 
     The store re-reads ``zad-projects`` on a timer, so a file committed to that repo by
-    something other than ZAD -- an import, a hand edit, another cluster -- is invisible
+    something other than ZAD (an import, a hand edit, another cluster) is invisible
     until the next tick. Anything asking for it before then gets "project not found".
     This endpoint does that read on demand.
 

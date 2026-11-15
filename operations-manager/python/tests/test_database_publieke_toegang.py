@@ -18,13 +18,13 @@ import pytest
 import yaml
 from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, PostgresValidationError
 from opi.core.config import Settings, settings
-from opi.core.platform_database_access import (
+from opi.manager.database_manager import DatabaseManager
+from opi.manager.db_console_manager import DbConsoleError, DbConsoleManager, DbConsoleTool
+from opi.runtime.startup.platform_database_access import (
     PLATFORM_BACKUP_ROLE,
     PLATFORM_DATABASE_ROLES,
     restrict_platform_databases,
 )
-from opi.manager.database_manager import DatabaseManager
-from opi.manager.db_console_manager import DbConsoleError, DbConsoleManager, DbConsoleTool
 
 #: ``operations-manager/python/tests/`` -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -328,7 +328,7 @@ async def test_elke_platformdatabase_wordt_afgesloten_met_zijn_eigen_rol() -> No
         return {"status": "restricted"}
 
     connector = SimpleNamespace(restrict_database_to_roles=restrict, close=AsyncMock())
-    with patch("opi.core.platform_database_access.create_postgres_connector", return_value=connector):
+    with patch("opi.runtime.startup.platform_database_access.create_postgres_connector", return_value=connector):
         await restrict_platform_databases()
 
     assert afsluitingen == [
@@ -348,7 +348,7 @@ async def test_een_weigerende_server_blokkeert_de_boot_niet() -> None:
         restrict_database_to_roles=AsyncMock(side_effect=PostgresExecutionError("server weg")),
         close=AsyncMock(),
     )
-    with patch("opi.core.platform_database_access.create_postgres_connector", return_value=connector):
+    with patch("opi.runtime.startup.platform_database_access.create_postgres_connector", return_value=connector):
         await restrict_platform_databases()
 
     connector.close.assert_awaited_once()
@@ -365,7 +365,7 @@ async def test_een_fout_op_de_ene_database_slaat_de_andere_niet_over() -> None:
         return {"status": "restricted"}
 
     connector = SimpleNamespace(restrict_database_to_roles=restrict, close=AsyncMock())
-    with patch("opi.core.platform_database_access.create_postgres_connector", return_value=connector):
+    with patch("opi.runtime.startup.platform_database_access.create_postgres_connector", return_value=connector):
         await restrict_platform_databases()
 
     assert afgesloten == ["forgejo", "mailrelay", "operations_manager"]

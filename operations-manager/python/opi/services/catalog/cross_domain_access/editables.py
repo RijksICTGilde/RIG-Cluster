@@ -1,4 +1,4 @@
-"""Editable definitions for the cross-domain-access project-level form (RC-15).
+"""Editable definitions for the cross-domain-access project-level form.
 
 Two sequences, ``inbound`` and ``outbound``. Every field maps DIRECTLY to its nested
 ``from``/``to`` storage path, exactly like the per-component ``publish-on-web/config/tls``
@@ -8,11 +8,11 @@ prefill naturally, with no transient split step.
 The peer side (the side carrying ``project``) uses three plain fields rather than one
 composite select: a composite select would have no natural edit-prefill path back from the
 stored ``from``/``to`` object. Three direct fields keep the stored form (nested
-``from``/``to``, 2.3) the single source of truth, and they cascade: ``project`` is a select
-fed from the authorized projects, ``deployment`` is fed from the project chosen in the SAME
-row, ``component`` from that deployment (RC-42, via the renderer's per-row ``row_data``).
-The own side is a select on the project's own components, and the port is a select on the
-RECEIVING side of the rule -- mine for inbound, the peer's for outbound.
+``from``/``to``) the single source of truth, and they cascade: ``project`` is a select fed
+from the authorized projects, ``deployment`` is fed from the project chosen in the SAME row,
+``component`` from that deployment (via the renderer's per-row ``row_data``). The own side
+is a select on the project's own components, and the port is a select on the RECEIVING side
+of the rule -- mine for inbound, the peer's for outbound.
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ from opi.services.services_enums import ServiceType
 
 # The rules themselves live on the config model -- the same model the API endpoints for both
 # layers take as their body and the stored project file is validated against -- so the form
-# points at them instead of restating them. It used to restate them as KubernetesNameValidator,
-# which additionally demands a leading LETTER: a peer project whose name starts with a digit
-# was offered in the select, accepted by the schema and the API, and refused by the form.
+# points at them instead of restating them. A restatement here diverges: KubernetesNameValidator
+# additionally demands a leading LETTER, and would refuse a peer project whose name starts
+# with a digit while the schema and the API accept it.
 _LABEL_MESSAGE = (
     "mag alleen kleine letters, cijfers en streepjes bevatten, moet beginnen en eindigen met een letter of cijfer"
 )
@@ -58,10 +58,10 @@ def _name(direction: str) -> Editable:
 
 
 #: An inbound row's peer DEPLOYMENT and COMPONENT are hidden -- and so neither required
-#: nor written -- while that row's peer project is the wildcard (RC-142). The dependency is
-#: read PER ROW (the bridge materializes the ``[*]`` to the row index), and ``not_equals``
-#: is what expresses "everything except this one value": every real project name must keep
-#: showing the fields, so listing the allowed values is not an option.
+#: nor written -- while that row's peer project is the wildcard. The dependency is read PER
+#: ROW (the bridge materializes the ``[*]`` to the row index), and ``not_equals`` is what
+#: expresses "everything except this one value": every real project name must keep showing
+#: the fields, so listing the allowed values is not an option.
 #:
 #: The wildcard itself is never OFFERED (see CrossDomainProjectOptionsProvider); a rule that
 #: carries it is set through the API or the project file. What the form must do is not break
@@ -72,8 +72,8 @@ _HIDE_WHEN_WILDCARD = {"not_equals": WILDCARD_PROJECT}
 
 def _peer_project(direction: str, side: str) -> Editable:
     # Validated against the model of its OWN direction: the inbound peer accepts the
-    # wildcard, the outbound peer does not, and a shared validator would have told the user
-    # that '*' was fine right up to the save that refused it.
+    # wildcard, the outbound peer does not, and a shared validator would accept '*' here and
+    # let the save refuse it.
     model = PeerRefPatch if direction == "inbound" else PeerTargetPatch
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "project"),
@@ -86,7 +86,7 @@ def _peer_project(direction: str, side: str) -> Editable:
 
 def _peer_deployment(direction: str, side: str) -> Editable:
     # Optional at rest: a root rule may leave the peer deployment open for the deployment
-    # layer to fill (2.3). remove_when_none so an empty field leaves no key.
+    # layer to fill. remove_when_none so an empty field leaves no key.
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "deployment"),
         values_provider="CrossDomainPeerDeploymentOptionsProvider",
@@ -181,11 +181,10 @@ OUTBOUND_SEQUENCE_EDITABLE = Editable(
 CROSS_DOMAIN_EDITABLES = [INBOUND_SEQUENCE_EDITABLE, OUTBOUND_SEQUENCE_EDITABLE]
 
 
-# --- the deployment layer: a PATCH, not a second rule editor -----------------------------
-# Two fields only, and that is the point. The deployment layer overrides a project rule keyed
-# on its name (merge.py); the field it exists for is the peer deployment, which a project rule
-# may deliberately leave open. Repeating the whole rule here would not be a patch but a second
-# truth, and the two would have to be kept in step by hand.
+# The deployment layer is a PATCH, not a second rule editor: two fields only. The deployment
+# layer overrides a project rule keyed on its name (merge.py); the field it exists for is the
+# peer deployment, which a project rule may deliberately leave open. Repeating the whole rule
+# here would not be a patch but a second truth, kept in step by hand.
 #
 # The peer deployment is NOT required at either layer: open on the project rule is a valid,
 # intended state, and a patch that only wants to disable a rule leaves it open too.

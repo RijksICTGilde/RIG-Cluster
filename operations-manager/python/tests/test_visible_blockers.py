@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.core.cluster_config import supports_custom_domain_certificates
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+from opi.manager.project.notices import certificate_warnings
 from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.base import ConfigLayer, config_endpoint_path
 from opi.services.catalog.publish_on_web.domain_config import custom_domain_certificate_note
@@ -314,21 +315,21 @@ class TestTheApiSaysItOnTheWrite:
         """``warnings`` en niet ``approvals``: dit wacht op niemand, en het begint waar de
         goedkeuringsmelding ophoudt."""
         project = _deployment_project({"base-domain": "mijn-app.nl"}, [{"domain": "mijn-app.nl", "status": "approved"}])
-        with patch("opi.manager.project_manager.settings.CLUSTER_MANAGER", "sandboxed-local"):
-            warnings = ProjectManager._certificate_warnings(project, "productie")
+        with patch("opi.manager.project.notices.settings.CLUSTER_MANAGER", "sandboxed-local"):
+            warnings = certificate_warnings(project, "productie")
 
         assert len(warnings) == 1
         assert "tls: provided" in warnings[0]
 
     def test_a_supported_domain_produces_no_warning(self) -> None:
         project = _deployment_project({"base-domain": "sandbox.rijksapp.dev"})
-        with patch("opi.manager.project_manager.settings.CLUSTER_MANAGER", "sandboxed-local"):
-            assert ProjectManager._certificate_warnings(project, "productie") == []
+        with patch("opi.manager.project.notices.settings.CLUSTER_MANAGER", "sandboxed-local"):
+            assert certificate_warnings(project, "productie") == []
 
     def test_an_unknown_deployment_produces_no_warning(self) -> None:
         project = _deployment_project({"base-domain": "mijn-app.nl"})
-        with patch("opi.manager.project_manager.settings.CLUSTER_MANAGER", "sandboxed-local"):
-            assert ProjectManager._certificate_warnings(project, "bestaat-niet") == []
+        with patch("opi.manager.project.notices.settings.CLUSTER_MANAGER", "sandboxed-local"):
+            assert certificate_warnings(project, "bestaat-niet") == []
 
 
 class TestTheApiSaysItBeforeTheWrite:

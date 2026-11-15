@@ -13,11 +13,11 @@ elders uitlekt. Het NL GOV OIDC-profiel vraagt PKCE ook voor een confidential cl
 Twee kanten, die beide mee moeten:
 
 1. **De kant van OPI.** `register_oauth_client_after_keycloak_setup`
-   (`opi/core/startup.py`) geeft authlib `client_kwargs={"code_challenge_method": "S256"}`
+   (`opi/runtime/startup/startup.py`) geeft authlib `client_kwargs={"code_challenge_method": "S256"}`
    mee. Authlib bewaart dan de verifier in de sessie en zet `code_challenge` en
    `code_challenge_method` in de authorize-redirect.
 2. **De kant van Keycloak.** `KeycloakSetup.setup_operations_client`
-   (`opi/bootstrap/keycloak_setup.py`) maakt de client `rig-platform-operations-manager`
+   (`opi/manager/bootstrap/keycloak_setup.py`) maakt de client `rig-platform-operations-manager`
    met `require_pkce=True`. `create_deployment_client` zet dan
    `pkce.code.challenge.method: S256` in `expected_attributes`, en omdat die verzameling ook
    in de 409-tak wordt vergeleken en bijgewerkt, krijgt een client die er al was het
@@ -29,5 +29,5 @@ client had S256 al.
 
 ## Afhankelijkheden
 
-- authlib (via `opi.core.startup`), Keycloak-attribuut `pkce.code.challenge.method`.
+- authlib (via `opi.runtime.startup.startup`), Keycloak-attribuut `pkce.code.challenge.method`.
 - Toetsen: `tests/test_keycloak_platform_zonder_ontwikkelresten.py`.

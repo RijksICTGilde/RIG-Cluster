@@ -1,25 +1,22 @@
-"""
-Ephemeral database console manager.
+"""Ephemeral database console manager.
 
-On request, spins up a temporary web database client (pgweb or dbgate) for a
-single deployment's PostgreSQL database, fronted by the existing oauth2-proxy
-"auth wall" so only the project's members (by email) can reach it. The console
-auto-expires; OPI applies and removes it directly via kubectl, outside
-git/ArgoCD. See features/futures/fsc-mtls-attachments.md sibling design notes.
+On request, spins up a temporary web database client (pgweb or dbgate) for a single
+deployment's PostgreSQL database, behind the existing oauth2-proxy "auth wall" so only
+the project's members (by email) can reach it. The console auto-expires, and OPI applies
+and removes it directly via kubectl, outside git and ArgoCD.
 
-Design highlights:
-- Reuses the production service/ingress/auth-wall templates; only the workload
-  is a small ephemeral Pod (kind: Pod) with activeDeadlineSeconds as a hard
-  self-terminate backstop.
-- Authenticates against the ZAD realm (derived from OIDC_DISCOVERY_URL) with a
-  dedicated per-session OIDC client created on demand and deleted at teardown -
-  no Keycloak redirect-URI wildcards, no shared client.
-- Connects with the deployment's own database credentials (no minted roles); the
-  access level is whatever those credentials have.
-- The console Pod carries the target deployment's `deployment` label so the
-  existing tenant NetworkPolicy already permits egress to PostgreSQL.
-- TLS relies on the cluster's default/wildcard ingress certificate (no per-host
-  cert issuance), so ephemeral hostnames do not churn Let's Encrypt.
+What that leans on:
+
+- the production service, ingress and auth-wall templates; only the workload is a small
+  ephemeral Pod with activeDeadlineSeconds as a hard self-terminate backstop;
+- a dedicated per-session OIDC client in the ZAD realm (derived from OIDC_DISCOVERY_URL),
+  created on demand and deleted at teardown, so there is no redirect-URI wildcard and no
+  shared client;
+- the deployment's own database credentials, so the access level is whatever those have;
+- the target deployment's ``deployment`` label on the Pod, which the tenant NetworkPolicy
+  already permits egress to PostgreSQL for;
+- the cluster's default wildcard ingress certificate, so an ephemeral hostname does not
+  churn Let's Encrypt.
 """
 
 from __future__ import annotations
@@ -53,20 +50,19 @@ from opi.manager.run_support import (
     apply_bundle,
     delete_bundle,
     find_deployment,
-    is_stale_starting,
-    parse_expires,
     resolve_image,
 )
-from opi.services.project_leden import human_emails
+from opi.services.project_members import human_emails
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
+from opi.services.runs_support import is_stale_starting, parse_expires
+from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
     generate_db_console_client_id,
     generate_db_console_hostname,
     generate_db_console_name,
     generate_project_service_account_name,
 )
-from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +82,6 @@ ANNOT_DB_NAME = "rig.zad/db-name"
 
 
 class DbConsoleTool(StrEnum):
-    """Selectable web database client."""
-
     PGWEB = "pgweb"
     DBGATE = "dbgate"
 
@@ -132,8 +126,6 @@ class DbConsoleError(Exception):
 
 @dataclass
 class DbConsoleSession:
-    """Public description of a live (or just-created) console session."""
-
     session_id: str
     name: str
     namespace: str
@@ -147,12 +139,8 @@ class DbConsoleSession:
 
 
 class DbConsoleManager:
-    """Orchestrates the lifecycle of ephemeral database consoles."""
-
     def __init__(self) -> None:
         self._kubectl = create_kubectl_connector()
-
-    # ------------------------------------------------------------------ helpers
 
     @staticmethod
     def _zad_realm() -> str:
@@ -191,7 +179,6 @@ class DbConsoleManager:
             )
             return image, port, args, {"DATABASE_URL": url}
 
-        # dbgate
         image = settings.DB_CONSOLE_DBGATE_IMAGE
         conn: dict[str, str] = {
             # Lock dbgate to the single predefined connection: no ad-hoc/volatile
@@ -207,8 +194,6 @@ class DbConsoleManager:
             "ENGINE_con1": "postgres@dbgate-plugin-postgres",
         }
         return image, port, [], conn
-
-    # ------------------------------------------------------------------- public
 
     async def begin(
         self,
@@ -253,7 +238,7 @@ class DbConsoleManager:
             )
         try:
             latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.DB_CONSOLE)
-        except Exception:
+        except Exception:  # noqa: BLE001  # an unreadable run row must not block the start
             latest = None
         if latest and latest.get("status") == "starting":
             # No pod exists (checked above). A 'starting' row with no pod is either
@@ -363,10 +348,10 @@ class DbConsoleManager:
         )
         if not db_secret:
             raise DbConsoleError("Geen database om mee te verbinden.")
-        # De console verbindt met de read-only rol van de deployment, zodat schrijven
-        # serverkant onmogelijk is. Geen terugval op de read-write gebruiker: een console
-        # die read-only heet en wel kan schrijven is erger dan een console die niet opent.
-        # De controle staat hier, dus voordat de eerste resource is aangemaakt.
+        # The console connects as the deployment's read-only role, so writing is impossible
+        # server-side. No fallback to the read-write user: a console that says read-only and
+        # can write is worse than a console that does not open. The check sits here, before
+        # the first resource is created.
         if not (db_secret.ro_username and db_secret.ro_password):
             raise DbConsoleError(
                 "Deze deployment heeft nog geen read-only databaserol. Verwerk de deployment "
@@ -430,8 +415,8 @@ class DbConsoleManager:
             "banner": "Tijdelijke databaseconsole",
         }
 
-        # Alleen de MENSEN: een service account logt nergens in, dus hij hoort niet in de
-        # lijst adressen die de console mag openen.
+        # People only: a service account logs in nowhere, so it does not belong in the list
+        # of addresses allowed to open the console.
         emails = sorted({e.lower() for e in human_emails(project)})
 
         common = {
@@ -540,7 +525,6 @@ class DbConsoleManager:
         # Label-scoped delete removes Pod, Service, Ingress, Secret and both ConfigMaps.
         await delete_bundle(self._kubectl, namespace, session_id)
 
-        # Keycloak client.
         if realm and client_id:
             try:
                 keycloak = await create_keycloak_connector()
@@ -601,13 +585,6 @@ class DbConsoleManager:
             and all(c.get("ready") for c in container_statuses)
         )
         return session, ready
-
-    async def list_sessions(self, project_name: str) -> list[DbConsoleSession]:
-        """List live console sessions for a project (read from cluster labels)."""
-        cluster = settings.CLUSTER_MANAGER
-        namespace = f"{get_namespace_prefix(cluster)}{project_name}"
-        pods = await self._kubectl.get_resources_by_label("pod", namespace, f"{LABEL_PROJECT}={project_name}")
-        return [self._session_from_pod(pod, namespace, project_name) for pod in pods]
 
     @staticmethod
     def _session_from_pod(pod: dict[str, Any], namespace: str, project_name: str) -> DbConsoleSession:

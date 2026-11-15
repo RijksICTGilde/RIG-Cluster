@@ -88,8 +88,8 @@ async def test_een_beheerder_komt_langs_de_grendel(route: Any) -> None:
         patch("opi.web.router_shared_services.render", return_value="gerenderd") as render,
         patch("opi.web.router_shared_services.get_menu_items", return_value=[]),
         patch("opi.web.router_shared_services.build_lotc_admin", return_value={}),
-        patch("opi.web.router_shared_services.haal_opslag", return_value=None),
-        patch("opi.web.router_shared_services.haal_databases", return_value=None),
+        patch("opi.web.router_shared_services.fetch_storage", return_value=None),
+        patch("opi.web.router_shared_services.fetch_databases", return_value=None),
     ):
         antwoord = await route(_verzoek("beheerder@rijksoverheid.nl"))
 

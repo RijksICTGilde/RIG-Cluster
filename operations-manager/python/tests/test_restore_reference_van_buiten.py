@@ -25,9 +25,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.api.restore_router import _known_reference_names, restore_router
+from opi.api.restore_router import restore_router
 from opi.connectors.kopia import KopiaSnapshot
 from opi.manager.backup.pvc_backup import PVCBackupManager
+from opi.manager.backup.restore_targets import known_reference_names
 
 API_KEY = "test-restore-api-key"
 PROJECT = "restore-test"
@@ -166,8 +167,8 @@ def client() -> TestClient:
 def mock_store() -> Any:
     store = _FakeStore(_project_file())
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.restore_router.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.manager.backup.restore_targets.get_project_store", return_value=store),
     ):
         yield store
 
@@ -178,15 +179,15 @@ class TestDeGepubliceerdeNaamWordtHerkend:
         gepubliceerd = [DATABASE_SNAPSHOT.restore_reference, BUCKET_SNAPSHOT.restore_reference]
         # ... staat in wat de route accepteert. Dit is de poort die drie rondes lang open stond:
         # de twee kanten werden apart getoetst en nooit tegen elkaar.
-        accepteert = _known_reference_names(
+        accepteert = known_reference_names(
             _project_file(), ["postgresql-database", "namespace-postgresql-database"], "database"
-        ) + _known_reference_names(_project_file(), ["minio-storage"], "minio")
+        ) + known_reference_names(_project_file(), ["minio-storage"], "minio")
         assert gepubliceerd == accepteert
 
     def test_zonder_component_met_de_dienst_geldt_de_deployment_brede_terugval(self) -> None:
         data = _project_file()
         data["components"][0]["services"] = ["publish-on-web"]
-        assert _known_reference_names(data, ["minio-storage"], "minio") == ["productie-minio"]
+        assert known_reference_names(data, ["minio-storage"], "minio") == ["productie-minio"]
 
 
 class TestDe404NoemtDeNamenDieErWelZijn:

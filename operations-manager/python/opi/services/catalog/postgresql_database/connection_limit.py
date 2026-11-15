@@ -1,5 +1,5 @@
-"""The connection limit of a deployment's database roles (RC-201). The bound is a
-platform decision, so it lives here and not in the project file."""
+"""The connection limit of a deployment's database roles. The bound is a platform
+decision, so it lives here and not in the project file."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ CONNECTION_LIMIT: Final = IntegerSetting(
 CONNECTION_LIMIT_STEPS: Final[tuple[int, ...]] = (10, 20, 40, 50, 75, 100, 150, 200, 250, 500)
 
 
-def _limit_in(entries: Any) -> Any:
+def _limit_in(entries: Any) -> Any:  # noqa: ANN401  # a project-file value
     return service_setting_value(entries, ServiceType.POSTGRESQL_DATABASE, CONNECTION_LIMIT)
 
 

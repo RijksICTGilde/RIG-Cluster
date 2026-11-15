@@ -6,12 +6,12 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
 from opi.core.audit_trail import begin_trail, trail
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
+from opi.services.tasks.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
 from sqlalchemy import func, select, text, update
 
 
@@ -173,6 +173,20 @@ async def test_complete_sets_result_and_done(orm_db):
     assert task["completed_at"]
 
 
+async def test_complete_without_a_result_keeps_the_one_already_stored(orm_db):
+    """A task reaches ``completed`` twice: the progress manager stamps it done with no
+    result, then the worker adds the handler's answer. The second write used to pass
+    ``result=None`` unconditionally, so whichever write landed last decided whether the
+    answer survived (RC-475: a finished backup read back as a failure on the sandbox)."""
+    svc = _svc()
+    created = await _create(svc)
+    await svc.complete_task(created["task_id"], result={"backup_run_id": "1"})
+    await svc.complete_task(created["task_id"])
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "completed"
+    assert task["result"] == {"backup_run_id": "1"}
+
+
 async def test_fail_retry_requeues(orm_db):
     svc = _svc()
     created = await _create(svc)
@@ -239,7 +253,7 @@ async def test_een_definitieve_fout_geeft_precies_een_regel(orm_db, caplog):
     svc = _svc()
     created = await _create(svc)
 
-    with caplog.at_level(logging.INFO, logger="opi.core.async_task_service"):
+    with caplog.at_level(logging.INFO, logger="opi.services.tasks.async_task_service"):
         await svc.fail_task(created["task_id"], error_message="stuk", attempt_count=1, max_attempts=1)
         await svc.fail_task(
             created["task_id"],
@@ -285,7 +299,7 @@ async def test_twee_gelijktijdige_definitieve_fouten_geven_precies_een_regel(orm
     svc = _svc()
     created = await _create(svc)
 
-    with caplog.at_level(logging.INFO, logger="opi.core.async_task_service"):
+    with caplog.at_level(logging.INFO, logger="opi.services.tasks.async_task_service"):
         async with session_scope() as blokkade:
             await blokkade.execute(
                 select(AsyncTask).where(AsyncTask.id == uuid.UUID(created["task_id"])).with_for_update()

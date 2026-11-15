@@ -26,8 +26,8 @@ import pyrage
 import yaml
 from opi.core.cluster_config import get_database_server, get_mail_from_address, get_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.platform_database_access import PLATFORM_BACKUP_ROLE, PLATFORM_DATABASE_ROLES
-from opi.core.project_schema import latest_schema_version, validate_project_schema
+from opi.runtime.startup.platform_database_access import PLATFORM_BACKUP_ROLE, PLATFORM_DATABASE_ROLES
+from opi.services.project_schema import latest_schema_version, validate_project_schema
 from opi.utils.age import wrap_project_key_sync
 from prometheus_client import REGISTRY
 from tests.integration import argocd_live, forgejo_live, keycloak_image, kubernetes_live, minio_live, postgres_live
@@ -169,7 +169,7 @@ def project_file(public_key: str, wrapped_private_key: str) -> str:
 
     Een deployment op dit cluster, want wat het opstarten ermee doet is de namespace en het
     sleutel-Secret neerzetten. Het AGE-sleutelpaar hoort erbij: zonder publieke sleutel
-    weigert ``_ensure_sops_secret_in_namespace``, en de private helft is ingepakt met de
+    weigert ``ensure_sops_secret_in_namespace``, en de private helft is ingepakt met de
     platformsleutel zoals een echt projectbestand hem draagt.
 
     De schemaversie komt uit het schema zelf en staat als tekenreeks in het bestand, en het
@@ -338,7 +338,6 @@ def _patch_git_settings(patch: pytest.MonkeyPatch, forgejo: forgejo_live.Forgejo
     patch.setattr(settings, "GIT_PROJECTS_SERVER_USERNAME", user)
     patch.setattr(settings, "GIT_PROJECTS_SERVER_PASSWORD", f"plain:{token}")
     patch.setattr(settings, "GIT_PROJECTS_WEB_URL", forgejo_live.base_url())
-    patch.setattr(settings, "GIT_PROJECTS_SERVER_FILE_PATH", f"projects/{PROJECT}.yaml")
     patch.setattr(settings, "GIT_PROJECTS_SERVER_BRANCH", "main")
     patch.setattr(settings, "GIT_ARGO_APPLICATIONS_URL", argo)
     patch.setattr(settings, "GIT_ARGO_APPLICATIONS_USERNAME", user)
@@ -355,7 +354,6 @@ def enable_background_tasks(patch: pytest.MonkeyPatch) -> None:
     zonder fout starten en bij het afsluiten weer netjes stoppen. Een scheduler die niet
     start wordt in ``lifespan`` gelogd en niet geworpen, dus de toets leest ``app.state``.
     """
-    patch.setattr(settings, "ENABLE_GIT_MONITOR", True)
     patch.setattr(settings, "TASK_WORKER_ENABLED", True)
     patch.setattr(settings, "BACKUP_SCHEDULER_ENABLED", True)
     patch.setattr(settings, "RECONCILIATION_SCHEDULER_ENABLED", True)

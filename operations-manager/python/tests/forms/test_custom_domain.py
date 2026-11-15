@@ -47,8 +47,8 @@ class TestCustomDomainSelectConverter:
 
     def test_view_supported_domain_passes_through(self):
         # Supported domains should pass through unchanged (uses current cluster)
-        from opi.connectors.subdomain import get_supported_base_domains
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
         if supported:
@@ -190,8 +190,8 @@ class TestProcessorPopulateDeferred:
         _parent_ed, _child_ed, editables = _make_editable_pair()
         processor = EditableFormProcessor()
 
-        from opi.connectors.subdomain import get_supported_base_domains
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
         if not supported:
@@ -259,8 +259,8 @@ class TestSequenceDeferral:
 
     def test_populate_deferred_in_sequence(self):
         """Populate works per-item in a sequence."""
-        from opi.connectors.subdomain import get_supported_base_domains
         from opi.core.config import settings
+        from opi.services.catalog.publish_on_web.subdomain import get_supported_base_domains
 
         supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
         if not supported:
@@ -361,20 +361,20 @@ class TestProviderCustomOption:
 
 class TestValidateBaseDomainCustom:
     def test_accepts_valid_custom_domain(self):
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error = validate_base_domain("mijnapp.nl")
         assert is_valid is True
         assert error is None
 
     def test_rejects_invalid_domain(self):
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, _error = validate_base_domain("not a domain")
         assert is_valid is False
 
     def test_rejects_single_label(self):
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, _error = validate_base_domain("nodots")
         assert is_valid is False

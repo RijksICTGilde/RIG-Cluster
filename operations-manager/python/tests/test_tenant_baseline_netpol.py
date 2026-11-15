@@ -26,9 +26,9 @@ import os
 from opi.core.cluster_config import get_ops_egress
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
+from tests import project_manager_sources
 
 MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
-PROJECT_MANAGER = os.path.join(os.path.dirname(__file__), "..", "opi", "manager", "project_manager.py")
 
 
 def _render_baseline(**overrides):
@@ -77,8 +77,7 @@ class TestAllowAllTemplateRemoved:
         assert not os.path.exists(path), "the unrestricted allow-all NetworkPolicy template must be deleted"
 
     def test_project_manager_no_longer_renders_allow_all(self):
-        with open(PROJECT_MANAGER) as f:
-            source = f.read()
+        source = project_manager_sources.source_text()
         # The render/manifest-list strings must be gone. Comments may mention
         # the term historically, so match the template filename specifically.
         assert "allow-all-network-policy.yaml.jinja" not in source
@@ -93,8 +92,7 @@ class TestAllowAllTemplateRemoved:
         lus: geen egress naar de gedeelde services, en geen except op de internetregel,
         beide zonder foutmelding. Daarom telt deze test de aanroepen.
         """
-        with open(PROJECT_MANAGER) as f:
-            source = f.read()
+        source = project_manager_sources.source_text()
         # deployment_selector komt alleen in de variabelen van deze template voor, dus het
         # aantal ervan is het aantal renderpunten.
         renderpunten = source.count('"deployment_selector":')
@@ -109,8 +107,7 @@ class TestAllowAllTemplateRemoved:
         """The per-component emission caused file collisions (last write wins).
         The baseline must now be emitted ONCE per deployment, not per component.
         """
-        with open(PROJECT_MANAGER) as f:
-            source = f.read()
+        source = project_manager_sources.source_text()
         # The old branch-on-manifest-name is gone.
         assert 'if manifest_name == "tenant-baseline-network-policy":' not in source
 
@@ -119,8 +116,7 @@ class TestAllowAllTemplateRemoved:
         so two deployments in the same namespace don't collide on disk or in
         the cluster.
         """
-        with open(PROJECT_MANAGER) as f:
-            source = f.read()
+        source = project_manager_sources.source_text()
         assert 'f"{deployment_name}-tenant-baseline"' in source, (
             "per-deployment baseline emission must namespace its resource name with the deployment"
         )

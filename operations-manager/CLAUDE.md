@@ -40,6 +40,7 @@ opi/
 |   +-- metrics_explorer.py #  Prometheus metrics UI
 |
 |-- manager/               # Business logic orchestration
+|   |-- bootstrap/         #   Keycloak bootstrap during cluster init
 |   |-- project_manager.py #   Primary orchestrator (large file)
 |   |-- argo_manager.py    #   ArgoCD application lifecycle
 |   |-- database_manager.py #  PostgreSQL schema/user management
@@ -64,12 +65,16 @@ opi/
 |
 |-- core/                  # Application bootstrap and config
 |   |-- config.py          #   Settings (env vars, cluster config)
-|   |-- startup.py         #   Initialization tasks
 |   |-- database_pools.py  #   AsyncPG connection pool management
-|   |-- git_monitor.py     #   Git file change watcher
 |   |-- metrics.py         #   Prometheus metrics definitions
 |   |-- tracing.py         #   OpenTelemetry setup
 |   +-- auth_decorators.py #   Authentication/authorization decorators
+|
+|-- runtime/               # Startup, task worker, backup and periodic loops
+|   |-- startup/           #   Initialization tasks (startup.py and friends)
+|   |-- tasks/             #   Task worker and its task handlers
+|   |-- backup/            #   Backup scheduler, backup tasks, retention sweep
+|   +-- periodic/          #   Watchers and reconcilers
 |
 |-- generation/            # Kubernetes manifest generation
 |   +-- manifests.py       #   Jinja2 template rendering
@@ -85,11 +90,6 @@ opi/
 |   |-- schema_migration.py #  Database schema migrations
 |   +-- oom_watcher.py     #   OOM kill detection for auto-tuning
 |
-|-- handlers/              # Request processing
-|   |-- project_file_handler.py # Project file CRUD
-|   |-- configuration_handler.py # Config management
-|   +-- sops.py            #   SOPS-specific handling
-|
 |-- middleware/            # HTTP middleware
 |   |-- authorization.py   #   RBAC and user isolation
 |   |-- csrf.py            #   CSRF protection
@@ -99,15 +99,13 @@ opi/
 |   |-- age.py             #   AGE encryption/decryption
 |   |-- sops.py            #   SOPS file operations
 |   |-- naming.py          #   Naming conventions (large file)
-|   |-- secrets.py         #   Secret generation/management
 |   +-- env_vars.py        #   Environment variable handling
 |
 |-- templates/             # Jinja2 HTML templates for web UI
 |-- jobs/                  # Background job scheduling
 |-- migrations/            # Alembic database migrations
 |-- locale/                # i18n translations
-|-- configs/               # Configuration presets
-+-- bootstrap/             # Keycloak bootstrap during cluster init
++-- configs/               # Configuration presets
 ```
 
 Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/python/manifests/*.yaml.jinja`
@@ -155,11 +153,17 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 
 ## Code Style
 
+De volledige regels staan in `docs/development/coding-rules.md`: namen, functies, lagen,
+commentaar, fouten en types, plus de gates die ze afdwingen. Wat hieronder staat, is wat je
+het vaakst nodig hebt.
+
 - **Modern type hints**: `dict`, `list`, `str | None` (not `Optional`, `Dict`, `List`)
 - **Type annotations**: Always on function parameters and return types
 - **Error handling**: Specific exceptions, no generic `except Exception`. In new methods, let exceptions bubble up.
 - **No emojis** in code, comments, or log messages
-- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md`
+- **Frontend**: Jinja2 + het NLDD Designsysteem (`<nldd-*>`, `@nldd/design-system`), zie
+  `features/nldd-app-shell.md`. Lord of the Components (`<c-*>`, `features/lotc-bouwlijn.md`) is
+  legacy en mag worden vervangen als je het tegenkomt.
 
 ## Utility Scripts
 
@@ -200,16 +204,21 @@ real database, real binaries). `task test-changed` runs what your change touches
 
 The ORM-backed tests (the `orm_db` fixture) are the broad layer, and `tests/conftest.py`
 marks them `wide` on that fixture, so the default run leaves them out. They need a real
-Postgres, and they share **one** long-lived container named `zad-test-postgres` on port
-55432 (`ZAD_TEST_PG_PORT` to change it); each pytest run gets its own database inside it,
-dropped when the run ends.
+Postgres, and they share **one** long-lived container named `zad-test-postgres`, published
+on a free port on 127.0.0.1 (`ZAD_TEST_PG_PORT` pins the port); each pytest run gets its own
+database inside it, dropped when the run ends.
 Databases left by a run that died are swept by a later run.
+
+In a dclaude session the container name gets the session name appended
+(`zad-test-postgres-dclaude-...`, `ZAD_TEST_PG_CONTAINER` to change it). Those sessions share
+the docker daemon and the host network, and a container belongs to the session that started
+it, so one shared container would be pulled out from under another session mid-run.
 
 The container is supposed to stay up between runs -- that is what stops it from ever
 becoming an orphan you have to hunt for. Remove it whenever you like:
 
 ```bash
-task test-db-stop    # docker rm -f zad-test-postgres
+task test-db-stop    # docker rm -f <the container of this session>
 task test-db-reset   # remove it, then let the next run recreate it
 ```
 

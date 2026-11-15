@@ -8,7 +8,7 @@ editables/visualizers in the forms layer; the service references them. Its API s
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.authz.actions import Action
 from opi.services.catalog.base import (
@@ -22,9 +22,13 @@ from opi.services.catalog.base import (
 from opi.services.catalog.events import on
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.catalog.keycloak.variables import KeycloakVariables
+from opi.services.secrets import KeycloakSecret
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType, UIEvent
-from opi.utils.secrets import KeycloakSecret
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 
 class KeycloakService(Service):
@@ -35,7 +39,7 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        secret_class="KeycloakSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="KeycloakSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in KeycloakVariables],
         requires=["services/publish-on-web"],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
@@ -56,19 +60,16 @@ class KeycloakService(Service):
             rotate_client_secret=self.service_type.value in ctx.rotate_credentials,
         )
 
-    # --- config field ownership -------------------------------------------------
-
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         return self.service_type.value in [
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        # Full KeycloakConfig surface (broader than the UI section, which shows
-        # template / restrict-access / additional-clients).
+        # The full KeycloakConfig surface, broader than the UI section.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.keycloak.editables import (
@@ -98,10 +99,8 @@ class KeycloakService(Service):
     @on(UIEvent.PROJECT_SECTIONS)
     def realm_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # Realm admin details (host / realm / admin credentials) for the detail page.
-        # Admin-only, and only when realms exist. Read from the service config where
-        # RC-5 relocated them; the general template used to read the old project-level
-        # ``config.keycloak``, which no longer exists, so the section silently stopped
-        # rendering. Owning the block here keeps it pinned to the config's real home.
+        # Admin-only, and only when realms exist. Read from the service config, which is where
+        # they live; owning the block here keeps it pinned to that location.
         if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.services.project import Project
@@ -113,7 +112,7 @@ class KeycloakService(Service):
             return []
         return [DetailPageSection(template="keycloak/section-detail.html.j2", context={"realms": realms})]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return None
         cached = getattr(self, "_config_section_cache", None)

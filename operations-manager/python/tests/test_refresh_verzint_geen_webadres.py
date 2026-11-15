@@ -20,9 +20,10 @@ from typing import Any
 
 import pytest
 from opi.api.v2.router import _compute_deployment_urls
-from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.manager.project_manager import DeploymentResult, ProjectManager
+from opi.manager.project.results import DeploymentResult
+from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.project_file_handler import ProjectFileHandler
 
 CLUSTER = "local"
 PROJECT = "p1-wan"

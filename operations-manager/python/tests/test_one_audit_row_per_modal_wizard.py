@@ -23,12 +23,12 @@ import pytest
 from fastapi import HTTPException
 from opi.core.audit_trail import begin_trail, record_task, trail
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
 from opi.forms.wizard import session
-from opi.middleware.audit import _hoort_in_de_audit
+from opi.http.auth.authz import enforce_route_action
+from opi.middleware.audit import _is_auditable
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web import router_detail_edit
-from opi.web.authz import enforce_route_action
 from starlette.requests import Request
 
 if TYPE_CHECKING:
@@ -42,6 +42,9 @@ TASK_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 STORED: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Demo",
+    # Required by the identity form, and since RC-483 P6 every save road validates the whole
+    # flow first: without it the identity edit below is refused instead of saved.
+    "description": "Demo-project",
     "deployments": [{"name": "live", "cluster": "local", "environment": "acceptatie"}],
 }
 
@@ -52,8 +55,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data=copy.deepcopy(STORED),
         users=[
-            ProjectUser(email=OPS, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=VIEWER, roles=["viewer"], type=LidSoort.PERSOON),
+            ProjectUser(email=OPS, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=VIEWER, roles=["viewer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -98,7 +101,7 @@ def _request(
 def _rows(request: Request) -> list[RecordedDecision]:
     """The decisions of this request that ``AuditMiddleware`` turns into a row."""
     genomen: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-    return [beslissing for beslissing in genomen if _hoort_in_de_audit(beslissing)]
+    return [beslissing for beslissing in genomen if _is_auditable(beslissing)]
 
 
 async def _call(request: Request, endpoint: Any, *args: Any) -> Any:
@@ -124,8 +127,8 @@ class _Environment:
         gebruikers = MagicMock()
         gebruikers.is_platform_admin.return_value = False
         self._patches = [
-            patch("opi.web.authz.get_project_store", return_value=store),
-            patch("opi.web.authz.get_user_service", return_value=gebruikers),
+            patch("opi.http.auth.authz.get_project_store", return_value=store),
+            patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
             patch.object(router_detail_edit, "get_project_store", return_value=store),
             patch.object(router_detail_edit, "_render_section_html", return_value=""),
             patch.object(router_detail_edit, "_render_modal_step", return_value=""),
@@ -191,7 +194,7 @@ async def test_a_whole_restore_wizard_writes_one_restore_run_row() -> None:
             query={"_wizard_token": token},
             body={},
         )
-        with patch("opi.core.task_helpers.get_task_service", return_value=tasks):
+        with patch("opi.http.task_helpers.get_task_service", return_value=tasks):
             await _call(confirmed, router_detail_edit.modal_wizard_confirm, "modal-restore")
             spoor = trail()
 
@@ -235,7 +238,7 @@ async def test_an_edit_flow_writes_one_project_edit_row() -> None:
         with (
             patch("opi.manager.project_manager.ProjectManager", return_value=manager),
             patch.object(router_detail_edit, "apply_modal_edit", new=AsyncMock(return_value=bewerkt)),
-            patch.object(router_detail_edit, "ensure_approval_requests"),
+            patch("opi.manager.project.update.ensure_approval_requests"),
         ):
             await _call(confirmed, router_detail_edit.modal_wizard_confirm, "modal-edit-identity")
 

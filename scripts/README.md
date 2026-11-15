@@ -199,6 +199,67 @@ Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt t
 de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
 hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
+## De gates op de coding rules
+
+`docs/development/coding-rules.md` is de maatlat. Drie gates houden nieuwe overtredingen tegen
+zonder dat bestaande code rood wordt, elk met een baseline die alleen kan krimpen. Twee ervan
+staan hier als script; de derde, het layers-contract van import-linter, is configuratie in
+`operations-manager/python/pyproject.toml` en draait met `task lint-imports`.
+
+| bestand | doet |
+|---|---|
+| `lint_baseline.py` | regenereert `operations-manager/python/ruff-baseline.toml`: per bestand de ruff-regels die het nog overtreedt. Een default run haalt alleen weg; `--check` meldt verouderde regels; `--initial` schrijft een nieuwe baseline en weigert zodra er een staat |
+| `check-code-conventions.py` | de ingang van de conventiecheck: de gate, `--update-baseline`, `--initial` en `--report` |
+| `code_conventions.py` | de meting en de ratchet: Nederlandse identifiers, Nederlands commentaar en docstrings, en functies met meer commentaar dan code |
+| `code-conventions-baseline.json` | per bestand de drie aantallen zoals ze waren |
+
+```bash
+task lint-baseline                  # een regel die een bestand niet meer overtreedt verdwijnt
+task lint-baseline-check            # faalt op een verouderde regel
+task code-conventions               # de conventiecheck (~17s over 1663 bestanden)
+task code-conventions-baseline      # verlaagt de aantallen naar wat de code nu is
+```
+
+`check-code-conventions.py` importeert `opi` niet en draait, net als `scan-secrets.py`, op een
+kale Python 3, dus die heeft de shebang en het x-bit wel:
+
+```bash
+python3 scripts/check-code-conventions.py
+```
+
+De conventiecheck herkent Nederlands met een woordenlijst en niets anders: een taaldetector zou
+een afhankelijkheid en een kans zijn waar een reviewer een reden nodig heeft. De lijst bevat
+alleen woorden die niet als Engels te lezen zijn, en een woord dat beide kan (`met`, `op`, `na`,
+`pad`, `basis`) staat er niet in. Dat maakt de telling een ondertelling, en dat is voor een
+ratchet de goede kant op. Andere strings dan commentaar en docstrings worden niet gemeten: de
+tekst die een gebruiker ziet mag Nederlands zijn.
+
+Een regel TOEVOEGEN kan alleen met de hand, en dat staat dan in de diff. `pyproject.toml` haalt
+de baseline binnen met `extend`, dus de handgeschreven uitzonderingen staan daar in
+`extend-per-file-ignores`: anders zou de een de ander overschrijven.
+`tests/test_lint_baseline.py` faalt als de baseline een regel bevat die een bestand niet meer
+overtreedt, zodat een opgeruimd bestand ook echt van de lijst gaat, en
+`tests/test_code_conventions.py` pint de herkenning en de ratchet vast.
+
+### Aantonen dat een opruimronde alleen tekst veranderde
+
+`ast_equivalence.py` vergelijkt per bestand de AST tussen twee commits, met docstrings
+weggelaten. Commentaar staat niet in de AST, dus een bestand waarvan alleen commentaar en
+docstrings zijn herschreven komt als `SAME` uit de vergelijking; een gewijzigde string literal,
+een verschoven statement of een hernoemde naam als `DIFFER`, met de functie erbij waarin het
+verschil zit.
+
+```bash
+python3 scripts/ast_equivalence.py --base <ref> operations-manager/python/opi/utils/qr.py
+python3 scripts/ast_equivalence.py --base <ref> --rename oud=nieuw <pad>...
+```
+
+`--rename old=new` hernoemt identifiers in de BASE-boom voordat hij vergelijkt, zodat een module
+met vertaalde Nederlandse namen alsnog aantoonbaar verder onaangeroerd is: wat de tabel niet dekt,
+blijft als verschil zichtbaar. Geef zo'n tabel per module mee, niet een tabel voor alle modules
+samen: twee modules kunnen dezelfde oude naam naar een andere nieuwe hebben gezet.
+`--head` staat default op de werkboom. `tests/test_ast_equivalence.py` pint het vast.
+
 ## De rest
 
 | bestand | doet |

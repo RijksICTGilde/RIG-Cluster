@@ -53,18 +53,7 @@ async def run_hooks(
     yaml_data: dict[str, Any],
     context: dict[str, Any] | None = None,
 ) -> None:
-    """Run all hooks for a given state across all editables.
-
-    Hooks are collected from all editables (including children),
-    sorted by order, and executed sequentially. Each hook receives
-    the yaml_data dict and may mutate it in place.
-
-    Args:
-        state: The FormState to run hooks for.
-        editables: All editables in the flow.
-        yaml_data: The YAML data being processed (mutable).
-        context: Optional context dict (e.g. project_name, user).
-    """
+    """Run every hook for *state*, in hook order; each one may mutate *yaml_data*."""
     ctx = context or {}
     hooks = collect_hooks(editables, state)
     for yaml_path, hook in hooks:

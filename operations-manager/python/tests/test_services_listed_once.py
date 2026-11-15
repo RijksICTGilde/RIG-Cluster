@@ -7,8 +7,8 @@ ProjectManager and ProjectStore use before any write) rejects it.
 """
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
-from opi.manager.project_validation import validate_project_structure
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
 
 
 def _project(**overrides) -> dict:

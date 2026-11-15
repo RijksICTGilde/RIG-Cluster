@@ -320,7 +320,9 @@ resource the deployment owns — PVCs, databases, MinIO buckets — in one run.
 |--------|----------|-------------|
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}` | List snapshots for namespace |
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}` | List snapshots for specific PVC |
-| `POST` | `/api/v1/restore/project/{project_name}` | Restore for a RIG-managed project (auto-updates project file via generation versioning) |
+| `POST` | `/api/v1/restore/project/{project_name}` | Restore one PVC of a RIG-managed project (auto-updates project file via generation versioning) |
+| `POST` | `/api/v1/restore/project/{project_name}/deployment/{deployment_name}` | Restore one resource (`pvc`, `database`, `minio`) of a deployment |
+| `POST` | `/api/v1/restore/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}` | Restore every resource of one backup run |
 | `POST` | `/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}` | Manual PVC restore to new or existing PVC |
 | `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
 | `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
@@ -329,6 +331,38 @@ All `{cluster}/{namespace}` endpoints require a `project_name` query parameter m
 `X-API-Key`, and `{namespace}` must be that project's own prefixed namespace
 (`rig-{project}` in sandbox, `rig-prd-{project}` in production). Any other namespace is
 rejected with `403` — a project can only list or restore its own backups.
+
+### Restoring goes through the queue too, and still answers synchronously
+
+The three `project/...` restores queue a restore task and wait for it, the same way the
+backup endpoint does, so they run the same path as the wizard: the ordering and the
+deduplication per deployment apply, and a restore no longer runs next to a deploy or a
+backup of the same deployment. Two things follow from the wait:
+
+- `409` when another backup or restore holds the cluster-wide backup lock and nothing came
+  back;
+- `504` when the restore outlasts what the request can wait for. Nothing is lost; the task
+  keeps going and `GET /api/tasks/{id}` says how it ended.
+
+What the steps are no longer differs per entrance: all three run `restore_deployment` in
+`opi/manager/backup/restore_run.py`. That means for all three:
+
+- the generation of a resource is committed right after that resource came back, so a
+  half-finished run leaves a project file that matches what is on the cluster;
+- a deployment on another cluster than this operations-manager is refused with `400`
+  instead of being restored into thin air;
+- a backup run whose data belongs to ANOTHER deployment is weighed on that deployment as
+  well: restoring production into your own deployment reads production, and needs the role
+  for it.
+
+### Restoring into a destination you name yourself
+
+The database and bucket restore take a destination of your own (`target_database_*`,
+`target_minio_*`). That destination has to resolve to a public address, or to one of the
+private networks this cluster allows, exactly as a clone source does. Anything else is
+refused with `422`, with one message that says no more than that. The project's OWN
+database or bucket (omit the target fields) is not weighed: the platform picks that one,
+and it is cluster-internal by definition.
 
 ### Request body
 
@@ -339,23 +373,62 @@ optional body to restrict to specific resource types:
 { "resource_types": ["pvc", "database", "minio"] }
 ```
 
-Omitting the body backs up all three types.
+Omitting the body backs up all three types. A type outside those three is refused with
+`422`; it used to be dropped without a word, so the backup that was asked for silently did
+not happen.
+
+### One path, and a synchronous answer
+
+The call queues a backup task and waits for it, so it goes through the same queue as the
+wizard and the scheduler: `BACKUP_MAX_CONCURRENT`, the deduplication and the ordering per
+deployment apply to it, and a backup no longer runs next to a deploy or a restore of the
+same deployment. The answer is still synchronous. Two things follow from the wait:
+
+- a second identical call joins the task that is already running instead of starting one;
+- `504` when the backup outlasts what the request can wait for. Nothing is lost, the task
+  keeps running, and `GET /api/tasks/{id}` says how it ended.
+
+The steps themselves live in one place, `opi/manager/backup/run.py`.
 
 ### Backup response
 
 ```json
 {
   "status": "success",
-  "message": "Backed up 3 resources for my-project/production",
-  "backup_run_id": "20260520020000",
-  "total_results": 3,
-  "results": [
-    {"namespace": "rig-my-project", "pvc_name": "production-frontend-data-pvc", "success": true, "duration_seconds": 45.3},
-    {"namespace": "rig-my-project", "reference_name": "frontend-database", "success": true, "duration_seconds": 12.1},
-    {"namespace": "rig-my-project", "reference_name": "frontend-uploads", "success": true, "duration_seconds": 8.7}
-  ]
+  "message": "Backed up 1 PVC(s), 1 database(s), 1 bucket(s) in deployment production",
+  "pvc_results": [
+    {"namespace": "rig-my-project", "pvc_name": "production-frontend-data-pvc", "success": true, "duration_seconds": 45.3}
+  ],
+  "database_results": [
+    {"namespace": "rig-my-project", "reference_name": "frontend-postgresql", "success": true, "duration_seconds": 12.1}
+  ],
+  "bucket_results": [
+    {"namespace": "rig-my-project", "reference_name": "frontend-minio", "success": true, "duration_seconds": 8.7}
+  ],
+  "skipped": []
 }
 ```
+
+| Outcome | `status` | HTTP |
+|---|---|---|
+| Every resource backed up, or nothing to back up | `success` | `200` |
+| Some resources backed up, others failed | `partial` | `207` |
+| Nothing backed up | `failed` | `500` |
+| A step gave up waiting for the cluster-wide backup lock | - | `409` |
+| The wait for the task ran out | - | `504` |
+
+A step that breaks counts as a failure. It used to be logged as a warning and left out of
+the answer, so a database or bucket backup that did not happen still reported `200`
+`"success"`.
+
+`skipped` names a resource type the run left alone and why, for instance a deployment whose
+secret is not there. A skip is no failure, so the status stays what it was; it is simply no
+longer invisible.
+
+A deployment that uses a database or object storage through helm-charts or helmfiles only,
+without a component naming the service, is backed up under the reference a component would
+have carried (`{deployment}-postgresql`, `{deployment}-minio`). The wizard and the scheduler
+used to pass it over with a green step.
 
 All snapshots in one run share `backup_run_id` and are tagged with `project`,
 `deployment`, `component`, `resource_type`, `generation`, and `trigger`
@@ -414,9 +487,14 @@ That is reported, not hidden in the OPI log:
 | Restored, applying it failed | `partial` | `207` | `true` | `false` |
 | Restored, no refresh asked for (`update_deployment: false`) | `success` | `200` | `false` | `null` |
 | The restore itself failed | `failed` | `500` | `false` | `false` |
+| Part of a run restored, applying it failed | `partial` | `207` | `true` | `false` |
 
 On `partial` the message says so as well. The restored data is in place; retry the
 restore or trigger a project refresh once the cause is cleared.
+
+A run in which SOME resources came back is refreshed as well: the project file then already
+points at the new generation of those resources, and leaving the deployment on the old
+manifests would be the worse of the two halves.
 
 ### Restoring a database keeps the deployment's credentials
 
@@ -1013,7 +1091,7 @@ grenzen houden dat in het gareel:
    (`"{{ waarde }}"`) breekt op een backslash of een regeleinde; de YAML-emitter escapet
    precies wat YAML eist. Alle manifesten lopen daarvoor door één Jinja-omgeving:
    `KubectlConnector.template_manifest` rendert via `render_template_source` uit
-   `opi/generation/manifests.py`, niet via een eigen `Environment()`.
+   `opi/utils/manifest_render.py`, niet via een eigen `Environment()`.
 3. **Het shellscript van de pod leest uit de omgeving.** `${NAMESPACE}`, `${PVC_NAME}`,
    `${TARGET_PVC_NAME}`, `${REFERENCE_NAME}` en `${RESTORE_SNAPSHOT_ID}` zijn `env`-items,
    geen geïnterpoleerde tekst: YAML-quoting is geen shell-quoting, dus een waarde die

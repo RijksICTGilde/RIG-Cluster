@@ -1,16 +1,15 @@
-"""Server-side sessies (RC-390): de tabel ``sessions`` met de hot-cache ervoor.
+"""Server-side sessions: the ``sessions`` table with the hot cache in front of it.
 
-Leesweg: eerst de cache, bij een miss de tabel (die vult de cache). Schrijfweg is
-write-through: ``set`` vult de cache én upsert de rij, dus een mutatie is voor een
-volgende lezer direct zichtbaar.
+Reading goes to the cache first and to the table on a miss, which fills the cache. Writing
+is write-through: ``set`` fills the cache AND upserts the row, so a mutation is visible to
+the next reader at once.
 
-Het verloop loopt op twee plaatsen: ``expires_at`` hier (het schuivende
-inactiviteitsvenster; ``purge_expired`` ruimt op vanuit de uurlijkse lus van de
-taakwerker) en ``user.login_at`` in de data (de absolute grens, gehandhaafd door
-``opi/core/session_guard.py``).
+Expiry lives in two places: ``expires_at`` here (the sliding inactivity window, swept by
+``purge_expired`` from the task worker's hourly loop) and ``user.login_at`` in the data (the
+absolute limit, enforced by ``opi/http/auth/session_guard.py``).
 
-De hit-ratio en het aantal sets worden hooguit eens per minuut als INFO gelogd, op
-activiteit: een store zonder verkeer heeft niets te melden.
+The hit ratio and the number of sets are logged at INFO at most once a minute, on activity:
+a store without traffic has nothing to report.
 """
 
 from __future__ import annotations
@@ -30,16 +29,16 @@ from opi.services.persistence.sessions import PortalSession
 
 logger = logging.getLogger(__name__)
 
-#: Een touch schrijft de database hooguit eens per zoveel seconden per sessie bij. Binnen
-#: die ruimte is de cachemarkering genoeg; de rij zelf mag er even achter lopen.
+#: A touch writes the database at most once per this many seconds per session. Inside that
+#: window the cache mark is enough and the row may lag behind.
 TOUCH_GRACE_SECONDS = 60.0
 
-#: Hoe vaak de cachetellers hooguit gelogd worden.
+#: How often the cache counters are logged, at most.
 REPORT_INTERVAL_SECONDS = 60.0
 
 
 class SessionStore:
-    """De rij in ``sessions`` achter een sessie-id, met de hot read-through cache ervoor."""
+    """The ``sessions`` row behind a session id, with the hot read-through cache in front."""
 
     def __init__(
         self,
@@ -54,7 +53,7 @@ class SessionStore:
         self._next_report_at = 0.0
 
     async def get(self, session_id: str) -> dict[str, Any] | None:
-        """De data van deze sessie, of None als hij onbekend of verlopen is."""
+        """This session's data, or None when it is unknown or expired."""
         self._report_if_due()
         cached = self._cache.get(session_id)
         if cached is not None:
@@ -74,7 +73,7 @@ class SessionStore:
         return row
 
     async def set(self, session_id: str, data: dict[str, Any]) -> None:
-        """Write-through: cache vullen én de rij upserten met een vers verloop."""
+        """Write-through: fill the cache AND upsert the row with a fresh expiry."""
         self._report_if_due()
         self._writes += 1
         self._cache.set(session_id, data)
@@ -91,14 +90,14 @@ class SessionStore:
             await session.execute(statement)
 
     async def delete(self, session_id: str) -> None:
-        """Weg bij beiden: de cache en de rij."""
+        """Gone from both: the cache and the row."""
         self._report_if_due()
         self._cache.delete(session_id)
         async with session_scope() as session:
             await session.execute(delete(PortalSession).where(PortalSession.id == session_id))
 
     async def delete_by_email(self, email: str) -> int:
-        """Verwijder elke sessie van dit adres; het intrekken is dan een harde weigering."""
+        """Delete every session of this address, which makes a revocation a hard refusal."""
         normalized = email.strip().lower()
         self._cache.delete_where(
             lambda data: str((data.get("user") or {}).get("email") or "").strip().lower() == normalized
@@ -110,12 +109,11 @@ class SessionStore:
         return result.rowcount or 0
 
     async def touch(self, session_id: str) -> bool:
-        """Verleng het verloop van deze sessie; nooit boven het verloop van een dode rij uit.
+        """Extend this session's expiry; True when a row was extended.
 
-        Returns True als er een rij verlengd is. Een verlopen of afwezige rij wordt niet
-        gereanimeerd, dus touch kan een sessie niet oneindig in leven houden. Binnen
-        :data:`TOUCH_GRACE_SECONDS` na de vorige touch is de cachemarkering genoeg en
-        blijft de database uit de weg.
+        An expired or absent row is NOT revived, so touch cannot keep a session alive
+        indefinitely. Within :data:`TOUCH_GRACE_SECONDS` of the previous touch the cache mark
+        is enough and the database stays out of the way.
         """
         self._report_if_due()
         if self._cache.touch_mark(session_id, TOUCH_GRACE_SECONDS):
@@ -130,23 +128,23 @@ class SessionStore:
         return (result.rowcount or 0) > 0
 
     async def count(self) -> int:
-        """Het aantal rijen in de tabel, vervallen inbegrepen (voor meting en tests)."""
+        """The number of rows in the table, expired ones included, for measurement and tests."""
         async with session_scope() as session:
             return (await session.execute(select(func.count()).select_from(PortalSession))).scalar_one()
 
     async def purge_expired(self) -> int:
-        """Ruim verlopen sessies op; de uurlijkse cleanup-lus van de taakwerker roept dit."""
+        """Sweep expired sessions; the task worker's hourly cleanup loop calls this."""
         async with session_scope() as session:
             result = await session.execute(delete(PortalSession).where(PortalSession.expires_at <= datetime.now(UTC)))
             return result.rowcount or 0
 
     def _report_if_due(self) -> None:
-        """Log de cachetellers hooguit eens per interval, op activiteit in plaats van een timer."""
+        """Log the cache counters at most once per interval, on activity and not on a timer."""
         now = time.monotonic()
         if now < self._next_report_at:
             return
         if self._next_report_at == 0.0:
-            # Niet bij de eerste aanroep al een nul-rapport loggen; de teller start nu.
+            # No zero report on the very first call; the counter starts now.
             self._next_report_at = now + REPORT_INTERVAL_SECONDS
             return
         stats = self._cache.take_stats()
@@ -171,7 +169,7 @@ _session_store: SessionStore | None = None
 
 
 def get_session_store() -> SessionStore:
-    """De proceswijde store. Aangemaakt met de waarden uit ``settings`` bij eerste gebruik."""
+    """The process-wide store, created from ``settings`` on first use."""
     global _session_store
     if _session_store is None:
         _session_store = SessionStore()

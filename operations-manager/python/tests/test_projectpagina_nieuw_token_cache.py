@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from opi.web import router_tokens
 from starlette.requests import Request
 
@@ -77,10 +77,10 @@ def _verzoek(pad: str, sessie: dict[str, Any]) -> Request:
 async def _pagina(monkeypatch: pytest.MonkeyPatch, pad: str, sessie: dict[str, Any]):
     from opi.web import router
 
-    project_prive, project_publiek = generate_sops_key_pair()
+    project_prive, project_publiek = generate_age_key_pair()
     # De sleutel uitpakken vraagt de KEK van het cluster, en die hoort niet bij wat hier
     # gemeten wordt: de header op het antwoord.
-    monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
+    monkeypatch.setattr(router, "get_decoded_project_private_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
     monkeypatch.setattr(router, "get_user_roles_for_project", lambda *_: ["admin", "ops"])
     project = ProjectSummary(
@@ -90,18 +90,31 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, pad: str, sessie: dict[str, A
         data=_projectbestand(project_publiek),
     )
     monkeypatch.setattr(router, "get_project_store", lambda: _Store(project))
-    monkeypatch.setattr(router, "is_projectbeheerder", lambda *_: True)
-    monkeypatch.setattr(router_tokens, "leden_overzicht", lambda _: [])
+    monkeypatch.setattr(router, "is_project_admin", lambda *_: True)
+    monkeypatch.setattr(router_tokens, "members_overview", lambda _: [])
 
     return await router.project_details(_verzoek(pad, sessie), PROJECT)
 
 
 async def test_het_tabblad_met_een_vers_token_mag_niet_gecachet_worden(monkeypatch: pytest.MonkeyPatch) -> None:
-    verwijzing = router_tokens._leg_klaar({"naam": "cli", "waarde": "zad_waardevandetoets"})
-    antwoord = await _pagina(monkeypatch, f"/projects/{PROJECT}/team", {router_tokens.NIEUW_TOKEN_SLEUTEL: verwijzing})
+    verwijzing = router_tokens._hold_for_display({"naam": "cli", "waarde": "zad_waardevandetoets"})
+    antwoord = await _pagina(
+        monkeypatch, f"/projects/{PROJECT}/team", {router_tokens.NEW_TOKEN_SESSION_KEY: verwijzing}
+    )
 
     assert antwoord.status_code == 200
     assert antwoord.headers["Cache-Control"] == "no-store"
+
+
+async def test_the_tab_renders_the_new_token_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that only touches the session context key stays truthy either way, so
+    the header-only tests above cannot see it: the body needs its own check."""
+    reference = router_tokens._hold_for_display({"token": "zad_waardevandetoets", "eigenaar": "cli"})
+    response = await _pagina(monkeypatch, f"/projects/{PROJECT}/team", {router_tokens.NEW_TOKEN_SESSION_KEY: reference})
+
+    html = response.body.decode()
+    assert "zad_waardevandetoets" in html
+    assert "Je nieuwe token voor cli" in html
 
 
 async def test_het_tabblad_zonder_vers_token_houdt_de_gewone_headers(monkeypatch: pytest.MonkeyPatch) -> None:

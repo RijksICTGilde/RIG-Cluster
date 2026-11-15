@@ -30,10 +30,10 @@ CLUSTER = "local"
 def _progress() -> Any:
     """Een echte voortgangsmanager zonder zijn periodieke flush-lus."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",
@@ -211,7 +211,7 @@ async def test_een_app_die_niet_terugkomt_laat_de_taak_falen(monkeypatch: pytest
     omgeving = _omgeving(monkeypatch, cached=data, ready=[False])
     progress = _progress()
 
-    with pytest.raises(flow.WakeTimeout) as exc:
+    with pytest.raises(flow.WakeTimeoutError) as exc:
         await _wektaak(progress)
 
     assert "de slaapstand-sweeper zet de deployment terug op wakker" in str(exc.value)
@@ -233,7 +233,7 @@ async def test_een_onleesbare_deadline_houdt_de_wacht_toch_begrensd(
     data = _project_data({"state": "waking", "expires-at": "ooit"})
     omgeving = _omgeving(monkeypatch, cached=data, ready=[False])
 
-    with pytest.raises(flow.WakeTimeout):
+    with pytest.raises(flow.WakeTimeoutError):
         await flow.finish_wake(PROJECT, DEPLOYMENT)
 
     assert omgeving.commits == []
@@ -338,7 +338,7 @@ async def test_de_achtergrondafronding_laat_een_mislukte_wek_aan_de_sweeper() ->
     """Niemand kijkt mee achter de route, dus een time-out wordt gelogd, niet gegooid."""
     from opi.services.catalog.sleep_mode.router import finish_wake_after_response
 
-    with patch.object(flow, "finish_wake", AsyncMock(side_effect=flow.WakeTimeout("kwam niet terug"))):
+    with patch.object(flow, "finish_wake", AsyncMock(side_effect=flow.WakeTimeoutError("kwam niet terug"))):
         await finish_wake_after_response(PROJECT, DEPLOYMENT)
 
 
@@ -390,17 +390,17 @@ async def test_de_sweeper_vraagt_de_gereedheid_via_flow(monkeypatch: pytest.Monk
     assert len(omgeving.commits) == 1
 
 
-# --- 8. De sweeper reprocessed alleen wat hij aanraakt ---------------------------------
+# --- 8. The sweep reprocesses only what it touched ------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_de_sweep_reprocessed_alleen_de_aangeraakte_deployment(
+async def test_the_sweep_reprocesses_only_the_deployment_it_touched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """De sweep kent zijn aangeraakte deployments al (``applied``) en geeft die door aan
-    de reprocess. Scope hij dat niet, dan hangt elke sweep aan de Synced+Healthy-wacht van
-    álle apps van het project -- zo faalde nachts elke sweep van pocpl-0g8 op de 300s-
-    time-out van een verder onaangeroerd deployment (productie, 10-11-2026).
+    """The sweep already knows which deployments it touched (``applied``) and passes those
+    to the reprocess. Unscoped, every sweep waits on the Synced+Healthy of ALL the project's
+    apps: that is how every nightly sweep of pocpl-0g8 failed on the 300s timeout of an
+    untouched deployment (production, 10-11-2026).
     """
     from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
 
@@ -425,20 +425,20 @@ async def test_de_sweep_reprocessed_alleen_de_aangeraakte_deployment(
     omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
     monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
 
-    gewijzigd = await SleepModeScheduler(CLUSTER)._apply(
+    changed = await SleepModeScheduler(CLUSTER)._apply(
         PROJECT, f"{PROJECT}.yaml", [(DEPLOYMENT, CHECK_AWAKE)], datetime.now(UTC)
     )
 
-    assert gewijzigd is True
+    assert changed is True
     call = omgeving.reprocess.await_args
-    assert call.kwargs["deployment_names"] == [DEPLOYMENT], "pr-690 hoort niet in deze sweep"
+    assert call.kwargs["deployment_names"] == [DEPLOYMENT], "pr-690 does not belong in this sweep"
 
 
 @pytest.mark.asyncio
-async def test_een_sweep_die_twee_deployments_raakt_scope_twee_namen(
+async def test_a_sweep_that_touches_two_deployments_scopes_two_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """De pacing-troef van de sweep (één commit per project) blijft: één run, alle namen."""
+    """The sweep's pacing advantage (one commit per project) stays: one run, every name."""
     from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, SleepModeScheduler
 
     waking = {"state": "waking", "expires-at": (datetime.now(UTC) + timedelta(minutes=9)).isoformat()}
@@ -462,14 +462,14 @@ async def test_een_sweep_die_twee_deployments_raakt_scope_twee_namen(
     omgeving = _omgeving(monkeypatch, cached=data, ready=[True])
     monkeypatch.setattr(flow, "app_is_ready", AsyncMock(return_value=True))
 
-    gewijzigd = await SleepModeScheduler(CLUSTER)._apply(
+    changed = await SleepModeScheduler(CLUSTER)._apply(
         PROJECT,
         f"{PROJECT}.yaml",
         [(DEPLOYMENT, CHECK_AWAKE), ("pr-690", CHECK_AWAKE)],
         datetime.now(UTC),
     )
 
-    assert gewijzigd is True
-    assert len(omgeving.commits) == 1, "nog steeds één commit per project"
+    assert changed is True
+    assert len(omgeving.commits) == 1, "still one commit per project"
     call = omgeving.reprocess.await_args
     assert call.kwargs["deployment_names"] == [DEPLOYMENT, "pr-690"]

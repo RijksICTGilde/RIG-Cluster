@@ -29,7 +29,7 @@ dit is een uitzondering die je aanvraagt, geen instelling die je vergeet.
 | `clone_database`, `clone_bucket` | nee — die werken rechtstreeks op het cluster en schrijven niets in het projectbestand |
 
 Waar het niet mag wordt de vlag **geweigerd** met HTTP 422 en de reden erbij, niet stil
-genegeerd. De indeling staat in `opi/core/task_rollout.py` (`DEFERRABLE_TASK_TYPES` en
+genegeerd. De indeling staat in `opi/services/tasks/task_rollout.py` (`DEFERRABLE_TASK_TYPES` en
 `NON_DEFERRABLE_REASONS`); een taaktype dat in geen van beide staat wordt door een test
 gemeld.
 

@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import opi
 import pytest
 from opi.core.config import settings
-from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from opi.services import image_pull_report
 from opi.services.image_pull_report import (
     ImagePullObserver,
@@ -26,6 +25,7 @@ from opi.services.image_pull_report import (
     observe_image_pull_failures,
     read_image_pull_failure,
 )
+from opi.services.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 
 ABSENT = 'Back-off pulling image "ghcr.io/org/app:bad-tag": ErrImagePull: manifest unknown'
 QUOTA = "ErrImagePull: reading manifest pr-692 in rcr.rijksapps.nl/ghcr-rig/org/app: denied: Quota has been exceeded on namespace"
@@ -223,7 +223,7 @@ class TestObserve:
     @patch("opi.services.image_pull_report.KubectlConnector")
     @pytest.mark.asyncio
     async def test_a_pass_replaces_the_snapshot(self, mock_kubectl_cls) -> None:
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
         pods = {"items": [_pod(), _pod(name="other-1", app="production-worker", message=QUOTA)]}
@@ -247,7 +247,7 @@ class TestObserve:
     async def test_a_failed_pass_keeps_the_previous_count(self, mock_kubectl_cls) -> None:
         """ "We could not look" must never read as "nothing is wrong": zero is what the
         alert treats as healthy, so a kubectl that fails would silence it."""
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
         mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": [_pod()]}), "", 0))
@@ -258,7 +258,7 @@ class TestObserve:
             assert await observe_image_pull_failures() == 1
             assert image_pull_failure_count() == 1
 
-        mock_kubectl.run_command = AsyncMock(side_effect=RuntimeError("kubectl is weg"))
+        mock_kubectl.run_command = AsyncMock(side_effect=OSError("kubectl is weg"))
         assert await observe_image_pull_failures() == 1
         assert image_pull_failure_count() == 1
 
@@ -279,7 +279,7 @@ class TestOfErGekekenIs:
     @patch("opi.services.image_pull_report.KubectlConnector")
     @pytest.mark.asyncio
     async def test_een_gelukte_ronde_zet_de_tijdstempel(self, mock_kubectl_cls) -> None:
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
         # Een LEGE uitkomst, want dat is de stand die niet van "niemand keek" te
@@ -300,7 +300,7 @@ class TestOfErGekekenIs:
         Er is dan ook geen vorige momentopname om te bewaren, dus de telling is een
         eerlijke nul en een ononderscheidbare. Alleen de tijdstempel zegt welke.
         """
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
 
@@ -309,7 +309,7 @@ class TestOfErGekekenIs:
             assert await observe_image_pull_failures() == 0
             assert image_pull_observed_timestamp() == 0.0
 
-        mock_kubectl.run_command = AsyncMock(side_effect=RuntimeError("kubectl is weg"))
+        mock_kubectl.run_command = AsyncMock(side_effect=OSError("kubectl is weg"))
         assert await observe_image_pull_failures() == 0
         assert image_pull_observed_timestamp() == 0.0
 
@@ -317,7 +317,7 @@ class TestOfErGekekenIs:
     @pytest.mark.asyncio
     async def test_een_mislukte_ronde_na_een_gelukte_laat_de_oude_tijdstempel_staan(self, mock_kubectl_cls) -> None:
         """Verouderen, niet terugzetten: het alarm gaat op de leeftijd af."""
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
         mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": [_pod()]}), "", 0))
@@ -333,7 +333,7 @@ class TestOfErGekekenIs:
     @patch("opi.services.image_pull_report.KubectlConnector")
     @pytest.mark.asyncio
     async def test_zonder_kubectl_is_er_niet_gekeken(self, mock_kubectl_cls) -> None:
-        mock_kubectl_cls.isConnected = False
+        mock_kubectl_cls.is_connected = False
 
         assert await observe_image_pull_failures() == 0
         assert image_pull_observed_timestamp() == 0.0
@@ -379,7 +379,7 @@ class TestObserveVervolg:
     @patch("opi.services.image_pull_report.KubectlConnector")
     @pytest.mark.asyncio
     async def test_the_selector_excludes_the_service_owned_pods(self, mock_kubectl_cls) -> None:
-        mock_kubectl_cls.isConnected = True
+        mock_kubectl_cls.is_connected = True
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
         mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": []}), "", 0))

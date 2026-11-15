@@ -6,11 +6,15 @@ unique names for Kubernetes resources, databases, MinIO, ArgoCD, backups,
 infrastructure, and URL handling.
 """
 
+from opi.services.catalog.publish_on_web.hostnames import (
+    find_root_component,
+    get_component_ingress_map,
+    get_deployment_hostnames,
+)
 from opi.utils.naming import (
     ensure_fqdn,
     ensure_url_has_protocol,
     extract_domain_from_url,
-    find_root_component,
     generate_argocd_application_filename,
     generate_argocd_application_name,
     generate_argocd_repository_secret_name,
@@ -57,8 +61,6 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_tls_secret_name,
     generate_unique_name,
-    get_component_ingress_map,
-    get_deployment_hostnames,
     make_argocd_repository_url_unique,
     normalize_base_domain,
     resolve_effective_base_domain,

@@ -22,25 +22,25 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.db import session_scope
-from opi.core.leden import LidSoort
-from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
-from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
-from opi.services.persistence.notification_events import NotificationEvent
-from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import enforce_route_action, may
-from opi.web.lotc_switch import (
+from opi.http.auth.authz import enforce_route_action, may
+from opi.http.render.lotc_switch import (
     AUDIT_QUERY_MAX,
     PROJECT_TABS,
     AuditFilters,
     audit_cursor_text,
     audit_filters,
     audit_limit,
-    audit_pagina,
+    audit_page,
     audit_url,
     build_lotc_audit,
     project_tab_url,
     tab_from_path,
 )
+from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
+from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
+from opi.services.members import MemberKind
+from opi.services.persistence.notification_events import NotificationEvent
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router import project_audit
 
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -56,8 +56,8 @@ def _project(naam: str = "demo") -> ProjectSummary:
         filename=f"{naam}.yaml",
         data={"name": naam},
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin"], type=LidSoort.PERSOON),
-            ProjectUser(email=BOUWER, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin"], type=MemberKind.PERSON),
+            ProjectUser(email=BOUWER, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -82,8 +82,8 @@ async def _poort(email: str, project_name: str, bestaand: str = "demo", query: d
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         await enforce_route_action(_request(email, project_name, query))
 
@@ -122,8 +122,8 @@ async def test_een_developer_krijgt_403_en_ziet_het_tabblad_niet() -> None:
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         assert may(_request(BOUWER, "demo"), action=Action.AUDIT_READ, project_name="demo") is False
         assert may(_request(BEHEERDER, "demo"), action=Action.AUDIT_READ, project_name="demo") is True
@@ -140,13 +140,13 @@ async def test_een_admin_van_project_a_krijgt_403_op_project_b() -> None:
     # Op project 'ander' is deze aanroeper geen lid, dus geen enkele rol.
     def _ander(naam: str) -> ProjectSummary:
         project = _project(naam)
-        project.users = [ProjectUser(email="iemand@rijksoverheid.nl", roles=["admin"], type=LidSoort.PERSOON)]
+        project.users = [ProjectUser(email="iemand@rijksoverheid.nl", roles=["admin"], type=MemberKind.PERSON)]
         return project
 
     store.get.side_effect = _ander
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         pytest.raises(HTTPException) as fout,
     ):
         await enforce_route_action(_request(BEHEERDER, "ander", {"project": "demo"}))
@@ -212,7 +212,7 @@ def test_een_weigering_draagt_zijn_reden() -> None:
 
 
 def _commit_url(*, server: str, web: str = "") -> str:
-    with patch("opi.web.lotc_switch.settings") as instellingen:
+    with patch("opi.http.render.lotc_switch.settings") as instellingen:
         instellingen.GIT_PROJECTS_SERVER_URL = server
         instellingen.GIT_PROJECTS_WEB_URL = web
         [rij] = build_lotc_audit([_rij()])
@@ -253,7 +253,7 @@ def test_de_auditrijen_worden_alleen_op_het_tabblad_audit_opgehaald() -> None:
     from opi.web import router
 
     bron = inspect.getsource(router.render_project_page)
-    aanroep = bron.index("audit_pagina(")
+    aanroep = bron.index("audit_page(")
     voorwaarde = bron.rindex('tab_from_path(request.url.path) == "audit"', 0, aanroep)
     assert voorwaarde > 0, "de audittrail wordt niet achter het tabblad gehouden"
 
@@ -265,7 +265,7 @@ def test_het_audittabblad_valt_uit_de_balk_zonder_leesrecht() -> None:
     from opi.web import router
 
     bron = inspect.getsource(router.render_project_page)
-    toevoeging = bron.index('lege_tabs = (*lege_tabs, "audit")')
+    toevoeging = bron.index('empty_tabs = (*empty_tabs, "audit")')
     voorwaarde = bron.rindex("if not may(request, action=Action.AUDIT_READ", 0, toevoeging)
     assert voorwaarde > 0, "de audittab valt niet uit de balk op basis van AUDIT_READ"
 
@@ -396,7 +396,7 @@ def test_the_time_in_the_table_is_dutch_time() -> None:
 
 # --- wat het tabblad oplevert, tegen een echte database ---------------------
 #
-# Via audit_pagina en niet door render_project_page aan te roepen: een render van die
+# Via audit_page en niet door render_project_page aan te roepen: een render van die
 # pagina vraagt het halve projectmodel mee, zoals tests/test_argo_connect_retry.py en
 # tests/test_lotc_backups_tabblad.py voor dezelfde functie al vaststellen.
 
@@ -428,7 +428,7 @@ async def test_the_tab_shows_only_the_rows_the_query_asks_for(orm_db: None) -> N
     await _schrijf(time=binnen, actor="pietersen@rijksoverheid.nl", data={"action": "component.write"})
     await _schrijf(time=datetime(2026, 6, 1, 10, 0, tzinfo=UTC), actor="jansen@rijksoverheid.nl")
 
-    context = await audit_pagina(
+    context = await audit_page(
         _request(BEHEERDER, "demo", {"q": "jansen", "from": "2026-07-01", "until": "2026-07-03"}), "demo"
     )
 
@@ -441,7 +441,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
     for minuut in range(3):
         await _schrijf(time=datetime(2026, 7, 2, 10, minuut, tzinfo=UTC), data={"action": f"actie{minuut}"})
 
-    eerste = await audit_pagina(_request(BEHEERDER, "demo", {"q": "actie", "limit": "2"}), "demo")
+    eerste = await audit_page(_request(BEHEERDER, "demo", {"q": "actie", "limit": "2"}), "demo")
 
     assert [rij["action"] for rij in eerste["audit_rijen"]] == ["actie2", "actie1"]
     assert "q=actie" in eerste["audit_ouder_url"]
@@ -451,7 +451,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
     assert eerste["audit_nieuwer_url"] == ""
 
     cursor = eerste["audit_ouder_url"].split("before=")[1]
-    tweede = await audit_pagina(
+    tweede = await audit_page(
         _request(BEHEERDER, "demo", {"q": "actie", "limit": "2", "before": unquote(cursor)}), "demo"
     )
 
@@ -463,7 +463,7 @@ async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> 
 async def test_an_empty_outcome_offers_a_way_back(orm_db: None) -> None:
     await _schrijf()
 
-    context = await audit_pagina(_request(BEHEERDER, "demo", {"q": "bestaat-niet"}), "demo")
+    context = await audit_page(_request(BEHEERDER, "demo", {"q": "bestaat-niet"}), "demo")
 
     assert context["audit_rijen"] == []
     assert context["audit_filter_actief"] is True

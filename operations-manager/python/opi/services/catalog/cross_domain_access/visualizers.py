@@ -1,9 +1,9 @@
-"""Visualizers for the cross-domain-access project-level form (RC-15).
+"""Visualizers for the cross-domain-access project-level form.
 
 Two SEQUENCE visualizers, ``inbound`` and ``outbound``, each with the six per-row fields.
 The three peer fields cascade (project -> deployment -> component) and the port select
-follows the RECEIVING side of the rule (RC-42). The port help text keeps the second pitfall
-from the design (2.5): an authorization-wall makes the reachable port 4180, not the app port.
+follows the RECEIVING side of the rule. The port help text names the pitfall: an
+authorization-wall makes the reachable port 4180, not the app port.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ from opi.services.catalog.cross_domain_access.editables import (
     OUTBOUND_SEQUENCE_EDITABLE,
 )
 
-#: De uitzondering (4180 achter een authorization-wall) staat niet hier maar in het label van
-#: die ene optie: het geldt voor een keuze en niet voor het veld, en wie hem niet kiest hoeft
-#: er niets van te weten.
+#: The exception (4180 behind an authorization wall) is not here but in the label of that one
+#: option: it holds for a choice and not for the field, and whoever does not pick it has no
+#: need to know.
 _PORT_HELP = "De poort op het ontvangende component, zoals daar zelf ingevuld."
 _PEER_DEPLOYMENT_HELP = (
     "Welke deployment van dat project. Leeglaten kan: de regel geldt dan voor elke deployment "
@@ -149,10 +149,9 @@ OUTBOUND_SEQUENCE = EditableVisualizer(
 CROSS_DOMAIN_VISUALIZERS = [INBOUND_SEQUENCE, OUTBOUND_SEQUENCE]
 
 
-# --- deployment layer (RC-42) ------------------------------------------------------------
-# Deliberately two fields: the rule NAME (the key the patch merges on) and the peer
-# deployment (the field a project rule may leave open). See the editables module for why the
-# rest of the rule is not repeated here.
+# Deployment layer. Deliberately two fields: the rule NAME (the key the patch merges on) and
+# the peer deployment (the field a project rule may leave open). See the editables module for
+# why the rest of the rule is not repeated here.
 
 DEPLOYMENT_INBOUND_NAME = EditableVisualizer(
     editable=DEPLOYMENT_INBOUND_NAME_EDITABLE,

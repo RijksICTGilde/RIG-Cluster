@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.leden import LidSoort
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router_detail_edit import _process_and_save_modal_edit
 
@@ -46,8 +46,8 @@ def _project(data: dict[str, Any]) -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data=data,
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -81,10 +81,10 @@ async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = Fals
 
     flow = SimpleNamespace(flow_id="modal-edit-deployment", sections=[])
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(na))),
-        patch("opi.web.router_detail_edit.ensure_approval_requests"),
+        patch("opi.manager.project.update.ensure_approval_requests"),
         patch("opi.web.router_detail_edit.render_step_up_dialog", new=AsyncMock(return_value="<dialoog>")),
     ):
         await _process_and_save_modal_edit(

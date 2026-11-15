@@ -8,21 +8,22 @@ ontsleutelde met de systeemsleutel (``settings.SOPS_AGE_PRIVATE_KEY``). Die twee
 sleutelparen zijn van elkaar verschillen, dus elke echt versleutelde env-var was
 onleesbaar -- de gebruiker zette de waarde toen maar plat neer.
 
-De fix haalt de sleutel via ``_sops_private_key_for`` (dezelfde helper als de
-andere project-paden) en doet dat lui: pas als er een versleutelde waarde staat
+De fix haalt de sleutel via ``project_private_key_or_none`` (dezelfde opzoeker als
+de andere project-paden) en doet dat lui: pas als er een versleutelde waarde staat
 wordt er überhaupt een sleutel opgehaald. Drie regels worden hier vastgezet:
 
 1. **Versleutelde waarden openen met de projectsleutel.** De sleutel die aan
-   ``decrypt_age_content`` wordt doorgegeven is die van
-   ``_sops_private_key_for`` -- en die wordt maar één keer opgehaald, ook bij
+   ``decrypt_password_smart`` wordt doorgegeven is die van
+   ``project_private_key_or_none`` -- en die wordt maar één keer opgehaald, ook bij
    meerdere versleutelde waarden.
 2. **Alleen platte tekst raakt het sleutelpad nooit.** Een project zonder
    versleutelde env-vars moet blijven werken, ook zonder geconfigureerde sleutel.
 3. **Versleuteld zonder sleutel zegt wat er mist.** Niet de generieke
-   "Missing encrypted content or private key" van ``decrypt_age_content``, maar
-   welke deployment en welke variabele.
+   "Missing encrypted content or private key" van het ontsleutelen, maar
+   welke deployment en welke variabele. En niet "is not configured": de sleutel
+   staat er meestal wel en gaat alleen niet open (RC-453).
 
-Git, SOPS-encryptie en decryptie zelf zijn gemockt; ``decrypt_age_content``
+Git, SOPS-encryptie en decryptie zelf zijn gemockt; ``decrypt_password_smart``
 wordt alleen gepatcht waar de test iets over de sleutel beweert.
 
 De validatie van de vorm gebeurt hier na ontsleuteling, omdat alleen daar te zien is wat
@@ -43,8 +44,13 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.utils.sops import decrypt_sops_with_key, generate_sops_key_pair, sops_filenames
+from opi.manager.project.helm_deployment import HelmDeployment
+from opi.utils.age import generate_age_key_pair
+from opi.utils.sops import decrypt_sops_with_key, sops_filenames
 from ruamel.yaml import YAML
+
+#: Where the helmfile path binds its module names, and so where a patch has to land.
+_HELM = "opi.manager.project.helm_deployment"
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +68,7 @@ PROJECT_KEY = "AGE-SECRET-KEY-PROJECT"
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -87,24 +93,37 @@ def _deployment(env_vars: dict[str, str]) -> dict[str, Any]:
 
 
 def _wire(manager: Any, public_key: str = "age1demo") -> None:
-    """Alles rond het cmp-env-blok: git-clone, values-extractie, secrets, SOPS."""
+    """What the host supplies: the project file and the values extraction."""
     manager.get_contents = AsyncMock(return_value={"name": "docs", "config": {"age-public-key": public_key}})
-    manager._get_helm_values_context = AsyncMock(return_value={})
-    manager._clone_helmfile_source = AsyncMock(return_value=("unused", None))
-    manager._write_helmfile_custom_files = MagicMock(return_value={})
-    manager._create_deployment_secrets = AsyncMock(return_value=[])
     manager._project_file_handler = MagicMock()
     manager._project_file_handler.get_helmfile_by_name = MagicMock(return_value={"name": "docs"})
     manager._project_file_handler.extract_helmfile_values = AsyncMock(return_value={})
     manager._project_file_handler.extract_deployment_helmfile_values = AsyncMock(return_value={})
 
 
-async def _process(manager: Any, deployment: dict[str, Any], target: Path, *, echte_sops: bool = False) -> None:
+async def _process(
+    manager: Any,
+    deployment: dict[str, Any],
+    target: Path,
+    *,
+    echte_sops: bool = False,
+    project_key: str | None = PROJECT_KEY,
+) -> MagicMock:
+    """Run the helmfile path, and return the mocked key lookup."""
     with ExitStack() as stack:
-        stack.enter_context(patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-docs"))
+        for target_name, replacement in (
+            ("get_helm_values_context", AsyncMock(return_value={})),
+            ("create_deployment_secrets", AsyncMock(return_value=[])),
+        ):
+            stack.enter_context(patch.object(HelmDeployment, target_name, replacement))
+        stack.enter_context(patch(f"{_HELM}.clone_helmfile_source", AsyncMock(return_value=("unused", None))))
+        stack.enter_context(patch(f"{_HELM}.write_helmfile_custom_files", MagicMock(return_value={})))
+        stack.enter_context(patch(f"{_HELM}.get_prefixed_namespace", return_value="rig-docs"))
         if not echte_sops:
-            stack.enter_context(patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"))
-        await manager._process_helmfile_deployment(deployment, MagicMock(), str(target))
+            stack.enter_context(patch(f"{_HELM}.encrypt_to_sops_files_or_fail"))
+        sleutelopzoeker = stack.enter_context(patch(f"{_HELM}.project_private_key_or_none", return_value=project_key))
+        await HelmDeployment(manager).process_helmfile_deployment(deployment, MagicMock(), str(target))
+        return sleutelopzoeker
 
 
 def _env_vars_op_schijf(target: Path) -> dict[str, str]:
@@ -116,12 +135,11 @@ def _env_vars_op_schijf(target: Path) -> dict[str, str]:
 async def test_versleutelde_env_vars_openen_met_de_projectsleutel(tmp_path: Path) -> None:
     decrypt = AsyncMock(side_effect=lambda content, key: f"open-met-{key}")
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
 
     deployment = _deployment({"EERSTE": AGE_BLOCK_1, "TWEEDE": AGE_BLOCK_2, "PLAT": "ja"})
-    with patch("opi.manager.project_manager.decrypt_age_content", decrypt):
-        await _process(manager, deployment, tmp_path)
+    with patch(f"{_HELM}.decrypt_password_smart", decrypt):
+        sleutelopzoeker = await _process(manager, deployment, tmp_path)
 
     assert _env_vars_op_schijf(tmp_path) == {
         "EERSTE": f"open-met-{PROJECT_KEY}",
@@ -132,22 +150,21 @@ async def test_versleutelde_env_vars_openen_met_de_projectsleutel(tmp_path: Path
     # Elke versleutelde waarde wordt ontsleuteld, met steeds de projectsleutel.
     assert decrypt.await_count == 2
     assert all(call.args[1] == PROJECT_KEY for call in decrypt.await_args_list)
-    # Twee awaits op de helper: één lui voor de env-vars-lus (niet per waarde),
+    # Twee aanroepen van de opzoeker: één lui voor de env-vars-lus (niet per waarde),
     # één door de SOPS-encryptiestap verderop in dezelfde methode.
-    assert manager._sops_private_key_for.await_count == 2
+    assert sleutelopzoeker.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_platte_env_vars_raken_het_sleutelpad_niet(tmp_path: Path) -> None:
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
 
-    with patch("opi.manager.project_manager.decrypt_age_content", AsyncMock()) as decrypt:
+    with patch(f"{_HELM}.decrypt_password_smart", AsyncMock()) as decrypt:
         await _process(manager, _deployment({"ALLEEN": "plat"}), tmp_path)
 
     assert _env_vars_op_schijf(tmp_path) == {"ALLEEN": "plat"}
-    # Geen enkele platte waarde komt bij decrypt_age_content langs -- het bewijs
+    # Geen enkele platte waarde komt bij het ontsleutelen langs -- het bewijs
     # dat de sleutel in de env-vars-lus nooit nodig is. (De helper wordt wél nog
     # één keer aangeroepen: door de SOPS-encryptiestap verderop.)
     decrypt.assert_not_awaited()
@@ -156,11 +173,10 @@ async def test_platte_env_vars_raken_het_sleutelpad_niet(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_versleuteld_zonder_projectsleutel_zegt_wat_er_mist(tmp_path: Path) -> None:
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=None)
     _wire(manager)
 
-    with pytest.raises(ValueError, match=r"production.*'API_KEY'.*age-private-key"):
-        await _process(manager, _deployment({"API_KEY": AGE_BLOCK_1}), tmp_path)
+    with pytest.raises(ValueError, match=r"production.*'API_KEY'.*age-private-key could not be read"):
+        await _process(manager, _deployment({"API_KEY": AGE_BLOCK_1}), tmp_path, project_key=None)
 
     assert not (tmp_path / CMP_ENV_TO_SOPS).exists()
 
@@ -169,7 +185,6 @@ async def test_versleuteld_zonder_projectsleutel_zegt_wat_er_mist(tmp_path: Path
 async def test_een_gereserveerde_sleutel_wordt_geweigerd(tmp_path: Path) -> None:
     """De plugin leest ``ARGOCD_APP_NAMESPACE`` zelf, dus een deployment mag hem niet zetten."""
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
 
     with pytest.raises(ValueError, match=r"'ARGOCD_APP_NAMESPACE' is reserved"):
@@ -186,12 +201,11 @@ async def test_een_regeleinde_na_ontsleuteling_wordt_geweigerd(tmp_path: Path) -
     platte waarde nog te toetsen is.
     """
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
 
     decrypt = AsyncMock(return_value="eerste\nARGOCD_APP_NAMESPACE=kaper")
     with (
-        patch("opi.manager.project_manager.decrypt_age_content", decrypt),
+        patch(f"{_HELM}.decrypt_password_smart", decrypt),
         pytest.raises(ValueError, match=r"value of 'MELDING' contains a newline"),
     ):
         await _process(manager, _deployment({"MELDING": AGE_BLOCK_1}), tmp_path)
@@ -209,7 +223,6 @@ async def test_een_lange_waarde_met_spaties_blijft_ongewijzigd(tmp_path: Path) -
     """
     waarde = "x" * 70 + "  twee spaties  " + "y" * 40
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
 
     await _process(manager, _deployment({"LANG": waarde}), tmp_path)
@@ -221,12 +234,17 @@ async def test_een_lange_waarde_met_spaties_blijft_ongewijzigd(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_de_env_vars_staan_versleuteld_in_de_deploymentmap(tmp_path: Path) -> None:
     """Wat naar zad-deployments gaat is cijfertekst op de projectsleutel, geen platte tekst."""
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=private_key)
     _wire(manager, public_key)
 
-    await _process(manager, _deployment({"ENVIRONMENT": "productie", "API_KEY": "geheim"}), tmp_path, echte_sops=True)
+    await _process(
+        manager,
+        _deployment({"ENVIRONMENT": "productie", "API_KEY": "geheim"}),
+        tmp_path,
+        echte_sops=True,
+        project_key=private_key,
+    )
 
     assert not (tmp_path / ".cmp-env").exists()
     assert not (tmp_path / CMP_ENV_TO_SOPS).exists()
@@ -242,7 +260,6 @@ async def test_de_env_vars_staan_versleuteld_in_de_deploymentmap(tmp_path: Path)
 async def test_een_bestaand_plat_cmp_env_wordt_opgeruimd(tmp_path: Path) -> None:
     """De deployments die nog een plat bestand hebben raken het kwijt bij de eerste ronde."""
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
     (tmp_path / ".cmp-env").write_text("ENVIRONMENT=productie\n")
 
@@ -256,7 +273,6 @@ async def test_een_bestaand_plat_cmp_env_wordt_opgeruimd(tmp_path: Path) -> None
 async def test_zonder_env_vars_blijft_er_geen_bestand_achter(tmp_path: Path) -> None:
     """Een weggehaalde variabele moet ook uit de render verdwijnen."""
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=PROJECT_KEY)
     _wire(manager)
     (tmp_path / CMP_ENV_SOPS).write_text("sops: van-een-vorige-ronde\n")
     (tmp_path / ".cmp-env").write_text("ENVIRONMENT=productie\n")
@@ -272,20 +288,76 @@ async def test_zonder_env_vars_blijft_er_geen_bestand_achter(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_een_ongewijzigde_waarde_levert_geen_nieuwe_cijfertekst_op(tmp_path: Path) -> None:
     """SOPS versleutelt niet deterministisch, dus zonder skip-if-unchanged churnt elke ronde."""
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     manager = _manager()
-    manager._sops_private_key_for = AsyncMock(return_value=private_key)
     _wire(manager, public_key)
 
-    await _process(manager, _deployment({"ENVIRONMENT": "productie"}), tmp_path, echte_sops=True)
+    await _process(
+        manager, _deployment({"ENVIRONMENT": "productie"}), tmp_path, echte_sops=True, project_key=private_key
+    )
     eerste = (tmp_path / CMP_ENV_SOPS).read_bytes()
 
-    await _process(manager, _deployment({"ENVIRONMENT": "productie"}), tmp_path, echte_sops=True)
+    await _process(
+        manager, _deployment({"ENVIRONMENT": "productie"}), tmp_path, echte_sops=True, project_key=private_key
+    )
     assert (tmp_path / CMP_ENV_SOPS).read_bytes() == eerste
 
-    await _process(manager, _deployment({"ENVIRONMENT": "acceptatie"}), tmp_path, echte_sops=True)
+    await _process(
+        manager, _deployment({"ENVIRONMENT": "acceptatie"}), tmp_path, echte_sops=True, project_key=private_key
+    )
     gewijzigd = tmp_path / CMP_ENV_SOPS
     assert gewijzigd.read_bytes() != eerste
     ontsleuteld = decrypt_sops_with_key(str(gewijzigd), private_key)
     assert ontsleuteld is not None
     assert YAML(typ="safe").load(ontsleuteld) == {"ENVIRONMENT": "acceptatie"}
+
+
+#: An AGE block written on one line with LITERAL backslash-n, which is what a paste through a
+#: single-line form leaves behind. It passes the schema (no real newline) and
+#: ``cmp_env_rejection``, so without the guard below it reached the CMP readable.
+ONE_LINE_BLOCK = r"-----BEGIN AGE ENCRYPTED FILE-----\nZW5l\n-----END AGE ENCRYPTED FILE-----"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        f"zie dit: {ONE_LINE_BLOCK}",
+        f"zie dit: {AGE_BLOCK_1}",
+        "base64+age staat hier: base64+age:ZW5l",
+    ],
+    ids=["one-line-with-literal-newlines", "text-before-a-real-block", "prefix-inside-the-text"],
+)
+async def test_a_marker_in_the_middle_of_the_text_is_refused(tmp_path: Path, value: str) -> None:
+    """Neither encrypted nor plain: every reader takes it for plain text and writes it down."""
+    manager = _manager()
+    _wire(manager)
+
+    with pytest.raises(ValueError, match=r"production.*'GEHEIM'.*AGE marker"):
+        await _process(manager, _deployment({"GEHEIM": value}), tmp_path)
+
+    assert not (tmp_path / CMP_ENV_TO_SOPS).exists()
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_does_not_repeat_the_value(tmp_path: Path) -> None:
+    manager = _manager()
+    _wire(manager)
+    value = f"token-dat-nergens-anders-staat {ONE_LINE_BLOCK}"
+
+    with pytest.raises(ValueError, match=r"AGE marker") as refusal:
+        await _process(manager, _deployment({"GEHEIM": value}), tmp_path)
+
+    assert "token-dat-nergens-anders-staat" not in str(refusal.value)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_block_and_a_prefixed_value_still_work(tmp_path: Path) -> None:
+    manager = _manager()
+    _wire(manager)
+
+    deployment = _deployment({"BLOK": AGE_BLOCK_1, "PREFIX": "base64+age:ZW5l"})
+    with patch(f"{_HELM}.decrypt_password_smart", AsyncMock(side_effect=lambda content, key: "open")):
+        await _process(manager, deployment, tmp_path)
+
+    assert _env_vars_op_schijf(tmp_path) == {"BLOK": "open", "PREFIX": "open"}

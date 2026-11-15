@@ -26,14 +26,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.git_repo import WriteResult
-from opi.core import progress_steps
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
-    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-    ARGOCD_HERSTEL_BUDGET_SECONDEN,
-    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+    APPLICATION_CREATION_TIMEOUT_SECONDS,
+    ARGOCD_RECOVERY_BUDGET_SECONDS,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS,
     ArgoManager,
 )
+from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.manager.project.manifests.repository import RepositoryManifests
+from opi.services.tasks import progress_steps
 from opi.utils.naming import generate_argocd_project_application_name
 
 PROJECT_APP = "demo-project"
@@ -280,7 +282,7 @@ def _project_manager(monkeypatch: Any, connector: AsyncMock, *, bestaat_al: bool
     """
     from opi.manager import project_manager as pm_module
 
-    monkeypatch.setattr(pm_module, "create_argo_connector", lambda: connector)
+    monkeypatch.setattr("opi.manager.project.argocd_sync.create_argo_connector", lambda: connector)
 
     manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
     manager._argo_manager = MagicMock()
@@ -297,7 +299,7 @@ def _project_manager(monkeypatch: Any, connector: AsyncMock, *, bestaat_al: bool
     manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
     manager._kubectl_connector = MagicMock()
     manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=bestaat_al)
-    manager._keep_umbrella_refreshed = AsyncMock(return_value=None)
+    monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", AsyncMock(return_value=None))
     return manager
 
 
@@ -364,7 +366,7 @@ class TestDeGrendelZelf:
 
         with (
             _klok_die_doorloopt(),
-            pytest.raises(RuntimeError, match=f"refresh.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+            pytest.raises(RuntimeError, match=f"refresh.*{ARGOCD_RECOVERY_BUDGET_SECONDS}s budget"),
         ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
@@ -416,7 +418,7 @@ class TestDeGrendelZelf:
 
         await manager.wait_for_project_level_application(PROJECT_APP)
 
-        manager._keep_umbrella_refreshed.assert_not_awaited()
+        ArgoCDSync._keep_umbrella_refreshed.assert_not_awaited()
         manager._argo_manager.wait_for_application_created.assert_not_awaited()
         manager._argo_manager.wait_for_application_synced.assert_awaited_once()
 
@@ -437,13 +439,13 @@ class TestDeGrendelZelf:
         # En die wacht staat in de verversbewaker: zonder hem kan onze refresh opgaan in een
         # reconcile die zijn revisie al had, en wacht deze grendel op een CR die pas bij de
         # volgende reconcile komt. De commit is wat de bewaker een herhaling laat doen.
-        manager._keep_umbrella_refreshed.assert_awaited_once_with(connector, "cafebabe")
+        ArgoCDSync._keep_umbrella_refreshed.assert_awaited_once_with(connector, "cafebabe")
 
     @pytest.mark.asyncio
     async def test_de_wacht_krijgt_de_afgesproken_bovengrens_mee(self, monkeypatch: Any) -> None:
-        """``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN`` is de grens waar de constante zijn
+        """``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS`` is de grens waar de constante zijn
         onderbouwing bij draagt: ruimte voor de umbrella plus een sync. Hetzelfde voor
-        ``APPLICATIE_AANMAAK_TIMEOUT_SECONDEN`` op de wacht ervoor. Een eigen getal hier zou
+        ``APPLICATION_CREATION_TIMEOUT_SECONDS`` op de wacht ervoor. Een eigen getal hier zou
         die onderbouwing stil loskoppelen van wat er gebeurt."""
         connector = AsyncMock()
         connector.login = AsyncMock(return_value=True)
@@ -453,9 +455,9 @@ class TestDeGrendelZelf:
         await manager.wait_for_project_level_application(PROJECT_APP)
 
         aanmaak = manager._argo_manager.wait_for_application_created.await_args.kwargs
-        assert aanmaak["timeout"] == APPLICATIE_AANMAAK_TIMEOUT_SECONDEN
+        assert aanmaak["timeout"] == APPLICATION_CREATION_TIMEOUT_SECONDS
         kwargs = manager._argo_manager.wait_for_application_synced.await_args.kwargs
-        assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN
+        assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
     async def test_een_login_die_het_hele_budget_faalt_stopt_voor_de_wacht(self, monkeypatch: Any) -> None:
@@ -469,7 +471,7 @@ class TestDeGrendelZelf:
 
         with (
             _klok_die_doorloopt(),
-            pytest.raises(RuntimeError, match=f"login.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+            pytest.raises(RuntimeError, match=f"login.*{ARGOCD_RECOVERY_BUDGET_SECONDS}s budget"),
         ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
@@ -544,14 +546,16 @@ class TestWaarDeGrendelZijnNaamVandaanHaalt:
 class TestDeVerversbewaker:
     """De bewaker is een vangnet: valt hij zelf om, dan mag hij de wacht niet meeslepen.
 
-    Vandaar de generieke ``except`` in ``_umbrella_verversbewaker``, tegen de afspraak in
+    Vandaar de generieke ``except`` in ``_umbrella_refresh_watcher``, tegen de afspraak in
     ``CLAUDE.md`` dat een nieuwe ``except`` specifiek is. Hij staat nu op een plek in plaats
     van drie, en dit is wat hij moet doen: een wacht op het bestaan van een applicatie hoort
     niet te stranden op een ververspoging die ernaast liep.
     """
 
     @pytest.mark.asyncio
-    async def test_een_omgevallen_bewaker_sleept_de_wacht_niet_mee(self, caplog: Any) -> None:
+    async def test_een_omgevallen_bewaker_sleept_de_wacht_niet_mee(
+        self, caplog: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from opi.manager import project_manager as pm_module
 
         manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
@@ -561,11 +565,11 @@ class TestDeVerversbewaker:
         async def _valt_om(*_args: Any) -> None:
             raise ValueError("ArgoCD gaf iets terug wat de bewaker niet aankan")
 
-        manager._keep_umbrella_refreshed = _valt_om  # type: ignore[method-assign]
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", _valt_om)
 
         gewacht = False
         with caplog.at_level(logging.WARNING):
-            async with manager._umbrella_verversbewaker(AsyncMock()):
+            async with manager._umbrella_refresh_watcher(AsyncMock()):
                 # De bewaker draait naast de wacht, dus hij moet wel aan de beurt komen.
                 await asyncio.sleep(0)
                 gewacht = True
@@ -574,7 +578,7 @@ class TestDeVerversbewaker:
         assert "Verversbewaker voor user-applications gestopt" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_de_bewaker_stopt_als_de_wacht_klaar_is(self) -> None:
+    async def test_de_bewaker_stopt_als_de_wacht_klaar_is(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Anders blijft hij de umbrella prikken terwijl er niemand meer op wacht."""
         from opi.manager import project_manager as pm_module
 
@@ -591,10 +595,10 @@ class TestDeVerversbewaker:
                 gestopt.set()
                 raise
 
-        manager._keep_umbrella_refreshed = _blijft_hangen  # type: ignore[method-assign]
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", _blijft_hangen)
 
         async def _wacht() -> None:
-            async with manager._umbrella_verversbewaker(AsyncMock()):
+            async with manager._umbrella_refresh_watcher(AsyncMock()):
                 await asyncio.sleep(0)
 
         # Gemeten op het AFLOPEN van de wacht als losse taak, niet met een
@@ -649,11 +653,10 @@ class TestDeMeldingNaastDeGrendel:
         ``process_project`` maakt van de doorgelaten ``TimeoutError`` een ``return False``
         met de melding in ``get_processing_error``; dat is wat de handler hier ziet.
         """
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
         store = MagicMock()
-        store.reconcile = AsyncMock(return_value=None)
-        store.read_path = AsyncMock(return_value=None)
+        store.create = AsyncMock(return_value=None)
         monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: store)
 
         manager = AsyncMock()
@@ -705,7 +708,7 @@ class TestDeMeldingNaastDeGrendel:
         """Een substapnaam gaat door ``clamp_step_text`` naar de titel van een lijstregel. Deze
         melding is de langste die er staat, en de zin die eraf valt bij een overschrijding is
         juist de laatste: wat een time-out betekent."""
-        from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
+        from opi.runtime.tasks.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
 
         await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
         melding = progress_steps.NEW_PROJECT_NOTICE
@@ -731,7 +734,7 @@ class TestDeGrendelOverslaan:
         connector.login = AsyncMock(return_value=True)
         connector.refresh_application = AsyncMock(return_value="2026-11-04T09:00:00Z")
         connector.get_application_status = AsyncMock(return_value=status)
-        monkeypatch.setattr(pm_module, "create_argo_connector", lambda: connector)
+        monkeypatch.setattr("opi.manager.project.argocd_sync.create_argo_connector", lambda: connector)
 
         manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
         manager._argo_manager = MagicMock()
@@ -739,7 +742,7 @@ class TestDeGrendelOverslaan:
         manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
         manager._kubectl_connector = MagicMock()
         manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=True)
-        manager._keep_umbrella_refreshed = AsyncMock(return_value=None)
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", AsyncMock(return_value=None))
         manager._project_level_manifests_changed = veranderd
         manager._project_level_repo = "main-repo"
         manager._project_level_path = "sandboxed-local/demo/project"
@@ -869,8 +872,6 @@ class TestWieDeGrendelMeet:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "demo"})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock()
-        fake._process_project_manifests = AsyncMock()
         fake._clear_blocking_sync_operations = AsyncMock()
         fake._project_level_path = project_level_path
         fake._project_level_manifests_changed = True
@@ -880,9 +881,13 @@ class TestWieDeGrendelMeet:
         ]
         fake.get_deployments = AsyncMock(return_value=deployments)
 
-        await ProjectManager._process_repository_manifests(
-            fake, {"name": repo}, [d for d in deployments if d["repository"] == repo]
-        )
+        with (
+            patch.object(RepositoryManifests, "process_deployment_manifests", AsyncMock()),
+            patch.object(RepositoryManifests, "process_project_manifests", AsyncMock()),
+        ):
+            await ProjectManager._process_repository_manifests(
+                fake, {"name": repo}, [d for d in deployments if d["repository"] == repo]
+            )
         return fake
 
     @pytest.mark.asyncio

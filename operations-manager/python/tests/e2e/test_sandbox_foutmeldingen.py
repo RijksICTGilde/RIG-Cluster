@@ -14,7 +14,7 @@ een stapel JSON uitbraakt lag nergens vast, en dat is de reden dat dit blok best
 helft wordt hier gemeten tegen een STUB die precies de gedocumenteerde envelop teruggeeft,
 en niet door de sandbox stuk te maken: het cluster is gedeeld, en wat gemeten moet worden
 is wat de CLI met de envelop DOET, niet of ZAD er een kan produceren. Dat laatste meet de
-serverkant hierboven, plus de unittests rond `_fout_antwoord` in `opi/server.py`.
+serverkant hierboven, plus de unittests rond `_error_response` in `opi/server.py`.
 """
 
 from __future__ import annotations

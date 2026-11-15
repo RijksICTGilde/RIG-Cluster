@@ -41,9 +41,9 @@ een teruggegeven waarde       een hulpfunctie die een ``dict`` oplevert die verd
 ============================  =======================================================
 
 Wat de sweep NIET ziet, en dus niet belooft: een waarde die via een attribuut of een
-buitenstaand object weglekt, iets dat eerst ``opi/web``/``opi/api`` verlaat (de
-managerlaag valt buiten de gemeten mappen), en een uitzondering die als gegeven wordt
-opgeslagen en pas bij een later verzoek wordt getoond.
+buitenstaand object weglekt, iets dat eerst ``opi/web``/``opi/api``/``opi/http``
+verlaat (de managerlaag valt buiten de gemeten mappen), en een uitzondering die als
+gegeven wordt opgeslagen en pas bij een later verzoek wordt getoond.
 
 De besmetting reist mee de handler UIT. ``ctx["usage_error"] = str(e)`` stond in het
 except-blok en de ``render`` die ``ctx`` uittekende stond eronder, buiten de ``try``:
@@ -59,8 +59,10 @@ from pathlib import Path
 
 import pytest
 
-#: De mappen die een antwoord aan een aanroeper opstellen.
-GEMETEN_MAPPEN = ("opi/web", "opi/api")
+#: De mappen die een antwoord aan een aanroeper opstellen. The catalog is in here because a
+#: service carries its own routes (``docs/development/services.md``): without it a handler
+#: leaves this guard the moment it moves to its service.
+GEMETEN_MAPPEN = ("opi/web", "opi/api", "opi/http", "opi/services/catalog")
 
 #: Vangsten waarvan de inhoud onbekend is.
 BREDE_VANGSTEN = frozenset({"Exception", "BaseException"})
@@ -360,7 +362,7 @@ class TestDeDrieDeurenErbij:
         "    return render(request, template='bg/_resource-usage.html.j2', context=ctx)\n"
     )
 
-    #: De vorm uit ``_restore_database_with_versioning``: een dict die verderop in een
+    #: De vorm uit ``restore_database_with_versioning``: een dict die verderop in een
     #: 500-body belandt.
     TERUGGEGEVEN_DICT = (
         "def zet_terug():\n"

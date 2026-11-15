@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
-from opi.core.task_manager import TaskStatus
+from opi.manager.project.manifests.repository import RepositoryManifests
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
+from opi.services.tasks import progress_steps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,10 +27,10 @@ if TYPE_CHECKING:
 def _progress() -> Any:
     """A real progress manager without its periodic flush loop."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",
@@ -80,7 +81,7 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, process_ok: bool | None
     monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[]))
     monkeypatch.setattr(manager, "get_name", AsyncMock(return_value="test-project"))
     monkeypatch.setattr(manager, "get_contents", AsyncMock(return_value=current_yaml))
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: MagicMock())
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: MagicMock())
     monkeypatch.setattr(manager, "close", AsyncMock(return_value=None))
     return manager
 
@@ -122,7 +123,7 @@ async def test_a_failed_run_keeps_its_reason_and_claims_no_sync(monkeypatch: pyt
 @pytest.mark.asyncio
 async def test_a_file_that_fails_the_schema_fails_the_validation_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fetching and validating are two steps, so the page says which of the two broke."""
-    from opi.core.project_schema import ProjectSchemaError
+    from opi.services.project_schema import ProjectSchemaError
 
     manager = _project_manager(monkeypatch, process_ok=True)
     monkeypatch.setattr(
@@ -220,8 +221,8 @@ def _repository_manager(
     monkeypatch.setattr(
         manager, "get_deployment_workspace", AsyncMock(return_value=_workspace(push_error, during_prepare))
     )
-    monkeypatch.setattr(manager, "_process_deployment_manifests", AsyncMock(return_value=None))
-    monkeypatch.setattr(manager, "_process_project_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(RepositoryManifests, "process_deployment_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(RepositoryManifests, "process_project_manifests", AsyncMock(return_value=None))
     monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[deployment]))
     monkeypatch.setattr(manager, "_clear_blocking_sync_operations", AsyncMock(return_value=None))
     return manager, deployment
@@ -532,7 +533,7 @@ async def test_a_deployment_outside_the_match_is_slept_like_any_other(
 
 def test_fragment_renders_every_step_of_a_long_running_task() -> None:
     """A busy project produces many steps; the polled fragment must show them all."""
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router import _build_task_hierarchy
 
     subtasks: list[dict] = []
@@ -631,8 +632,8 @@ def _refresh_manager(monkeypatch: pytest.MonkeyPatch) -> Any:
 async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     monkeypatch: pytest.MonkeyPatch, stub_platform_repo_sync: None
 ) -> None:
-    from opi.core.task_handlers_operations import handle_refresh_project
-    from opi.core.task_rollout import first_phase
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
+    from opi.services.tasks.task_rollout import first_phase
 
     manager = _refresh_manager(monkeypatch)
     project = MagicMock()
@@ -640,7 +641,7 @@ async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     store = MagicMock()
     store.get.return_value = project
     store.reconcile = AsyncMock()
-    monkeypatch.setattr("opi.core.task_handlers_operations.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.runtime.tasks.task_handlers_operations.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.project_manager.create_project_manager", lambda *a, **k: manager)
 
     progress = _progress()

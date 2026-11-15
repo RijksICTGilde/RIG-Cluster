@@ -24,12 +24,12 @@ import asyncio
 
 import pytest
 from opi.generation.manifests import render_template
-from opi.handlers.project_file_handler import (
+from opi.services.catalog.base import ConfigLayer
+from opi.services.project_file_handler import (
     USAGE_CERTIFICATE,
     ProjectFileHandler,
     attachment_usage_sites,
 )
-from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import (
     deployment_component_service_editables,
     deployment_component_service_visualizers,
@@ -293,8 +293,8 @@ def test_removing_a_certificate_used_by_an_override_is_refused() -> None:
 
 
 def test_project_with_a_per_deployment_certificate_validates() -> None:
-    from opi.core.project_schema import validate_project_schema
-    from opi.manager.project_validation import validate_project_structure
+    from opi.services.project_schema import validate_project_schema
+    from opi.services.project_validation import validate_project_structure
 
     project = {
         "schema-version": 2,

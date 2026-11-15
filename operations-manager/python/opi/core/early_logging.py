@@ -1,32 +1,23 @@
-"""
-Early logging initialization module.
+"""Logging, set up on import.
 
-This module sets up logging before any other imports that might trigger logging.
-It should be imported first in server.py to ensure logging is available during
-config.py initialization.
+Imported first in server.py: anything imported after this may already log, and config.py
+does so while it initialises.
 """
 
 import logging
 import os
 
-from opi.utils.logging_config import setup_logging
+from opi.core.logging_config import setup_logging
 
 
 def initialize_logging() -> None:
-    """
-    Initialize logging early in the application lifecycle.
-
-    This function reads basic logging configuration from environment variables
-    and sets up logging before other modules are imported.
-    """
-    # Get basic logging settings from environment
+    """Reads its settings from the environment, not from ``settings``: config.py logs itself."""
     log_to_file = os.environ.get("LOG_TO_FILE", "false").lower() == "true"
     log_file_path = os.environ.get("LOG_FILE_PATH", "log.txt")
     log_errors_to_file = os.environ.get("LOG_ERRORS_TO_FILE", "false").lower() == "true"
     log_errors_file_path = os.environ.get("LOG_ERRORS_FILE_PATH", "/data/logs/errors.log")
     level = os.environ.get("LOG_LEVEL", "DEBUG")
 
-    # Set up logging immediately
     setup_logging(
         log_to_file=log_to_file,
         log_file_path=log_file_path,
@@ -35,10 +26,8 @@ def initialize_logging() -> None:
         level=level,
     )
 
-    # Get logger for this module
     logger = logging.getLogger(__name__)
     logger.debug("Early logging initialized successfully")
 
 
-# Initialize logging when this module is imported
 initialize_logging()

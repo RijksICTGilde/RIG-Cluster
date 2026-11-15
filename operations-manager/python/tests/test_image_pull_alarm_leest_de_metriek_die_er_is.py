@@ -30,7 +30,7 @@ import re
 import time
 from pathlib import Path
 
-from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
+from opi.services.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from ruamel.yaml import YAML
 
 _OVERLAY = (

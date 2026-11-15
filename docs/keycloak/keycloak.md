@@ -6,7 +6,7 @@
 SSO-Rijk → RIG Platform Realm (sso-rijk IDP) → Project Realms (optional federation)
 ```
 
-Bootstrap is automatic via `opi/bootstrap/keycloak_setup.py` on startup: creates `rig-platform` realm, configures SSO-Rijk IDP, creates client scopes and protocol mappers, creates the operations manager OIDC client. All operations are idempotent.
+Bootstrap is automatic via `opi/manager/bootstrap/keycloak_setup.py` on startup: creates `rig-platform` realm, configures SSO-Rijk IDP, creates client scopes and protocol mappers, creates the operations manager OIDC client. All operations are idempotent.
 
 ## SSO-Rijk Identity Provider
 
@@ -114,7 +114,7 @@ KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=<discovery-url>
 
 ## Key Files
 
-- `opi/bootstrap/keycloak_setup.py` - automatic configuration on startup
+- `opi/manager/bootstrap/keycloak_setup.py` - automatic configuration on startup
 - `opi/connectors/keycloak.py` - API client
 - `opi/manager/keycloak_manager.py` - project client management
 

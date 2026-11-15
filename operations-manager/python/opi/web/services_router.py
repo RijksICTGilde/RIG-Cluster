@@ -1,32 +1,29 @@
-"""
-Services web route for displaying service information.
-"""
+"""The services overview page (/services)."""
 
 import logging
+from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.core.errors import log_render_failure
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.render.menu import get_menu_items
 from opi.services.services import ServiceAdapter
-from opi.web.menu import get_menu_items
+
+if TYPE_CHECKING:
+    from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
 services_router = APIRouter()
 
 
-def replacement_marker(service_type) -> str | None:
-    """The successor's display name when this service is replaced on this cluster, else None.
-
-    Choosing a replaced service is already refused in the picker and at save time
-    (RC-382); this overview is read-only, so what it owes the reader is the marker that
-    says why new projects should not pick it. The service's own help page tells the
-    full story.
-    """
+def replacement_marker(service_type: ServiceType) -> str | None:
+    """The successor's display name when this service is replaced on this cluster, else None."""
     # The import stays inside: the registry loads the service packages and some of those
     # import back into the web layer.
     from opi.services.registry import get_service
@@ -40,20 +37,11 @@ def replacement_marker(service_type) -> str | None:
 @services_router.get("/services", response_class=HTMLResponse)
 @action(Action.PORTAL_READ)
 @requires_sso
-async def services_overview(request: Request):
-    """
-    Serve the services overview page showing all available services and their variables.
-
-    This page displays cards for each service with their descriptions, icons, and the
-    variables they provide (either through secrets or direct env vars).
-
-    Returns:
-        HTML response with service cards showing variable information
-    """
+async def services_overview(request: Request) -> Response:
+    """A card per service, with its description, icon and the variables it provides."""
     try:
         user = get_current_user(request)
 
-        # Get all services and their variable information
         all_services = ServiceAdapter.get_all_services()
         services_info = []
 
@@ -73,10 +61,7 @@ async def services_overview(request: Request):
                 }
             )
 
-        # Dezelfde gegevens, twee weergaven. Met ?ui=lotc rendert deze route de
-        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/web/lotc_switch.py
-        # voor waarom dat een schakelaar is en geen omzetting ineens.
-        from opi.web.lotc_switch import build_lotc_services, render
+        from opi.http.render.lotc_switch import build_lotc_services, render
 
         return render(
             request,

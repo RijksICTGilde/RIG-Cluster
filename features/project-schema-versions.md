@@ -7,13 +7,13 @@ verhuist naar het schema van de versie die hem droeg en verdwijnt uit het nieuws
 
 - Nieuwste schema: `operations-manager/python/opi/schemas/project_v2.json`
 - Oudere versies: `operations-manager/python/opi/schemas/project_legacy/v<versie>.json`
-- Code: `opi/core/project_schema.py`, migratieketen in `opi/services/schema_migration.py`
+- Code: `opi/services/project_schema.py`, migratieketen in `opi/services/schema_migration.py`
 - Tests: `operations-manager/python/tests/test_project_schema_versions.py`
 
 ## Waarom
 
-Het projectschema was één bestand voor de hele 2.x-reeks, en `git_monitor.file_change_handler`
-valideert een bestand rechtstreeks uit git **vóór** enige migratie. Dat laatste is een
+Het projectschema was één bestand voor de hele 2.x-reeks, en de poort op een bestand
+rechtstreeks uit git (`validate_declared_project_schema`) valideert **vóór** enige migratie. Dat laatste is een
 beveiligingsmaatregel (zie hieronder), maar het had een gevolg dat niemand bedoeld had:
 zolang er één bestand op schijf stond dat nog een oude vorm droeg, moest het schema die vorm
 blijven accepteren. Een migratie kon dus wel geschreven worden, maar nooit afgesloten.
@@ -43,7 +43,7 @@ echte breuk, niet voor de tiende kleine toevoeging.
 Als getal zou dat niet werken: `2.10` is als float gelijk aan `2.1`, en dus kleiner dan `2.9`.
 Daarom:
 
-- `SchemaVersion` in `opi/core/project_schema.py` is het ene versietype. Het leest `2`, `2.9`,
+- `SchemaVersion` in `opi/services/project_schema.py` is het ene versietype. Het leest `2`, `2.9`,
   `"2.9"` en `"2.10"` als `(major, minor)` en vergelijkt daarop. `parse_schema_version` leest een
   waarde, `version_key` geeft de canonieke tekstvorm (`"2"`, `"2.9"`, `"2.10"`), en dat is ook de
   naam van het patchbestand.
@@ -65,7 +65,7 @@ Daarom:
 welke dat is:
 
 ```json
-"x-zad-schema-version": "2.17"
+"x-zad-schema-version": "2.18"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -73,7 +73,8 @@ een [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) die van 
 de eerstvolgende versie dat van die versie maakt:
 
 ```
-project_v2.json                 (2.17)
+project_v2.json                 (2.18)
+  + project_legacy/v2.17.json -> 2.17  (`plain:` op vijf geheime velden: 2.18 laat alleen de versleutelde vormen toe)
   + project_legacy/v2.16.json -> 2.16  (`source-code`: 2.17 voegt het root-veld toe voor broncodelinks)
   + project_legacy/v2.15.json -> 2.15  (`clone-from.run`: 2.16 voegt het veld toe voor backup-restore)
   + project_legacy/v2.14.json -> 2.14  (component-`description`: 2.15 voegde het veld toe)
@@ -120,16 +121,21 @@ teruggeschreven.
    terugzet. Is er niets versmald, dan is een patch met alleen een `$comment` het juiste antwoord.
 
 Vergeet je stap 3, dan **stopt het opstarten**: `check_schema_versions(SCHEMA_VERSIONS)` in
-`opi/core/startup.py` vergelijkt de keten met de schema's op schijf en weigert te booten als ze
+`opi/runtime/startup/startup.py` vergelijkt de keten met de schema's op schijf en weigert te booten als ze
 niet overeenkomen — in beide richtingen (een migratie zonder schema, én een schema zonder migratie).
 Zonder die controle zou het gevolg zijn dat bestanden die de nieuwe versie declareren stil door
 de poort geweigerd worden, maanden later en zonder aanwijsbare oorzaak.
 
 ## De poort is een beveiligingsmaatregel
 
-`git_monitor` valideert nog steeds **vóór** de migratie. Dat is bewust: een vijandig bestand dat
-toevallig schoon migreert zou anders onder de identiteit van de operations manager teruggeschreven
-worden naar `zad-projects` voordat de validatie het afkeurt.
+`validate_declared_project_schema` valideert **vóór** de migratie. Dat is bewust: een vijandig
+bestand dat toevallig schoon migreert zou anders onder de identiteit van de operations manager
+teruggeschreven worden naar `zad-projects` voordat de validatie het afkeurt.
+
+Sinds RC-483 heeft deze poort geen aanroeper in de applicatie meer: `git_monitor` was de enige,
+en die is weg (hij stond in elke overlay uit). De poort en de legacy-schema's blijven staan,
+want ze weghalen is een besluit over de hele legacy-schemaketen en niet over het bewerken van
+een project. Het staat op de PR van RC-483.
 
 De versiedeclaratie komt uit hetzelfde onvertrouwde bestand als de rest, en wordt dus als invoer
 behandeld:
@@ -171,5 +177,5 @@ nog declareert. Dat is meetbaar met de replay uit `features/upgrade-safety-test.
 
 `validate_project_schema(data)` zonder `schema_version` valideert nog steeds tegen het nieuwste
 schema. Dat is wat elke schrijfroute wil: die valideert de **eindtoestand**, en die is gemigreerd.
-Alleen de poort in `git_monitor` kijkt naar de gedeclareerde versie, want alleen die kijkt naar een
-bestand dat nog niet gemigreerd is.
+Alleen `validate_declared_project_schema` kijkt naar de gedeclareerde versie, want alleen die
+kijkt naar een bestand dat nog niet gemigreerd is.

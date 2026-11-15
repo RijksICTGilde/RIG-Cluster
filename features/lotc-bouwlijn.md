@@ -28,7 +28,7 @@ naast elkaar stonden): `docs/lotc-samenleven-met-jinja-roos.md`.
   in een zijkolom met groepen, alleen hulplinks (account, in- en uitloggen) in de header.
 - De formulierlaag is te bekijken op `/lotc/formulier`.
 
-Er valt niets meer te kiezen: `opi/web/lotc_switch.py` rendert het sjabloon, en de
+Er valt niets meer te kiezen: `opi/http/render/lotc_switch.py` rendert het sjabloon, en de
 `?layout=`-parameter en het koekje `zad_layout` bestaan niet meer. Wat er wel nog gekozen
 wordt is licht/donker, via `/weergave` en het koekje `zad_scheme`.
 
@@ -88,16 +88,17 @@ Draaiende applicatie:
 
 | bestand | rol |
 |---|---|
-| `opi/core/templates_lotc.py` | de tweede Jinja-omgeving, met design systems, globals en filters |
+| `opi/http/render/templates_lotc.py` | de tweede Jinja-omgeving, met design systems, globals en filters |
 | `opi/templates_lotc/` | alle templates. De eerste generatie is ooit gegenereerd; de omzetter is met zijn invoer verdwenen, dus dit is nu handwerk |
 | `opi/templates_lotc/base_lotc.html.j2` | de schil in bg-opzet - **wel** met de hand |
 | `opi/templates_lotc/widgets/` | de formulierwidgets - **wel** met de hand |
 | `opi/templates_lotc/bg/` | de hertekende pagina's - **wel** met de hand |
 | `opi/templates_lotc/bg/_patterns.html.j2` | gedeelde patronen: `panel()`, `page_head()`, `info()`, `service_card()` |
 | `opi/templates_lotc/bg/wizard-page.html.j2`, `wizard-start.html.j2`, `_wizard-step.html.j2`, `_wizard-steps.html.j2`, `_wizard-review.html.j2` | de wizard: de hele pagina, de startpagina, en de drie fragmenten die htmx wisselt |
-| `opi/web/lotc_switch.py` | `render()`/`render_fragment()`, plus de vorm waarin een route zijn gegevens aanlevert |
+| `opi/http/render/lotc_switch.py` | `render()`/`render_fragment()`, plus de vorm waarin een route zijn gegevens aanlevert |
 | `opi/web/lotc_fixtures/` | voorbeeldprojecten voor de proefopstelling |
-| `opi/web/navigation_lotc.py` | de indeling van de navigatie en de icoonvertaling |
+| `opi/http/render/navigation_lotc.py` | de indeling van de navigatie |
+| `opi/utils/nldd_iconen.py` | de icoonvertaling, en welke namen NLDD echt levert |
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
 | `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
@@ -387,7 +388,7 @@ het blok staat er in de nieuwe vormgeving, en na een scroll of een klik komt er 
 in de oude in. Twee daarvan waren zo:
 
 - **De snapshotlijst** (`GET /projects/details/<project>/backups`). De route rendert nu via
-  `render()` uit `opi/web/lotc_switch.py`, met `shared/_backup-snapshots.html.j2` +
+  `render()` uit `opi/http/render/lotc_switch.py`, met `shared/_backup-snapshots.html.j2` +
   `shared/_backup-snapshots-one.html.j2`. De id's met `hx-swap-oob` zijn
   letterlijk gelijk gebleven - het verzoek staat op `hx-swap="none"`, dus alles zonder die
   markering wordt weggegooid, en een stylesheet of script kan er daarom niet omheen.
@@ -410,14 +411,14 @@ geklikt).
 `icons.json` van `lord_of_the_components` en de bundel die de browser laadt lopen
 uiteen, en een naam die alleen in de lijst staat rendert als niets. Hoe groot dat gat is
 verschilt per versie: op 0.8.80 waren het 56 namen, op 0.8.92 nog 2. De actuele meting
-staat in de docstring van `opi/web/nldd_iconen.py`; hier geen tweede kopie, want die
+staat in de docstring van `opi/utils/nldd_iconen.py`; hier geen tweede kopie, want die
 veroudert bij elke bump.
 
 Dat is geen randgeval: op 0.8.80 kostte het 37 lege plekken in de interface, waaronder de
 bewerkknop en de verwijderknop, terwijl de test die erop bewaakte groen stond - want die
 las de lijst.
 
-De bron is nu `opi/web/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
+De bron is nu `opi/utils/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
 En let op het tweede gat dat daarbij hoorde: `ROOS_TO_NLDD_ICONS` wordt toegepast door het
 `nldd_icon`-FILTER. Een letterlijke `icon="verwijderen"` in een sjabloon komt daar nooit
 langs. In een sjabloon schrijf je dus een NLDD-naam; de tabel is voor namen die uit

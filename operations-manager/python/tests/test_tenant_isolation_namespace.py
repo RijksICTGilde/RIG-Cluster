@@ -22,8 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 from opi.api.restore_router import _require_namespace_owned_by_project
-from opi.core import git_monitor
-from opi.core.cluster_config import get_pod_security_labels, get_prefixed_namespace, namespace_labels
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.manager.backup import RestoreResult
 from opi.manager.project_manager import ProjectManager
 
@@ -118,99 +117,11 @@ class TestNamespacePinning:
             await pm.get_deployments(cluster_filter=True)
 
 
-class _SpyKubectl:
-    """Records every namespace write the git-monitor path attempts."""
-
-    def __init__(self):
-        self.namespace_exists = AsyncMock(return_value=False)
-        self.apply_manifest = AsyncMock(return_value=None)  # success = no raise
-        self.apply_labels_to_resource = AsyncMock(return_value=True)
-
-
-class TestGitMonitorNamespacePinning:
-    """VULN 1, git-monitor path: a project committed directly to git must
-    not be able to create or label another tenant's namespace.
-
-    Regression guard for the bypass where ``git_monitor`` reads the project
-    file directly and never goes through ``ProjectManager.get_deployments``,
-    so the chokepoint pin alone would not protect this path.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _spy_kubectl(self, monkeypatch):
-        self.kubectl = _SpyKubectl()
-        monkeypatch.setattr(
-            "opi.core.git_monitor.create_kubectl_connector",
-            lambda *a, **k: self.kubectl,
-        )
-
-    @pytest.mark.asyncio
-    async def test_foreign_namespace_is_rejected_and_nothing_created(self, monkeypatch):
-        """A foreign namespace must raise and never touch kubectl."""
-        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
-        project_data = {
-            "name": "attacker-project",
-            "deployments": [
-                {
-                    "name": "evil",
-                    "cluster": "local",
-                    "namespace": "victim-project",
-                }
-            ],
-        }
-
-        with pytest.raises(ValueError, match="victim-project"):
-            await git_monitor.check_and_create_namespaces(project_data)
-
-        self.kubectl.namespace_exists.assert_not_called()
-        self.kubectl.apply_manifest.assert_not_called()
-        self.kubectl.apply_labels_to_resource.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_absent_namespace_defaults_to_project_name(self, monkeypatch):
-        """An absent namespace must be pinned to the project name, so the
-        namespace acted on derives from the project, not attacker input."""
-        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
-        monkeypatch.setattr(
-            "opi.core.git_monitor.get_prefixed_namespace",
-            lambda cluster, ns: ns,
-        )
-        monkeypatch.setattr(
-            "opi.core.git_monitor.get_argo_namespace",
-            lambda cluster: "argocd",
-        )
-        project_data = {
-            "name": "my-project",
-            "deployments": [{"name": "web", "cluster": "local"}],
-        }
-
-        result = await git_monitor.check_and_create_namespaces(project_data)
-
-        assert result is True
-        manifest_variables = self.kubectl.apply_manifest.await_args.args[1]
-        assert manifest_variables["namespace"] == "my-project"
-        assert manifest_variables["pod_security_labels"] == get_pod_security_labels("local"), (
-            "RC-316: the manifest must get the same Pod Security labels as the label-apply call"
-        )
-        applied_labels = self.kubectl.apply_labels_to_resource.await_args.kwargs["labels"]
-        assert applied_labels == namespace_labels("local")
-
-
-# ---------------------------------------------------------------------------
-# GAT 3 (review augmentation): extract_deployment_namespace enforces the pin
-#
-# Eight callsites (3 in backup_router, 2 in restore_router, 3 in backup_tasks,
-# 1 in router_detail_edit) read the namespace via this helper without going
-# through enforce_namespace_pin. The helper itself now enforces the same
-# invariant: declared namespace must equal project name; default when absent.
-# ---------------------------------------------------------------------------
-
-
 class TestExtractDeploymentNamespacePinned:
     """The helper must pin the namespace, not return the raw declared value."""
 
     def _handler(self):
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         return ProjectFileHandler.__new__(ProjectFileHandler)
 
@@ -275,19 +186,20 @@ class TestHandleCreateProjectExistenceCheck:
 
     @pytest.mark.asyncio
     async def test_create_project_blocked_when_file_already_exists(self, monkeypatch) -> None:
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
-        # The existence check asks the ProjectStore, which owns the projects repo.
+        # The existence check is ProjectStore.create, which owns the projects repo.
         # A store that already has the file must stop the create.
+        from opi.services.project_store import ProjectExistsError
+
         fake_store = AsyncMock()
-        fake_store.reconcile = AsyncMock()
-        fake_store.read_path = AsyncMock(return_value={"name": "victim-project"})
+        fake_store.create = AsyncMock(side_effect=ProjectExistsError("Project 'victim-project' already exists"))
         fake_store.save = AsyncMock()
 
         monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
 
         # Stub the small helpers used before the file_exists check.
-        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
 
         # Progress object the handler calls into.
         progress = AsyncMock()
@@ -313,7 +225,7 @@ class TestHandleCreateProjectExistenceCheck:
     async def test_edit_flow_overwrites_existing_file(self, monkeypatch) -> None:
         """Edit flows (no is_new_project flag) must NOT trip the existence
         check -- they legitimately overwrite an existing project file."""
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
         fake_connector = AsyncMock()
         fake_connector.file_exists = AsyncMock(return_value=True)
@@ -324,7 +236,7 @@ class TestHandleCreateProjectExistenceCheck:
                 return fake_connector
 
         monkeypatch.setattr("opi.connectors.git.GitConnector", _FakeGitConnector)
-        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
 
         # Stub ProjectManager so the handler doesn't try to process the project.
         # We only care that the write happened (and the existence check did not block).
@@ -366,6 +278,53 @@ class TestHandleCreateProjectExistenceCheck:
         # single validated save path rather than a raw create_or_update_file commit.
         assert len(saved_calls) == 1
         assert saved_calls[0][0].get("name") == "existing-project"
+
+    @pytest.mark.asyncio
+    async def test_new_project_is_written_through_create_not_save(self, monkeypatch) -> None:
+        """save is last-writer-wins, so a create that lost a race would overwrite the winner."""
+        from opi.runtime.tasks import task_handlers_project
+
+        fake_store = AsyncMock()
+        monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
+
+        saved_calls: list[tuple] = []
+
+        class _FakeProjectManager:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def save_and_commit_project(self, project_data, commit_message, **_kwargs):
+                saved_calls.append((project_data, commit_message))
+
+            async def get_contents(self):
+                return {"name": "new-project"}
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr("opi.manager.project_manager.ProjectManager", _FakeProjectManager)
+
+        progress = AsyncMock()
+        progress.add_task = lambda *_: object()
+        progress.update_current_step = lambda *_: None
+        progress.complete_task = lambda *_: None
+        progress.fail_task = lambda *_: None
+        progress.fail_project = lambda *_: None
+        progress.complete_project = lambda *_: None
+
+        payload = {
+            "project_name": "new-project",
+            "yaml_content": "name: new-project\n",
+            "is_new_project": True,
+            "rollout": False,
+        }
+        result = await task_handlers_project.handle_create_project(payload, progress)
+
+        assert result["status"] == "success"
+        fake_store.create.assert_awaited_once()
+        assert fake_store.create.await_args.args[0] == "new-project"
+        assert saved_calls == []
 
 
 # ---------------------------------------------------------------------------

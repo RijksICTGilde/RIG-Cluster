@@ -32,12 +32,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.catalog.publish_on_web.hostnames import apply_domain_approval_fallback
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import apply_domain_approval_fallback
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -233,7 +233,7 @@ def api(mock_settings: Any, request: pytest.FixtureRequest) -> Iterator[TestClie
 
     app: FastAPI = create_app()
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.v2.router.get_project_store", return_value=store),
         patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=CLUSTERPOSTFIX),
         patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=True),

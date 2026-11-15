@@ -6,13 +6,14 @@ Regression guard for the ArgoCD connector leaking a live admin Bearer JWT via
 
 import logging
 
-from opi.services.project_leden import TOKEN_PREFIX, nieuw_token
-from opi.utils.logging_redact import (
+from opi.core.logging_redact import (
     SecretRedactionFilter,
     redact_sensitive_headers,
     redact_structure,
     redact_text,
+    sanitize_for_log,
 )
+from opi.services.project_members import TOKEN_PREFIX, new_token
 
 
 def test_masks_bearer_token_value() -> None:
@@ -116,7 +117,7 @@ def test_een_api_token_valt_ook_buiten_een_header() -> None:
     Het voorvoegsel maakt de vorm zelfstandig herkenbaar, dus dit werkt ook waar het token
     niet in een bekende credential-header staat.
     """
-    token, _ = nieuw_token()
+    token, _ = new_token()
 
     assert token not in redact_text(f"Token {token} geweigerd voor project demo")
     assert token not in redact_text(f'{{"token": "{token}"}}')
@@ -126,5 +127,34 @@ def test_een_api_token_valt_ook_buiten_een_header() -> None:
 
 def test_het_voorvoegsel_van_het_patroon_is_dat_van_een_echt_token() -> None:
     """Verandert ``TOKEN_PREFIX``, dan maskeert het patroon niets meer."""
-    assert nieuw_token()[0].startswith(TOKEN_PREFIX)
-    assert redact_text(nieuw_token()[0]).startswith(TOKEN_PREFIX)
+    assert new_token()[0].startswith(TOKEN_PREFIX)
+    assert redact_text(new_token()[0]).startswith(TOKEN_PREFIX)
+
+
+def test_sanitize_for_log_returns_empty_for_none_and_empty_string() -> None:
+    assert sanitize_for_log(None) == ""
+    assert sanitize_for_log("") == ""
+
+
+def test_sanitize_for_log_truncates_to_max_length() -> None:
+    # A user-supplied name can be arbitrarily long; the log line should not be.
+    assert sanitize_for_log("a" * 100) == "a" * 64
+    assert sanitize_for_log("a" * 10, max_length=5) == "a" * 5
+
+
+def test_sanitize_for_log_strips_newlines_and_carriage_returns() -> None:
+    # Without this, a value containing a newline could forge a fake log line.
+    injected = 'project\n2026 ERROR config - "admin" logged in\r\n'
+    out = sanitize_for_log(injected)
+    assert "\n" not in out
+    assert "\r" not in out
+    assert out == injected.replace("\n", "").replace("\r", "")
+
+
+def test_sanitize_for_log_strips_other_control_characters_but_keeps_tab() -> None:
+    out = sanitize_for_log("before\ttab\x00\x07after")
+    assert out == "before\ttabafter"
+
+
+def test_sanitize_for_log_leaves_plain_text_unchanged() -> None:
+    assert sanitize_for_log("algor-odc") == "algor-odc"

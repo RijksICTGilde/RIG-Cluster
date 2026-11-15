@@ -1,4 +1,4 @@
-"""De deployment-knop van send-email: de afzender en het dagbudget van die deployment (RC-401)."""
+"""The deployment button of send-email: that deployment's sender and daily budget."""
 
 from __future__ import annotations
 

@@ -1,22 +1,12 @@
-"""
-Security headers middleware for internet.nl compliance.
+"""Security headers middleware for internet.nl compliance.
 
 Sets HTTP security headers on all responses. This is the application-level
 fallback for environments where the ingress controller (e.g. HAProxy on
 OpenShift) cannot inject response headers via annotations.
 
-Headers set:
-- Strict-Transport-Security (HSTS)
-- X-Content-Type-Options
-- X-Frame-Options
-- Referrer-Policy
-- Permissions-Policy
-- Cross-Origin-Resource-Policy
-- Content-Security-Policy
-- Content-Security-Policy-Report-Only
-
-Het afgedwongen beleid staat inline scripts toe; het Report-Only-beleid niet. Waarom die
-twee naast elkaar staan en wat het verschil nog in de weg zit: features/security-headers.md.
+The enforced policy allows inline scripts; the Report-Only policy does not. Why those
+two sit side by side and what still stands in the way of closing the gap:
+features/security-headers.md.
 """
 
 import secrets
@@ -27,20 +17,13 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
-
-
-def csp_nonce(request: Request) -> str:
-    """De CSP-nonce van dit verzoek (standaardwaarde: leeg).
-
-    (Test-request zonder state? Dat is okay; het Report-Only-beleid meet zonder nonce.)
-    """
-    return getattr(getattr(request, "state", None), "csp_nonce", "")
+    from starlette.types import ASGIApp
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security response headers to every HTTP response."""
 
-    def __init__(self, app, *, keycloak_url: str = "", prometheus_url: str = "") -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, app: ASGIApp, *, keycloak_url: str = "", prometheus_url: str = "") -> None:
         super().__init__(app)
         self._keycloak_host = self._extract_origin(keycloak_url)
         self._prometheus_host = self._extract_origin(prometheus_url)
@@ -60,13 +43,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         keycloak = f" {self._keycloak_host}" if self._keycloak_host else ""
         prometheus = f" {self._prometheus_host}" if self._prometheus_host else ""
 
-        # Inline styles/scripts: componenten renderen style-attributen en @click→onclick.
-        # Frame-src: Prometheus metrics UI in iframe.
+        # Inline styles/scripts: components render style attributes and @click to onclick.
+        # Frame-src: Prometheus metrics UI in an iframe.
         script_src = (
             f"script-src 'self' 'nonce-{nonce}' 'strict-dynamic'" if nonce else "script-src 'self' 'unsafe-inline'"
         )
-        # object-src alleen in het doelbeleid: het portaal heeft geen plug-ins, en
-        # <object> is onder 'strict-dynamic' de weg terug naar scriptuitvoering.
+        # object-src only in the target policy: the portal has no plug-ins, and under
+        # 'strict-dynamic' <object> is the way back to script execution.
         object_src = ["object-src 'none'"] if nonce else []
         parts = [
             "default-src 'self'",
@@ -84,7 +67,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return "; ".join(parts)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # Voor call_next, want de sjablonen lezen hem tijdens het renderen (csp_nonce()).
+        # Before call_next: the templates read it while rendering (``csp_nonce()`` in
+        # opi/http/render/templates_lotc.py).
         nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = nonce
 
@@ -100,15 +84,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        # ZAP 90004: zonder deze header mag een andere site een antwoord van het portaal in
-        # een eigen document inladen. Het portaal levert niets voor derden.
+        # ZAP 90004: without this header another site may load a response from the portal
+        # into a document of its own. The portal serves nothing for third parties.
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
         response.headers.setdefault(
             "Permissions-Policy",
             "geolocation=(), microphone=(), camera=()",
         )
         response.headers.setdefault("Content-Security-Policy", self._build_csp())
-        # Meet wat een afgedwongen nonce-beleid nog zou blokkeren, zonder iets te breken.
+        # Measures what an enforced nonce policy would still block, without breaking anything.
         response.headers.setdefault("Content-Security-Policy-Report-Only", self._build_csp(nonce=nonce))
 
         return response

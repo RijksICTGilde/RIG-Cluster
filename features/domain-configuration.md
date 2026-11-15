@@ -324,7 +324,7 @@ die het meestuurt krijgt 422. Zie `features/service-config-api.md`.
 
 Een aanvraag is een gevolg van een deployment-schrijfactie, niet iets dat een client zelf
 opschrijft. Zowel de portal als de API komen daarvoor uit bij dezelfde functie,
-`connectors/subdomain.ensure_domain_requests`, zodat het om één soort aanvraag gaat, in
+`services/catalog/publish_on_web/subdomain.ensure_domain_requests`, zodat het om één soort aanvraag gaat, in
 één blok, in één beheerdersinterface (`/admin/approvals`):
 
 | Weg | Wat hem in gang zet |

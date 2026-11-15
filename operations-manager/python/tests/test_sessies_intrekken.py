@@ -25,10 +25,10 @@ from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 from opi.api.auth_routes import logout
-from opi.core.auth_decorators import requires_sso
 from opi.core.config import settings
 from opi.core.db import Base, include_orm_object, session_scope
-from opi.core.session_guard import valid_session_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.auth.session_guard import valid_session_user
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from opi.services.persistence.sessions import PortalSession
@@ -206,7 +206,7 @@ async def test_een_platformbeheerder_beeindigt_de_sessies_van_een_gebruiker(orm_
     sessie = _sessie(time.time() - 60)
 
     with (
-        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=True),
+        patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=True),
         patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst({BEHEERDER})),
     ):
         antwoord = await revoke_user_sessions(_verzoek(BEHEERDER), aangemaakt["id"])
@@ -219,7 +219,7 @@ async def test_een_gewone_gebruiker_mag_de_sessies_van_een_ander_niet_beeindigen
     aangemaakt = await UserAdminService().create_user(email=EMAIL, full_name="Iemand")
 
     with (
-        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=True),
+        patch("opi.http.auth.auth_decorators.has_fresh_step_up", return_value=True),
         patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())),
         pytest.raises(HTTPException) as fout,
     ):

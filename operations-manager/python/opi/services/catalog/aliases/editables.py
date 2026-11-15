@@ -1,10 +1,9 @@
-"""Editables owned by the ``aliases`` system service (RC-25).
+"""Editables owned by the ``aliases`` system service.
 
-The yaml_path is NOT built with ``config_path``: this service owns a plain property of
-the component (``components[*]/aliases``), not a block inside the ``services`` list. The
-service model is what gives it a config model, a schema fragment, a validator and a
-declared form section; the storage location stays exactly where it has always been, so
-no project file changes.
+The yaml_path is NOT built with ``config_path``: this service owns a plain property of the
+component (``components[*]/aliases``), not a block inside the ``services`` list. The service
+model gives it a config model, a schema fragment, a validator and a declared form section;
+the storage location is the component property itself.
 """
 
 from __future__ import annotations
@@ -35,22 +34,19 @@ class AliasMapValidator:
     encrypted as a whole and carry no reference requirement. The rule lives here, on the
     form, and not in the config model: an already-stored constant deploys fine
     (``substitute_variables`` passes a reference-free template through untouched), so
-    rejecting it at file level would break working projects. Here the author still has
-    the value on screen.
+    rejecting it at file level breaks working projects. Here the author still has the value
+    on screen.
 
-    A value the author does NOT have on screen cannot be judged, and there are two of
-    those. An AGE block is one -- and since RC-106 that is the whole set at once, so the
-    guard on the text as a whole below is the one that fires. The other is the
-    ``REDACTED`` placeholder, kept because the wizard session redaction may still hand it
-    back: judging it as a reference-free constant made every following save of the
-    components modal fail with "Alias(sen) zonder verwijzing" -- for any component that
-    had ever stored an alias, and for a plain user editing something else entirely. The
-    placeholder is put back from the stored project at save
-    (``restore_redacted_secrets``), so what is written is the original value, which was
-    validated when it was entered.
+    A value the author does NOT have on screen is never judged, and there are two of those:
+    an AGE block (the whole set at once, caught by the guard on the text below) and the
+    ``REDACTED`` placeholder the wizard session redaction hands back. Judging the
+    placeholder as a reference-free constant refuses every save of the components modal for
+    a component that has an alias stored. The placeholder is put back from the stored
+    project at save (``restore_redacted_secrets``), so what is written is the original
+    value, validated when it was entered.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not isinstance(value, str) or not value.strip() or is_age_encrypted(value):
             return []
         if value.strip() == REDACTED:

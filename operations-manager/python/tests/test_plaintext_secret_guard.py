@@ -13,7 +13,7 @@ credentials to land in the repository.
 from __future__ import annotations
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, find_plaintext_secret_violations
+from opi.services.project_schema import ProjectSchemaError, find_plaintext_secret_violations
 
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nc29tZQ==\n-----END AGE ENCRYPTED FILE-----"
 

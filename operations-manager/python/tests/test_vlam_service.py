@@ -28,23 +28,21 @@ and the service delivers no CA material at all.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.core.cluster_config import get_vlam_config
-from opi.core.project_schema import ProjectIntegrityError
 from opi.generation.manifests import ManifestGenerator, render_template
-from opi.manager.project_manager import (
-    ProjectManager,
+from opi.manager.project.manifests.contributions import (
     apply_manifest_contributions,
     collect_manifest_contributions,
 )
-from opi.manager.project_validation import validate_service_availability
+from opi.manager.project.manifests.pruning import prune_obsolete_service_manifests
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
-from opi.services.registry import collect_service_routers, get_service
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_availability
+from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType, UIEvent
 from opi.utils.naming import generate_unique_name
 from opi.utils.sops import sops_filenames
@@ -199,7 +197,7 @@ class TestAvailability:
     @pytest.mark.asyncio
     async def test_the_save_path_raises_and_names_the_cluster(self) -> None:
         """The refusal that counts: the wizard, the API and a hand-edited file all pass here."""
-        from opi.manager.project_validation import validate_project_structure
+        from opi.services.project_validation import validate_project_structure
 
         with pytest.raises(ProjectIntegrityError) as error:
             await validate_project_structure(_project(cluster=WITHOUT_VLAM))
@@ -208,7 +206,7 @@ class TestAvailability:
 
     @pytest.mark.asyncio
     async def test_the_same_project_saves_on_the_cluster_that_has_vlam(self) -> None:
-        from opi.manager.project_validation import validate_project_structure
+        from opi.services.project_validation import validate_project_structure
 
         await validate_project_structure(_project(cluster=WITH_VLAM))
 
@@ -712,11 +710,7 @@ class TestDeOudeCaSecretWordtOpgeruimd:
         beleid = tmp_path / "prod-vlam-web-network-policy.yaml"
         beleid.write_text("kind: NetworkPolicy\n")
 
-        # De methode gebruikt alleen ``deployment["name"]`` van zichzelf; een echte
-        # ProjectManager bouwen zou hier connectors optuigen die niets met de prune doen.
-        ProjectManager._prune_obsolete_service_manifests(
-            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
-        )
+        prune_obsolete_service_manifests({"name": "prod"}, str(tmp_path), self._gegenereerd())
 
         assert not achtergebleven.exists()
         assert beleid.exists()
@@ -725,9 +719,7 @@ class TestDeOudeCaSecretWordtOpgeruimd:
         """De kustomization wordt uit een schijfscan opgebouwd, dus dit is de uitkomst van
         de prune en niet een tweede plek om bij te werken."""
         (tmp_path / "prod-vlam-ca-secret.sops.yaml").write_text("kind: Secret\n")
-        ProjectManager._prune_obsolete_service_manifests(
-            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
-        )
+        prune_obsolete_service_manifests({"name": "prod"}, str(tmp_path), self._gegenereerd())
 
         sops_files, regular_files = ManifestGenerator().collect_manifest_files(str(tmp_path))
         assert "prod-vlam-ca-secret.sops.yaml" not in sops_files + regular_files
@@ -767,19 +759,22 @@ class TestDeNetwerkregelOpentBeidePoorten:
 class TestDeDownloadrouteIsWeg:
     """RC-414: de bundel bestaat niet meer, dus de route die hem uitdeelde ook niet.
 
-    Op de gemonteerde routers en niet op de bron: een vergeten registratie elders zou de
+    Op de gemonteerde webrouter en niet op de bron: een vergeten registratie elders zou de
     route terugbrengen zonder dat er een bestand bij hoort, en dan deelt de app een
     404-pagina uit als PEM-bestand.
     """
 
-    def test_geen_dienst_registreert_de_route_nog(self) -> None:
-        paden = [route.path for router in collect_service_routers() for route in router.routes]
+    def test_geen_route_draagt_het_pad_nog(self) -> None:
+        from opi.web.router import web_router
+
+        paden = [getattr(route, "path", "") for route in web_router.routes]
         assert not [pad for pad in paden if "ca-bundle" in pad]
 
     def test_de_app_antwoordt_niet_meer_op_het_pad(self) -> None:
+        from opi.web.router import web_router
+
         app = FastAPI()
-        for router in SERVICE.web_routers():
-            app.include_router(router)
+        app.include_router(web_router)
         assert TestClient(app).get("/services/vlam/ca-bundle").status_code == 404
 
 

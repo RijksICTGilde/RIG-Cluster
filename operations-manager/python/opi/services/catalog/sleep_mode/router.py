@@ -7,34 +7,32 @@ Two ways in, because there are two callers with genuinely different rights:
   public waker pod may wake exactly one deployment and nothing else. Verification cannot
   happen in a header-only check because it needs the project loaded.
 * ``X-API-Key`` -- the project's own API key, checked here against the project in the URL.
-  A project owner may wake his own deployment, and until now he could not: the endpoints
-  demanded a wake token that no API and no page hands out (zad-cli, punt 4), so the two
-  CLI commands were unusable. A key belonging to ANOTHER project is refused, exactly as
-  everywhere else in the API.
+  A project owner may wake their own deployment with it. A key belonging to ANOTHER project
+  is refused, exactly as everywhere else in the API.
 
 Both headers are declared as parameters so they appear in the OpenAPI document; a
 generated client can see what it may send instead of discovering a 401.
 
-Both answers are declared as response models (RC-119), for the same reason: a bare
-JSONResponse put no schema in the document at all, so a client could not see which values
-either endpoint returns. See ``api_models`` for why there are two state fields.
+Both answers are declared as response models, for the same reason: without one the document
+holds no schema, so a client cannot see which values either endpoint returns. See
+``api_models`` for why there are two state fields.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable  # noqa: TC003 -- staat in een runtime-signatuur
+from collections.abc import Callable  # noqa: TC003 -- appears in a runtime signature
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from opi.api.endpoint_util import handhaaf
 from opi.core.authz.actions import Action, action
+from opi.http.auth.endpoint_util import enforce
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
-from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeTimeout
+from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeTimeoutError
 from opi.services.catalog.sleep_mode.state import STATE_WAKING
 from opi.services.project_store import ConflictError, get_project_store
 
@@ -68,9 +66,9 @@ async def _presented_token(
     """Authenticate the caller and return what ``flow`` must still verify.
 
     A wake token is returned as-is: only the project file can say whether it belongs to
-    this deployment. Een ``X-API-Key`` loopt langs hetzelfde handhavingspunt als de rest
-    van de API, zodat de oude projectsleutel en een token hier niet uit elkaar lopen; die
-    weg heeft niets meer nodig, dus None.
+    this deployment. An ``X-API-Key`` passes the same enforcement point as the rest of the
+    API, so the old project key and a token do not drift apart here; that route needs nothing
+    further, hence None.
     """
     if wake_token:
         return wake_token
@@ -78,7 +76,7 @@ async def _presented_token(
         project = get_project_store().get(project_name)
         if project is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        await handhaaf(request, api_key, endpoint, project)
+        await enforce(request, api_key, endpoint, project)
         return None
     raise HTTPException(status_code=401, detail="X-Wake-Token or X-API-Key header required")
 
@@ -91,7 +89,7 @@ async def finish_wake_after_response(project_name: str, deployment_name: str) ->
     """
     try:
         await flow.finish_wake(project_name, deployment_name)
-    except (WakeTimeout, DeploymentNotFound, ConflictError) as exc:
+    except (WakeTimeoutError, DeploymentNotFoundError, ConflictError) as exc:
         logger.info("sleep-mode: could not finish the wake of %s/%s: %s", project_name, deployment_name, exc)
 
 
@@ -124,9 +122,9 @@ async def wake(
     token = await _presented_token(request, wake, project_name, x_wake_token, x_api_key)
     try:
         result = await flow.wake(project_name, deployment_name, presented_token=token)
-    except InvalidWakeToken as exc:
+    except InvalidWakeTokenError as exc:
         raise HTTPException(status_code=401, detail="Invalid wake token") from exc
-    except DeploymentNotFound as exc:
+    except DeploymentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result.changed and result.state == STATE_WAKING:
         background_tasks.add_task(finish_wake_after_response, project_name, deployment_name)
@@ -151,13 +149,13 @@ async def status(
     ``state`` is the waker's poll contract (``starting | ready``) and nothing else; it is
     frozen because a waker image older than this code reads it. ``sleep_state`` is the
     deployment's real state, including ``disabled`` when sleep-mode is not configured for
-    it -- the case that used to report a hardcoded ``starting``.
+    it.
     """
     token = await _presented_token(request, status, project_name, x_wake_token, x_api_key)
     try:
         result = await flow.status(project_name, deployment_name, presented_token=token)
-    except InvalidWakeToken as exc:
+    except InvalidWakeTokenError as exc:
         raise HTTPException(status_code=401, detail="Invalid wake token") from exc
-    except DeploymentNotFound as exc:
+    except DeploymentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return JSONResponse(result)

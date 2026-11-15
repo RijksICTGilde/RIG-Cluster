@@ -3,9 +3,10 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from opi.connectors.argo import ArgoConnector
-from opi.manager.argo_manager import ApplicationGone, ArgoManager
+from opi.manager.argo_manager import ApplicationGoneError, ArgoManager
 
 #: De wacht-lus telt de verstreken tijd op de wandklok, dus een budget van seconden kost
 #: ook echt seconden. Tests die de time-out moeten halen krijgen een kort budget en een
@@ -530,7 +531,10 @@ class TestRefreshApplicationReturnsReconciledAt:
     async def test_returns_none_on_exception(self, connector: ArgoConnector):
         """Should return None when the request raises an exception."""
         with patch.object(
-            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("connection error")
+            connector,
+            "_make_authenticated_request",
+            new_callable=AsyncMock,
+            side_effect=aiohttp.ClientError("connection error"),
         ):
             result = await connector.refresh_application("my-app")
 
@@ -655,7 +659,7 @@ class TestGetApplicationManifests:
     @pytest.mark.asyncio
     async def test_transport_error_is_not_ok(self, connector: ArgoConnector):
         with patch.object(
-            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("boom")
+            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=aiohttp.ClientError("boom")
         ):
             ok, detail = await connector.get_application_manifests("my-app")
 
@@ -675,13 +679,13 @@ class TestApplicationDisappearsDuringWait:
 
     @pytest.mark.asyncio
     async def test_disappearing_app_raises_immediately(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
-        """Eerst zichtbaar, dan weg: ApplicationGone binnen een pollinterval, geen 300s."""
+        """Eerst zichtbaar, dan weg: ApplicationGoneError binnen een pollinterval, geen 300s."""
         mock_connector.get_application_status = AsyncMock(side_effect=[_make_status("Synced", "Progressing"), None])
 
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
-            pytest.raises(ApplicationGone, match="verdween tijdens het wachten"),
+            pytest.raises(ApplicationGoneError, match="verdween tijdens het wachten"),
         ):
             await argo_manager.wait_for_application_synced("my-app", timeout=300, poll_interval=2)
 
@@ -740,7 +744,7 @@ class TestFrozenProgressingIsRefreshed:
         # plaats van pollen te tellen.
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
-            patch("opi.manager.argo_manager.HERVERVERS_ELKE_SECONDEN", _KORTE_POLL),
+            patch("opi.manager.argo_manager.REFRESH_EVERY_SECONDS", _KORTE_POLL),
             pytest.raises(TimeoutError),
         ):
             await argo_manager.wait_for_application_synced(
@@ -773,10 +777,10 @@ class TestFrozenProgressingIsRefreshed:
 
     @pytest.mark.asyncio
     async def test_de_refresh_volgt_niet_elke_poll(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
-        """Een refresh per ``HERVERVERS_ELKE_SECONDEN``, niet een per poll.
+        """Een refresh per ``REFRESH_EVERY_SECONDS``, niet een per poll.
 
-        De drempel zat in ``elapsed_time % HERVERVERS_ELKE_SECONDEN == 0`` en is sinds de
-        wandklok eigen toestand (``laatste_herverversing``). Zonder die toestand vraagt de
+        De drempel zat in ``elapsed_time % REFRESH_EVERY_SECONDS == 0`` en is sinds de
+        wandklok eigen toestand (``last_refresh``). Zonder die toestand vraagt de
         lus een refresh bij elke poll zolang de status Progressing blijft, en dat is een
         aanroep naar ArgoCD per poll-interval per wachtende deployment.
         """
@@ -788,7 +792,7 @@ class TestFrozenProgressingIsRefreshed:
 
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
-            patch("opi.manager.argo_manager.HERVERVERS_ELKE_SECONDEN", drempel),
+            patch("opi.manager.argo_manager.REFRESH_EVERY_SECONDS", drempel),
             pytest.raises(TimeoutError),
         ):
             await argo_manager.wait_for_application_synced(

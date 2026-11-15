@@ -13,8 +13,6 @@ from opi.forms.models.project_file import (
     SourceCodeLinkModel,
 )
 
-# --- Pure Editable definitions (data logic only) ---
-
 DISPLAY_NAME_EDITABLE = Editable(
     yaml_path="display-name",
     validator=MinMaxLengthValidator(3, 100),
@@ -44,8 +42,8 @@ SOURCE_CODE_NAME_EDITABLE = Editable(
     remove_when_none=True,
 )
 
-#: Informatieve links naar de broncode. Een project zonder links draagt het veld niet, dus
-#: een lege lijst haalt het weg in plaats van ``source-code: []`` te schrijven.
+#: Informative links to the source code. A project without links carries no field at all, so
+#: an empty list removes the key instead of writing ``source-code: []``.
 SOURCE_CODE_EDITABLE = Editable(
     yaml_path="source-code",
     children=[SOURCE_CODE_URL_EDITABLE, SOURCE_CODE_NAME_EDITABLE],

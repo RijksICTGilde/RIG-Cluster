@@ -1,14 +1,10 @@
-"""ORM-model voor ``otp_pending_registrations`` (lopende registraties van een tweede factor).
+"""ORM model for ``otp_pending_registrations`` (running second-factor registrations).
 
-Een rij is het bewijs dat /start draaide: alleen de vingerafdruk van het
-AGE-versleutelde zaad (die in het formulier meereist), plus verloop. Geen zaad, geen
-geheim in rust - de leverancier van een rij kan er niets mee zonder de bijbehorende
-code uit de app van de gebruiker.
+A row is the proof that /start ran: only the fingerprint of the AGE-encrypted seed (which
+travels along in the form), plus expiry. No seed and so no secret at rest: whoever holds a
+row can do nothing with it without the matching code from the user's app.
 
-Server-side, omdat dit eerst in de sessiecookie zat: op een sessie met een volle
-id_token liep die cookie daardoor over de ~4 KB die een browser geruisloos weglaat,
-en de bevestiging deed naar stille niets (27-10-2026). Dezelfde aanpak als AMT/TAD:
-een eigen tabel met TTL, plus een periodieke schoonmaak.
+The table carries a TTL and is swept periodically.
 """
 
 from __future__ import annotations
@@ -22,7 +18,7 @@ from opi.core.db import Base
 
 
 class OtpPendingRegistration(Base):
-    """Een lopende OTP-registratie van dit e-mailadres."""
+    """One running OTP registration of this email address."""
 
     __tablename__ = "otp_pending_registrations"
 

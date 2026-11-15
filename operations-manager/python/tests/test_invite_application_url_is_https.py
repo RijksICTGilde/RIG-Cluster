@@ -13,9 +13,9 @@ andere knoptoetsen.
 from __future__ import annotations
 
 import pytest
-from opi.manager.project_validation import validation_reasons
 from opi.services.catalog.invite.config_model import HTTPS_URL_PATTERN, InviteConfig
 from opi.services.catalog.invite.destination import resolve_invite_url
+from opi.services.project_validation import validation_reasons
 from pydantic import ValidationError
 
 SLEUTEL = "een-sleutel"

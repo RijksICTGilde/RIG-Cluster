@@ -25,7 +25,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.forms import FormRenderer, get_default_nl_translator
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.wizard_sections import build_component_edit_section
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.services.catalog.base import ConfigLayer

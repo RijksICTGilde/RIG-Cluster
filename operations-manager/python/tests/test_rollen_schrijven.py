@@ -18,16 +18,16 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_LABELS, Role
-from opi.core.leden import LidSoort
-from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
+from opi.forms.wizard.members import MemberListRefusedError, guard_member_list
+from opi.http.auth.authz import authorize, may
 from opi.services.api_token_service import (
-    STANDAARD_ROLLEN,
-    TokenAanvraagGeweigerd,
-    schoon_rollen,
-    zet_rollen_in_data,
+    DEFAULT_ROLES,
+    TokenRequestRefusedError,
+    clean_roles,
+    set_roles_in_data,
 )
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import authorize, may
 
 PROJECT = "bouwput"
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -40,8 +40,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data={"name": PROJECT, "deployments": [{"name": "live", "environment": "productie"}]},
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -61,8 +61,8 @@ def _patches() -> tuple[Any, Any]:
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     return (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     )
 
 
@@ -111,17 +111,17 @@ def test_een_developer_zet_de_markering_van_een_productiedeployment_niet() -> No
 
 
 def test_een_lege_lijst_rollen_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een rol"):
-        schoon_rollen([])
+    with pytest.raises(TokenRequestRefusedError, match="minstens een rol"):
+        clean_roles([])
 
 
 def test_een_onbekende_rol_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        schoon_rollen(["operator"])
+    with pytest.raises(TokenRequestRefusedError, match="Onbekende rol"):
+        clean_roles(["operator"])
 
 
 def test_de_rollen_worden_ontdubbeld_en_gesorteerd() -> None:
-    assert schoon_rollen(["ops", "admin", "ops"]) == ["admin", "ops"]
+    assert clean_roles(["ops", "admin", "ops"]) == ["admin", "ops"]
 
 
 def test_de_laatste_admin_weghalen_wordt_geweigerd() -> None:
@@ -131,8 +131,8 @@ def test_de_laatste_admin_weghalen_wordt_geweigerd() -> None:
             {"email": DEV, "roles": ["developer"]},
         ]
     }
-    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een lid met de rol admin"):
-        zet_rollen_in_data(data, BEHEERDER, ["developer"])
+    with pytest.raises(TokenRequestRefusedError, match="minstens een lid met de rol admin"):
+        set_roles_in_data(data, BEHEERDER, ["developer"])
     assert data["users"][0]["roles"] == ["admin", "ops"], "de lijst blijft staan zoals hij was"
 
 
@@ -143,13 +143,13 @@ def test_een_tweede_admin_maakt_degraderen_wel_mogelijk() -> None:
             {"email": DEV, "roles": ["admin"]},
         ]
     }
-    assert zet_rollen_in_data(data, BEHEERDER, ["developer"]) is data
+    assert set_roles_in_data(data, BEHEERDER, ["developer"]) is data
     assert data["users"][0]["roles"] == ["developer"]
 
 
 def test_een_onbestaand_lid_wordt_geweigerd() -> None:
-    with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        zet_rollen_in_data({"users": []}, "niemand", ["admin"])
+    with pytest.raises(TokenRequestRefusedError, match="geen lid"):
+        set_roles_in_data({"users": []}, "niemand", ["admin"])
 
 
 # --- de wizardweg -----------------------------------------------------------
@@ -159,14 +159,14 @@ def test_een_flow_die_users_niet_bezit_mag_hem_niet_wijzigen() -> None:
     """Een inzending die ``users`` meebrengt zonder het formulier ervoor te renderen."""
     opgeslagen = {"users": [{"email": BEHEERDER, "roles": ["admin"]}]}
     ingediend = {"users": [{"email": BEHEERDER, "roles": ["admin"]}, {"email": DEV, "roles": ["admin"]}]}
-    with pytest.raises(LedenlijstGeweigerd, match="bewerkt de projectleden niet"):
-        bewaak_ledenlijst(ingediend, opgeslagen, bezit_users=False)
+    with pytest.raises(MemberListRefusedError, match="bewerkt de projectleden niet"):
+        guard_member_list(ingediend, opgeslagen, owns_users=False)
 
 
 def test_een_flow_die_users_niet_bezit_mag_hem_ongewijzigd_meesturen() -> None:
     """De sessie van de bewerkwizard draagt het hele project; gelijk is niet gewijzigd."""
     opgeslagen = {"users": [{"email": BEHEERDER, "roles": ["admin"]}]}
-    bewaak_ledenlijst({"users": [{"email": BEHEERDER, "roles": ["admin"]}]}, opgeslagen, bezit_users=False)
+    guard_member_list({"users": [{"email": BEHEERDER, "roles": ["admin"]}]}, opgeslagen, owns_users=False)
 
 
 @pytest.mark.parametrize(
@@ -179,8 +179,8 @@ def test_een_flow_die_users_niet_bezit_mag_hem_ongewijzigd_meesturen() -> None:
     ],
 )
 def test_de_wizardweg_weigert_hetzelfde_als_de_servicefunctie(leden: list[Any], melding: str) -> None:
-    with pytest.raises(LedenlijstGeweigerd, match=melding):
-        bewaak_ledenlijst({"users": leden}, {"users": []}, bezit_users=True)
+    with pytest.raises(MemberListRefusedError, match=melding):
+        guard_member_list({"users": leden}, {"users": []}, owns_users=True)
 
 
 # --- het label is los van de sleutel (B13) ----------------------------------
@@ -194,7 +194,7 @@ def test_een_ander_label_verandert_het_scherm_en_niet_het_bestand() -> None:
     origineel = ROLE_LABELS[Role.DEVELOPER]
     try:
         ROLE_LABELS[Role.DEVELOPER] = "Bouwer"
-        lid = ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON)
+        lid = ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON)
         assert lid.rol_labels == ["Bouwer"], "de Team-kaart toont het label"
         assert lid.roles == ["developer"], "het projectbestand houdt de sleutel"
 
@@ -210,7 +210,7 @@ def test_een_ander_label_verandert_het_scherm_en_niet_het_bestand() -> None:
 
 def test_een_nieuw_lid_heeft_developer_vooraf_gekozen() -> None:
     """B12: een voorinvulling, geen vaste toekenning."""
-    assert list(STANDAARD_ROLLEN) == [Role.DEVELOPER.value]
+    assert list(DEFAULT_ROLES) == [Role.DEVELOPER.value]
 
 
 # --- elke weg leest dezelfde regels ----------------------------------------
@@ -234,7 +234,7 @@ def test_de_twee_rolroutes_lopen_langs_set_member_roles() -> None:
 
     # De servicefunctie zelf is de enige die het wel doet.
     bron = pathlib.Path(api_token_service.__file__ or "").read_text()
-    assert 'lid["roles"] = rollen' in bron
+    assert 'member["roles"] = roles' in bron
 
 
 def test_de_wizard_leest_dezelfde_twee_guards() -> None:
@@ -244,9 +244,9 @@ def test_de_wizard_leest_dezelfde_twee_guards() -> None:
     Zonder dit kan "minstens een admin" of "wat een geldige rol is" opnieuw in de
     formulierlaag landen, en dan lopen de wegen uit elkaar.
     """
-    from opi.forms.wizard import leden
+    from opi.forms.wizard import members
 
-    bron = pathlib.Path(leden.__file__ or "").read_text()
-    assert "schoon_rollen(" in bron, "de wizard toetst de rollen buiten de servicefunctie om"
-    assert "eis_een_admin(" in bron, "de wizard bouwt de admin-eis zelf na"
+    bron = pathlib.Path(members.__file__ or "").read_text()
+    assert "clean_roles(" in bron, "de wizard toetst de rollen buiten de servicefunctie om"
+    assert "require_an_admin(" in bron, "de wizard bouwt de admin-eis zelf na"
     assert f'"{Role.ADMIN.value}"' not in bron, "de wizard toetst de rol admin weer zelf"

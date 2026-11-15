@@ -9,11 +9,8 @@ import asyncio
 
 import httpx
 import pytest
-from opi.connectors.grafana_prometheus import (
-    GrafanaConnectionError,
-    GrafanaPrometheusConnector,
-    GrafanaQueryError,
-)
+from opi.connectors.grafana_prometheus import GrafanaPrometheusConnector
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
 
 
 class Backend:
@@ -59,7 +56,8 @@ async def connector(monkeypatch):
     monkeypatch.setattr("opi.core.config.settings.GRAFANA_DATASOURCE_UID", "test-uid")
     c = GrafanaPrometheusConnector()
     # Short waits: the real sequence is 5s to 60s, which no test can sit out.
-    c._recovery_delays = (0.01,)
+    c._recovery_first_delay = 0.01
+    c._recovery_max_delay = 0.01
     yield c
     await c.aclose()
     GrafanaPrometheusConnector._instance = None
@@ -89,8 +87,8 @@ async def test_transport_error_marks_unavailable_and_starts_one_task(connector):
     attach(connector, backend)
     connector._mark_available()
 
-    with pytest.raises(GrafanaConnectionError):
-        await connector.custom_query("up")
+    with pytest.raises(MetricsUnavailableError):
+        await connector.query("up")
 
     assert connector.is_connected is False
     first_task = connector._recovery_task
@@ -107,13 +105,14 @@ async def test_queries_fail_fast_without_a_request(connector):
     backend = Backend()
     attach(connector, backend)
     # Long enough that the recovery task cannot sneak a request into this measurement.
-    connector._recovery_delays = (3600.0,)
+    connector._recovery_first_delay = 3600.0
+    connector._recovery_max_delay = 3600.0
     connector._mark_unavailable("outage")
     seen = len(backend.requests)
 
     for _ in range(10):
-        with pytest.raises(GrafanaConnectionError):
-            await connector.custom_query("up")
+        with pytest.raises(MetricsUnavailableError):
+            await connector.query("up")
 
     assert len(backend.requests) == seen
 
@@ -125,8 +124,8 @@ async def test_bad_request_leaves_the_status_alone(connector):
     attach(connector, backend)
     connector._mark_available()
 
-    with pytest.raises(GrafanaQueryError):
-        await connector.custom_query("not promql")
+    with pytest.raises(MetricsQueryError):
+        await connector.query("not promql")
 
     assert connector.is_connected is True
     assert connector._recovery_task is None
@@ -168,7 +167,7 @@ async def test_one_client_through_outage_and_recovery(connector):
 
     connector.start_probe()
     await asyncio.wait_for(connector._recovery_task, timeout=5)
-    await connector.custom_query("up")
+    await connector.query("up")
 
     assert connector._client is client
 
@@ -193,7 +192,8 @@ async def test_bad_request_does_not_mark_available(connector):
     """A 400 while unavailable keeps the status unavailable: only a 2xx restores it."""
     backend = Backend(status=400)
     attach(connector, backend)
-    connector._recovery_delays = (3600.0,)
+    connector._recovery_first_delay = 3600.0
+    connector._recovery_max_delay = 3600.0
     connector._mark_unavailable("outage")
 
     resp = await connector._request("POST", "/api/ds/query", {})

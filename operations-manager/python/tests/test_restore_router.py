@@ -20,11 +20,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from opi.api.restore_router import restore_router
-from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import RestoreResult, SnapshotInfo
+from opi.services.project_file_handler import create_project_file_handler
 
 API_KEY = "test-restore-api-key"
 PROJECT = "restore-test"
@@ -90,12 +90,16 @@ def project_data() -> dict[str, Any]:
 
 @pytest.fixture
 def mock_manager(project_data: dict[str, Any]) -> Any:
-    """Patch ProjectManager in the router with a manager whose read returns project_data."""
+    """Patch the ProjectManager the restore use case reads, mutates and commits through."""
     manager = MagicMock()
     manager.get_contents = AsyncMock(return_value=project_data)
     manager.save_and_commit_project = AsyncMock()
     manager.process_project_from_git = AsyncMock(return_value=True)
-    with patch("opi.api.restore_router.ProjectManager", return_value=manager):
+    manager.close = AsyncMock()
+    with (
+        patch("opi.manager.backup.restore_run.ProjectManager", return_value=manager),
+        patch("opi.runtime.backup.backup_tasks.create_project_manager", return_value=manager),
+    ):
         yield manager
 
 
@@ -103,10 +107,36 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
 def mock_store(project_data: dict[str, Any]) -> Any:
     store = _FakeStore(project_data)
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.restore_router.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.manager.backup.restore_targets.get_project_store", return_value=store),
+        patch("opi.manager.backup.run.get_project_store", return_value=store),
     ):
         yield store
+
+
+@pytest.fixture(autouse=True)
+def inline_task() -> Any:
+    """Run the restore task the route queues inline, so the route is measured end to end.
+
+    The routes answer synchronously through the task queue (RC-482); without a worker in
+    the test the route would wait for a task nobody runs.
+    """
+    from opi.runtime.backup.task_handlers_backup import handle_restore
+
+    answers: dict[str, Any] = {}
+
+    async def create(request: Any, task_type: str, project_name: str, deployment_name: str, payload: Any) -> Any:
+        answers["result"] = await handle_restore(payload, MagicMock())
+        return {"task_id": "restore-task"}
+
+    async def finished(request: Any, task_id: str, answer_key: str) -> Any:
+        return {"task_id": task_id, "status": "completed", "result": answers.get("result")}
+
+    with (
+        patch("opi.api.restore_router.create_async_task", side_effect=create),
+        patch("opi.api.restore_router.wait_for_task_answer", side_effect=finished),
+    ):
+        yield answers
 
 
 @pytest.fixture
@@ -124,7 +154,11 @@ def mock_backup_manager() -> Any:
 
     backup_manager.restore_to_project_pvc = AsyncMock(side_effect=_restore)
     backup_manager.list_snapshots = AsyncMock(return_value=[])
-    with patch("opi.api.restore_router.create_backup_manager", return_value=backup_manager):
+    with (
+        patch("opi.api.restore_router.create_backup_manager", return_value=backup_manager),
+        patch("opi.manager.backup.restore.create_backup_manager", return_value=backup_manager),
+        patch("opi.manager.backup.runs.BackupManager", return_value=backup_manager),
+    ):
         yield backup_manager
 
 
@@ -132,8 +166,9 @@ def mock_backup_manager() -> Any:
 def mock_cluster_functions() -> Any:
     with (
         patch("opi.api.restore_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
-        patch("opi.api.restore_router.get_storage_class_name", return_value="standard"),
-        patch("opi.api.restore_router.get_storage_access_modes", return_value=["ReadWriteOnce"]),
+        patch("opi.manager.backup.run.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
+        patch("opi.manager.backup.restore.get_storage_class_name", return_value="standard"),
+        patch("opi.manager.backup.restore.get_storage_access_modes", return_value=["ReadWriteOnce"]),
     ):
         yield
 
@@ -171,7 +206,7 @@ class TestRestoreProjectPvc:
 
         _assert_read_mutate_save(mock_manager, project_data)
 
-    def test_missing_project_file_is_404(
+    def test_unknown_deployment_is_404(
         self,
         client: TestClient,
         mock_store: Any,
@@ -179,13 +214,54 @@ class TestRestoreProjectPvc:
         mock_backup_manager: Any,
         mock_cluster_functions: Any,
     ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}",
+            headers={"X-API-Key": API_KEY},
+            json={"deployment_name": "ghost", "component_name": "web", "storage_name": "data"},
+        )
+        assert response.status_code == 404, response.text
+        assert "ghost" in response.json()["detail"]
+        mock_manager.save_and_commit_project.assert_not_awaited()
+
+    def test_unknown_component_is_404(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}",
+            headers={"X-API-Key": API_KEY},
+            json={"deployment_name": "main", "component_name": "ghost", "storage_name": "data"},
+        )
+        assert response.status_code == 404, response.text
+        assert "ghost" in response.json()["detail"]
+        mock_manager.save_and_commit_project.assert_not_awaited()
+
+    def test_an_unreadable_project_file_is_a_failed_restore(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        """The data lands first, so a file the generation cannot reach is a 500, not a 404.
+
+        The read belongs to the commit of the generation, which happens after the restore
+        pod ran, and the caller has to learn that the data is there while the deployment
+        still points at the previous resource.
+        """
         mock_manager.get_contents = AsyncMock(side_effect=ValueError("Project file not found"))
         response = client.post(
             f"/api/v1/restore/project/{PROJECT}",
             headers={"X-API-Key": API_KEY},
             json={"deployment_name": "main", "component_name": "web", "storage_name": "data"},
         )
-        assert response.status_code == 404
+        assert response.status_code == 500, response.text
+        assert response.json()["status"] == "failed"
         mock_manager.save_and_commit_project.assert_not_awaited()
 
 
@@ -224,6 +300,109 @@ class TestRestoreBackupRun:
         assert body["project_updated"] is True
 
         _assert_read_mutate_save(mock_manager, project_data)
+
+    def test_a_run_with_no_snapshots_is_a_404_before_anything_is_queued(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        """Looked up here, not only inside the task (RC-482, decision R11): a run that is
+        gone is the caller's 404, not a task that gets created and then fails."""
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main/run/gone-run",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+
+        assert response.status_code == 404, response.text
+        assert "gone-run" in response.json()["detail"]
+        mock_manager.save_and_commit_project.assert_not_awaited()
+
+
+class TestTheBackupRunRouteWeighsTheSourceDeployment:
+    """The run a restore reads belongs to a deployment of its own (RC-482, decision R8).
+
+    The route gate weighs only the deployment in the PATH, the one the data lands in. A run
+    of production restored into a developer's own deployment reads production, and the portal
+    has always weighed that source separately.
+    """
+
+    @staticmethod
+    def _snapshot_of(deployment: str) -> SnapshotInfo:
+        return SnapshotInfo(
+            snapshot_id="snap-1",
+            pvc_name="pvc-main-web-data-0",
+            timestamp="2026-07-21T00:00:00Z",
+            deployment_name=deployment,
+            component_name="web",
+            storage_name="data",
+            generation=0,
+            backup_run_id="run-1",
+            resource_type="pvc",
+        )
+
+    def _post(self, client: TestClient) -> Any:
+        return client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main/run/run-1",
+            headers={"X-API-Key": API_KEY},
+            json={},
+        )
+
+    def test_the_source_of_the_run_is_weighed(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_backup_manager.list_snapshots = AsyncMock(return_value=[self._snapshot_of("productie")])
+
+        with patch("opi.api.restore_router.require_restore_source_access") as gate:
+            response = self._post(client)
+
+        assert response.status_code == 200, response.text
+        assert gate.call_args.args[1:] == (PROJECT, "productie")
+
+    def test_a_run_without_a_deployment_tag_still_weighs_a_source(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        """An untagged snapshot names no source, and skipping the weighing would let the
+        target gate alone decide. The empty name weighs against the highest marking."""
+        untagged = self._snapshot_of("productie")
+        untagged.deployment_name = None
+        mock_backup_manager.list_snapshots = AsyncMock(return_value=[untagged])
+
+        with patch("opi.api.restore_router.require_restore_source_access") as gate:
+            response = self._post(client)
+
+        assert response.status_code == 200, response.text
+        assert gate.call_args.args[1:] == (PROJECT, "")
+
+    def test_a_refused_source_stops_the_restore(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_backup_manager.list_snapshots = AsyncMock(return_value=[self._snapshot_of("productie")])
+        refusal = HTTPException(status_code=403, detail="Onvoldoende rechten")
+
+        with patch("opi.api.restore_router.require_restore_source_access", side_effect=refusal):
+            response = self._post(client)
+
+        assert response.status_code == 403, response.text
+        mock_manager.save_and_commit_project.assert_not_awaited()
 
 
 class TestRestoreDeploymentResource:
@@ -475,7 +654,7 @@ class TestEenMislukteTerugzetActieGeeftNietsPrijs:
 
     async def test_de_hulpfunctie_voor_een_database_geeft_de_lezerszin_terug(self) -> None:
         """De deur die de grendel niet kende: een dict die verderop een antwoord wordt."""
-        from opi.api import restore_router as module
+        from opi.manager.backup import restore as module
 
         handler = MagicMock()
         handler.get_database_generation.return_value = 0
@@ -484,7 +663,7 @@ class TestEenMislukteTerugzetActieGeeftNietsPrijs:
             patch("opi.core.cluster_config.get_database_server", return_value="db.intern"),
             patch("opi.connectors.postgres.create_postgres_connector", side_effect=OSError(self.STORING)),
         ):
-            result = await module._restore_database_with_versioning(
+            result = await module.restore_database_with_versioning(
                 project_name=PROJECT,
                 deployment_name="main",
                 component_name="web",

@@ -16,7 +16,7 @@ hoger getal dan de werkelijkheid, dan faalt de test met het verzoek het te verla
 
 import re
 
-from opi.core.template_helpers import STATIC_DIR, TEMPLATES_DIR
+from opi.http.render.template_helpers import STATIC_DIR, TEMPLATES_DIR
 
 INLINE_STYLE = re.compile(r'\bstyle="')
 STYLE_BLOCK = re.compile(r"<style[\s>]")
@@ -47,11 +47,6 @@ MAX_CONTENT_BLOCK_LINES = 50
 # nooit langs deze eis is gekomen. De hertekende bg-paginas staan er daarom als WERKLIJST
 # in - ze zijn niet goedgekeurd, ze zijn geteld, en de eis is dat het er niet meer worden.
 CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
-    "architecture-overview.html.j2": (
-        "1.500 regels handgeschreven markup in een enkel blok. Dit is geen pagina om op te "
-        "delen maar een om apart te beoordelen, en misschien te vervangen in plaats van te "
-        "verbouwen. Bewust buiten het opdeelwerk gehouden."
-    ),
     "bg/project-tabs.html.j2": WERKLIJST,
     "bg/projects.html.j2": WERKLIJST,
     "bg/feedback.html.j2": WERKLIJST,
@@ -68,7 +63,6 @@ CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
 
 # Templates die een eigen <style>-blok mogen houden, met de reden.
 STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
-    "architecture-overview.html.j2": "Zie CONTENT_BLOCK_EXCEPTIONS: deze pagina wordt in zijn geheel apart beoordeeld.",
     "bg/admin-usage.html.j2": WERKLIJST,
 }
 
@@ -77,10 +71,6 @@ STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
 # waarde die de template zelf uitrekent, of een component dat een klasse anders behandelt
 # dan een style.
 INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
-    "architecture-overview.html.j2": (
-        85,
-        "Zie CONTENT_BLOCK_EXCEPTIONS: deze pagina wordt in zijn geheel apart beoordeeld.",
-    ),
     "widgets/_macros.html.j2": (
         1,
         "De breedte van de voortgangsbalk is de waarde zelf. Staat in de macro progress_bar, "
@@ -99,11 +89,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         1,
         "De tussenruimte tussen de knoppen is een instelling van het veld en komt uit de "
         "formulierdefinitie, niet uit een vaste lijst.",
-    ),
-    "wizard/partials/backup_select_deployment.html.j2": (
-        1,
-        "De kleur van het resourcetype-label komt uit de servicedefinitie; er is geen vaste "
-        "lijst kleuren om klassen voor te maken.",
     ),
 }
 
@@ -265,7 +250,6 @@ FORMULIEREN_MET_SERVERVALIDATIE = {
     "bg/_admin-user-form.html.j2": "{{ form_action }}",
     "invite-register.html.j2": "/invite/{{ invite_key }}/register",
     "bg/invite-register.html.j2": "/invite/{{ invite_key }}/register",
-    "project-form-demo/_formulier.html.j2": "/projects/form-demo",
     "bg/_step-up.html.j2": "step-up-form",
 }
 

@@ -16,7 +16,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from opi.core.startup import warm_connector_singletons
+from opi.runtime.startup.startup import warm_connector_singletons
 
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_een_falende_connector_wordt_gelogd_niet_doorgegooid(
     monkeypatch.setattr("opi.connectors.kopia.create_kopia_connector", _kapot)
     monkeypatch.setattr("opi.connectors.skopeo.SkopeoConnector", MagicMock())
 
-    with caplog.at_level(logging.WARNING, logger="opi.core.startup"):
+    with caplog.at_level(logging.WARNING, logger="opi.runtime.startup.startup"):
         await warm_connector_singletons()  # mag geen RuntimeError doorgeven
 
     waarschuwingen = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]

@@ -25,8 +25,8 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.http.render.lotc_switch import project_tab_url
 from opi.services.project_service import get_project_service
-from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
     from collections.abc import Generator

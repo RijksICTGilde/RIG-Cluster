@@ -160,7 +160,7 @@ class TestOpslaan:
     def test_het_schema_keurt_het_resultaat_goed(self) -> None:
         """De vorm die de wizard schrijft moet door het schema komen; dat is de tweede weg
         naar binnen en die controleert onafhankelijk."""
-        from opi.core.project_schema import validate_declared_project_schema
+        from opi.services.project_schema import validate_declared_project_schema
 
         component = self._verwerk("sh -c /app/start")
         validate_declared_project_schema({"schema-version": 2.6, "name": "demo", "components": [component]})

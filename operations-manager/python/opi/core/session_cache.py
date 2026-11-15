@@ -1,10 +1,9 @@
-"""De hot-cache voor server-side sessies: een begrensde LRU met per-item TTL.
+"""The hot cache for server-side sessions: a bounded LRU with a per-item TTL.
 
-Elke request leest van hier; de database is alleen de bron bij een miss. Twee grenzen
-houden hem klein en vers: maximaal ``max_entries`` items (een volle cache zakt de
-minst-recent-aangeraakte eruit) en een vervaltijd per item (daarna telt hij als miss
-en dwingt een database-lezing af, dus een tweede OPI-pod loopt nooit verder achter dan
-die tijd).
+Every request reads from here; the database is the source only on a miss. Two bounds keep it
+small and fresh: at most ``max_entries`` items (a full cache drops the least recently touched
+one) and an expiry per item (after which it counts as a miss and forces a database read, so a
+second OPI pod never lags further behind than that time).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ class _Entry:
 
 @dataclass(frozen=True)
 class CacheStats:
-    """Tellers sinds de vorige :meth:`SessionCache.take_stats`."""
+    """Counters since the previous :meth:`SessionCache.take_stats`."""
 
     hits: int
     misses: int
@@ -38,17 +37,15 @@ class CacheStats:
 
 
 class SessionCache:
-    """Begrensde LRU met per-item TTL, voor sessie-id's en hun data.
+    """Bounded LRU with a per-item TTL, for session ids and their data.
 
-    ``get`` levert NOOIT een verlopen item en verplaatst de hit naar het einde van de
-    rij (meest recent); ``set`` doet hetzelfde. De evictie verliest daardoor wie het
-    langst onaangeraakt is. Kopieert in en uit, zodat een aanroeper de bewaarde data
-    niet mee muteert (een sessie-dict verandert plek in de store, niet in het
-    cachebeeld).
+    ``get`` NEVER hands out an expired item and moves the hit to the end of the queue (most
+    recent); ``set`` does the same. Eviction therefore loses whatever went untouched longest.
+    Copies in and out, so a caller does not mutate the stored data along with its own (a
+    session dict changes in the store, not in the cached picture).
 
-    De evictie gaat alleen op recentheid, niet op verlopenheid: een verlopen item
-    houdt zijn plek tot de eerste lezing erna, ook als daarvoor een geldig maar koud
-    item wijkt. Dat is bewust, om een volle ``set`` geen zoektocht te laten doen.
+    Eviction goes by recency alone, not by expiry: an expired item keeps its place until the
+    first read after it, even when a valid but cold item gives way before it.
     """
 
     def __init__(
@@ -66,13 +63,13 @@ class SessionCache:
         self._evictions = 0
 
     def get(self, session_id: str) -> dict[str, Any] | None:
-        """De data van deze sessie, of None bij een miss of een verlopen item."""
+        """The data of this session, or None on a miss or an expired item."""
         entry = self._entries.get(session_id)
         if entry is None:
             self._misses += 1
             return None
         if entry.expires_at <= self._clock():
-            # Een verlopen item komt nooit uit de cache: de database is weer de bron.
+            # An expired item never comes out of the cache: the database is the source again.
             del self._entries[session_id]
             self._misses += 1
             return None
@@ -81,9 +78,11 @@ class SessionCache:
         return deepcopy(entry.data)
 
     def set(self, session_id: str, data: dict[str, Any]) -> None:
-        """Sla de data op met een verse TTL en een verse positie; bij een volle cache gaat de minst-recent-aangeraakte eruit."""
-        bestaand = session_id in self._entries
-        if not bestaand and len(self._entries) >= self._max_entries:
+        """Store the data with a fresh TTL and a fresh position; a full cache drops the least
+        recently touched entry.
+        """
+        existing = session_id in self._entries
+        if not existing and len(self._entries) >= self._max_entries:
             self._entries.popitem(last=False)
             self._evictions += 1
         self._entries[session_id] = _Entry(data=deepcopy(data), expires_at=self._clock() + self._ttl)
@@ -93,17 +92,17 @@ class SessionCache:
         self._entries.pop(session_id, None)
 
     def delete_where(self, predicate: Callable[[dict[str, Any]], bool]) -> int:
-        """Verwijder elke cache-entry waarvan de data aan ``predicate`` voldoet."""
-        treffers = [sid for sid, entry in self._entries.items() if predicate(entry.data)]
-        for sid in treffers:
+        """Remove every cache entry whose data satisfies ``predicate``."""
+        matches = [sid for sid, entry in self._entries.items() if predicate(entry.data)]
+        for sid in matches:
             del self._entries[sid]
-        return len(treffers)
+        return len(matches)
 
     def touch_mark(self, session_id: str, grace_seconds: float) -> bool:
-        """Markeer deze sessie als zojuist aangeraakt.
+        """Mark this session as touched just now.
 
-        Returns True als de markering VERS genoeg was (minder dan ``grace_seconds``
-        geleden gezet), zodat de store de database-touch achterwege kan laten.
+        Returns True when the mark was FRESH enough (set less than ``grace_seconds`` ago), so
+        the store can leave the database touch out.
         """
         entry = self._entries.get(session_id)
         if entry is None or entry.expires_at <= self._clock():
@@ -115,7 +114,7 @@ class SessionCache:
         return False
 
     def take_stats(self) -> CacheStats:
-        """De tellers sinds de vorige aanroep, en zet ze op nul (voor de minuutlog)."""
+        """The counters since the previous call, reset to zero (for the per-minute log)."""
         stats = CacheStats(hits=self._hits, misses=self._misses, evictions=self._evictions)
         self._hits = self._misses = self._evictions = 0
         return stats

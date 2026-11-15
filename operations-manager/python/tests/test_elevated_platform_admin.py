@@ -15,18 +15,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.api import step_up_router as step_up_router_module
-from opi.api import user_token_auth
-from opi.api.otp_step_up import verify_api_step_up
-from opi.core.auth_decorators import require_platform_admin
-from opi.core.step_up import STEP_UP_WINDOW, StepUpAction, is_elevated_admin, step_up_fresh
+from opi.http.auth import user_token_auth
+from opi.http.auth.auth_decorators import require_platform_admin
+from opi.http.auth.otp_step_up import verify_api_step_up
+from opi.http.render import menu as menu_module
+from opi.http.render.menu import get_menu_items
 from opi.services import project_authorization
 from opi.services.api_step_up_service import ApiStepUpService, personal_token_credential, sso_session_credential
+from opi.services.step_up import STEP_UP_WINDOW, StepUpAction, is_elevated_admin, step_up_fresh
 from opi.services.user_otp_service import OtpVerification
 from opi.services.user_service import UserService
 from opi.utils.url_paths import local_redirect_path
-from opi.web import menu as menu_module
 from opi.web import router_step_up
-from opi.web.menu import get_menu_items
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -201,9 +201,9 @@ def _api_request(*, fresh: bool) -> Any:
 
 
 async def test_a_fresh_api_state_needs_no_code() -> None:
-    with patch("opi.api.otp_step_up.UserOtpService") as otp:
+    with patch("opi.http.auth.otp_step_up.UserOtpService") as otp:
         result = await verify_api_step_up(
-            _api_request(fresh=True), project_name="demo", actie=StepUpAction.TOKEN_ISSUE, doelwit="x"
+            _api_request(fresh=True), project_name="demo", action=StepUpAction.TOKEN_ISSUE, target="x"
         )
 
     assert result is None
@@ -212,7 +212,7 @@ async def test_a_fresh_api_state_needs_no_code() -> None:
 
 async def test_without_the_api_state_a_code_is_still_asked() -> None:
     result = await verify_api_step_up(
-        _api_request(fresh=False), project_name="demo", actie=StepUpAction.TOKEN_ISSUE, doelwit="x"
+        _api_request(fresh=False), project_name="demo", action=StepUpAction.TOKEN_ISSUE, target="x"
     )
 
     assert result is not None

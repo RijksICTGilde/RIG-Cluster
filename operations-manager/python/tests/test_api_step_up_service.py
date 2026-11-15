@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 from opi.core.db import session_scope
-from opi.core.step_up import STEP_UP_WINDOW
 from opi.services.api_step_up_service import ApiStepUpService
 from opi.services.persistence.api_step_ups import ApiStepUp
+from opi.services.step_up import STEP_UP_WINDOW
 from sqlalchemy import select, update
 
 EMAIL = "iemand@rijksoverheid.nl"

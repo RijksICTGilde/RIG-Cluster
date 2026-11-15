@@ -3,7 +3,7 @@
 The project file has exactly one validated save path:
 ``ProjectManager.save_and_commit_project`` (schema + structural validation,
 canonical dumper, commit + push, cache refresh). No mutation handler in the
-API/web/core/service layers may persist project YAML to git directly -- doing so
+API/web/core/service/http layers may persist project YAML to git directly -- doing so
 re-opens the validation-bypass gap this consolidation closed (an API call could
 commit a malformed or structurally broken project file to ``zad-projects``).
 
@@ -25,13 +25,13 @@ from opi.services.project_store import GitProjectStore
 # Directories whose handlers must route every project-file write through
 # ProjectManager.save_and_commit_project (the central validated save).
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
-_SCANNED_DIRS = ["opi/api", "opi/web", "opi/core", "opi/services"]
+_SCANNED_DIRS = ["opi/api", "opi/web", "opi/core", "opi/services", "opi/http"]
 
 # Substrings that indicate a project-YAML write that skips the central save.
 _FORBIDDEN_PATTERNS = (
     "do_commit_and_push=True",  # raw create_or_update_file commit, no validation
     "commit_project_yaml(",  # removed legacy helper, must never come back
-    "save_project_file(",  # low-level writer; only the central save may call it
+    "save_project_file(",  # removed low-level writer, must never come back
 )
 
 # Files allowed to still contain a forbidden pattern, with the reason. These are
@@ -211,6 +211,15 @@ def test_no_one_closes_the_stores_warm_connector() -> None:
     )
 
 
+_CACHE_ACCESS_ALLOWLIST: dict[str, str] = {
+    "opi/services/project_store.py": "the store itself",
+    "opi/services/project_service.py": "the cache itself",
+    # ``build_project_from_data`` parses a dict the caller already holds and registers
+    # nothing, so this is not a second door into the cache.
+    "opi/services/project_utils.py": "parses the just-written file to check the token hash",
+}
+
+
 def _scan_for_direct_cache_access() -> list[str]:
     """Find code reaching the project cache without going through ProjectStore.
 
@@ -219,13 +228,13 @@ def _scan_for_direct_cache_access() -> list[str]:
     direct write can leave the cache disagreeing with what is actually in git.
     """
     violations: list[str] = []
-    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/web", "opi/handlers", "opi/middleware", "opi/forms"]:
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/web", "opi/middleware", "opi/forms"]:
         directory = _PYTHON_ROOT / rel_dir
         if not directory.exists():
             continue
         for py_file in directory.rglob("*.py"):
             rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
-            if rel_path in ("opi/services/project_store.py", "opi/services/project_service.py"):
+            if rel_path in _CACHE_ACCESS_ALLOWLIST:
                 continue
             violations.extend(
                 f"{rel_path}:{lineno}: {line.strip()}"
@@ -274,7 +283,7 @@ def test_no_one_injects_a_projects_connector_into_project_manager() -> None:
     create failed with "Project file not found at HEAD".
     """
     violations: list[str] = []
-    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/handlers"]:
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager"]:
         for py_file in (_PYTHON_ROOT / rel_dir).rglob("*.py"):
             rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
             if rel_path == "opi/manager/project_manager.py":

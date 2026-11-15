@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import pathlib
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,14 +31,15 @@ import pytest
 from fastapi import HTTPException
 from opi.api.task_models import TASK_RESULT_MODELS
 from opi.api.v2.router import AddDatabaseSchemaRequest, v2_router
-from opi.core.async_task_service import TaskType
-from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
-from opi.core.task_rollout import DEFERRABLE_TASK_TYPES
 from opi.forms.editables.validators import SchemaPostfixValidator
-from opi.manager.project_validation import validate_project_structure, validate_service_configs
+from opi.runtime.tasks.handler_registry import standalone_worker_handlers, task_handlers
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
+from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
+from opi.services.project_validation import validate_project_structure, validate_service_configs
 from opi.services.services_enums import ServiceType
+from opi.services.tasks.async_task_service import TaskType
+from opi.services.tasks.task_rollout import DEFERRABLE_TASK_TYPES
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN, generate_database_schema
 from pydantic import ValidationError
 
@@ -49,7 +49,7 @@ _SERVICE = ServiceType.POSTGRESQL_DATABASE.value
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -508,12 +508,10 @@ def test_the_schema_task_type_is_wired_to_a_handler_everywhere_it_runs() -> None
     """
     assert TaskType.MANAGE_DATABASE_SCHEMAS in TASK_RESULT_MODELS
 
-    for module in ("opi/server.py", "opi/worker_main.py"):
-        source = pathlib.Path(module).read_text(encoding="utf-8")
-        assert "handle_manage_database_schemas" in source, f"{module} does not import the handler"
-        assert "TaskType.MANAGE_DATABASE_SCHEMAS, handle_manage_database_schemas" in source, (
-            f"{module} imports the handler but never registers it"
-        )
+    for registry in (task_handlers(), standalone_worker_handlers()):
+        handler = registry.get(TaskType.MANAGE_DATABASE_SCHEMAS)
+        assert handler is not None, "the task type has no handler in the registry both processes read"
+        assert handler.__name__ == "handle_manage_database_schemas"
 
 
 def test_a_schema_write_may_be_saved_without_rolling_out() -> None:

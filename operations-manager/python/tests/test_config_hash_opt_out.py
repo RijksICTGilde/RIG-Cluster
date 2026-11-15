@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from opi.generation.manifests import CONFIG_HASH_IGNORE_LABEL_KEY, CONFIG_HASH_IGNORE_LABEL_VALUE
-from opi.manager.project_manager import _secret_labels_for
+from opi.manager.project.manifests.secrets import secret_labels_for
 from opi.services.catalog.base import SecretFileSpec
 
 _PLUGIN = Path(__file__).parent.parent.parent.parent / "bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml"
@@ -34,17 +34,17 @@ def test_a_secret_counts_as_application_config_by_default() -> None:
     """Opting out must be a deliberate act: a secret the app reads and that silently
     stopped counting would leave pods running on stale configuration."""
     assert _spec().include_in_config_hash is True
-    assert _secret_labels_for(_spec()) == {}
+    assert secret_labels_for(_spec()) == {}
 
 
 def test_opting_out_adds_the_label_the_plugin_filters_on() -> None:
-    labels = _secret_labels_for(_spec(include_in_config_hash=False))
+    labels = secret_labels_for(_spec(include_in_config_hash=False))
 
     assert labels[CONFIG_HASH_IGNORE_LABEL_KEY] == CONFIG_HASH_IGNORE_LABEL_VALUE
 
 
 def test_opting_out_keeps_the_service_its_own_labels() -> None:
-    labels = _secret_labels_for(_spec(include_in_config_hash=False, secret_labels={"eigen": "waarde"}))
+    labels = secret_labels_for(_spec(include_in_config_hash=False, secret_labels={"eigen": "waarde"}))
 
     assert labels["eigen"] == "waarde"
     assert labels[CONFIG_HASH_IGNORE_LABEL_KEY] == CONFIG_HASH_IGNORE_LABEL_VALUE

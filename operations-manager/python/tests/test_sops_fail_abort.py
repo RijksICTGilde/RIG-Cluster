@@ -40,6 +40,7 @@ from opi.utils.sops import (
     encrypt_to_sops_files,
     encrypt_to_sops_files_or_fail,
 )
+from tests import project_manager_sources
 
 PUBLIC_KEY = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsdummyy"
 
@@ -380,11 +381,11 @@ def test_managers_never_call_bare_encrypt_to_sops_files() -> None:
     refactor.
     """
     import opi.manager.argo_manager as argo_manager
-    import opi.manager.project_manager as project_manager
 
-    for module in (argo_manager, project_manager):
-        source = inspect.getsource(module)
-        tree = ast.parse(source)
+    scanned = [(Path(argo_manager.__file__), ast.parse(inspect.getsource(argo_manager)))]
+    scanned += project_manager_sources.trees()
+
+    for path, tree in scanned:
         called_names: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -394,7 +395,7 @@ def test_managers_never_call_bare_encrypt_to_sops_files() -> None:
                 elif isinstance(func, ast.Attribute):
                     called_names.add(func.attr)
         assert "encrypt_to_sops_files" not in called_names, (
-            f"{module.__name__} calls the bare encrypt_to_sops_files; "
+            f"{path.name} calls the bare encrypt_to_sops_files; "
             "secret-bearing sites must use encrypt_to_sops_files_or_fail "
             "so they stay fail-closed."
         )

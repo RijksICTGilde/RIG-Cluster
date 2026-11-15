@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.utils.totp import totp_now
 
 SECTION = Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail.html.j2"
@@ -32,7 +32,7 @@ def _render(**realm_extra: object) -> str:
         "host": "https://kc.example",
         "realm": "demo-realm",
         "username": "demo_admin",
-        "password": "VOORBEELDWAARDE-geen-echt-geheim",
+        "password": "base64+age:Vk9PUkJFRUxEV0FBUkRFLWdlZW4tZWNodC1nZWhlaW0=",
         **realm_extra,
     }
     section = type("Section", (), {"context": {"realms": [realm]}})()

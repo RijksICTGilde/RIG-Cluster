@@ -200,7 +200,7 @@ download then uses the host network).
 - Runtime: Go stdlib + `jackc/pgx/v5` (Postgres), `redis/go-redis/v9`,
   `minio/minio-go/v7` (S3). Built `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`.
 - Build-time spec generator: Python, imports OPI's `opi.services` /
-  `opi.utils.secrets`. Never runs in the pod.
+  `opi.services.secrets`. Never runs in the pod.
 
 ## Validation
 

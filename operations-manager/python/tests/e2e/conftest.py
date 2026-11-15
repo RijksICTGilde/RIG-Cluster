@@ -28,10 +28,10 @@ from tests.e2e.helpers.forgejo import ForgejoClient
 from tests.e2e.helpers.sandbox_api import make_session_cookie
 from tests.e2e.testserver import (
     SECRET_KEY,
-    _preinitialize_kubectl_without_probing,
     create_test_app,
     get_in_memory_session_store,
 )
+from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -75,7 +75,7 @@ def _sign_session(data: dict, secret: str = SECRET_KEY) -> str:
     Sinds RC-390 draagt de cookie geen inhoud meer maar een id; de inhoud woont in de
     store die de testserver aansluit. De sessiegebruiker krijgt een vers ``login_at``:
     een sessie zonder inlogtijdstip is voorbij haar absolute levensduur en wordt
-    geweigerd (opi/core/session_guard.py).
+    geweigerd (opi/http/auth/session_guard.py).
     """
     user = data.get("user")
     if user is not None:
@@ -129,7 +129,7 @@ def _keep_kubectl_from_probing() -> None:
     Root-conftest fixtures are set up before package-level ones, so this runs after the
     reset and puts the initialised singleton back.
     """
-    _preinitialize_kubectl_without_probing()
+    preinitialize_kubectl_without_probing()
 
 
 @pytest.fixture(scope="session")

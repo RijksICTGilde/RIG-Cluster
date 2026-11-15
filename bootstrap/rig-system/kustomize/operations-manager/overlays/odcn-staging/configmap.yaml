@@ -7,19 +7,16 @@ data:
   .env: |
     CLUSTER_MANAGER=odcn-staging
     # Upstream-IdP zoals de sandbox, maar geen lokale beheerder in het OPI-realm: staging
-    # is een pentestomgeving. Zie opi/bootstrap/keycloak_setup.py.
+    # is een pentestomgeving. Zie opi/manager/bootstrap/keycloak_setup.py.
     KEYCLOAK_BOOTSTRAP_CONFIG=staging
 
     # De wachtwoorden van de drie git-repos staan niet hier maar in het env-secret uit
     # de private repo zad-staging-secrets: GIT_PROJECTS_SERVER_PASSWORD,
     # GIT_ARGO_APPLICATIONS_PASSWORD en PROJECT_REPO_PASSWORD.
-    ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=https://github.com/RijksICTGilde/zad-staging-projects.git
     GIT_PROJECTS_SERVER_USERNAME=git
     GIT_PROJECTS_SERVER_REPO_PATH=/
-    GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
     GIT_PROJECTS_SERVER_BRANCH=main
-    GIT_PROJECTS_SERVER_POLL_INTERVAL=120
 
     GIT_ARGO_APPLICATIONS_URL=https://github.com/RijksICTGilde/zad-staging-argo-applications.git
     GIT_ARGO_APPLICATIONS_USERNAME=git

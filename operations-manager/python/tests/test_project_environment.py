@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from opi.api.v2.models import DeploymentDetail, DeploymentStatus
 from opi.api.v2.router import _build_deployment_detail, _empty_live_status
-from opi.core.project_environment import (
+from opi.services.project_environment import (
     DEFAULT_ENVIRONMENT,
     Omgeving,
     deployment_environment,
@@ -26,7 +26,7 @@ from opi.core.project_environment import (
     is_production_downgrade,
     log_production_downgrades,
 )
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "opi" / "schemas" / "project_v2.json"

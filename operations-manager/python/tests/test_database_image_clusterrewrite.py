@@ -8,12 +8,10 @@ meer ververst worden; gemeten op mb-docs-helmfile op 28 september 2026.
 """
 
 import re
-from pathlib import Path
 from typing import Any
 
 from opi.services.catalog.image_registries.resolution import resolve_project_image
-
-PROJECT_MANAGER = Path(__file__).resolve().parents[1] / "opi" / "manager" / "project_manager.py"
+from tests import project_manager_sources
 
 PROJECT: dict[str, Any] = {"name": "demo"}
 
@@ -54,18 +52,22 @@ class TestDeBedrading:
     """
 
     def test_de_database_image_gaat_langs_de_rewrite_voor_hij_gerenderd_wordt(self) -> None:
-        bron = PROJECT_MANAGER.read_text()
-
-        aanroep = bron.find("resolve_project_image(")
-        assert aanroep != -1, "de database-image gaat niet langs resolve_project_image"
-
-        render = bron.find('render_template(\n                "postgresql-cluster.yaml.jinja"')
-        assert render != -1, "de render van het cluster-sjabloon is verplaatst; werk deze guard bij"
-        assert aanroep < render, "de rewrite staat NA de render en bereikt het manifest dus niet"
+        # The order only means anything within the file that renders, so measured per
+        # source instead of over the sources joined.
+        found = False
+        for path, source in project_manager_sources.sources():
+            render = source.find('render_template(\n                "postgresql-cluster.yaml.jinja"')
+            if render == -1:
+                continue
+            found = True
+            call = source.find("resolve_project_image(")
+            assert call != -1, f"{path.name} rendert het cluster-sjabloon zonder resolve_project_image"
+            assert call < render, f"{path.name}: de rewrite staat NA de render en bereikt het manifest dus niet"
+        assert found, "de render van het cluster-sjabloon is verplaatst; werk deze guard bij"
 
     def test_de_uitkomst_gaat_ook_de_secretmap_in(self) -> None:
         """Een herschreven image zonder pull-secret faalt op een registry die authenticatie vraagt."""
-        bron = PROJECT_MANAGER.read_text()
-        assert re.search(r"image_pull_secrets_map\[resolved_db\.image\]\s*=\s*resolved_db\.secret", bron), (
+        source = project_manager_sources.source_text()
+        assert re.search(r"image_pull_secrets_map\[resolved_db\.image\]\s*=\s*resolved_db\.secret", source), (
             "het secret van de opgeloste database-image landt niet in imagePullSecretsMap"
         )

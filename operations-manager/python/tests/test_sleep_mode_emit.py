@@ -8,8 +8,8 @@ that the three waker files land in created_files.
 from unittest.mock import MagicMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import ProjectManager
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 def _project(state: str | None) -> dict:

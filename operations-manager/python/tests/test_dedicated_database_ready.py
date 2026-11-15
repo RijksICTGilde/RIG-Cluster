@@ -6,18 +6,22 @@ right after that signal, and the task failed permanently. These tests pin the wa
 sits in between, and the warning for a cluster the operator itself cannot reach.
 """
 
-import inspect
+import ast
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
-from opi.manager import project_manager as project_manager_module
-from opi.manager.project_manager import DATABASE_CONNECT_TIMEOUT_SECONDS, ProjectManager
+from opi.core.connect_retry import retry_on_connect_error
+from opi.manager.project.infrastructure import DATABASE_CONNECT_TIMEOUT_SECONDS, Infrastructure
+from opi.manager.project_manager import ProjectManager
 from opi.services.postgres_scope import project_uses_dedicated_postgres
-from opi.utils.connect_retry import retry_on_connect_error
+from opi.services.tasks import progress_steps
+from tests import project_manager_sources
 
 HOST = "demo-db-rw.rig-prd-demo-infrastructure.svc.cluster.local"
+
+#: Where the infrastructure work binds its module names, and so where a patch has to land.
+_INFRA = "opi.manager.project.infrastructure"
 
 # The status of pocpl-0g8 on 4 November 2026, 14 hours after creation: the pod ran and the
 # application connected, but the operator never reached it.
@@ -31,11 +35,11 @@ NIET_READY_STATUS: dict[str, Any] = {
 }
 
 
-def _manager(status: dict[str, Any] | None = None) -> ProjectManager:
-    manager = ProjectManager.__new__(ProjectManager)
+def _infrastructure(status: dict[str, Any] | None = None) -> Infrastructure:
+    host = ProjectManager.__new__(ProjectManager)
     cluster = {"status": status} if status is not None else None
-    manager._kubectl_connector = MagicMock(get_namespaced_resource=AsyncMock(return_value=cluster))
-    return manager
+    host._kubectl_connector = MagicMock(get_namespaced_resource=AsyncMock(return_value=cluster))
+    return Infrastructure(host)
 
 
 class TestRetryOnOwnExceptionType:
@@ -51,8 +55,8 @@ class TestRetryOnOwnExceptionType:
                 raise ConnectionRefusedError("[Errno 111] Connect call failed")
             return "ok"
 
-        with patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()) as sleep:
-            assert await retry_on_connect_error(operation, 30, "db", connect_errors=(OSError,)) == "ok"
+        with patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()) as sleep:
+            assert await retry_on_connect_error(operation, 30, "db", retry_on=(OSError,)) == "ok"
 
         assert len(attempts) == 3
         assert sleep.await_count == 2
@@ -63,10 +67,10 @@ class TestRetryOnOwnExceptionType:
             raise ConnectionRefusedError("refused")
 
         with (
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
             pytest.raises(ConnectionRefusedError),
         ):
-            await retry_on_connect_error(operation, 3, "db", connect_errors=(OSError,))
+            await retry_on_connect_error(operation, 3, "db", retry_on=(OSError,))
 
     @pytest.mark.asyncio
     async def test_does_not_retry_another_error(self) -> None:
@@ -77,22 +81,22 @@ class TestRetryOnOwnExceptionType:
             raise ValueError("not a connect failure")
 
         with pytest.raises(ValueError, match="not a connect failure"):
-            await retry_on_connect_error(operation, 30, "db", connect_errors=(OSError,))
+            await retry_on_connect_error(operation, 30, "db", retry_on=(OSError,))
         assert len(attempts) == 1
 
 
 class TestWaitUntilDatabaseAcceptsConnections:
     @pytest.mark.asyncio
     async def test_a_refused_connection_is_retried_until_it_is_accepted(self) -> None:
-        manager = _manager()
+        infrastructure = _infrastructure()
         conn = MagicMock(fetchval=AsyncMock(return_value=1), close=AsyncMock())
         connect = AsyncMock(side_effect=[ConnectionRefusedError("refused"), ConnectionRefusedError("refused"), conn])
 
         with (
-            patch("opi.manager.project_manager.asyncpg.connect", new=connect),
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch(f"{_INFRA}.asyncpg.connect", new=connect),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
         ):
-            await manager._wait_until_database_accepts_connections(
+            await infrastructure.wait_until_database_accepts_connections(
                 project_name="demo", cluster_name="odcn-production", username="postgres", password="geheim"
             )
 
@@ -102,15 +106,15 @@ class TestWaitUntilDatabaseAcceptsConnections:
 
     @pytest.mark.asyncio
     async def test_a_deadline_without_a_connection_fails_the_task(self) -> None:
-        manager = _manager(NIET_READY_STATUS)
+        infrastructure = _infrastructure(NIET_READY_STATUS)
         connect = AsyncMock(side_effect=ConnectionRefusedError("[Errno 111] Connect call failed"))
 
         with (
-            patch("opi.manager.project_manager.asyncpg.connect", new=connect),
-            patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
+            patch(f"{_INFRA}.asyncpg.connect", new=connect),
+            patch("opi.core.connect_retry.asyncio.sleep", new=AsyncMock()),
             pytest.raises(RuntimeError) as fout,
         ):
-            await manager._wait_until_database_accepts_connections(
+            await infrastructure.wait_until_database_accepts_connections(
                 project_name="demo", cluster_name="odcn-production", username="postgres", password="geheim"
             )
 
@@ -121,25 +125,33 @@ class TestWaitUntilDatabaseAcceptsConnections:
         assert isinstance(fout.value.__cause__, ConnectionRefusedError)
 
     def test_only_the_dedicated_path_waits(self) -> None:
-        """The shared rig-db never reaches this wait: it only lives in the dedicated flow."""
-        source = inspect.getsource(project_manager_module)
-        aanroepen = source.count("_wait_until_database_accepts_connections(")
-        definitie_en_aanroep = 2  # the method itself plus the single call site
-        assert aanroepen == definitie_en_aanroep
-        assert "_wait_until_database_accepts_connections" in inspect.getsource(
-            ProjectManager._create_infrastructure_resources
-        )
+        """The shared rig-db never reaches this wait: it only lives in the dedicated flow.
+
+        Measured over every project-manager source, so moving the wait into
+        ``opi/manager/project/`` cannot take the guard with it. A one-line delegation that
+        keeps the name is not a second call site.
+        """
+        waiter = "wait_until_database_accepts_connections"
+        callers: set[str] = set()
+        for _, tree in project_manager_sources.trees():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or node.name == waiter:
+                    continue
+                if f"{waiter}(" in ast.unparse(node):
+                    callers.add(node.name)
+
+        assert callers == {"create_infrastructure_resources"}
         assert not project_uses_dedicated_postgres({"services": ["postgresql-database"]})
 
 
 class TestClusterReadyWarning:
     @pytest.mark.asyncio
     async def test_a_cluster_the_operator_cannot_reach_warns_once_and_continues(self) -> None:
-        manager = _manager(NIET_READY_STATUS)
+        infrastructure = _infrastructure(NIET_READY_STATUS)
         progress = MagicMock(add_subtask=MagicMock(return_value="sub"))
 
-        with patch("opi.manager.project_manager.logger") as log:
-            await manager._warn_when_database_cluster_not_ready(
+        with patch(f"{_INFRA}.logger") as log:
+            await infrastructure.warn_when_database_cluster_not_ready(
                 project_name="demo", cluster_name="odcn-production", progress_manager=progress, infra_task="taak"
             )
 
@@ -151,11 +163,13 @@ class TestClusterReadyWarning:
 
     @pytest.mark.asyncio
     async def test_a_ready_cluster_is_silent(self) -> None:
-        manager = _manager({"phase": "Cluster in healthy state", "conditions": [{"type": "Ready", "status": "True"}]})
+        infrastructure = _infrastructure(
+            {"phase": "Cluster in healthy state", "conditions": [{"type": "Ready", "status": "True"}]}
+        )
         progress = MagicMock()
 
-        with patch("opi.manager.project_manager.logger") as log:
-            await manager._warn_when_database_cluster_not_ready(
+        with patch(f"{_INFRA}.logger") as log:
+            await infrastructure.warn_when_database_cluster_not_ready(
                 project_name="demo", cluster_name="odcn-production", progress_manager=progress, infra_task="taak"
             )
 
@@ -165,11 +179,11 @@ class TestClusterReadyWarning:
     @pytest.mark.asyncio
     async def test_an_unreadable_cluster_stays_silent(self) -> None:
         """Absent and forbidden look the same through kubectl, and neither proves unhealthy."""
-        manager = _manager(None)
+        infrastructure = _infrastructure(None)
         progress = MagicMock()
 
-        with patch("opi.manager.project_manager.logger") as log:
-            await manager._warn_when_database_cluster_not_ready(
+        with patch(f"{_INFRA}.logger") as log:
+            await infrastructure.warn_when_database_cluster_not_ready(
                 project_name="demo", cluster_name="odcn-production", progress_manager=progress, infra_task="taak"
             )
 
@@ -178,44 +192,43 @@ class TestClusterReadyWarning:
 
 
 class TestSopsRetryLogLevels:
-    @pytest.mark.asyncio
-    async def test_transient_rounds_before_a_success_produce_no_error(self, caplog: pytest.LogCaptureFixture) -> None:
-        manager = ProjectManager.__new__(ProjectManager)
-        manager._kubectl_connector = MagicMock(
+    """The handler owns the retry on the RBAC race, so the caller answers its verdict once."""
+
+    @staticmethod
+    def _infrastructure_whose_handler_answers(answer: bool) -> Infrastructure:
+        host = ProjectManager.__new__(ProjectManager)
+        host._kubectl_connector = MagicMock(
             get_sops_secret_from_namespace=AsyncMock(return_value=None), delete_resource=AsyncMock()
         )
-        manager._sops_handler = MagicMock(
-            store_project_sops_key_in_namespace=AsyncMock(side_effect=[False, False, False, True])
-        )
+        host._sops_handler = MagicMock(store_project_sops_key_in_namespace=AsyncMock(return_value=answer))
+        return Infrastructure(host)
+
+    @pytest.mark.asyncio
+    async def test_a_stored_secret_produces_no_error_and_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        infrastructure = self._infrastructure_whose_handler_answers(True)
 
         with (
-            patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),
-            patch("opi.manager.project_manager.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
-            patch("opi.manager.project_manager.asyncio.sleep", new=AsyncMock()),
+            patch(f"{_INFRA}.get_project_public_key", return_value="age1x"),
+            patch(f"{_INFRA}.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
             caplog.at_level("WARNING"),
         ):
-            await manager._ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
+            await infrastructure.ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
 
-        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
-        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+        assert [r for r in caplog.records if r.levelname in ("ERROR", "WARNING")] == []
 
     @pytest.mark.asyncio
-    async def test_ten_failed_rounds_log_one_error_and_raise(self, caplog: pytest.LogCaptureFixture) -> None:
-        manager = ProjectManager.__new__(ProjectManager)
-        manager._kubectl_connector = MagicMock(
-            get_sops_secret_from_namespace=AsyncMock(return_value=None), delete_resource=AsyncMock()
-        )
-        manager._sops_handler = MagicMock(store_project_sops_key_in_namespace=AsyncMock(return_value=False))
+    async def test_a_false_from_the_handler_logs_one_error_and_raises(self, caplog: pytest.LogCaptureFixture) -> None:
+        infrastructure = self._infrastructure_whose_handler_answers(False)
 
         with (
-            patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),
-            patch("opi.manager.project_manager.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
-            patch("opi.manager.project_manager.asyncio.sleep", new=AsyncMock()),
+            patch(f"{_INFRA}.get_project_public_key", return_value="age1x"),
+            patch(f"{_INFRA}.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
             caplog.at_level("WARNING"),
             pytest.raises(RuntimeError),
         ):
-            await manager._ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
+            await infrastructure.ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
 
         errors = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(errors) == 1
-        assert "after 10 attempts" in errors[0].getMessage()
+        assert "RBAC" in errors[0].getMessage()
+        assert infrastructure._host._sops_handler.store_project_sops_key_in_namespace.await_count == 1

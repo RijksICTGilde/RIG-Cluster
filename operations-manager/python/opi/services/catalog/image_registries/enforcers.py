@@ -1,9 +1,9 @@
-"""De tokentoets bij het opslaan.
+"""The token check at save time.
 
-Bij het pullen levert een te smal token ``ImagePullBackOff`` met "repository not found",
-een melding die de verkeerde kant op wijst. Getoetst wordt het tag-overzicht van een
-repository waar dit project werkelijk een image uit haalt; is die er nog niet, dan alleen
-of de registry het token accepteert.
+On a pull, a token that is too narrow yields ``ImagePullBackOff`` with "repository not found",
+a message that points the wrong way. What is checked is the tag listing of a repository this
+project really pulls an image from; when there is none yet, only whether the registry accepts
+the token.
 """
 
 from __future__ import annotations
@@ -12,14 +12,13 @@ import logging
 from typing import Any
 
 from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
-from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.services_enums import ServiceType
-from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
+from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync, project_private_key_or_none
 from opi.utils.naming import upstream_host
 
 logger = logging.getLogger(__name__)
@@ -28,9 +27,9 @@ _REGISTRIES_PATH = config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES
 
 
 class RegistryTokenEnforcer:
-    """Toetst per registry of de inloggegevens een repository van dit project mogen lezen."""
+    """Checks per registry whether the credentials may read a repository of this project."""
 
-    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:  # noqa: ANN401  # a project-file value
         registries = smart_get_value(value, _REGISTRIES_PATH) or []
         if not isinstance(registries, list):
             return value
@@ -45,12 +44,12 @@ class RegistryTokenEnforcer:
             given_username = registry.get("username")
             password = _plain_token(registry, value)
             if not upstream or not password:
-                # Een entry met een secretName heeft geen token om te toetsen; een entry zonder
-                # beide weigert het model (``RegistryEntry``) bij het opslaan.
+                # An entry with a secretName has no token to check; an entry with neither is
+                # refused by the model (``RegistryEntry``) on save.
                 continue
-            # Dezelfde plaatshouder als de backend in de dockerconfigjson zet, want dit is de
-            # toets OP dat paar: met een andere gebruikersnaam meten we iets anders dan wat er
-            # straks wordt geschreven.
+            # The same placeholder the backend puts in the dockerconfigjson, because this is
+            # the check ON that pair: with a different username we would measure something
+            # other than what gets written.
             username = str(given_username) if given_username else PULL_USERNAME_PLACEHOLDER
             repository = _repository_under(str(upstream), images)
             if repository is None:
@@ -70,53 +69,54 @@ class RegistryTokenEnforcer:
 
 
 def _access_denied_message(repository: str, has_username: bool) -> str:
-    """Wat de afnemer op het scherm krijgt als de registry ons niet binnenlaat.
+    """What the consumer sees when the registry does not let us in.
 
-    De reden is vast en komt niet van skopeo (zie ``UNREADABLE_REASON``). Faalt de toets
-    terwijl de optionele gebruikersnaam leeg was, dan ligt het waarschijnlijk daaraan
-    (Docker Hub, Quay), en dat zegt de melding.
+    The reason is fixed and does not come from skopeo (see ``UNREADABLE_REASON``). When the
+    check fails while the optional username was empty, that is the likely cause (Docker Hub,
+    Quay), and the message says so.
     """
     if has_username:
         opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen: {UNREADABLE_REASON}."
-        raad = "Het token heeft leesrecht op packages nodig."
+        advice = "Het token heeft leesrecht op packages nodig."
     else:
         opening = f"Met dit token kunnen we '{repository}' niet lezen: {UNREADABLE_REASON}."
-        raad = (
+        advice = (
             "Het token heeft leesrecht op packages nodig. Je hebt geen gebruikersnaam ingevuld: "
             "bij Docker Hub en Quay is die wel nodig, dus vul daar je accountnaam of de naam van "
             "je robotaccount in."
         )
-    return f"{opening} {raad}"
+    return f"{opening} {advice}"
 
 
 def _login_refused_message(host: str, has_username: bool) -> str:
     """What the user sees when the registry does not accept the token at all."""
     opening = f"{host} accepteert dit token niet: {UNREADABLE_REASON}."
-    raad = "Controleer of je het hele token hebt geplakt en of het nog geldig is."
+    advice = "Controleer of je het hele token hebt geplakt en of het nog geldig is."
     if not has_username:
-        raad += " Bij Docker Hub en Quay is ook een gebruikersnaam nodig."
-    return f"{opening} {raad}"
+        advice += " Bij Docker Hub en Quay is ook een gebruikersnaam nodig."
+    return f"{opening} {advice}"
 
 
 def _connector() -> SkopeoConnector:
-    """De skopeo-connector; een dienst praat nooit zelf met de buitenwereld.
+    """The skopeo connector; a service never talks to the outside world itself.
 
-    Zonder vangnet: ontbreekt skopeo, dan geeft ``check_repository_access`` zelf ok terug.
+    Without a safety net: when skopeo is missing, ``check_repository_access`` returns ok
+    itself.
     """
     return SkopeoConnector()
 
 
 def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str | None:
-    """Het token in leesbare vorm, of None als er niets te toetsen valt.
+    """The token in readable form, or None when there is nothing to check.
 
-    De enforcer krijgt de OPGESLAGEN vorm, dus wat de converter ervan gemaakt heeft; die
-    aan skopeo geven zou een geldig token afkeuren. Anders dan in ``backends.py`` is een
-    onbruikbare sleutel hier geen fout maar een reden om te zwijgen: dit is een toets.
+    The enforcer receives the STORED shape, so what the converter made of it; handing that to
+    skopeo would reject a valid token. Unlike in ``backends.py`` an unusable key is not an
+    error here but a reason to stay quiet: this is a check.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:
         return None
-    private_key = resolve_project_private_key(project_data) if carries_encrypted_value(stored) else None
+    private_key = project_private_key_or_none(project_data) if carries_encrypted_value(stored) else None
     try:
         return decrypt_password_smart_sync(stored, private_key)
     except ValueError:
@@ -125,9 +125,9 @@ def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str 
 
 
 def _project_images(data: dict[str, Any]) -> list[str]:
-    """Elke image die dit project ergens noemt, genormaliseerd."""
+    """Every image this project names anywhere, normalised."""
 
-    def images_of(components: Any) -> list[str]:
+    def images_of(components: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         return [
             normalize_image(component["image"])
             for component in components or []
@@ -142,7 +142,7 @@ def _project_images(data: dict[str, Any]) -> list[str]:
 
 
 def _repository_under(upstream: str, images: list[str]) -> str | None:
-    """De eerste repository uit deze images die onder ``upstream`` valt, zonder tag."""
+    """The first repository among these images that falls under ``upstream``, without tag."""
     prefix = normalize_prefix(upstream)
     for image in images:
         if image == prefix or image.startswith(prefix + "/"):
@@ -151,7 +151,7 @@ def _repository_under(upstream: str, images: list[str]) -> str | None:
 
 
 def _strip_reference(image: str) -> str:
-    """``host/pad/app:tag`` en ``host/pad/app@sha256:..`` -> ``host/pad/app``."""
+    """``host/path/app:tag`` and ``host/path/app@sha256:..`` -> ``host/path/app``."""
     reference = image.split("@", 1)[0]
     repository, separator, tag = reference.rpartition(":")
     if not separator or "/" in tag:

@@ -43,7 +43,7 @@ Table `users` with columns: `id` (UUID), `email` (unique), `full_name`, `created
 - `opi/templates_lotc/bg/admin-users.html.j2` - List page template
 - `opi/templates_lotc/bg/admin-user-form.html.j2` - Create/edit page template
 - `opi/templates_lotc/bg/_admin-user-form.html.j2` - The form itself, also rendered on its own into the step-up dialog
-- `opi/web/menu.py` - Menu item (admin-only)
+- `opi/http/render/menu.py` - Menu item (admin-only)
 - `features/portaalsessie-levensduur.md` - wat "Sessies beëindigen" doet
 
 ## Validation

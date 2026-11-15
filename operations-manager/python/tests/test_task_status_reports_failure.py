@@ -28,7 +28,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_worker import TaskWorker, reported_failure
+from opi.runtime.tasks.task_worker import TaskWorker, reported_failure
 
 # --------------------------------------------------------------------------------------
 # De beslissing zelf
@@ -116,7 +116,7 @@ def task_service() -> AsyncMock:
 
 @pytest.fixture
 def worker_settings() -> Any:
-    with patch("opi.core.task_worker.settings") as s:
+    with patch("opi.runtime.tasks.task_worker.settings") as s:
         s.TASK_WORKER_POLL_INTERVAL = 0.05
         s.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         s.TASK_WORKER_STALE_THRESHOLD = 120
@@ -136,7 +136,7 @@ async def _draai_tot(worker: TaskWorker, klaar: asyncio.Event, timeout: float = 
         await run_task
 
 
-@patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+@patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
 async def test_de_afgewezen_dienstselectie_meldt_zich_als_mislukt(
     mock_progress_cls: MagicMock,
     task_service: AsyncMock,
@@ -152,8 +152,6 @@ async def test_de_afgewezen_dienstselectie_meldt_zich_als_mislukt(
     task_service.claim_next_task.side_effect = [_taak(), None]
 
     voortgang = AsyncMock()
-    voortgang.mark_legacy_completed = MagicMock()
-    voortgang.mark_legacy_failed = MagicMock()
     voortgang.project_failure = None
     mock_progress_cls.return_value = voortgang
 
@@ -183,10 +181,9 @@ async def test_de_afgewezen_dienstselectie_meldt_zich_als_mislukt(
     assert "publish-on-web" in kwargs["error_message"]
     assert kwargs["max_attempts"] == 0, "een afgewezen wijziging hoort niet opnieuw geprobeerd te worden"
     assert kwargs["result"] == antwoord, "het antwoord van de handler hoort bewaard te blijven"
-    voortgang.mark_legacy_failed.assert_called_once()
 
 
-@patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+@patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
 async def test_een_geslaagde_taak_verandert_niet_van_gedrag(
     mock_progress_cls: MagicMock,
     task_service: AsyncMock,
@@ -198,8 +195,6 @@ async def test_een_geslaagde_taak_verandert_niet_van_gedrag(
     task_service.claim_next_task.side_effect = [_taak(), None]
 
     voortgang = AsyncMock()
-    voortgang.mark_legacy_completed = MagicMock()
-    voortgang.mark_legacy_failed = MagicMock()
     voortgang.project_failure = None
     mock_progress_cls.return_value = voortgang
 
@@ -219,4 +214,3 @@ async def test_een_geslaagde_taak_verandert_niet_van_gedrag(
 
     task_service.complete_task.assert_called_once_with("test-id", antwoord)
     task_service.fail_task.assert_not_called()
-    voortgang.mark_legacy_completed.assert_called_once()

@@ -1,18 +1,18 @@
-"""De kortlevensdurige databaseconsole modal, eigendom van de PostgreSQL services (RC-24).
+"""The short-lived database console modal, owned by the PostgreSQL services.
 
-Een projectlid opent een dialog uit het Acties-menu van een deployment, kiest een tool,
-en OPI start een auth-walled console. Starten geeft onmiddellijk resultaat: validatie en
-registratie gebeuren synchroon (begin), de trage provisioning draait op de achtergrond
-(provision). De dialog polt live toestand: de pod zodra hij bestaat, anders de runs
-registry ('starting'/'failed' voordat de pod er is). De modal en de status zijn voor
-elk projectlid; starten en stoppen vragen een operationele rol (RC-323), want de console
-geeft interactieve toegang tot de database.
+A project member opens a dialog from a deployment's Acties menu, picks a tool, and OPI starts
+an auth-walled console. Starting gives an immediate answer: validation and registration happen
+synchronously (begin), the slow provisioning runs in the background (provision). The dialog
+polls live state: the pod as soon as it exists, otherwise the runs registry
+('starting'/'failed' before the pod is there). The modal and the status are for every project
+member; starting and stopping ask for an operational role, because the console gives
+interactive access to the database.
 
-De modal template staat naast deze module en de routes zijn gemonteerd via
-``Service.web_routers``, dus het blok en de endpoints die het aandrijven gaan samen in
-plaats van dat het blok in de algemene pagina zit en de routes in de algemene router.
-Deze module wordt luie geïmporteerd uit ``web_routers`` (nooit op catalogimport-tijd),
-dus de catalog zelf blijft vrij van manager imports.
+The modal template sits next to this module and the routes are mounted through
+``Service.web_routers``, so the block and the endpoints driving it travel together instead of
+the block living in the general page and the routes in the general router. This module is
+imported lazily from ``web_routers`` (never at catalog import time), so the catalog itself
+stays free of manager imports.
 """
 
 from __future__ import annotations
@@ -22,18 +22,19 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.auth.authz import may
+from opi.http.render.lotc_switch import render
 from opi.manager.db_console_manager import (
     DbConsoleError,
     DbConsoleTool,
     get_db_console_manager,
 )
-from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind, get_runs_service
-from opi.web.authz import may
-from opi.web.lotc_switch import render
+from opi.services.runs_support import pending_state, spawn
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +75,14 @@ async def _render(
             else:
                 state = "starting"
         elif include_pending:
-            state, error = await pending_state(project_name, deployment_name, RunKind.DB_CONSOLE, "console", error)
+            state, message = await pending_state(project_name, deployment_name, RunKind.DB_CONSOLE, "console")
+            error = message or error
         else:
             state = "none"
 
-    # Hetzelfde blok in twee vormgevingen, net als bij de backupsnapshots. Hier stond een
-    # kale TemplateResponse op het roos-sjabloon, dus op een hertekende projectpagina kwam
-    # deze dialoog in de oude vormgeving binnen - onopgemaakt, want lotc_rvo staat niet in
-    # DESIGN_SYSTEMS.
+    # The same block in two designs, as with the backup snapshots. The answer arrives on a
+    # page that is either roos or NLDD, and a roos component on a redrawn page lands there
+    # unstyled, because lotc_rvo is not in DESIGN_SYSTEMS.
     return render(
         request,
         template=_MODAL_TEMPLATE,

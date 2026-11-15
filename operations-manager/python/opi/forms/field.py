@@ -1,10 +1,4 @@
-"""
-Resolved form field representation.
-
-This module provides the FormField dataclass which represents a fully
-resolved field ready for rendering. It bridges the gap between the
-schema definition (Pydantic + FormMeta) and the widget adapter.
-"""
+"""The ``FormField`` dataclass: a field resolved from its schema and ready for rendering."""
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -13,59 +7,22 @@ from typing import Any, Protocol
 class Converter(Protocol):
     """Protocol for value converters (e.g., AGE encryption)."""
 
-    async def to_form(self, value: Any) -> Any:
-        """Convert value for form display."""
-        ...
+    async def to_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
-    async def from_form(self, value: Any) -> Any:
-        """Convert form value back to storage format."""
-        ...
+    async def from_form(self, value: Any) -> Any: ...  # noqa: ANN401  # a project-file value
 
 
 class Validator(Protocol):
     """Protocol for custom validators beyond Pydantic."""
 
-    async def validate(self, value: Any, context: dict[str, Any]) -> list[str]:
-        """
-        Validate value and return list of error messages.
-
-        Returns empty list if valid.
-        """
+    async def validate(self, value: Any, context: dict[str, Any]) -> list[str]:  # noqa: ANN401  # a project-file value
+        """The error messages for *value*, empty when it is valid."""
         ...
 
 
 @dataclass
 class FormField:
-    """
-    Resolved field ready for rendering.
-
-    This class contains all the information a widget adapter needs
-    to render a form field, including metadata, current value,
-    validation errors, and nested children for complex fields.
-
-    Attributes:
-        name: Field name (e.g., "display_name")
-        path: Full path for nested fields (e.g., "components[0].name")
-        schema_type: Python type of the field (None when the model declares none)
-        widget_type: Widget type string ("text", "select", etc.)
-        label: Translated label text
-        description: Translated help text
-        placeholder: Placeholder text
-        required: Whether the field is required
-        value: Current field value
-        options: List of options for select/radio widgets
-        errors: List of validation error messages
-        children: Nested fields for sequences/mappings
-        converter: Optional value converter
-        validator: Optional custom validator
-        css_class: CSS classes for field wrapper
-        attributes: Extra HTML attributes
-        readonly: Whether field is read-only (always)
-        readonly_on_edit: Whether field is read-only when editing
-        min_items: Minimum items for sequence fields
-        max_items: Maximum items for sequence fields
-        htmx_attrs: HTMX attributes for dynamic behavior
-    """
+    """Everything a widget adapter needs to render one field, children included."""
 
     name: str
     path: str
@@ -99,26 +56,14 @@ class FormField:
     virtualize: tuple[str, str] | None = None
 
     def has_errors(self) -> bool:
-        """Check if this field or any children have errors."""
+        """Whether this field or any of its children has an error."""
         if self.errors:
             return True
         return any(child.has_errors() for child in self.children)
 
     def get_error_messages(self) -> list[str]:
-        """Get all error messages including from children."""
+        """Every error message, this field's and its children's."""
         all_errors = list(self.errors)
         for child in self.children:
             all_errors.extend(child.get_error_messages())
         return all_errors
-
-    def get_htmx_attributes(self) -> str:
-        """Generate HTMX attribute string for HTML rendering."""
-        if not self.htmx_attrs:
-            return ""
-        return " ".join(f'{k}="{v}"' for k, v in self.htmx_attrs.items())
-
-    def get_html_attributes(self) -> str:
-        """Generate HTML attribute string for additional attributes."""
-        if not self.attributes:
-            return ""
-        return " ".join(f'{k}="{v}"' for k, v in self.attributes.items())

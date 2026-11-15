@@ -1,19 +1,13 @@
 """Manager for SMTP accounts on the platform mail relay.
 
-There is exactly ONE piece of code that brings an account into existence
-(``ensure_account``) and two callers of it: a project being processed, and the platform
-setting up its own account for ZAD. That split is deliberate and load-bearing --
-``plans/mailrelay.md`` (aanvulling 4 en 4b) argues it at length: ZAD is not a project, it
-has no project file to hang an account on, and inventing a fake project for it would create
-a second kind of project that needs an exception everywhere. The price of two CALLERS is
-only payable if there is one implementation behind them; two would drift, and the platform
-account is the one nobody looks at.
+Exactly ONE piece of code brings an account into existence (``ensure_account``), and the
+callers differ only in who asks and in the budget: a project being processed, the platform
+setting up ZAD's own account, and Keycloak's. Keep it one implementation: ZAD is not a
+project and has no project file to hang an account on, and a second implementation would
+drift, with the platform account the one nobody looks at.
 
-What is deliberately NOT different between the two: the kind of account. Both are ordinary
-principals on the relay, made by the same connector through the relay's ADMIN account --
-the one credential the infrastructure hands over, generated in the shared secret generation
-like the Keycloak, PostgreSQL and MinIO admin passwords. The two accounts differ in who
-asks for them and in their budget, in nothing else.
+Every one of them is an ordinary principal on the relay, made by the same connector through
+the relay's ADMIN account, which is the one credential the infrastructure hands over.
 """
 
 from __future__ import annotations
@@ -38,6 +32,7 @@ from opi.services.catalog.send_email import (
     deployment_messages_per_day,
     is_approved,
 )
+from opi.services.secrets import SendEmailSecret
 from opi.utils.naming import (
     MAIL_PROJECT_ACCOUNT_PREFIX,
     generate_deployment_mail_account_name,
@@ -46,10 +41,10 @@ from opi.utils.naming import (
     generate_mail_sender_address,
 )
 from opi.utils.passwords import generate_secure_password
-from opi.utils.secrets import SendEmailSecret
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 logger = logging.getLogger(__name__)
 
@@ -57,22 +52,22 @@ logger = logging.getLogger(__name__)
 class MailAccountNameError(ValueError):
     """An account name is being used on a path that may not have it.
 
-    The relay has one flat account namespace: ZAD's own account stands next to the
-    project accounts. Two things keep a project off the platform account, and both are
-    needed. The names are disjoint by construction (project accounts carry
+    The relay has one flat account namespace: ZAD's own account stands next to the project
+    accounts. Two things keep a project off the platform account, and both are needed. The
+    names are disjoint by construction (project accounts carry
     ``MAIL_PROJECT_ACCOUNT_PREFIX``), and the project path refuses the platform name
-    outright -- because the prefix only holds while nobody points
-    ``MAIL_PLATFORM_ACCOUNT`` INTO that prefix, and because the project path also gets
-    account names out of the project file, which a repair or an older file can carry.
+    outright, because that prefix only holds while nobody points ``MAIL_PLATFORM_ACCOUNT``
+    INTO it, and because the project path also reads account names out of the project file,
+    which a repair or an older file can carry.
     """
 
 
 def _platform_accounts() -> dict[str, str]:
     """Every account the platform owns, by setting name.
 
-    A COLLECTION and not one name, because there are two: ZAD's own (``zad-platform``)
-    and Keycloak's (``zad-keycloak``). A guard that knows only one of them guards only
-    one of them, and the one it forgets is the one a project could take over.
+    A COLLECTION and not one name, because there are two: ZAD's own (``zad-platform``) and
+    Keycloak's (``zad-keycloak``). A guard that knows only one of them leaves the other open
+    for a project to take over.
     """
     return {
         "MAIL_PLATFORM_ACCOUNT": settings.MAIL_PLATFORM_ACCOUNT,
@@ -102,12 +97,8 @@ def _refuse_platform_account(username: str) -> None:
 
 
 class MailManager:
-    """Creates, updates and removes SMTP accounts on the relay."""
-
     def __init__(self, project_manager: ProjectManager) -> None:
         self.project_manager = project_manager
-
-    # --- the one account path ---------------------------------------------------
 
     @staticmethod
     async def ensure_account(
@@ -128,20 +119,19 @@ class MailManager:
         exists is brought in line rather than refused, so processing a project twice is a
         no-op and a changed limit takes effect on the next run.
 
-        Which is exactly why the platform account has to be refused HERE and not only at
-        the caller: "an existing account is brought in line" means a project that reaches
-        this method with ZAD's account name gets the relay to overwrite ZAD's password and
-        sender address. Only the platform caller says so itself.
+        Which is why the platform account is refused HERE and not only at the caller: "an
+        existing account is brought in line" means a project reaching this method with ZAD's
+        account name would have the relay overwrite ZAD's password and sender address.
 
         Args:
             connector: The relay connector to act through.
             username: SASL username the application authenticates with.
             password: Plaintext password to set on the account.
             from_address: Address the relay pins the sender to.
-            bounce_address: Address bounces come back to. The same address today: envelope
-                and ``From:`` were split by a plus part that bought nothing.
-            from_name: Display name the recipient sees, or empty for none. Empty is a
-                valid outcome and not a fallback -- a project simply did not choose one.
+            bounce_address: Address bounces come back to; the same address as ``from_address``
+                today.
+            from_name: Display name the recipient sees, or empty for none. Empty is a valid
+                outcome and not a fallback: a project simply did not choose one.
             messages_per_day: Daily budget for this account, enforced by the relay via
                 ``set_rate_limit`` (RC-400). Set on all paths including platform accounts.
             is_platform_account: Only the platform caller sets this. Everything else is
@@ -173,19 +163,13 @@ class MailManager:
         else:
             await connector.update_principal(name=username, password=password)
 
-        # The display NAME is a second thing the relay has to be told; the address it works
-        # out itself from this very account name (see ``_sender_address``). Written only on
-        # a difference, so processing a project twice makes no settings write and no
-        # reload -- and a changed ``from-name`` takes effect on the very next run, because
-        # that IS a difference.
+        # The display NAME has to be told to the relay; the address it works out itself from
+        # this account name (see ``_sender_address``). Written only on a difference, so
+        # processing a project twice makes no settings write and no reload, while a changed
+        # ``from-name`` takes effect on the next run.
         #
-        # Nothing to warn about when it is absent: no display name is a legal outcome, and a
-        # project whose name has not been written yet sends from the right ADDRESS with no
-        # name next to it. That is the whole failure mode.
-        #
-        # The ADDRESS travels the same way and for the same reason, but only for an account
-        # that has one. An empty address is not a missing value: it means the relay works
-        # the address out from the account name, which is what every project does.
+        # An absent name or address is a legal outcome, not a missing value: the account then
+        # sends from the derived address with no name next to it.
         await connector.set_sender(username, from_name, sender_address, project_name)
         await connector.set_rate_limit(username, messages_per_day)
 
@@ -196,15 +180,11 @@ class MailManager:
             messages_per_day=messages_per_day,
         )
 
-    # --- caller 1: a project ----------------------------------------------------
-
     async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
         """Ensure this DEPLOYMENT's SMTP account and hand its credentials to it.
 
-        One account per deployment since RC-401 (see
-        ``generate_deployment_mail_account_name``), so each one has its own budget, its own
-        password and its own bounce address -- a test deployment sends its hundred messages
-        a day without anyone approving anything.
+        One account per deployment (see ``generate_deployment_mail_account_name``), so each
+        one has its own budget, password and bounce address.
 
         The password comes out of the deployment's own Secret, exactly as the database
         password does, and is generated only when that Secret is CONFIRMED absent. That is
@@ -232,21 +212,20 @@ class MailManager:
 
         username = generate_deployment_mail_account_name(project_name, deployment_name)
 
-        # De afzender van deze deployment: het afgeleide adres draagt project EN deployment
-        # (niet de accountnaam, die het voorvoegsel project- draagt), en de weergavenaam komt
-        # van de deployment of van het project. Leeg is een geldige uitkomst: dan vertrekt de
-        # post met het kale afgeleide adres en zonder naam.
+        # This deployment's sender: the derived address carries project AND deployment (not
+        # the account name, which carries the project- prefix), and the display name comes
+        # from the deployment or from the project. Empty is a valid outcome: the mail then
+        # leaves with the bare derived address and no name.
         derived_address = self._deployment_sender_address(cluster, project_name, deployment_name)
-        # DE POORT (RC-399/RC-401). Alleen een adres dat een beheerder voor PRECIES DEZE
-        # WAARDE heeft goedgekeurd gaat naar de relay, van deze deployment of van het
-        # project. In elk ander geval gaat een lege waarde mee, en die wist een adres dat er
-        # eerder stond: zo heeft intrekken geen eigen trigger nodig. De bounce blijft naar
-        # het afgeleide adres terugkomen, zodat hij herleidbaar blijft tot deze deployment.
+        # THE GATE (RC-399/RC-401). Only an address an admin approved for EXACTLY THIS VALUE
+        # reaches the relay, from this deployment or from the project. In every other case an
+        # empty value travels, which clears an address that stood there before, so a
+        # withdrawal needs no trigger of its own. The bounce keeps coming back to the derived
+        # address, so it stays traceable to this deployment.
         sender_address = deployment_from_address(project_data, deployment_name)
         from_address = sender_address or derived_address
         from_name = deployment_from_name(project_data, deployment_name)
-        # Poort: naar de relay gaat de EFFECTIEVE waarde van deze deployment, nooit de
-        # gevraagde.
+        # Gate: the relay gets this deployment's EFFECTIVE value, never the requested one.
         messages_per_day = deployment_messages_per_day(project_data, deployment_name)
 
         stored = await self._read_deployment_secret(deployment_name, deployment)
@@ -286,13 +265,12 @@ class MailManager:
     ) -> dict[str, str] | None:
         """The stored Secret, or ``None`` when it is CONFIRMED absent.
 
-        Raises ``KubectlExecutionError`` when its existence cannot be determined. That is
-        not pedantry: ``get_secret`` answers ``None`` for a missing Secret AND for any
-        kubectl failure (no rights, API server away, timeout), and every caller turns a
-        ``None`` into a NEW password. So one unreadable moment would silently rotate an
-        account out of its own password -- the Secret overwritten, the relay reset, and
-        nothing in the way of it. Refusing here makes that moment a failure the next run
-        repairs by simply reading the Secret back.
+        Raises ``KubectlExecutionError`` when its existence cannot be determined.
+        ``get_secret`` answers ``None`` for a missing Secret AND for any kubectl failure (no
+        rights, API server away, timeout), and every caller turns a ``None`` into a NEW
+        password, so one unreadable moment would silently rotate an account out of its own
+        password. Refusing here makes that moment a failure the next run repairs by reading
+        the Secret back.
         """
         stored = await kubectl.get_secret(secret_name, namespace)
         if stored is not None:
@@ -319,12 +297,11 @@ class MailManager:
     async def _remove_legacy_project_account(self, project_data: dict[str, Any], project_name: str) -> None:
         """Remove the one-per-project account of before RC-401, once nothing uses it.
 
-        The overgang without a gap in the mail: the old account keeps standing as long as a
-        LIVE Secret of one of this project's deployments still authenticates with it. Pods
-        pick up their new account when ArgoCD has synced their new Secret and restarted
-        them, which is one processing round later than the project file being written -- so
-        deleting on the strength of the project file alone would take the mail away in
-        between.
+        No gap in the mail: the old account keeps standing as long as a LIVE Secret of one of
+        this project's deployments still authenticates with it. Pods pick up their new account
+        only once ArgoCD has synced their new Secret and restarted them, which is one round
+        later than the project file being written, so deleting on the strength of the project
+        file alone would take the mail away in between.
 
         A Secret that cannot be READ leaves the account standing, for the same reason.
 
@@ -357,29 +334,22 @@ class MailManager:
         if await self._delete_account(legacy):
             logger.info(f"Oud projectmailaccount {legacy} opgeruimd: geen enkele deployment gebruikt het nog")
 
-    # --- caller 2: ZAD itself ---------------------------------------------------
-
     @staticmethod
     async def ensure_platform_account() -> MailAccount | None:
         """Ensure ZAD's own account on the relay, outside any project.
 
-        This is an ORDINARY account: the same ``ensure_account`` a project goes through,
-        with a password OPI generates itself. There is no second kind of account and no
-        second credential in the relay's own configuration -- the only thing the
-        infrastructure hands over is the ADMIN credential this connector authenticates
-        with, exactly as with Keycloak, PostgreSQL and MinIO.
-
-        That is also why the password cannot come from the bootstrap: it does not exist
-        when the bootstrap runs. It is generated the first time OPI meets a running relay,
-        and kept in a Secret in OPI's own namespace (see ``_read_platform_secret``).
+        An ORDINARY account: the same ``ensure_account`` a project goes through, with a
+        password OPI generates itself. The password cannot come from the bootstrap, because it
+        does not exist when the bootstrap runs; it is generated the first time OPI meets a
+        running relay and kept in a Secret in OPI's own namespace
+        (see ``_read_platform_secret``).
 
         Idempotent by construction. A second boot reads the stored password back and hands
         the relay the SAME one, so it makes no second account and silently replaces
         nothing. A password is generated ONLY when the Secret is absent.
 
-        Returns ``None`` when no relay is configured -- the platform account is what
-        unblocks password reset and invite mail, and a cluster without a relay simply has
-        neither yet.
+        Returns ``None`` when no relay is configured; such a cluster has no password-reset
+        and no invite mail either.
         """
         if not settings.MAIL_RELAY_API_URL:
             logger.info("Geen mailrelay ingesteld op dit cluster: ZAD krijgt geen eigen mailaccount")
@@ -387,11 +357,10 @@ class MailManager:
 
         cluster = settings.CLUSTER_MANAGER
         username = settings.MAIL_PLATFORM_ACCOUNT
-        # ZAD is not a project, so there is no project name to put in the plus part and no
-        # project configuration to take a display name from. It sends from the BARE
-        # address, without a name -- which is also what the relay falls back to when it
-        # holds no sender for an account, so the platform account needs no exception
-        # anywhere. See ``_sender_address``.
+        # ZAD is not a project, so there is no project name for the plus part and no project
+        # configuration to take a display name from. It sends from the BARE address, without a
+        # name, which is also what the relay falls back to when it holds no sender for an
+        # account. See ``_sender_address``.
         from_address = MailManager._sender_address(cluster, None)
         bounce_address = from_address
 
@@ -406,13 +375,13 @@ class MailManager:
             password = generate_secure_password()
             await MailManager._write_platform_secret(username, password, from_address)
         elif (stored or {}).get("username") != username or (stored or {}).get("from-address") != from_address:
-            # Name or sender changed by configuration: the Secret must not keep answering
-            # the old thing to whoever reads it back.
+            # Name or sender changed by configuration: the Secret must not keep answering the
+            # old value to whoever reads it back.
             await MailManager._write_platform_secret(username, password, from_address)
 
         connector = await create_mail_connector()
-        # The same ``ensure_account`` the project path uses -- it is a staticmethod
-        # precisely so this caller needs no project and no manager instance.
+        # The same ``ensure_account`` the project path uses; it is a staticmethod so this
+        # caller needs no project and no manager instance.
         account = await MailManager.ensure_account(
             connector=connector,
             username=username,
@@ -464,25 +433,18 @@ class MailManager:
         )
         logger.info(f"Platform-mailaccount {username} bewaard in secret {settings.MAIL_PLATFORM_SECRET_NAME}")
 
-    # --- caller 3: Keycloak -----------------------------------------------------
-
     @staticmethod
     async def ensure_keycloak_account() -> MailAccount | None:
         """Ensure KEYCLOAK's account on the relay, from the password the bootstrap made.
 
-        A THIRD caller of ``ensure_account`` and not a variant of the second, because the
-        two differ in the one thing that matters: where the password comes from.
+        A THIRD caller of ``ensure_account`` and not a variant of the second, because the two
+        differ in where the password comes from. ``zad-platform`` is used by nobody but OPI,
+        so OPI generates and keeps that password. Keycloak reads its password out of a file
+        the bootstrap put there, so here OPI generates NOTHING and writes NOTHING back: the
+        Secret comes out of git and OPI is the reconciler, not the source.
 
-        ``zad-platform`` is used by nobody but OPI, so OPI generates that password itself
-        and keeps it. Keycloak is a different program that does not know OPI, must not wait
-        for it, and reads its password out of a file the bootstrap put there. So here OPI
-        generates NOTHING and writes NOTHING back: the Secret comes out of git, and OPI is
-        the reconciler rather than the source. That is the whole rule, and it is written
-        down again in the template that makes the Secret.
-
-        Which also decides what happens when the Secret is absent: that is a cluster
-        without Keycloak mail, not a failure. It is logged and the boot carries on -- the
-        same shape as a cluster with no relay configured at all.
+        An absent Secret is a cluster without Keycloak mail, not a failure: it is logged and
+        the boot carries on, like a cluster with no relay configured at all.
 
         Idempotent: a second boot reads the same value out of the same Secret and hands the
         relay the same password, so nothing changes. A CHANGED value in the Secret reaches
@@ -503,11 +465,11 @@ class MailManager:
             return None
 
         username = settings.MAIL_KEYCLOAK_ACCOUNT
-        # Het KALE clusteradres, zonder eigen lokaal deel en zonder plusdeel: dit is het
-        # basisadres dat we overal willen, en het is ook wat de YAML-handler in de
-        # ``smtpServer.from`` van elke realm schrijft. Een plusdeel kan hier sowieso niet:
-        # ``zad-keycloak`` verstuurt voor alle realms tegelijk, dus er is geen project om te
-        # noemen. Wat inlogpost van portalpost onderscheidt is de WEERGAVENAAM hieronder.
+        # The BARE cluster address, with no local part and no plus part of its own: the base
+        # address wanted everywhere, and also what the YAML handler writes into every realm's
+        # ``smtpServer.from``. A plus part is impossible here anyway: ``zad-keycloak`` sends
+        # for every realm at once, so there is no project to name. What tells login mail from
+        # portal mail is the DISPLAY NAME below.
         from_address = get_mail_from_address(settings.CLUSTER_MANAGER)
 
         connector = await create_mail_connector()
@@ -533,9 +495,8 @@ class MailManager:
         infrastructure secrets predate this feature.
 
         Unlike the platform account there is nothing to protect against a MISREAD here: a
-        ``None`` leads to "no Keycloak mail on this cluster" and never to a generated
-        password that overwrites anything. So an unreadable moment costs one reconcile, and
-        the next boot repairs it.
+        ``None`` leads to "no Keycloak mail on this cluster" and never to a generated password
+        that overwrites anything, so an unreadable moment costs one reconcile.
         """
         namespace = get_namespace(settings.CLUSTER_MANAGER)
         stored = await KubectlConnector().get_secret(settings.MAIL_KEYCLOAK_SECRET_NAME, namespace)
@@ -543,20 +504,18 @@ class MailManager:
             return None
         return stored.get(settings.MAIL_KEYCLOAK_SECRET_KEY) or None
 
-    # --- cleanup ----------------------------------------------------------------
-
     async def handle_service_removal(
         self,
         project_name: str,
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: Any = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Clean up when send-email is removed from a deployment.
 
-        Since RC-401 the account is of the deployment, so there is nothing to weigh: its
-        account goes and the other deployments keep theirs.
+        The account belongs to the deployment, so there is nothing to weigh: its account goes
+        and the other deployments keep theirs.
         """
         result = await self.delete_resources_for_deployment(project_data, deployment_data)
         result["trigger"] = "service_removal"
@@ -603,13 +562,11 @@ class MailManager:
         """Remove the account from the relay. ``None`` when there is no relay configured.
 
         The ONE removal, so a withdrawn approval and a deleted project take the same path.
-        Two removals would differ the moment one of them learns something the other does
-        not, and the withdrawal path is the one nobody exercises.
 
-        Every removal is a PROJECT removal -- the platform account has no lifecycle that
-        ends -- so the platform name is refused here without an exception for anyone. That
-        also covers the name that comes out of the project FILE in ``_revoke``, which is
-        the one path where the name is not computed but read.
+        Every removal is a PROJECT removal, because the platform account has no lifecycle
+        that ends, so the platform name is refused here with no exception for anyone. That
+        also covers the name that comes out of the project FILE in ``_revoke``, the one path
+        where the name is read rather than computed.
 
         Raises:
             MailAccountNameError: The name is the platform account of ZAD itself.
@@ -623,8 +580,8 @@ class MailManager:
         # the relay's configuration after the project is gone, and hand it to whoever next
         # gets an account by that name.
         await connector.delete_sender_name(username)
-        # En het dagbudget, om dezelfde reden: een limiter die blijft staan geldt voor het
-        # volgende account dat zo gaat heten.
+        # And the daily budget, for the same reason: a limiter left standing applies to the
+        # next account by that name.
         await connector.delete_rate_limit(username)
         return await connector.delete_principal(username)
 
@@ -643,8 +600,6 @@ class MailManager:
         await self._remove_legacy_project_account(project_data, project_name)
         logger.info(f"Mailaccounts van {project_name} ingetrokken: het project heeft geen goedkeuring (meer)")
 
-    # --- internals --------------------------------------------------------------
-
     @staticmethod
     def _sender_address(cluster: str, project_name: str | None) -> str:
         """The address this account's envelope carries, and its ``From:`` unless one is approved.
@@ -654,13 +609,9 @@ class MailManager:
         for the one-per-project account of before RC-401, which stands until it is cleaned
         up, so the pairing it pins stays real for as long as that account does.
 
-        One address for both, where those two used to differ by a plus part. The
-        difference bought nothing -- SPF alignment looks at the DOMAIN, and that is the
-        same either way -- while it cost the recipient the ability to see which project
-        wrote to them. Since RC-399 they CAN differ again, for a project whose own address
-        was approved: the ``From:`` then carries that address and the envelope keeps this
-        one, so the bounce stays traceable. The relay's ``X-ZAD-Project`` header names the
-        project either way.
+        One address for both, unless a project's own address was approved: the ``From:`` then
+        carries that address and the envelope keeps this one, so the bounce stays traceable.
+        The relay's ``X-ZAD-Project`` header names the project either way.
 
         The label goes in the plus part, which is what makes a bounce traceable without
         leaving the domain. Staying in ``rijksoverheid.nl`` is load-bearing: it publishes
@@ -668,17 +619,13 @@ class MailManager:
         ``From:`` is the only thing that gets a message through DMARC.
 
         ``project_name`` is ``None`` for the platform account of ZAD itself, which is not a
-        project and has none to point at. It gets the bare address -- the same one the
-        relay falls back to when it holds no sender for an account, so the two coincide by
-        construction instead of by coincidence.
+        project and has none to point at. It gets the bare address, the same one the relay
+        falls back to when it holds no sender for an account.
 
-        What is returned is not a request but a REPORT of what the relay will do. The relay
-        composes this address ITSELF, by cutting the ``project-`` prefix off the
-        authenticated account name, because Stalwart v0.11.8 turned out to have no way at
-        all to look a value up per account while a message is being accepted (measured; see
-        the identity rules in the relay's configmap). The two cannot disagree: both are
-        built from the same label function, so the account name always carries exactly the
-        label the address puts after the ``+``.
+        What is returned is not a request but a REPORT of what the relay will do: the relay
+        composes this address itself, by cutting the ``project-`` prefix off the authenticated
+        account name (see the identity rules in the relay's configmap). The two cannot
+        disagree, because both are built from the same label function.
 
         It is handed to the application as ``SMTP_FROM`` so a developer can see what the
         recipient gets.
@@ -692,7 +639,7 @@ class MailManager:
     def _deployment_sender_address(cluster: str, project_name: str, deployment_name: str) -> str:
         """The same report for ONE deployment's account (RC-401).
 
-        The plus part now carries project AND deployment, so a bounce is traceable to the
+        The plus part carries project AND deployment, so a bounce is traceable to the
         deployment that sent it instead of to the project as a whole.
         """
         return generate_deployment_mail_sender_address(get_mail_from_address(cluster), project_name, deployment_name)

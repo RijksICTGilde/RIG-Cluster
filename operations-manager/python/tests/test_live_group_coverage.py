@@ -117,7 +117,6 @@ KUBERNETES = Dependency(
     exempt={},
     unused={
         "apply_annotation_to_resource": "no caller in opi/; apply_labels_to_resource is the one in use",
-        "encrypt_file_with_sops": "no caller in opi/; opi/utils/sops.py encrypts without kubectl",
         "get_namespace_label_map": "no caller in opi/; get_namespace_labels_map is the one in use",
     },
 )

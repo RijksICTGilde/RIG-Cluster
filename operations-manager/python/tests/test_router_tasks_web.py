@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.http.auth.authz import enforce_route_action
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import enforce_route_action
 from opi.web.router_tasks import project_tasks
 
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -53,8 +53,8 @@ async def _call(email: str, project_name: str = "demo") -> Any:
     gebruikers.is_platform_admin.return_value = False
     request = _request(email, project_name)
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         await enforce_route_action(request)
     with (
@@ -62,7 +62,7 @@ async def _call(email: str, project_name: str = "demo") -> Any:
             "opi.web.router_tasks.get_runs_service", return_value=SimpleNamespace(list_runs=AsyncMock(return_value=[]))
         ),
         patch(
-            "opi.web.lotc_switch.render", MagicMock(side_effect=lambda _r, template, context, **_kw: context)
+            "opi.http.render.lotc_switch.render", MagicMock(side_effect=lambda _r, template, context, **_kw: context)
         ) as render,
     ):
         resultaat = await project_tasks(request, project_name)

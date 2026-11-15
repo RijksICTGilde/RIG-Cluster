@@ -1,5 +1,5 @@
-"""Visualizers van ``seaweedfs-storage``: de projectlaag, en de grens op oude versies op
-beide lagen (RC-380)."""
+"""Visualizers of ``seaweedfs-storage``: the project layer, and the limit on noncurrent
+versions on both layers."""
 
 from __future__ import annotations
 
@@ -21,15 +21,15 @@ SEAWEEDFS_ENABLE_VERSIONING = EditableVisualizer(
         "verwijdering terug te draaien is. Dit kost extra opslag, evenredig met hoe vaak "
         "objecten wijzigen."
     ),
-    # Live hertekenen: het blok "Oude versies" staat achter een Fieldset-poort op dit
-    # vinkje; zonder dit attribuut wordt de toggle pas op de volgende stap zichtbaar.
+    # Live redraw: the "Oude versies" block sits behind a Fieldset guard on this checkbox;
+    # without this attribute the toggle only becomes visible on the next step.
     attributes={"data-rerender": "true"},
 )
 
 
-#: Dezelfde grens als bij minio, uit dezelfde declaratie; alleen het yaml-pad noemt deze
-#: dienst. ``inherits``: een leeg veld zegt niets, zodat de minder specifieke laag of de
-#: standaard geldt.
+#: The same limit as with minio, from the same declaration; only the yaml path names this
+#: service. ``inherits``: an empty field says nothing, so the less specific layer or the default
+#: applies.
 MAX_NONCURRENT_VERSIONS_FIELD = setting_field(
     MAX_NONCURRENT_VERSIONS,
     ServiceType.SEAWEEDFS_STORAGE,
@@ -48,7 +48,7 @@ NONCURRENT_EXPIRE_DAYS_FIELD = setting_field(
     inherits=True,
 )
 
-# Geen virtualize: de modal per deployment gaat over een deployment, zoals bij minio.
+# No virtualize: the per-deployment modal targets one deployment, as with minio.
 DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD = setting_field(
     MAX_NONCURRENT_VERSIONS,
     ServiceType.SEAWEEDFS_STORAGE,

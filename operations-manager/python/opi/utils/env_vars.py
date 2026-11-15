@@ -1,34 +1,34 @@
-"""
-Environment variable utilities for generating deployment environment variables.
+"""Parsing and substituting the environment variables of a deployment.
 
-This module provides functionality to generate environment variables for deployments
-including storage paths, service discovery, database connections, and other runtime
-configuration variables.
+Three input shapes land here (``KEY=value`` text, YAML text and a legacy mapping) and they
+share one name rule, plus the ``$VAR``/``${VAR}`` substitution in two flavours: strict for
+an alias the author wrote, lenient for a user-supplied value that may just hold a dollar.
 """
 
 import logging
 import re
 from typing import Final
 
-from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+
+from opi.utils.yaml_util import load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
-#: De vorm van een omgevingsvariabelenaam, zoals de shell en Kubernetes hem accepteren.
-#: Eén constante voor alle drie de vormen die deze module uitpakt (KEY=value, YAML en een
-#: mapping), en ``$defs/env-var-map`` in project_v2.json neemt de tekst over.
+#: The shape of an environment variable name, as the shell and Kubernetes accept it. One
+#: constant for all three shapes this module parses (KEY=value, YAML and a mapping), and
+#: ``$defs/env-var-map`` in project_v2.json carries the same text.
 ENV_VAR_NAME_PATTERN: Final[str] = r"^[A-Za-z_][A-Za-z0-9_]*\Z"
 
 _ENV_VAR_NAME: Final = re.compile(ENV_VAR_NAME_PATTERN)
 
 
 def _check_env_var_name(key: object, where: str) -> None:
-    """Weiger een sleutel die geen variabelenaam is.
+    """Refuse a key that is not a variable name.
 
     Raises:
-        TypeError: als de sleutel geen string is.
-        ValueError: als hij niet de vorm van een variabelenaam heeft.
+        TypeError: when the key is not a string.
+        ValueError: when it does not have the shape of a variable name.
     """
     if not isinstance(key, str):
         raise TypeError(f"{where}Environment variable key must be a string, got {type(key).__name__}")
@@ -39,22 +39,13 @@ def _check_env_var_name(key: object, where: str) -> None:
 
 
 def _detect_env_var_format(text: str) -> str:
-    """
-    Detect whether the input is in KEY=VALUE or YAML format.
-
-    Args:
-        text: Input text to analyze
-
-    Returns:
-        'yaml' if YAML format detected, 'keyvalue' otherwise
-    """
+    """``'yaml'`` when the text reads as YAML, ``'keyvalue'`` otherwise."""
     lines = text.strip().split("\n")
 
-    # Look for YAML indicators
     yaml_indicators = 0
     keyvalue_indicators = 0
 
-    for line in lines[:10]:  # Check first 10 lines
+    for line in lines[:10]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -68,11 +59,9 @@ def _detect_env_var_format(text: str) -> str:
             yaml_indicators += 1
             continue
 
-        # KEY=VALUE indicators
         if "=" in line and not line.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*", line):
             keyvalue_indicators += 1
 
-    # If we have more YAML indicators or the text starts with certain patterns
     if yaml_indicators > keyvalue_indicators or text.strip().startswith(("---", "{\n", "[\n")):
         return "yaml"
 
@@ -100,34 +89,24 @@ def _yaml_failure_summary(error: Exception) -> str:
 
 
 def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
-    """
-    Parse environment variables from YAML format.
-
-    Args:
-        yaml_text: YAML formatted text
-
-    Returns:
-        Dictionary of environment variables
+    """Parse environment variables from YAML text.
 
     Raises:
-        ValueError: If YAML is invalid or contains non-string values
+        ValueError: when the YAML is invalid or holds a value that is not a string, a
+            number or a boolean.
     """
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        data = yaml.load(yaml_text)
+        data = load_yaml_safe(yaml_text)
 
         if data is None:
             return {}
 
-        # Handle different YAML structures
         env_vars = {}
 
         if isinstance(data, dict):
             for key, value in data.items():
                 _check_env_var_name(key, "")
 
-                # Convert value to string
                 if value is None:
                     env_vars[key] = ""
                 elif isinstance(value, bool):
@@ -149,13 +128,11 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
     except Exception as e:
         if "ValueError" in str(e.__class__):
             raise
-        raise ValueError(f"Failed to parse YAML: {_yaml_failure_summary(e)}")
+        raise ValueError(f"Failed to parse YAML: {_yaml_failure_summary(e)}") from e
 
 
 def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
-    """
-    Validate and parse environment variables from text format.
-    Automatically detects and supports both KEY=VALUE and YAML formats.
+    """Parse environment variables, detecting the format from the text itself.
 
     Supported formats:
 
@@ -170,38 +147,30 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
         DEBUG: true
         PORT: 8080
 
-    Args:
-        env_vars_text: Environment variables in KEY=VALUE or YAML format
-
-    Returns:
-        Dictionary of parsed environment variables
-
     Raises:
-        ValueError: If format is invalid
+        ValueError: when the format is invalid.
     """
     if not env_vars_text:
         return {}
 
-    # De mapping-vorm (legacy CommentedMap) ging ongetoetst door, terwijl de twee
-    # tekstvormen hieronder de sleutel wel toetsen. Zelfde regel, dezelfde constante.
+    # The mapping shape (legacy CommentedMap) gets the same key check as the two text
+    # shapes below, from the same constant.
     if isinstance(env_vars_text, CommentedMap):
         for key in env_vars_text:
             _check_env_var_name(key, "")
         return dict(env_vars_text)
 
-    # Auto-detect format
     format_type = _detect_env_var_format(env_vars_text)
 
     if format_type == "yaml":
         return _parse_yaml_env_vars(env_vars_text)
 
-    # Original KEY=VALUE parsing logic
     env_vars = {}
     lines = env_vars_text.strip().split("\n")
 
     for line_num, line in enumerate(lines, 1):
         line = line.strip()
-        if not line or line.startswith("#"):  # Skip empty lines and comments
+        if not line or line.startswith("#"):
             continue
 
         if "=" not in line:
@@ -215,15 +184,13 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
         key = key.strip()
         value = value.strip()
 
-        # Clean up common problematic value formats
         if value == '""' or value == "''":
-            # Convert quoted empty strings to actual empty strings
             value = ""
         elif len(value) >= 2 and (
             (value.startswith('"') and value.endswith('"') and value.count('"') == 2)
             or (value.startswith("'") and value.endswith("'") and value.count("'") == 2)
         ):
-            # Remove surrounding quotes if present (but preserve internal quotes)
+            # Surrounding quotes only: an internal quote is part of the value.
             value = value[1:-1]
 
         if not key:
@@ -237,16 +204,7 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
 
 
 def extract_variable_references(template: str) -> list[str]:
-    """
-    Extract all variable references from a template string.
-
-    Supports both $VAR and ${VAR} syntax.
-
-    Args:
-        template: String potentially containing variable references
-
-    Returns:
-        List of unique variable names referenced in the template
+    """Every variable name a template references, in both ``$VAR`` and ``${VAR}`` syntax.
 
     Examples:
         >>> extract_variable_references("$HOST:$PORT")
@@ -261,11 +219,10 @@ def extract_variable_references(template: str) -> list[str]:
 
     var_names = set()
 
-    # Pattern 1: ${VAR_NAME} - braced syntax
     braced_pattern = r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
     var_names.update(re.findall(braced_pattern, template))
 
-    # Pattern 2: $VAR_NAME - simple syntax (not followed by alphanumeric or underscore)
+    # The lookahead keeps $VAR from swallowing the start of $VARIANT.
     simple_pattern = r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^A-Za-z0-9_]|$)"
     var_names.update(re.findall(simple_pattern, template))
 
@@ -273,21 +230,12 @@ def extract_variable_references(template: str) -> list[str]:
 
 
 def substitute_variables(template: str, context: dict[str, str]) -> str:
-    """
-    Substitute variable references in a template string with values from context.
+    """Substitute every ``$VAR`` and ``${VAR}`` reference with its value from ``context``.
 
-    Supports both $VAR and ${VAR} syntax.
-    Escaping: $$ becomes literal $
-
-    Args:
-        template: String containing variable references
-        context: Dictionary of variable name -> value mappings
-
-    Returns:
-        String with all variables substituted
+    ``$$`` escapes to a literal ``$``.
 
     Raises:
-        ValueError: If a referenced variable is not found in context
+        ValueError: when a referenced variable is not in ``context``.
 
     Examples:
         >>> substitute_variables("$HOST:$PORT", {"HOST": "localhost", "PORT": "5432"})
@@ -300,14 +248,11 @@ def substitute_variables(template: str, context: dict[str, str]) -> str:
     if not template:
         return template
 
-    # First, handle escaping: $$ -> placeholder
     placeholder = "\x00ESCAPED_DOLLAR\x00"
     result = template.replace("$$", placeholder)
 
-    # Extract all referenced variables
     referenced_vars = extract_variable_references(result)
 
-    # Validate all referenced variables exist in context
     missing_vars = [var for var in referenced_vars if var not in context]
     if missing_vars:
         available = ", ".join(sorted(context.keys()))
@@ -315,31 +260,24 @@ def substitute_variables(template: str, context: dict[str, str]) -> str:
             f"Variable references not found in context: {', '.join(missing_vars)}. Available variables: {available}"
         )
 
-    # Substitute braced variables: ${VAR}
     for var_name in referenced_vars:
         var_value = context[var_name]
         result = result.replace(f"${{{var_name}}}", var_value)
 
-    # Substitute simple variables: $VAR
-    # Use word boundary to avoid partial replacements
+    # The lookahead keeps the bare form from matching a ${VAR} already replaced above, and
+    # from eating the start of a longer name.
     for var_name in referenced_vars:
         var_value = context[var_name]
-        # Replace $VAR but not if it's part of ${VAR}
         safe_value = var_value.replace("\\", "\\\\")
         result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", safe_value, result)
 
-    # Restore escaped dollars
     result = result.replace(placeholder, "$")
 
     return result
 
 
 def detect_circular_references(aliases: dict[str, str]) -> None:
-    """
-    Detect circular references in alias definitions.
-
-    Args:
-        aliases: Dictionary of alias_name -> template mappings
+    """Refuse alias definitions that reference each other in a circle.
 
     Raises:
         ValueError: If circular references are detected
@@ -351,17 +289,13 @@ def detect_circular_references(aliases: dict[str, str]) -> None:
     if not aliases:
         return
 
-    # Build dependency graph
     dependencies: dict[str, set[str]] = {}
     for alias_name, template in aliases.items():
         referenced_vars = extract_variable_references(template)
-        # Only track dependencies on other aliases
         dependencies[alias_name] = {var for var in referenced_vars if var in aliases}
 
-    # Check for cycles using depth-first search
     def has_cycle(node: str, visited: set[str], path: list[str]) -> list[str] | None:
         if node in visited:
-            # Found a cycle
             if node in path:
                 cycle_start = path.index(node)
                 return [*path[cycle_start:], node]

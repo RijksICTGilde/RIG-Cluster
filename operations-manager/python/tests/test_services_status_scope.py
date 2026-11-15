@@ -1,6 +1,6 @@
 """Services status gaat over ONZE diensten, niet over wat gebruikers draaien.
 
-De queries in ``gedeelde_diensten`` hebben geen namespacefilter: ze tellen op wat er is,
+De queries in ``shared_services`` hebben geen namespacefilter: ze tellen op wat er is,
 in een set per blok. Dat is met opzet zo, want een filter in PromQL zou een lijst
 namespaces in elke query bakken en die loopt weg zodra er een project bij komt.
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.services import gedeelde_diensten
+from opi.services import shared_services
 
 
 class _Project:
@@ -41,7 +41,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_de_projectnamespaces_worden_afgeleid(store: None) -> None:
-    gevonden = gedeelde_diensten.projectnamespaces()
+    gevonden = shared_services.project_namespaces()
 
     assert "rig-prd-wies" in gevonden
     assert "rig-prd-toets-hn7" in gevonden
@@ -50,7 +50,7 @@ def test_de_projectnamespaces_worden_afgeleid(store: None) -> None:
 
 
 def test_onze_eigen_namespaces_vallen_er_niet_onder(store: None) -> None:
-    gevonden = gedeelde_diensten.projectnamespaces()
+    gevonden = shared_services.project_namespaces()
 
     assert "rig-prd-operations" not in gevonden
     assert "argocd" not in gevonden
@@ -64,7 +64,7 @@ def test_een_onbekend_cluster_sluit_niets_uit(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("opi.core.cluster_config.get_namespace_prefix", _weiger)
 
-    assert gedeelde_diensten.projectnamespaces() == set()
+    assert shared_services.project_namespaces() == set()
 
 
 @pytest.mark.asyncio
@@ -78,9 +78,9 @@ async def test_een_project_pvc_staat_niet_op_de_pagina(monkeypatch: pytest.Monke
         ]
         return {"vulling": reeks, "gebruikt": reeks, "capaciteit": reeks, "inodes": reeks}
 
-    monkeypatch.setattr(gedeelde_diensten, "_voer_queries_uit", _antwoorden)
+    monkeypatch.setattr(shared_services, "_run_queries", _antwoorden)
 
-    blok = await gedeelde_diensten.haal_opslag()
+    blok = await shared_services.fetch_storage()
 
     namespaces = [rij.namespace for rij in blok.rijen]
     assert "rig-prd-operations" in namespaces
@@ -106,9 +106,9 @@ async def test_een_projectdatabase_staat_niet_op_de_pagina(monkeypatch: pytest.M
             "wachtend": instanties,
         }
 
-    monkeypatch.setattr(gedeelde_diensten, "_voer_queries_uit", _antwoorden)
+    monkeypatch.setattr(shared_services, "_run_queries", _antwoorden)
 
-    blok = await gedeelde_diensten.haal_databases()
+    blok = await shared_services.fetch_databases()
 
     assert [rij.namespace for rij in blok.rijen] == ["rig-prd-operations"]
     assert [rij.namespace for rij in blok.extra_rijen] == ["rig-prd-operations"]
@@ -126,9 +126,9 @@ def test_geen_enkele_query_telt_dezelfde_reeks_dubbel() -> None:
     Per (namespace, pod, datname) bestaat er logisch EEN reeks, en per (namespace, pvc)
     ook. Er valt dus niets op te tellen.
     """
-    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _OPSLAG_QUERIES
+    from opi.services.shared_services import _DATABASE_QUERIES, _STORAGE_QUERIES
 
-    for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items():
+    for naam, query in {**_STORAGE_QUERIES, **_DATABASE_QUERIES}.items():
         assert "sum by" not in query, (
             f"query '{naam}' telt op over reeksen die door meerdere jobs gescrapet worden "
             f"en verdubbelt daarmee de waarde; gebruik max by: {query}"
@@ -137,9 +137,9 @@ def test_geen_enkele_query_telt_dezelfde_reeks_dubbel() -> None:
 
 def test_elke_meting_kijkt_terug_over_het_staleness_venster_heen() -> None:
     """Een deel van deze reeksen komt uit een job die elke twee uur scrapet."""
-    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _OPSLAG_QUERIES
+    from opi.services.shared_services import _DATABASE_QUERIES, _STORAGE_QUERIES
 
-    for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items():
+    for naam, query in {**_STORAGE_QUERIES, **_DATABASE_QUERIES}.items():
         assert "last_over_time" in query, (
             f"query '{naam}' is een kale instant-query en mist daarmee alles wat langer dan "
             f"vijf minuten geleden gescrapet is: {query}"

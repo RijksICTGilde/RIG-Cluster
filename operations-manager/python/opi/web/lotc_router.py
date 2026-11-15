@@ -1,18 +1,15 @@
-"""Routes van de LOTC-bouwlijn, naast de bestaande pagina's.
+"""Routes of the LOTC build line, next to the existing pages.
 
-Elke omgezette pagina is bereikbaar op ``/lotc/<pad>`` terwijl het origineel op
-``<pad>`` blijft staan. Dat is bewust: zolang de omzetting loopt is de enige
-bruikbare toets een vergelijking tussen de twee, en die is alleen te maken als ze
-tegelijk bestaan. De screenshottests draaien op precies dit paar.
+A converted page is reachable at ``/lotc/<path>`` while the original stays at ``<path>``, so
+the two can be laid side by side. The screenshot tests run on exactly that pair.
 
-Deze router is PUBLIEK: geen enkele route hier draagt ``requires_sso``. Dat is voor een
-proefopstelling de bedoeling, maar het betekent dat wat ``page_data()`` aanlevert op
-straat ligt. Alleen zichtbaar verzonnen waarden dus, ook voor de beheerderspagina's:
-grenswaarden, of de lijst van welke platformdiensten niet gemeten worden, horen achter
-``require_platform_admin`` en niet hier.
+This router is PUBLIC: no route here carries ``requires_sso``, so everything ``page_data()``
+supplies is out in the open. Visibly made-up values only, the admin pages included: a threshold
+or the list of which platform services go unmeasured belongs behind
+``require_platform_admin`` and not here.
 
-Daarom registreert ``opi/server.py`` hem alleen als ENVIRONMENT ``local`` of
-``sandboxed-local`` is. In productie bestaan deze paden niet.
+``opi/server.py`` therefore registers it only when ENVIRONMENT is ``local`` or
+``sandboxed-local``; in production these paths do not exist.
 """
 
 import logging
@@ -22,30 +19,25 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.errors import log_render_failure
-from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.http.render.navigation_lotc import get_navigation
+from opi.http.render.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.web.lotc_fixtures import page_data
 from opi.web.lotc_form_preview import EXAMPLE_FIELDS
-from opi.web.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
 
-#: De gebruiker die de proefopstelling toont als er niemand is ingelogd.
+#: The user the preview shows when nobody is signed in.
 PREVIEW_USER = {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"}
 
 
 def _previewable_pages() -> dict[str, str]:
-    """De omgezette pagina's die zonder paginadata te bekijken zijn.
+    """The converted pages that render with only the navigation, so without page data.
 
-    Een verrassend groot deel van de applicatie toont vooral inhoud, en die pagina's
-    renderen compleet met alleen de navigatie. Precies die zijn bruikbaar om de
-    omzetting te BEKIJKEN, en dat is waar deze route voor is.
-
-    De uitkomst is een allowlist, opgebouwd bij het starten. Dat is geen sierlijkheid:
-    zonder zou de paginanaam uit de URL rechtstreeks een templatepad worden, en dan
-    kan iemand met ../ elk template in de zoekpaden laten renderen.
+    The result is an allowlist, built at startup. Without it the page name from the URL would
+    become a template path directly, and a ``../`` would render any template on the search path.
     """
     pages: dict[str, str] = {}
     for path in sorted(TEMPLATES_LOTC_DIR.rglob("*.j2")):
@@ -61,17 +53,14 @@ PREVIEWABLE_PAGES = _previewable_pages()
 
 
 def _context(request: Request, **extra: object) -> dict[str, object]:
-    """Basiscontext voor een LOTC-pagina.
+    """The base context for a LOTC page.
 
-    Dezelfde menu-items als de roos-schil: opi/web/menu.py blijft de ene bron voor
-    welke links er zijn en wie ze mag zien. navigation_lotc herschikt ze alleen naar
-    de bg-opzet, zodat de omzetting over weergave gaat en niet over inhoud.
+    The menu items come from ``opi/http/render/menu.py``, which stays the one source of which
+    links exist and who may see them; ``navigation_lotc`` only rearranges them.
     """
     user = request.session.get("user") if hasattr(request, "session") else None
-    # Zonder gebruiker toont het menu alleen "Inloggen", en dan is de hulplinkbalk in de
-    # header zo goed als leeg. Voor een proefopstelling die bedoeld is om de VORMGEVING
-    # te beoordelen is dat de minst leerzame stand, dus valt hij terug op een
-    # voorbeeldgebruiker. Zichtbaar een voorbeeld, net als de projectbestanden.
+    # Without a user the menu holds only "Inloggen", which is the least informative state for
+    # a preview meant to judge the DESIGN, so it falls back on a visibly made-up user.
     user = user or PREVIEW_USER
     return {
         "request": request,
@@ -82,22 +71,16 @@ def _context(request: Request, **extra: object) -> dict[str, object]:
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def lotc_index(request: Request) -> HTMLResponse:
-    """De schil zelf, zonder pagina-inhoud.
-
-    Dit is de kleinste toets op de hele gereedschapsketen: componenttags, het
-    gekozen design system, en de statische bestanden onder /static/lotc/.
-    """
+    """The shell itself, with no page content: the smallest check on the whole tool chain."""
     return templates_lotc.TemplateResponse(request, "base_lotc.html.j2", _context(request))
 
 
 @router.get("/pagina/{slug:path}", response_class=HTMLResponse, include_in_schema=False)
 async def lotc_page(request: Request, slug: str) -> HTMLResponse:
-    """Toon een omgezette pagina, om hem naast het origineel te kunnen leggen.
+    """Show a converted page, so it can be laid next to the original.
 
-    Alleen pagina's uit de allowlist; een onbekende naam is een 404 en geen poging tot
-    laden. Pagina's die wel bestaan maar paginadata nodig hebben, geven een 422 met de
-    reden erbij - dat is bruikbare informatie over hoever de omzetting staat, en
-    prettiger dan een stacktrace.
+    Pages from the allowlist only: an unknown name is a 404 and not an attempt to load. A page
+    that does exist but needs page data answers 422 with the reason.
     """
     template_name = PREVIEWABLE_PAGES.get(slug)
     if template_name is None:
@@ -114,10 +97,9 @@ async def lotc_page(request: Request, slug: str) -> HTMLResponse:
 
 @router.get("/formulier", response_class=HTMLResponse, include_in_schema=False)
 async def lotc_form_preview(request: Request) -> HTMLResponse:
-    """De omgezette formulierlaag, gerenderd uit voorbeeldvelden.
+    """The converted form layer, rendered from the example fields.
 
-    De wizard heeft een echt project nodig, dus zonder deze route zou de laag die het
-    zwaarst is omgezet ook de enige zijn die niemand kan bekijken.
+    The wizard needs a real project, so this route is the only way to look at the form layer.
     """
     adapter = LOTCWidgetAdapter()
     rendered_fields = [adapter.render_field(field) for field in EXAMPLE_FIELDS]
@@ -128,9 +110,8 @@ async def lotc_form_preview(request: Request) -> HTMLResponse:
     )
 
 
-# Voorbeelddata voor het herontworpen dashboard. Uit de voorbeeldprojecten, zodat het
-# beeld klopt met wat een echte instantie zou tonen en er geen tweede verzonnen
-# werkelijkheid naast staat.
+# Example data for the redesigned dashboard, drawn from the example projects so there is no
+# second made-up reality next to them.
 _ACTIVITY = [
     {
         "icon": "plus",
@@ -157,17 +138,16 @@ _ACTIVITY = [
 
 
 def _redesigned_pages() -> dict[str, str]:
-    """De herontworpen paginas in bg-vorm, als allowlist opgebouwd bij het starten.
+    """The redesigned pages in bg form, as an allowlist built at startup.
 
-    Zelfde reden als bij de vertaalde paginas: zonder allowlist zou de naam uit de URL
-    rechtstreeks een templatepad worden.
+    Same reason as for the converted pages: without it the name from the URL would become a
+    template path directly.
     """
     directory = TEMPLATES_LOTC_DIR / "bg"
     return {
         path.name.removesuffix(".html.j2"): f"bg/{path.name}"
         for path in sorted(directory.glob("*.j2"))
-        # Bestanden met een liggend streepje ervoor zijn gedeelde patronen en geen
-        # pagina; ze hebben geen eigen inhoud en zouden leeg renderen.
+        # A leading underscore marks a shared partial, which has no content of its own.
         if not path.name.startswith("_")
     }
 
@@ -177,22 +157,15 @@ REDESIGNED_PAGES = _redesigned_pages()
 
 @router.get("/bg/{slug}", response_class=HTMLResponse, include_in_schema=False)
 async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
-    """Een pagina zoals bg.rijks.app hem zou opbouwen.
-
-    Naast de vertaalde versie op /lotc/pagina/<naam>. Het verschil tussen die twee is het
-    verschil tussen een omzetting en een herontwerp, en dat hoort te zien te zijn.
-    """
+    """A page as bg.rijks.app would build it, next to the converted version."""
     template_name = REDESIGNED_PAGES.get(slug)
     if template_name is None:
         raise HTTPException(status_code=404, detail=f"onbekende pagina: {slug}")
 
     data = page_data(slug)
 
-    # Het actieve tabblad komt uit de URL, want de tabs zijn echte links. Een onbekende
-    # naam valt terug op de eerste in plaats van een fout te geven: een verkeerd
-    # gedeelde link hoort de pagina te tonen, niet stuk te gaan.
-    # Filteren op de dienstenpagina. Zelfde regel als bij de tabs: de keuze staat in de
-    # URL, dus hij is deelbaar en werkt zonder JavaScript.
+    # The filter on the services page sits in the URL, so it is shareable and works without
+    # JavaScript.
     if "service_filters" in data:
         chosen = request.query_params.get("kind", "")
         data["service_filter"] = chosen
@@ -203,11 +176,12 @@ async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
 
     tabs = data.get("tabs")
     if tabs:
+        # The tabs are real links, and an unknown name falls back on the first one rather than
+        # failing: a wrongly shared link should show the page.
         requested = request.query_params.get("tab", "")
         data["active_tab"] = requested if requested in tabs else next(iter(tabs))
-        # De ECHTE pagina geeft elk tabblad een eigen pad (/projects/<naam>/deployments).
-        # Deze proefopstelling heeft geen project en dus geen zulke paden; hier blijft het
-        # ?tab= op deze ene demo-URL. Het sjabloon leest in beide gevallen ``tab.url``.
-        data["tabs"] = {sleutel: {**tab, "url": f"/lotc/bg/{slug}?tab={sleutel}"} for sleutel, tab in tabs.items()}
+        # The REAL page gives every tab a path of its own; this preview has no project, so it
+        # keeps the ``?tab=`` on this one demo URL. The template reads ``tab.url`` either way.
+        data["tabs"] = {key: {**tab, "url": f"/lotc/bg/{slug}?tab={key}"} for key, tab in tabs.items()}
 
     return templates_lotc.TemplateResponse(request, template_name, _context(request, **data))

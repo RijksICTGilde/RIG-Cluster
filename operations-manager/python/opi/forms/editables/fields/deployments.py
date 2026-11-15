@@ -24,18 +24,14 @@ from opi.services.catalog.publish_on_web.editables import (
 )
 from opi.services.registry import deployment_component_service_editables, deployment_service_editables
 
-# ===========================================================================
-# Pure Editable definitions (data logic only)
-# ===========================================================================
-
 DEPLOYMENT_NAME_EDITABLE = Editable(
     yaml_path="deployments[*]/name", required=True, validator=KubernetesNameValidator("Deploymentnaam")
 )
 DEPLOYMENT_CLUSTER_EDITABLE = Editable(
     yaml_path="deployments[*]/cluster", required=True, values_provider="ClusterOptionsProvider"
 )
-# Leeg betekent de standaard ontwikkeling. remove_when_none haalt de sleutel dan uit het
-# bestand, zodat er geen deployment met een lege markering achterblijft.
+# Empty means the default, development. remove_when_none then drops the key, so no deployment
+# is left behind with an empty marking.
 DEPLOYMENT_ENVIRONMENT_EDITABLE = Editable(
     yaml_path="deployments[*]/environment",
     values_provider="EnvironmentOptionsProvider",
@@ -44,12 +40,10 @@ DEPLOYMENT_ENVIRONMENT_EDITABLE = Editable(
 DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
-# The web-address fields of a deployment are publish-on-web's (RC-60). This module used to
-# define its OWN base-domain / subdomain / domain-format editables, with
-# different providers and validators than the wizard's, for exactly the same yaml_path. Two
-# definitions for one path in two flows is how a conversion ends up half-done: whoever moves
-# one and misses the other leaves a flow writing the old shape. There is one set now, owned
-# by the service, and the deployment sequence uses it under the familiar names.
+# The web-address fields of a deployment belong to publish-on-web and are re-exported here
+# under the names the deployment sequence knows them by. Do not define a second set for these
+# yaml_paths: two definitions for one path in two flows let one flow keep writing the old
+# shape.
 DEPLOYMENT_SUBDOMAIN_EDITABLE = DOMAIN_SUBDOMAIN_EDITABLE
 DEPLOYMENT_BASE_DOMAIN_EDITABLE = DOMAIN_BASE_DOMAIN_EDITABLE
 DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE
@@ -96,15 +90,15 @@ DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
     depends_on="deployments[*]/backup/schedule",
 )
 
-# Manual backup editables (transient — not saved to YAML)
+# Manual backup editables: transient, not saved to YAML.
 BACKUP_DEPLOYMENT_NAME_EDITABLE = Editable(
     yaml_path="deployment_name",
     transient=True,
     values_provider="BackupDeploymentOptionsProvider",
 )
-# De deployment waarvan een restore naar een NIEUWE deployment zijn config overneemt. Een
-# eigen transient veld en niet ``clone-from``: die sleutel draagt na een restore de
-# backup-run, dus de twee kunnen niet dezelfde waarde zijn.
+# The deployment whose config a restore into a NEW deployment takes over. A transient field
+# of its own and not ``clone-from``: after a restore that key carries the backup run, so the
+# two cannot hold the same value.
 RESTORE_CONFIG_SOURCE_EDITABLE = Editable(
     yaml_path="config_source",
     transient=True,
@@ -141,11 +135,10 @@ DEPLOYMENT_COMP_PATH_EDITABLE = Editable(
         DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE,
     ],
 )
-# Per-deployment attachment coupling override. Mirrors the base-component coupling
-# (components[*]/services{attachments}/config) but on the deployment component, so a
-# certificate/file can differ per deployment. Optional (min_items=0): an empty list
-# means "use whatever the base component couples". Merge semantics (deployment wins
-# per reference) live in resolve_attachments_for_component.
+# Per-deployment attachment coupling override, mirroring the base-component coupling
+# (components[*]/services{attachments}/config) so a certificate or file can differ per
+# deployment. An empty list means "use whatever the base component couples"; the merge, where
+# the deployment wins per reference, lives in resolve_attachments_for_component.
 DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/services/attachments/config[*]/reference",
     values_provider="AttachmentOptionsProvider",
@@ -199,22 +192,18 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_IMAGE_EDITABLE,
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
-        # Per-service deployment-component fields, gathered from the registry (RC-25):
-        # user-env-vars owns this layer's one field.
+        # Per-service deployment-component fields, gathered from the registry; user-env-vars
+        # owns this layer's one field.
         *deployment_component_service_editables(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     ],
 )
 
-# Focused, read-only-component sequence for the domain wizard's per-component TLS step.
-# Reuses the deployment-components path; the reference is shown read-only (you only pick
-# the TLS mode here, you do not add/remove components).
-#
-# The two override fields it shows are publish-on-web's, declared in the service package
-# (RC-78) and imported here rather than defined a second time. They used to be written out
-# in this module, which is why they existed on this step only: the deployment form gathers
-# the deployment-component layer from the registry, and a field the service never declared
-# could not arrive there.
+# Focused, read-only-component sequence for the domain wizard's per-component TLS step. It
+# reuses the deployment-components path and shows the reference read-only: here you pick only
+# the TLS mode, you do not add or remove components. The two override fields are
+# publish-on-web's, imported from the service package rather than defined a second time, so
+# the deployment form can gather them from the registry too.
 DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
     min_items=0,
@@ -233,8 +222,8 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_CLUSTER_EDITABLE,
         DEPLOYMENT_ENVIRONMENT_EDITABLE,
         DEPLOYMENT_REPOSITORY_EDITABLE,
-        # Per-service deployment fields, gathered from the registry (RC-60): the
-        # web-address set is publish-on-web's, and nothing here names it.
+        # Per-service deployment fields, gathered from the registry; the web-address set is
+        # publish-on-web's, and nothing here names it.
         *deployment_service_editables(),
         DEPLOYMENT_CLONE_FROM_EDITABLE,
         DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,

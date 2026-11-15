@@ -1,17 +1,14 @@
 """Shared SQLAlchemy declarative base for service-owned ORM models (RC-5).
 
-This is the foundation for phased ORM adoption. Today the app talks to Postgres with
-raw asyncpg SQL and hand-written Alembic migrations; the tables are created from
-``*_TABLE_SQL`` constants. A service that owns a table can now ALSO declare it as an
-ORM model on this ``Base``, which makes it the schema-as-code source of truth and lets
-Alembic autogenerate future migrations for it.
+A service that owns a table declares it as an ORM model on this ``Base``, which makes the
+model the schema source of truth and lets Alembic autogenerate migrations for it. Next to
+it the app still talks to Postgres with raw asyncpg SQL, and those tables are created from
+``*_TABLE_SQL`` constants.
 
-Coexistence is deliberate and safe: ``migrations/env.py`` points autogenerate at
-``Base.metadata`` but scopes it (via ``include_object``) to ONLY the tables declared as
-ORM models here. Any table not (yet) declared as an ORM model stays off this metadata and
-is left untouched by autogenerate. Services can be migrated to the ORM one table at a time
-without a big-bang rewrite; today all of the platform's tables (async_tasks, users, runs,
-marked_for_deletion, subdomain_registry, project_reconciliation) are modeled.
+``migrations/env.py`` points autogenerate at ``Base.metadata`` but scopes it (via
+``include_object``) to ONLY the tables declared here, so a table that is not an ORM model
+is left untouched. Today every platform table (async_tasks, users, runs,
+marked_for_deletion, subdomain_registry, project_reconciliation) is modeled.
 """
 
 from __future__ import annotations
@@ -35,33 +32,32 @@ class Base(DeclarativeBase):
     it (see ``opi/services/persistence/__init__.py``)."""
 
 
-# --- async engine / session for ORM query execution (RC-5 persistence phase 2) -------
-# A dedicated SQLAlchemy async engine (asyncpg driver) used by service-owned ORM
-# repositories. It is separate from the raw asyncpg pools in ``core/database_pools`` --
-# service persistence being migrated to the ORM uses this; everything else stays on the
+# A dedicated SQLAlchemy async engine (asyncpg driver) for the service-owned ORM
+# repositories, separate from the raw asyncpg pools in ``core/database_pools``: service
+# persistence that is being migrated to the ORM uses this, everything else stays on the
 # pools. Lazily created from settings; tests point it at a throwaway Postgres via
 # ``configure_engine``.
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
-#: Het plafond van deze engine: ``ORM_POOL_SIZE`` verbindingen, zonder overloop. Samen met
-#: de asyncpg-hoofdpool (``MAIN_POOL_MAX_SIZE`` in ``opi/core/database_pools.py``) opent een
-#: OPI-pod zo maximaal 10 verbindingen naar zijn eigen database, en daarop is de
-#: ``connectionLimit`` van de rol ``operations_manager`` in CNPG gerekend (RC-410).
+#: The ceiling of this engine: ``ORM_POOL_SIZE`` connections, without overflow. Together with
+#: the main asyncpg pool (``MAIN_POOL_MAX_SIZE`` in ``opi/core/database_pools.py``) an OPI pod
+#: opens at most 10 connections to its own database, and the ``connectionLimit`` of the role
+#: ``operations_manager`` in CNPG is calculated on that (RC-410).
 ORM_POOL_SIZE = 5
 ORM_MAX_OVERFLOW = 0
 
 
 def app_database_url(scheme: str, ssl_param: str) -> str:
-    """De URL van OPI's eigen database, met de app-rol die haar objecten bezit.
+    """The URL of OPI's own database, with the app role that owns its objects.
 
-    De app-rol en niet de superuser: OPI's eigen tabellen horen van de rol te zijn die ze
-    gebruikt (RC-410). Het beheer van tenantdatabases houdt de admin-credentials.
+    The app role and not the superuser: OPI's own tables belong to the role that uses them.
+    Managing tenant databases keeps the admin credentials.
 
-    Gedeeld met ``opi/migrations/env.py``, want de migraties draaien als diezelfde rol.
-    ``ssl_param`` verschilt per driver: asyncpg noemt hem ``ssl``, psycopg2 ``sslmode``;
-    de waarden zijn in beide gevallen die van libpq.
+    Shared with ``opi/migrations/env.py``, because the migrations run as that same role.
+    ``ssl_param`` differs per driver: asyncpg calls it ``ssl``, psycopg2 ``sslmode``; the
+    values are libpq's in both cases.
     """
     from opi.core.config import settings
 
@@ -135,7 +131,7 @@ async def dispose_engine() -> None:
     _sessionmaker = None
 
 
-def include_orm_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
+def include_orm_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:  # noqa: ANN401  # the hook alembic calls
     """Alembic ``include_object`` hook that scopes autogenerate to ORM-managed tables.
 
     A table is managed iff it is on :data:`Base.metadata`; indexes/constraints/columns

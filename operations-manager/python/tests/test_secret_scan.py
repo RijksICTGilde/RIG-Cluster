@@ -37,8 +37,8 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from opi.core.config import settings
+from opi.utils.age import generate_age_key_pair
 from opi.utils.api_keys import generate_api_key
-from opi.utils.sops import generate_sops_key_pair
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
@@ -157,7 +157,7 @@ MULTILINE_SHAPES: tuple[tuple[str, str], ...] = (
 @needs_age
 def test_a_real_age_private_key_is_a_finding() -> None:
     """The counter-check the plan asks for, on the shape that started this task."""
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
 
     findings = scan_text(f'PRIVATE_KEY = "{private_key}"\n', "tests/whatever.py")
 
@@ -191,7 +191,7 @@ def test_a_placeholder_key_is_not_a_finding(placeholder: str) -> None:
 
 @needs_age
 def test_age_key_validity_is_what_the_rule_hangs_on() -> None:
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     assert age_key_is_real(private_key)
     assert not age_key_is_real("AGE-SECRET-KEY-1TEST")
     assert not age_key_is_real("AGE-SECRET-KEY-" + "Q" * 59)
@@ -200,7 +200,7 @@ def test_age_key_validity_is_what_the_rule_hangs_on() -> None:
 @needs_age
 def test_the_public_half_is_not_a_finding() -> None:
     """A public key is not a secret and belongs in documentation and in SOPS metadata."""
-    _private_key, public_key = generate_sops_key_pair()
+    _private_key, public_key = generate_age_key_pair()
     assert scan_text(f"recipient: {public_key}\n", "some.sops.yaml") == []
 
 
@@ -403,7 +403,7 @@ def test_a_key_inside_a_kubernetes_secret_is_a_finding() -> None:
     by ``.gitignore`` in the repository root. So hook, CI and history sweep all said CLEAN over a
     commit carrying the platform key.
     """
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     encoded = base64.b64encode(f"# public key: whatever\n{private_key}\n".encode()).decode()
     manifest = f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: sops-age-key\ndata:\n  key: {encoded}\n"
 
@@ -542,7 +542,7 @@ def test_a_key_split_over_two_base64_lines_is_not_claimed_to_be_covered() -> Non
     adjacent base64 lines would have to guess where a blob ends. Pinning the limit is what keeps
     the docs honest about it rather than letting a reader assume full coverage.
     """
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     encoded = base64.b64encode(f"{private_key}\n".encode()).decode()
     half = len(encoded) // 2
 
@@ -557,7 +557,7 @@ def test_a_key_split_over_two_base64_lines_is_not_claimed_to_be_covered() -> Non
 
 @needs_age
 def test_a_binary_suffix_is_skipped(tmp_path: Path) -> None:
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     (tmp_path / "logo.png").write_text(private_key)
     (tmp_path / "config.yaml").write_text(private_key)
 
@@ -576,7 +576,7 @@ def test_a_built_bundle_is_scanned_like_any_other_tracked_file(tmp_path: Path) -
     of the guard call ``scan_files``, so a directory rule here took the finding away from both at
     once -- and said "CLEAN" while doing it.
     """
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     for name in ("dist/vendor.js", "build/out.txt", "node_modules/pkg/index.js", "src/app.py"):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -611,7 +611,7 @@ def test_where_a_file_sits_is_never_a_reason_to_leave_it_unread(tmp_path: Path) 
 def test_an_svg_is_text_and_is_read_like_any_other_file(tmp_path: Path) -> None:
     """It sat on the media list between the PNGs, and it is the one entry there that is text:
     a key pasted into XML reads exactly like a key pasted into YAML."""
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     (tmp_path / "diagram.svg").write_text(f"<svg><desc>{private_key}</desc></svg>\n")
 
     result = scan_files([tmp_path / "diagram.svg"])
@@ -724,7 +724,7 @@ def test_only_tracked_files_are_scanned(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@e.invalid"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], check=True)
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     (tmp_path / "security").mkdir()
     (tmp_path / "security" / "key.txt").write_text(private_key)
     (tmp_path / "committed.txt").write_text("nothing secret\n")
@@ -759,7 +759,7 @@ def _repo_with(tmp_path: Path, files: dict[str, str]) -> Path:
 @needs_age
 def test_a_secret_deleted_from_the_tree_is_still_found_in_the_history(tmp_path: Path) -> None:
     """The reason the sweep exists: removing the file does not remove the secret."""
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     repo = _repo_with(tmp_path, {"leaked.py": f'KEY = "{private_key}"\n'})
     (repo / "leaked.py").unlink()
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-am", "remove it"], check=True)
@@ -780,7 +780,7 @@ def test_the_history_sweep_finishes_on_a_repository_that_has_subdirectories(tmp_
     to reproduce this at all. Both outcomes of the desynchronisation fail the test: garbage where
     a header belongs raises, and the timeout catches the version that waited forever.
     """
-    private_key, _public_key = generate_sops_key_pair()
+    private_key, _public_key = generate_age_key_pair()
     repo = _repo_with(
         tmp_path,
         {
@@ -811,8 +811,8 @@ def test_the_baseline_takes_a_retracted_finding_off_the_history(tmp_path: Path) 
     every week, and a job that is red every week is a job nobody opens. The entry pins the blob,
     which is what survives a rename and a shifted line number.
     """
-    first, _public = generate_sops_key_pair()
-    second, _public = generate_sops_key_pair()
+    first, _public = generate_age_key_pair()
+    second, _public = generate_age_key_pair()
     repo = _repo_with(tmp_path, {"one.py": f'KEY = "{first}"\n', "two.py": f'KEY = "{second}"\n'})
     findings = scan_history(repo)
 
@@ -832,7 +832,7 @@ def test_a_baseline_entry_that_matches_nothing_is_reported(tmp_path: Path, capsy
     An entry whose blob no longer turns up silences nothing while reading as if it does. It is
     housekeeping and not an alarm, so it is printed and the run still passes.
     """
-    private_key, _public = generate_sops_key_pair()
+    private_key, _public = generate_age_key_pair()
     repo = _repo_with(tmp_path, {"one.py": f'KEY = "{private_key}"\n'})
     invented = BaselineEntry(blob="0" * 40, kind="age-private-key")
 

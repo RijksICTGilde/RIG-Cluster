@@ -71,7 +71,7 @@ def store():
     instance = MagicMock()
     instance.get.return_value = project
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=instance),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=instance),
         patch("opi.api.v2.router.get_project_store", return_value=instance),
     ):
         yield instance
@@ -215,7 +215,7 @@ class TestRollout:
 
     def test_the_task_type_may_defer_its_rollout(self) -> None:
         # Otherwise rollout=false would be accepted and then silently ignored.
-        from opi.core.task_rollout import DEFERRABLE_TASK_TYPES
+        from opi.services.tasks.task_rollout import DEFERRABLE_TASK_TYPES
 
         assert "configure_service_values" in DEFERRABLE_TASK_TYPES
 

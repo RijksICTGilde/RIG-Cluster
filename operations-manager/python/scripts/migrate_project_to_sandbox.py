@@ -49,27 +49,28 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
-from opi.core.leden import LidSoort  # noqa: E402
 from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
-from opi.services.project_leden import nieuw_token  # noqa: E402
+from opi.services.members import MemberKind  # noqa: E402
+from opi.services.project_members import new_token  # noqa: E402
 from opi.services.schema_migration import (  # noqa: E402
     PROJECT_API_ACCOUNT,
-    PROJECT_API_ROLLEN,
-    PROJECT_API_VERVALT,
+    PROJECT_API_EXPIRES,
+    PROJECT_API_ROLES,
 )
-from opi.services.services import service_entry_data, service_entry_name  # noqa: E402
+from opi.services.services import service_entry_config, service_entry_data, service_entry_name  # noqa: E402
 from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
     carries_encrypted_value,
     decrypt_age_content_sync,
     decrypt_password_smart_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    encrypt_to_base64_age_sync,
+    generate_age_key_pair,
     project_key_candidates_for,
     unwrap_project_key_sync,
     wrap_project_key_sync,
 )
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
-from opi.utils.sops import generate_sops_key_pair  # noqa: E402
 from opi.utils.yaml_util import (  # noqa: E402
     load_yaml_from_path,
     save_yaml_to_path,
@@ -96,13 +97,16 @@ DEFAULT_PROBE_PORT = 8080
 #: content of an attachment, and whatever ``replace_remaining_secrets`` finds. Recognisable
 #: on sight in a manifest or a pod, so nobody mistakes a sandbox copy for real configuration.
 SANDBOX_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
-SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLLEN)}
+SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLES)}
+#: The sandbox Forgejo password. Encrypted into the converted file with the sandbox platform
+#: key, not written down: a project file may not carry a ``plain:`` value (schema 2.18).
+SANDBOX_REPOSITORY_PASSWORD = "admin1234"  # noqa: S105  # the sandbox admin, no production secret
+
 SANDBOX_REPOSITORIES = [
     {
         "name": "main-repo",
         "url": f"https://forgejo.{SANDBOX_DOMAIN}/rig-admin/zad-deployments.git",
         "username": "rig-admin",
-        "password": "plain:admin1234",
         "branch": "main",
         "path": ".",
     }
@@ -170,6 +174,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             component.pop("registry", None)
             component.pop("imagePullPolicy", None)
         _point_command_at_probe(component, f"{name}/{component.get('name', '?')}")
+        _point_health_check_at_probe(component, f"{name}/{component.get('name', '?')}")
         _apply_probe_resources(component, f"{name}/{component.get('name', '?')}")
 
     for dep in project.get("deployments", []):
@@ -182,6 +187,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             comp.pop("registry", None)
             comp.pop("imagePullPolicy", None)
             _point_command_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
+            _point_health_check_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             _apply_probe_resources(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             logger.info(
                 f"  [{name}] deployment '{dep.get('name', '?')}' component '{comp.get('reference', '?')}': "
@@ -240,6 +246,35 @@ def _point_command_at_probe(component: dict, where: str) -> None:
         return
     component["command"] = list(PROBE_ENTRYPOINT)
     logger.info(f"  [{where}]: command -> {PROBE_ENTRYPOINT} (de probe heeft geen shell)")
+
+
+#: The one health path the probe image serves (images/e2e-allservices).
+PROBE_HEALTH_PATH = "/healthz"
+
+
+def _point_health_check_at_probe(component: dict, where: str) -> None:
+    """Point the health-check service's probe paths at the one path the probe serves.
+
+    A production project sets its own paths (``dh-d6d`` asks ``/readyz``); the probe answers
+    those with a 404, the pod never turns ready, and the refresh times out waiting for the
+    sync. The service binding stays, so the test still covers it; only the paths change.
+    """
+    services = component.get("services")
+    if isinstance(services, dict):
+        configs = [
+            entry.get("config") for key, entry in services.items() if key == "health-check" and isinstance(entry, dict)
+        ]
+    elif isinstance(services, list):
+        configs = [service_entry_config(entry) for entry in services if service_entry_name(entry) == "health-check"]
+    else:
+        return
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        for key in ("liveness-path", "readiness-path"):
+            if key in config and config[key] != PROBE_HEALTH_PATH:
+                config[key] = PROBE_HEALTH_PATH
+                logger.info(f"  [{where}]: health-check {key} -> {PROBE_HEALTH_PATH}")
 
 
 def migrate_project(
@@ -305,7 +340,7 @@ def migrate_project(
         # Dezelfde projectsleutel hergebruiken scheidde productie en testomgeving niet: elke
         # waarde die later in productie met die sleutel bijkomt, opent daarna ook op de
         # sandbox (BIO2 8.31, 8.33). Dus een nieuw paar, met OPI's eigen generator.
-        new_project_private_key, project_public_key = generate_sops_key_pair()
+        new_project_private_key, project_public_key = generate_age_key_pair()
         config["age-public-key"] = project_public_key
         config["age-private-key"] = LiteralScalarString(
             wrap_project_key_sync(new_project_private_key, sandbox_kek_public or sandbox_public_key)
@@ -334,15 +369,15 @@ def migrate_project(
     accounts = [
         lid
         for lid in project.get("users") or []
-        if isinstance(lid, dict) and lid.get("type") == LidSoort.SERVICE_ACCOUNT.value
+        if isinstance(lid, dict) and lid.get("type") == MemberKind.SERVICE_ACCOUNT.value
     ]
     if had_projectsleutel and not any(lid.get("name") == PROJECT_API_ACCOUNT for lid in accounts):
         accounts.append(
             {
-                "type": LidSoort.SERVICE_ACCOUNT.value,
+                "type": MemberKind.SERVICE_ACCOUNT.value,
                 "name": PROJECT_API_ACCOUNT,
-                "roles": list(PROJECT_API_ROLLEN),
-                "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": ""}],
+                "roles": list(PROJECT_API_ROLES),
+                "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_EXPIRES, "hash": ""}],
             }
         )
 
@@ -355,7 +390,7 @@ def migrate_project(
         for token in lid.get("tokens") or []:
             if not isinstance(token, dict):
                 continue
-            waarde, token["hash"] = nieuw_token()
+            waarde, token["hash"] = new_token()
             eigenaar = lid.get("name") or lid.get("email") or "?"
             logger.info(f"  [{name}] Nieuw token '{token.get('name')}' voor {eigenaar}: {waarde}")
 
@@ -366,6 +401,8 @@ def migrate_project(
 
     # 7. Replace repositories with sandbox Forgejo config
     project["repositories"] = deepcopy(SANDBOX_REPOSITORIES)
+    for repository in project["repositories"]:
+        repository["password"] = encrypt_to_base64_age_sync(SANDBOX_REPOSITORY_PASSWORD, sandbox_public_key)
     logger.info(f"  [{name}] Replaced repositories with sandbox Forgejo config")
 
     # 8. Transform deployments
@@ -662,9 +699,12 @@ def regenerate_wake_tokens(project: dict, new_public_key: str | None, name: str)
         logger.info(f"  [{name}] {minted} wake-token(s) opnieuw gemunt")
 
 
-#: Het enige AGE-blok in de uitvoer dat met geen van beide projectsleutels opengaat en dat
-#: ook niet hoort te doen: de nieuwe private projectsleutel staat op de sandbox-clustersleutel.
-_NOT_ON_A_PROJECT_KEY = ("/config/age-private-key",)
+#: AGE blocks in the output that open with neither project key, and are not meant to: the
+#: new private project key sits on the sandbox cluster key, and the repository password
+#: sits on that same cluster key (``AGE_FIELD_HANDLING`` above already replaces it in step
+#: 7). Without this exclusion the safety net flags them as "check this value" even though
+#: they are exactly as intended.
+_NOT_ON_A_PROJECT_KEY = ("/config/age-private-key", "/repositories[]/password")
 
 
 def _encrypted_values(node: object, path: str = "") -> list[tuple[Any, Any, str, str]]:
@@ -795,6 +835,7 @@ _INTENDED_REMOVALS = (
     "/repositories",  # replaced by the sandbox Forgejo
     "/deployments[]/issuer",
     "/deployments[]/configuration",
+    "/config/api-key",  # replaced by a fresh 'project-api' token, see AGE_FIELD_HANDLING
 )
 
 #: Additionally dropped when the project is staged as a FRESH one rather than an existing

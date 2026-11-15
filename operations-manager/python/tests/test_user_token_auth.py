@@ -18,7 +18,8 @@ import pytest
 from authlib.jose import JsonWebKey, JsonWebToken, jwt
 from cryptography.hazmat.primitives import serialization
 from fastapi import HTTPException
-from opi.api.user_token_auth import (
+from opi.core.actor import get_actor, user_actor
+from opi.http.auth.user_token_auth import (
     UserTokenError,
     authorize_claims,
     extract_bearer_token,
@@ -27,7 +28,6 @@ from opi.api.user_token_auth import (
     validate_user_token,
     verify_user_token,
 )
-from opi.core.actor import get_actor, user_actor
 from starlette.datastructures import Headers
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -86,9 +86,9 @@ def realm(signing_key: Any) -> Any:
     get_metadata_cache().clear()
     metadata = {"issuer": ISSUER, "jwks_uri": f"{ISSUER}/protocol/openid-connect/certs"}
     with (
-        patch("opi.api.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)) as meta,
-        patch("opi.api.user_token_auth.fetch_jwks", AsyncMock(return_value=_jwks_of(signing_key))) as jwks,
-        patch("opi.api.user_token_auth.settings") as mock_settings,
+        patch("opi.http.auth.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)) as meta,
+        patch("opi.http.auth.user_token_auth.fetch_jwks", AsyncMock(return_value=_jwks_of(signing_key))) as jwks,
+        patch("opi.http.auth.user_token_auth.settings") as mock_settings,
     ):
         mock_settings.OIDC_DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"
         mock_settings.CLI_TOKEN_AUDIENCE = AUDIENCE
@@ -220,7 +220,7 @@ class TestAuthorizeClaims:
         return claims
 
     def test_allowed_user_passes(self) -> None:
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             user = authorize_claims(self._claims())
         assert user["email"] == "user@example.test"
@@ -228,20 +228,20 @@ class TestAuthorizeClaims:
 
     def test_user_outside_the_allowlist_is_refused(self) -> None:
         """A valid token is not permission; the platform allowlist still decides."""
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = False
             with pytest.raises(UserTokenError):
                 authorize_claims(self._claims())
 
     def test_unverified_email_is_refused(self) -> None:
         """Every check keys on the email, so an unverified one may not establish access."""
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             with pytest.raises(UserTokenError):
                 authorize_claims(self._claims(email_verified=False))
 
     def test_missing_email_is_refused(self) -> None:
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             with pytest.raises(UserTokenError):
                 authorize_claims(self._claims(email=None))
@@ -261,7 +261,7 @@ class TestValidateUserTokenDecorator:
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             assert await route(request=request) == "ok"
 
@@ -290,7 +290,7 @@ class TestValidateUserTokenDecorator:
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = False
             with pytest.raises(HTTPException) as exc:
                 await route(request=request)
@@ -315,7 +315,7 @@ class TestValidatePlatformAdminTokenDecorator:
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             get_service.return_value.is_platform_admin.return_value = True
             assert await route(request=request) == "ok"
@@ -355,7 +355,7 @@ class TestValidatePlatformAdminTokenDecorator:
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
-        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+        with patch("opi.http.auth.user_token_auth.get_user_service") as get_service:
             get_service.return_value.is_email_allowed.return_value = True
             get_service.return_value.is_platform_admin.return_value = False
             with pytest.raises(HTTPException) as exc:

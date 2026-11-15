@@ -16,14 +16,14 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from opi.api.route_herkenning import WEBSOCKET, route_herkenningen
+from opi.api.route_recognition import WEBSOCKET, route_recognitions
 from opi.server import app
 
 from security_tests.baseline import toets_tegen_baseline
 from security_tests.conftest import TIJDBUDGET, met_csrf
 
 if TYPE_CHECKING:
-    from opi.api.route_herkenning import RouteHerkenning
+    from opi.api.route_recognition import RouteRecognition
 
     from security_tests.doel import Doel
 
@@ -89,21 +89,21 @@ def beoordeel_antwoord(status: int, inhoud: str) -> str | None:
     return bevat_lek(inhoud) or (f"{status} waar een 4xx hoort" if status >= 500 else None)
 
 
-def sweeproutes() -> list[RouteHerkenning]:
+def sweeproutes() -> list[RouteRecognition]:
     """De routes van het portaal, zonder de API en zonder websockets."""
     return [
         route
-        for route in route_herkenningen(app)
-        if route.methode != WEBSOCKET
-        and route.pad not in SESSIEVERNIETIGERS
-        and not route.pad.startswith(("/api/", "/static/", "/metrics"))
+        for route in route_recognitions(app)
+        if route.method != WEBSOCKET
+        and route.path not in SESSIEVERNIETIGERS
+        and not route.path.startswith(("/api/", "/static/", "/metrics"))
     ]
 
 
-def vul_pad_in(route: RouteHerkenning) -> str:
+def vul_pad_in(route: RouteRecognition) -> str:
     """Vul de padparameters in: een bestaand project voor een leesactie, een onbekend voor een mutatie."""
-    vulling = SWEEP_ONBEKEND if route.methode in _MUTATIES else SWEEP_PROJECT
-    return re.sub(r"\{[^}]+\}", vulling, route.pad)
+    vulling = SWEEP_ONBEKEND if route.method in _MUTATIES else SWEEP_PROJECT
+    return re.sub(r"\{[^}]+\}", vulling, route.path)
 
 
 def test_geen_payload_komt_ongeescapet_terug(projectlid: httpx.Client) -> None:
@@ -155,20 +155,20 @@ def test_geen_pagina_lekt_of_valt_om(rol: str, doel: Doel, request: pytest.Fixtu
     for route in sweeproutes():
         pad = vul_pad_in(route)
         try:
-            antwoord = client.request(route.methode, pad, headers=headers)
+            antwoord = client.request(route.method, pad, headers=headers)
         except httpx.TimeoutException:
             # Een route die binnen het tijdbudget niet antwoordt is een bevinding op de
             # beschikbaarheidsas, geen fout van het harnas.
-            bevindingen[f"{route.methode} {route.pad}"] = f"geen antwoord binnen {TIJDBUDGET}s"
+            bevindingen[f"{route.method} {route.path}"] = f"geen antwoord binnen {TIJDBUDGET}s"
             continue
         except httpx.TransportError as fout:
             # Een verbinding die de server verbreekt is ook een bevinding op die as, en met
             # hetzelfde kenmerk, zodat de baseline hem met een reden kan dekken.
-            bevindingen[f"{route.methode} {route.pad}"] = f"geen antwoord: {type(fout).__name__}"
+            bevindingen[f"{route.method} {route.path}"] = f"geen antwoord: {type(fout).__name__}"
             continue
         melding = beoordeel_antwoord(antwoord.status_code, antwoord.text)
         if melding:
-            bevindingen[f"{route.methode} {route.pad}"] = melding
+            bevindingen[f"{route.method} {route.path}"] = melding
     assert client.get("/dashboard").status_code == 200, "de sweep heeft zijn eigen sessie weggehaald"
     meldingen = toets_tegen_baseline(PROEF, bevindingen, doel.soort)
     assert not meldingen, "\n".join(meldingen)
@@ -215,7 +215,7 @@ def test_de_webproef_merkt_een_lek_en_een_reflectie_op() -> None:
     # nooit een geldige sleutel staan. Een echte zou de secretscan van de repo blokkeren.
     assert PROJECTGEHEIM.search("AGE-SECRET-KEY-1" + "B" * 58)
     assert not PROJECTGEHEIM.search('placeholder="AGE-SECRET-KEY-1..."')
-    assert "/auth/logout" not in {route.pad for route in sweeproutes()}
+    assert "/auth/logout" not in {route.path for route in sweeproutes()}
 
 
 def test_de_sweep_vraagt_een_eigen_verbinding_per_route() -> None:

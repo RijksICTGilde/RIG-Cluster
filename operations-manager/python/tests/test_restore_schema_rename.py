@@ -46,9 +46,9 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, SnapshotInfo
 from opi.manager.backup.database_backup import DatabaseBackupManager
+from opi.utils.manifest_render import MANIFEST_FILTERS
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 _TEMPLATE = "restore-database-pod.yaml.jinja"
@@ -368,7 +368,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
     @pytest.mark.asyncio
     async def test_the_previous_generation_database_is_named_as_the_source(self) -> None:
         """The restore into generation N+1 knows exactly which database the dump came from."""
-        from opi.api.restore_router import _restore_database_with_versioning
+        from opi.manager.backup.restore import restore_database_with_versioning
 
         backup_manager = MagicMock()
         backup_manager.restore_database = AsyncMock(return_value=MagicMock(success=True, error=None))
@@ -387,13 +387,13 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
         secret.password = "existing"
 
         with (
-            patch("opi.api.restore_router.create_database_backup_manager", return_value=backup_manager),
+            patch("opi.manager.backup.restore.create_database_backup_manager", return_value=backup_manager),
             patch("opi.connectors.postgres.create_postgres_connector", return_value=postgres),
             patch("opi.core.cluster_config.get_database_server", return_value="postgres.example"),
-            patch("opi.api.restore_router.create_kubectl_connector", return_value=MagicMock()),
-            patch("opi.utils.secrets.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
+            patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
+            patch("opi.services.secrets.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         ):
-            result = await _restore_database_with_versioning(
+            result = await restore_database_with_versioning(
                 project_name="amt",
                 deployment_name="prod",
                 component_name="app",

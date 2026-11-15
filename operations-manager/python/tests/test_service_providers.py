@@ -26,9 +26,9 @@ from opi.services.registry import (
     manifest_services,
     provisioning_services,
 )
+from opi.services.secrets import DatabaseSecret, MinIOSecret, RedisSecret
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ManagerKey, ServiceType
-from opi.utils.secrets import DatabaseSecret, MinIOSecret, RedisSecret
 
 
 def test_every_service_type_has_a_provider() -> None:
@@ -953,8 +953,8 @@ def test_apply_approval_verdicts_routes_to_owning_spec():
     the new status + a history entry; skips are left untouched."""
     import copy
 
-    from opi.connectors.subdomain import get_domains_config
     from opi.services.approvals import apply_approval_verdicts
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     project = copy.deepcopy(_APPROVAL_PROJECT)
     items = [
@@ -991,8 +991,8 @@ def test_apply_approval_verdicts_falls_back_to_type_when_untagged():
     """An in-flight item without a ``service`` tag still routes on its spec key."""
     import copy
 
-    from opi.connectors.subdomain import get_domains_config
     from opi.services.approvals import apply_approval_verdicts
+    from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 
     project = copy.deepcopy(_APPROVAL_PROJECT)
     items = [{"type": "domain", "domain": "wait.nl", "name": "wait.nl", "status": "denied"}]

@@ -8,9 +8,12 @@ process_project_from_git where applicable.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core import progress_steps
+from opi.manager.project.deployment_removal import DeploymentRemovalResult
+from opi.services.tasks import progress_steps
 
 PM_PATH = "opi.manager.project_manager.ProjectManager"
+#: The clone use case owns the ProjectManager the clone handlers drive (RC-482).
+CLONE_PM_PATH = "opi.manager.clone.ProjectManager"
 CREATE_PM_PATH = "opi.manager.project_manager.create_project_manager"
 
 
@@ -49,7 +52,7 @@ class TestHandleUpdateImage:
 
     @pytest.mark.asyncio
     async def test_success_calls_add_task_and_complete(self, payload):
-        from opi.core.task_handlers_deployment import handle_update_image
+        from opi.runtime.tasks.task_handlers_deployment import handle_update_image
 
         progress = _make_progress()
 
@@ -68,7 +71,7 @@ class TestHandleUpdateImage:
 
     @pytest.mark.asyncio
     async def test_error_calls_fail_task_and_fail_project(self, payload):
-        from opi.core.task_handlers_deployment import handle_update_image
+        from opi.runtime.tasks.task_handlers_deployment import handle_update_image
 
         progress = _make_progress()
 
@@ -100,7 +103,7 @@ class TestHandleDeleteDeployment:
     async def test_success_calls_add_task_and_complete(self, payload):
         # De echte stappen van de verwijdering zet de manager via de meegegeven
         # voortgangsmanager; de handler zelf kent alleen nog "Projectgegevens ophalen".
-        from opi.core.task_handlers_deployment import handle_delete_deployment
+        from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
@@ -108,7 +111,9 @@ class TestHandleDeleteDeployment:
         # De echte set_progress_manager is synchroon; een kale AsyncMock maakt er een
         # coroutine van die niemand afwacht.
         mock_pm.set_progress_manager = MagicMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": True, "namespace": {"success": True}})
+        mock_pm.delete_deployment = AsyncMock(
+            return_value=DeploymentRemovalResult({"success": True, "namespace": {"success": True}})
+        )
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm):
@@ -124,13 +129,15 @@ class TestHandleDeleteDeployment:
     async def test_deletion_not_success_raises_and_fails_task(self, payload):
         # A partially-failed delete must FAIL the task (not return a "partial" success),
         # so the caller / nightly cleaner retries instead of treating it as done.
-        from opi.core.task_handlers_deployment import handle_delete_deployment
+        from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
         mock_pm = AsyncMock()
         mock_pm.set_progress_manager = MagicMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": False, "errors": ["boom"]})
+        mock_pm.delete_deployment = AsyncMock(
+            return_value=DeploymentRemovalResult({"success": False, "errors": ["boom"]})
+        )
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError):
@@ -140,7 +147,7 @@ class TestHandleDeleteDeployment:
 
     @pytest.mark.asyncio
     async def test_error_calls_fail_project(self, payload):
-        from opi.core.task_handlers_deployment import handle_delete_deployment
+        from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
@@ -176,7 +183,7 @@ class TestHandleCloneDatabase:
 
     @pytest.mark.asyncio
     async def test_success_direct(self, payload):
-        from opi.core.task_handlers_operations import handle_clone_database
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
 
         progress = _make_progress()
 
@@ -191,7 +198,7 @@ class TestHandleCloneDatabase:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             result = await handle_clone_database(payload, progress)
 
         assert progress.add_task.call_count == 2
@@ -202,7 +209,7 @@ class TestHandleCloneDatabase:
 
     @pytest.mark.asyncio
     async def test_clone_failure_calls_fail_project(self, payload):
-        from opi.core.task_handlers_operations import handle_clone_database
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
 
         progress = _make_progress()
 
@@ -210,7 +217,7 @@ class TestHandleCloneDatabase:
         mock_pm.clone_database_from_external_direct = AsyncMock(return_value={"success": False, "errors": ["timeout"]})
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Database clone failed"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Database clone failed"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -218,7 +225,7 @@ class TestHandleCloneDatabase:
 
     @pytest.mark.asyncio
     async def test_missing_host_calls_fail_project(self):
-        from opi.core.task_handlers_operations import handle_clone_database
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
 
         payload = {
             "project_name": "test-project",
@@ -233,15 +240,41 @@ class TestHandleCloneDatabase:
         mock_pm = AsyncMock()
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_missing_port_calls_fail_project(self):
+        """A host without a port is just as incomplete as no source at all."""
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
+
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "dev",
+            "source_database": "mydb",
+            "source_schema": "public",
+            "source_username": "user",
+            "source_password": "pass",
+            "source_host": "db.example.com",
+        }
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
+            await handle_clone_database(payload, progress)
+
+        progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
+        mock_pm.clone_database_from_external_direct.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_tunnel_clone_uses_tunnel_task_name(self):
-        from opi.core.task_handlers_operations import handle_clone_database
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_database
 
         payload = {
             "project_name": "test-project",
@@ -266,7 +299,7 @@ class TestHandleCloneDatabase:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             await handle_clone_database(payload, progress)
 
         progress.add_task.assert_any_call(progress_steps.DATABASE_CLONE, subject="mydb via een Chisel-tunnel")
@@ -292,7 +325,7 @@ class TestHandleCloneBucket:
 
     @pytest.mark.asyncio
     async def test_success_direct(self, payload):
-        from opi.core.task_handlers_operations import handle_clone_bucket
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_bucket
 
         progress = _make_progress()
 
@@ -307,7 +340,7 @@ class TestHandleCloneBucket:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm):
+        with patch(CLONE_PM_PATH, return_value=mock_pm):
             result = await handle_clone_bucket(payload, progress)
 
         assert progress.add_task.call_count == 2
@@ -318,7 +351,7 @@ class TestHandleCloneBucket:
 
     @pytest.mark.asyncio
     async def test_clone_failure_calls_fail_project(self, payload):
-        from opi.core.task_handlers_operations import handle_clone_bucket
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_bucket
 
         progress = _make_progress()
 
@@ -328,11 +361,35 @@ class TestHandleCloneBucket:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Bucket clone failed"):
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Bucket clone failed"):
             await handle_clone_bucket(payload, progress)
 
         progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_source_calls_fail_project(self):
+        """No host and no port, and no tunnel either: there is nothing to dial."""
+        from opi.runtime.tasks.task_handlers_operations import handle_clone_bucket
+
+        payload = {
+            "project_name": "test-project",
+            "deployment_name": "dev",
+            "source_bucket": "mybucket",
+            "source_access_key": "access",
+            "source_secret_key": "secret",
+        }
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(CLONE_PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="sourceHost and sourcePort"):
+            await handle_clone_bucket(payload, progress)
+
+        progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
+        mock_pm.clone_minio_bucket_from_external_direct.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +411,7 @@ class TestRefreshDeploymentOomBudget:
     )
     @pytest.mark.asyncio
     async def test_only_a_user_refresh_clears_the_budget(self, automated_remediation, expected_budget_after):
-        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
         from opi.services.oom_watcher import _oom_tune_attempts
 
         _oom_tune_attempts.clear()
@@ -380,7 +437,7 @@ class TestRefreshDeploymentOomBudget:
         }
 
         with (
-            patch("opi.core.task_handlers_operations.get_project_store", return_value=mock_store),
+            patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=mock_store),
             patch(CREATE_PM_PATH, return_value=mock_pm),
             patch("opi.services.oom_watcher.schedule_oom_check", return_value=None),
         ):
@@ -400,7 +457,7 @@ class TestHandleRefreshDeployment:
 
     @pytest.mark.asyncio
     async def test_success_passes_progress_and_reports_urls(self, payload):
-        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
         progress = _make_progress()
 
@@ -421,7 +478,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -454,7 +511,7 @@ class TestHandleRefreshDeployment:
 
     @pytest.mark.asyncio
     async def test_project_not_found_calls_fail_project(self, payload):
-        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
         progress = _make_progress()
 
@@ -463,7 +520,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -479,7 +536,7 @@ class TestHandleRefreshDeployment:
 
     @pytest.mark.asyncio
     async def test_processing_failed_calls_fail_project(self, payload):
-        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
         progress = _make_progress()
 
@@ -496,7 +553,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -515,7 +572,7 @@ class TestHandleRefreshDeployment:
 
     @pytest.mark.asyncio
     async def test_invalid_project_name_calls_fail_project(self):
-        from opi.core.task_handlers_operations import handle_refresh_deployment
+        from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
         payload = {
             "project_name": "INVALID!!",
@@ -525,7 +582,7 @@ class TestHandleRefreshDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=False,
             ),
             pytest.raises(ValueError, match="Invalid project name"),
@@ -545,7 +602,7 @@ class TestRefreshGitSyncFails:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("handler_name", ["handle_refresh_project", "handle_refresh_deployment"])
     async def test_an_unreachable_git_server_fails_the_step(self, handler_name, monkeypatch):
-        import opi.core.task_handlers_operations as handlers
+        import opi.runtime.tasks.task_handlers_operations as handlers
         from opi.connectors.git import GitRemoteUnavailableError
 
         async def unreachable() -> None:
@@ -558,7 +615,7 @@ class TestRefreshGitSyncFails:
         payload = {"project_name": "test-project", "deployment_name": "dev"}
 
         with (
-            patch("opi.core.task_handlers_operations.get_project_store", return_value=mock_store),
+            patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=mock_store),
             pytest.raises(GitRemoteUnavailableError),
         ):
             await getattr(handlers, handler_name)(payload, progress)
@@ -584,7 +641,7 @@ class TestHandleUpsertDeployment:
 
     @pytest.mark.asyncio
     async def test_success_passes_progress_to_process(self, payload):
-        from opi.core.task_handlers_project import handle_upsert_deployment
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
 
         progress = _make_progress()
 
@@ -600,7 +657,7 @@ class TestHandleUpsertDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -608,20 +665,20 @@ class TestHandleUpsertDeployment:
                 return_value="dev",
             ),
             patch(
-                "opi.utils.project_utils.normalize_container_image",
+                "opi.services.project_utils.normalize_container_image",
                 return_value=("web:v1", None),
             ),
             patch(PM_PATH, return_value=mock_pm),
         ):
             result = await handle_upsert_deployment(payload, progress)
 
-        # Verify progress passed to process_project_from_git
+        # The progress reaches the processing, and the scope travels as ``deployment_names``:
+        # the shared rollout step takes a list, which is also the task scope.
         mock_pm.process_project_from_git.assert_called_once_with(
             "projects/test-project.yaml",
             task_progress_manager=progress,
-            deployment_name="dev",
+            deployment_names=["dev"],
             force_clone=False,
-            argocd_resources_changed=True,
         )
 
         # Web addresses reported
@@ -631,7 +688,7 @@ class TestHandleUpsertDeployment:
 
     @pytest.mark.asyncio
     async def test_processing_failed_fails_the_project(self, payload):
-        from opi.core.task_handlers_project import handle_upsert_deployment
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
 
         progress = _make_progress()
 
@@ -643,7 +700,7 @@ class TestHandleUpsertDeployment:
 
         with (
             patch(
-                "opi.utils.project_utils.validate_project_name",
+                "opi.utils.project_names.validate_project_name",
                 return_value=True,
             ),
             patch(
@@ -651,7 +708,7 @@ class TestHandleUpsertDeployment:
                 return_value="dev",
             ),
             patch(
-                "opi.utils.project_utils.normalize_container_image",
+                "opi.services.project_utils.normalize_container_image",
                 return_value=("web:v1", None),
             ),
             patch(PM_PATH, return_value=mock_pm),
@@ -661,6 +718,59 @@ class TestHandleUpsertDeployment:
         progress.fail_task.assert_not_called()
         progress.fail_project.assert_called()
         assert result["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_from_the_use_case_is_a_client_error(self, payload):
+        """An invalid deployment name is the caller's mistake, not an outage (RC-483).
+
+        The use case already fails the step and the project on this refusal; the handler
+        only turns it into the task's answer, without adding a second failed step of its own.
+        """
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
+
+        progress = _make_progress()
+        payload = {**payload, "deployment_name": "Not Valid!"}
+
+        mock_pm = AsyncMock()
+        mock_pm.close = AsyncMock()
+
+        with patch(PM_PATH, return_value=mock_pm):
+            result = await handle_upsert_deployment(payload, progress)
+
+        assert result["status"] == "failed"
+        assert result["error_type"] == "validation_error"
+        progress.fail_task.assert_called_once()
+        assert progress.fail_task.call_args.kwargs.get("client_error") is True
+        mock_pm.upsert_deployment.assert_not_awaited()
+        mock_pm.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_error_is_a_permanent_task_failure_not_a_raise(self, payload):
+        """RC-483 regression: moving the upsert into a use case let an unexpected error fly
+        past the handler and into the worker, which retries a failure dict never would.
+        """
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
+
+        progress = _make_progress()
+
+        mock_pm = AsyncMock()
+        mock_pm.upsert_deployment = AsyncMock(side_effect=RuntimeError("argocd onbereikbaar"))
+        mock_pm.close = AsyncMock()
+
+        with (
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
+            patch("opi.utils.naming.sanitize_kubernetes_name", return_value="dev"),
+            patch(PM_PATH, return_value=mock_pm),
+        ):
+            result = await handle_upsert_deployment(payload, progress)
+
+        assert result == {
+            "deployment_name": "dev",
+            "status": "failed",
+            "error": "Error upserting deployment: argocd onbereikbaar",
+            "error_type": "internal_error",
+        }
+        mock_pm.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +799,7 @@ class TestHandleCreateProject:
 
     @pytest.mark.asyncio
     async def test_forwards_deployment_name_when_present(self):
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -701,10 +811,10 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             result = await handle_create_project(payload, progress)
@@ -716,7 +826,7 @@ class TestHandleCreateProject:
 
     @pytest.mark.asyncio
     async def test_deployment_name_none_when_absent(self):
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -727,10 +837,10 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             await handle_create_project(payload, progress)
@@ -742,7 +852,7 @@ class TestHandleCreateProject:
     @pytest.mark.asyncio
     async def test_forwards_deployment_names_list(self):
         """Domain approval supplies an explicit list of affected deployments."""
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -754,10 +864,10 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             await handle_create_project(payload, progress)
@@ -771,7 +881,7 @@ class TestHandleCreateProject:
         """An empty list (approval affecting zero deployments) must NOT collapse
         to None - it means 'deploy nothing', not 'deploy everything'.
         """
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -783,10 +893,10 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             await handle_create_project(payload, progress)
@@ -803,7 +913,7 @@ class TestHandleCreateProject:
         base project created from the CLI would land as a failed task while its file
         was written and committed. rollout=false stops after the commit instead.
         """
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -815,10 +925,10 @@ class TestHandleCreateProject:
         }
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             result = await handle_create_project(payload, progress)
@@ -834,7 +944,7 @@ class TestHandleCreateProject:
     @pytest.mark.asyncio
     async def test_rollout_defaults_to_processing(self):
         """Absent flag means roll out; only an explicit false may skip the cluster."""
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = _make_progress()
         mock_git, mock_pm = self._mocks()
@@ -842,10 +952,10 @@ class TestHandleCreateProject:
         payload = {"project_name": "test-project", "yaml_content": "name: test-project\n"}
 
         with (
-            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.utils.project_names.validate_project_name", return_value=True),
             patch("opi.connectors.git.GitConnector", return_value=mock_git),
             patch(PM_PATH, return_value=mock_pm),
-            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
             patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
         ):
             await handle_create_project(payload, progress)
@@ -862,10 +972,10 @@ class TestUpdateTaskMethod:
     def test_persistent_update_task(self):
         """Test that update_task updates subtask name and marks dirty."""
         with patch(
-            "opi.core.persistent_task_progress.asyncio.get_running_loop",
+            "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
             side_effect=RuntimeError,
         ):
-            from opi.core.persistent_task_progress import PersistentTaskProgressManager
+            from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
             pm = PersistentTaskProgressManager(
                 task_id="test-123",
@@ -881,13 +991,3 @@ class TestUpdateTaskMethod:
         assert pm._subtasks[task_id]["name"] == "Updated name"
         assert pm._dirty is True
         assert pm._current_step == "Updated name"
-
-    def test_in_memory_update_task(self):
-        """Test that TaskProgressManager.update_task works."""
-        from opi.core.task_manager import TaskProgressManager
-
-        pm = TaskProgressManager(project_id="test-123", project_name="test-project")
-        task_id = pm.add_task("Original name")
-        pm.update_task(task_id, "Updated name")
-
-        assert pm.tasks[task_id].name == "Updated name"

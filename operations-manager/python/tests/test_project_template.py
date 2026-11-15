@@ -15,14 +15,13 @@ import pytest
 from opi.forms.editables import template as template_module
 from opi.forms.editables.template import load_project_template
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
-from opi.utils.age import decrypt_password_smart_sync, ensure_base64_age_sync
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import decrypt_password_smart_sync, ensure_base64_age_sync, generate_age_key_pair
 
 
 @pytest.fixture
 def platform_keys(monkeypatch: Any) -> tuple[str, str]:
     """A real AGE keypair, plus a repository password that the env carries plain."""
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     monkeypatch.setattr(template_module.settings, "SOPS_AGE_PRIVATE_KEY", private_key)
     monkeypatch.setattr(template_module.settings, "SOPS_AGE_PUBLIC_KEY", public_key)
     monkeypatch.setattr(template_module.settings, "PROJECT_REPO_PASSWORD", "plain:repo-secret")

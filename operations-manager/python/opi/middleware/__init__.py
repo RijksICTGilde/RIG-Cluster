@@ -1,3 +1,1 @@
-"""
-Middleware package for OPI.
-"""
+"""Middleware package for OPI."""

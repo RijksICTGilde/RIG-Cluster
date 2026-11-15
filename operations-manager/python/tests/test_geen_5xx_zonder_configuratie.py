@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import opi.api.endpoint_util as endpoint_util
+import opi.http.auth.endpoint_util as endpoint_util
 import pytest
-from opi.api.route_herkenning import MARKERINGEN, route_herkenningen
+from opi.api.route_recognition import MARKERS, route_recognitions
 from opi.server import app
 
 if TYPE_CHECKING:
@@ -78,8 +78,8 @@ def test_een_niet_geconfigureerd_secret_geeft_404(test_client: TestClient, zonde
 
 def test_elke_uitzondering_bestaat_nog() -> None:
     """Een uitzondering voor een pad dat weg is verbergt een pad dat terugkomt."""
-    assert "metrics-token" in MARKERINGEN
-    paden = {route.pad for route in route_herkenningen(app)}
+    assert "metrics-token" in MARKERS
+    paden = {route.path for route in route_recognitions(app)}
     verdwenen = [pad for pad in UITGEZONDERD if pad not in paden]
 
     assert not verdwenen, f"haal deze uitzonderingen weg, de routes bestaan niet meer: {verdwenen}"

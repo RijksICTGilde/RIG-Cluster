@@ -1,10 +1,10 @@
-"""Het regelregister: wat elke action opent, en voor wie.
+"""The rule register: what every action opens, and for whom.
 
-Dit bestand lees je van boven naar beneden als de rechtenmatrix; de pagina op
-``/rollen`` toont precies wat hier staat. Een action zonder regel hier laat de
-applicatie bij het opstarten falen, dus een nieuwe route kan niet stil onbeschermd zijn.
+This file reads from top to bottom as the permission matrix; the page at "/rollen" shows
+exactly what is here. An action without a rule here makes the application fail at startup,
+so a new route cannot be quietly unprotected.
 
-De rollen en scopes staan in :mod:`opi.core.authz.engine`.
+The roles and scopes are in :mod:`opi.core.authz.engine`.
 """
 
 from __future__ import annotations
@@ -40,18 +40,16 @@ OPERATIONS = "Operationeel"
 PORTAL = "Het portaal"
 PLATFORM = "Platformbeheer"
 
-# --- Lezen -------------------------------------------------------------------
-#
-# Rij 1 van de matrix: een viewer leest alles van het project, behalve de waarden van
-# omgevingsvariabelen en secrets. Die staan achter env-vars.manage respectievelijk de
-# projectsleutel.
+# Row 1 of the matrix: a viewer reads everything of the project, except the values of
+# environment variables and secrets. Those sit behind env-vars.manage and the project key
+# respectively.
 #
 # developer-ci reads as viewer (INCLUDES). ops-ci reads only what a pipeline asks for
 # after a deploy: the task outcome, the deployment's URLs and whether changes are still
 # waiting for a rollout; it is the role that reaches production.
 _CI_READS = frozenset({Action.PROJECT_READ, Action.DEPLOYMENT_READ, Action.TASK_READ})
 
-for _actie, _label, _sectie in (
+for _action, _label, _section in (
     (Action.PROJECT_READ, "Project bekijken", PROJECT),
     (Action.PROJECT_LIST, "Projectenoverzicht bekijken", PROJECT),
     (Action.DEPLOYMENT_READ, "Deployment bekijken", DEPLOYMENTS),
@@ -67,22 +65,20 @@ for _actie, _label, _sectie in (
     (Action.SLEEP_READ, "Slaapstand bekijken", TASKS),
     (Action.TOKEN_READ, "Tokens bekijken", MEMBERS),
 ):
-    _ci = [Grant(Role.OPS_CI)] if _actie in _CI_READS else []
-    rule(_actie, label=_label, section=_sectie, read=True, grants=[Grant(Role.VIEWER), *_ci])
+    _ci = [Grant(Role.OPS_CI)] if _action in _CI_READS else []
+    rule(_action, label=_label, section=_section, read=True, grants=[Grant(Role.VIEWER), *_ci])
 
 
-# --- Deployments -------------------------------------------------------------
-#
-# Rij 2 tot en met 7. Een developer bouwt op alles wat niet productie is; ops doet
-# hetzelfde op productie. De CI-rollen stapelen niet op elkaar en dragen alleen wat een
-# pijplijn nodig heeft (B7).
+# Rows 2 through 7. A developer builds on everything that is not production; ops does the
+# same on production. The CI roles do not stack on each other and carry only what a pipeline
+# needs (B7).
 
-for _actie, _label in (
+for _action, _label in (
     (Action.DEPLOYMENT_WRITE, "Deployment aanmaken of wijzigen"),
     (Action.DEPLOYMENT_REFRESH, "Deployment verwerken"),
 ):
     rule(
-        _actie,
+        _action,
         label=_label,
         section=DEPLOYMENTS,
         grants=[
@@ -103,16 +99,16 @@ rule(
     ],
 )
 
-for _actie, _label, _sectie in (
+for _action, _label, _section in (
     (Action.DEPLOYMENT_IMAGE_REPLACE, "Image vervangen", DEPLOYMENTS),
     (Action.IMAGE_PUSH, "Image pushen", DATA),
 ):
     rule(
-        _actie,
+        _action,
         label=_label,
-        section=_sectie,
-        # ops-ci bewust zonder step-up, en op allebei de scopes: hij omvat geen andere
-        # rol, en zonder step-up kan een pijplijn het uberhaupt (ontwerp 5.3).
+        section=_section,
+        # ops-ci deliberately without a step-up, and on both scopes: it covers no other
+        # role, and without a step-up a pipeline can do it at all (design 5.3).
         grants=[
             Grant(Role.DEVELOPER, NON_PRODUCTION),
             Grant(Role.DEVELOPER_CI, NON_PRODUCTION),
@@ -122,14 +118,15 @@ for _actie, _label, _sectie in (
         ],
     )
 
-# Op de COMPONENTscopes en niet op die van een deployment, anders dan de rij in ontwerp
-# paragraaf 4 zegt: de env-vars hangen aan het component, en de route die ze bewerkt heeft
-# geen deployment in het pad. Met een deploymentscope las die route als niet-productie, en
-# dan opende de developer-grant de waarden van een component dat alleen op productie staat
-# (RC-392 securityreview).
+# On the COMPONENT scopes and not on a deployment's, unlike what the row in design section 4
+# says: the env-vars hang off the component, and the route that opens them has no deployment
+# in its path. A deployment scope reads that route as non-production, and the developer grant
+# then shows the values of a component that only stands on production.
+# Since RC-481 this action opens the window and no longer writes: saving the values weighs
+# SERVICE_WRITE_VALUES on the project, like the values endpoints.
 rule(
     Action.ENV_VARS_MANAGE,
-    label="Env-vars bekijken en wijzigen",
+    label="Env-vars bekijken",
     section=DEPLOYMENTS,
     grants=[
         Grant(Role.DEVELOPER, COMPONENT_NOT_IN_PRODUCTION, requires=STEP_UP),
@@ -137,9 +134,9 @@ rule(
     ],
 )
 
-# De BRON van een kloon, naast de deployment die geschreven wordt. Klonen VANAF productie
-# is ops, ongeacht waar het naartoe gaat: productiedata naar niet-productie kopieren laten
-# we niet aan een developer of een pijplijn over (RC-392 securityreview).
+# The SOURCE of a clone, next to the deployment being written. Cloning FROM production is
+# ops, wherever it goes: copying production data to non-production is not something we leave
+# to a developer or a pipeline (RC-392 security review).
 rule(
     Action.DEPLOYMENT_CLONE_FROM,
     label="Klonen vanaf een deployment",
@@ -151,11 +148,11 @@ rule(
     ],
 )
 
-# De hostnaam van een BESTAANDE deployment wijzigen is altijd ops. De domeingoedkeuring
-# geldt per project en het format ``subdomain`` is ``{subdomain}.{domain}``, dus twee
-# deployments van hetzelfde project kunnen dezelfde hostnaam vormen; wie de hostnaam van
-# een draaiende deployment mag verzetten kan die van productie opeisen (RC-392
-# securityreview). Een NIEUWE deployment krijgt ze mee uit deployment.write.
+# Changing the host name of an EXISTING deployment is always ops. The domain approval holds
+# per project and the format ``subdomain`` is ``{subdomain}.{domain}``, so two deployments of
+# the same project can form the same host name; whoever may move the host name of a running
+# deployment can claim the one of production (RC-392 security review). A NEW deployment gets
+# it along out of deployment.write.
 rule(
     Action.DEPLOYMENT_DOMAIN_SET,
     label="Hostnaam van een bestaande deployment wijzigen",
@@ -163,9 +160,9 @@ rule(
     grants=[Grant(Role.OPS)],
 )
 
-# Van of naar productie staat bij ops met een step-up, omdat wie een deployment van
-# productie haalt elke productieregel met een klik omzeilt (ontwerp paragraaf 4). Een
-# overgang tussen de andere stages is een deployment schrijven.
+# On or off production sits with ops plus a step-up, because whoever takes a deployment off
+# production sidesteps every production rule with one click (design section 4). A transition
+# between the other stages is writing a deployment.
 rule(
     Action.ENVIRONMENT_SET,
     label="OTAP-markering van of naar productie zetten",
@@ -174,12 +171,10 @@ rule(
 )
 
 
-# --- Op projectniveau ----------------------------------------------------------
-#
-# Rij 10 en 11 (B5): een wijziging die het hele project raakt vraagt ops zodra EEN
-# deployment van dat project op productie staat.
+# Rows 10 and 11 (B5): a change touching the whole project asks for ops as soon as ONE
+# deployment of that project stands on production.
 
-for _actie, _label, _sectie in (
+for _action, _label, _section in (
     (Action.PROJECT_EDIT, "Het projectbestand bewerken", PROJECT),
     (Action.PROJECT_REFRESH, "Project verwerken", PROJECT),
     (Action.COMPONENT_ADD, "Component toevoegen", COMPONENTS),
@@ -193,17 +188,17 @@ for _actie, _label, _sectie in (
     (Action.ATTACHMENT_MANAGE, "Bijlagen beheren", PROJECT),
 ):
     rule(
-        _actie,
+        _action,
         label=_label,
-        section=_sectie,
+        section=_section,
         grants=[
             Grant(Role.DEVELOPER, PROJECT_WITHOUT_PRODUCTION),
             Grant(Role.OPS, PROJECT_WITH_PRODUCTION),
         ],
     )
 
-# Rij 12 en 13: een component weegt of een PRODUCTIEdeployment hem gebruikt, niet of het
-# project ergens productie heeft.
+# Rows 12 and 13: a component weighs whether a PRODUCTION deployment uses it, not whether
+# the project has production somewhere.
 rule(
     Action.COMPONENT_DELETE,
     label="Component verwijderen",
@@ -215,12 +210,10 @@ rule(
 )
 
 
-# --- Operationeel --------------------------------------------------------------
-#
-# Rij 14 en 15: job, databaseconsole, terugzetten en wat er verder op EEN deployment
-# gebeurt. Niet-productie is developer, productie is ops.
+# Rows 14 and 15: a job, the database console, a restore and whatever else happens on ONE
+# deployment. Non-production is developer, production is ops.
 
-for _actie, _label, _sectie in (
+for _action, _label, _section in (
     (Action.JOB_RUN, "Een job draaien", OPERATIONS),
     (Action.DATABASE_CONSOLE, "De databaseconsole openen", OPERATIONS),
     (Action.RESTORE_RUN, "Terugzetten", BACKUPS),
@@ -236,17 +229,15 @@ for _actie, _label, _sectie in (
     (Action.SLEEP_WAKE, "Wekken uit de slaapstand", TASKS),
 ):
     rule(
-        _actie,
+        _action,
         label=_label,
-        section=_sectie,
+        section=_section,
         grants=[Grant(Role.DEVELOPER, NON_PRODUCTION), Grant(Role.OPS, PRODUCTION)],
     )
 
 
-# --- Leden, tokens en het project zelf ------------------------------------------
-#
-# Rij 17 tot en met 19. Admin is gebruikersbeheer en geen bovenste trede (B1): hij leest
-# het project en beheert wie erbij mag, maar bouwt er niet aan.
+# Rows 17 through 19. Admin is user administration and not a top rung (B1): it reads the
+# project and manages who may come in, but does not build on it.
 
 rule(
     Action.MEMBER_MANAGE,
@@ -266,17 +257,15 @@ rule(
     section=PROJECT,
     grants=[Grant(Role.ADMIN, requires=STEP_UP)],
 )
-# Geen leesactie: wie de projectsleutel uitleest heeft daarmee alles wat die sleutel
-# opent. Zonder step-up, want de CLI leest hem bij elke lijstvraag op.
+# Not a read action: whoever reads the project key out has everything that key opens. Without
+# a step-up, because the CLI reads it on every list request.
 rule(Action.PROJECT_KEY_READ, label="Projectsleutel lezen", section=MEMBERS, grants=[Grant(Role.ADMIN)])
 rule(Action.AUDIT_READ, label="De audit van dit project lezen", section=MEMBERS, read=True, grants=[Grant(Role.ADMIN)])
 
 
-# --- Het portaal ------------------------------------------------------------
-#
-# Geen projectrecht: deze routes werken niet op een project, dus er is geen rol om te
-# wegen. Ze dragen een action omdat een route zonder action stil onbewaakt zou zijn, en
-# zodat de audit ze kan noemen.
+# Not a project permission: these routes do not work on a project, so there is no role to
+# weigh. They carry an action because a route without an action would be quietly unguarded,
+# and so the audit can name them.
 
 rule(Action.PORTAL_READ, label="Portaalpagina's lezen", section=PORTAL, read=True, audience=Audience.SIGNED_IN)
 rule(Action.WIZARD_USE, label="De aanmaakwizard gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
@@ -296,14 +285,11 @@ rule(
 rule(Action.TOOLS_USE, label="Het versleutelgereedschap gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
 
 
-# --- Platformbeheer ---------------------------------------------------------
-#
-# Alleen een platformbeheerder, afgedwongen door ``require_platform_admin`` of door het
-# platformbeheerderstoken. Geen projectrol opent deze, ook niet die van een admin. Een
-# eigen publiek en geen zevende rol, zodat de matrix de zes kolommen van ontwerp
-# paragraaf 4 houdt.
+# A platform administrator only, enforced by ``require_platform_admin`` or by the platform
+# administrator token. No project role opens these, not even an admin's. An audience of its
+# own and not a seventh role, so the matrix keeps the six columns of design section 4.
 
-for _actie, _label in (
+for _action, _label in (
     (Action.PLATFORM_CLEANUP, "Opruiming en verwijdermarkeringen"),
     (Action.PLATFORM_RECONCILE, "Reconciliatie van het platform"),
     (Action.PLATFORM_USERS, "Gebruikersbeheer"),
@@ -315,33 +301,32 @@ for _actie, _label in (
     (Action.PLATFORM_BACKUP, "De back-uptoestand van het platform"),
     (Action.PLATFORM_PROJECT_KEY, "De projectsleutel van een project vervangen"),
 ):
-    rule(_actie, label=_label, section=PLATFORM, audience=Audience.PLATFORM_ADMIN)
+    rule(_action, label=_label, section=PLATFORM, audience=Audience.PLATFORM_ADMIN)
 
 
 def check_register() -> None:
-    """De controles uit ontwerp 5.4 die niet in :func:`rule` zelf passen.
+    """The checks of design 5.4 that do not fit in :func:`rule` itself.
 
-    Draait bij het opstarten, naast de routecontrole. Wat hier faalt is een fout in dit
-    bestand, en dan is niet starten beter dan een rol die stil niets opent.
+    Runs at startup, next to the route check. What fails here is an error in this file, and
+    then not starting is better than a role that quietly opens nothing.
 
-    Raises:
-        RuleError: Als een rol in geen enkele grant voorkomt, of als een CI-rol alleen
-            grants heeft die een mens vragen (en dus voor een pijplijn niets opent).
+    Raises ``RuleError`` when a role appears in no grant at all, or when a CI role has only
+    grants that ask for a human, and therefore opens nothing for a pipeline.
     """
-    gebruikt: set[Role] = set()
-    bereikbaar: set[Role] = set()
-    for regel in all_rules():
-        for grant in regel.grants:
-            gebruikt.add(grant.role)
+    used: set[Role] = set()
+    reachable: set[Role] = set()
+    for registered in all_rules():
+        for grant in registered.grants:
+            used.add(grant.role)
             if not grant.needs_human:
-                bereikbaar.add(grant.role)
+                reachable.add(grant.role)
 
-    ongebruikt = sorted(rol.value for rol in Role if rol not in gebruikt)
-    if ongebruikt:
-        raise RuleError(f"deze rollen komen in geen enkele grant voor: {', '.join(ongebruikt)}")
+    unused = sorted(role.value for role in Role if role not in used)
+    if unused:
+        raise RuleError(f"deze rollen komen in geen enkele grant voor: {', '.join(unused)}")
 
-    dode_ci = sorted(rol.value for rol in Role if rol.value.endswith("-ci") and rol not in bereikbaar)
-    if dode_ci:
+    dead_ci = sorted(role.value for role in Role if role.value.endswith("-ci") and role not in reachable)
+    if dead_ci:
         raise RuleError(
-            f"deze CI-rollen hebben alleen grants die een mens vragen en openen dus niets: {', '.join(dode_ci)}"
+            f"deze CI-rollen hebben alleen grants die een mens vragen en openen dus niets: {', '.join(dead_ci)}"
         )

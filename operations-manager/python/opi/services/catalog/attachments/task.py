@@ -2,8 +2,7 @@
 
 The removal itself is a git clone, an edit and a commit; short, but long enough that the
 page needs something to show, and it is confirmed in the same modal as every other
-dangerous action. Rather than being the one action that reports back differently, it
-runs as a task and answers with the shared progress fragment.
+dangerous action. It runs as a task and answers with the shared progress fragment.
 
 The handler lives in the service package because the work is the attachments service's;
 only the registration is central, next to the other task types.
@@ -14,12 +13,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.core import progress_steps as steps
+from opi.services.tasks import progress_steps as steps
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+async def handle_delete_attachment(payload: dict[str, Any], progress: PersistentTaskProgressManager) -> dict[str, Any]:
     """Remove one attachment from the project's catalog.
 
     Args:
@@ -53,10 +52,9 @@ async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> di
             raise RuntimeError(error_msg)
         progress.complete_task(remove_task)
 
-        # Committing the removal is half the job (RC-119). The secret and the mount are
-        # generated manifests, so without processing the project they stay on the cluster
-        # and the pod keeps the file it started with -- the same change-nobody-sees the
-        # API routes had. Nothing to process when the catalog did not change.
+        # Committing the removal is half the job. The secret and the mount are generated
+        # manifests, so without processing the project they stay on the cluster and the pod
+        # keeps the file it started with. Nothing to process when the catalog did not change.
         if result.get("changed") and not await project_manager.process_project_from_git(
             project_file_relative_path, task_progress_manager=progress
         ):
@@ -75,16 +73,14 @@ async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> di
     }
 
 
-async def handle_configure_attachment(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+async def handle_configure_attachment(
+    payload: dict[str, Any], progress: PersistentTaskProgressManager
+) -> dict[str, Any]:
     """Roll a written attachment change out to the cluster.
 
-    The write already happened in the request that created this task: an attachment
-    arrives as an upload, and a file does not belong in a task payload. What was missing
-    was everything after it. The five attachment routes committed the project file and
-    stopped there, so a replaced certificate reached git and never reached a pod -- no
-    manifest was generated from it until something else happened to process the project.
-
-    This is that processing, as a task the caller can follow, with the same ``rollout``
+    The write already happened in the request that created this task: an attachment arrives
+    as an upload, and a file does not belong in a task payload. The processing that turns
+    it into a manifest is this task, which the caller can follow, with the same ``rollout``
     meaning every other mutating endpoint has: ``rollout=false`` saves without processing
     and the project file runs ahead of the cluster until a refresh.
 
@@ -96,8 +92,8 @@ async def handle_configure_attachment(payload: dict[str, Any], progress: Any) ->
     Returns:
         The outcome of the processing, in the shared ``processing`` shape.
     """
-    from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
     from opi.manager.project_manager import ProjectManager
+    from opi.services.tasks.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
     project_name: str = payload["project_name"]
     attachment_id: str | None = payload.get("item_id")

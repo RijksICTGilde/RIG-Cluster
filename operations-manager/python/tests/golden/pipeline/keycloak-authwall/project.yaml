@@ -1,0 +1,47 @@
+schema-version: '2.17'
+name: golden-authwall
+display-name: Golden authwall
+description: Keycloak met de autorisatiemuur voor het component
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+  - keycloak
+  - authorization-wall
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-authwall.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    aliases:
+      OIDC_ISSUER: $OIDC_DISCOVERY_URL
+    services:
+      - publish-on-web
+      - keycloak
+      - authorization-wall
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-authwall
+    repository: main-repo
+    components:
+      - reference: web
+        image: nginx:1.27

@@ -34,7 +34,7 @@ Twee winsten die los staan van de tijd:
 
 ## Hoe het werkt
 
-`_decrypt_in_process` parseert de private sleutel tot een `pyrage.x25519.Identity` en
+`_decrypt_block` parseert de private sleutel tot een `pyrage.x25519.Identity` en
 laat `pyrage.decrypt` het blok openen. `pyrage` is een binding op de Rust-implementatie
 van age en leest zowel de armored als de binaire vorm, dus bestaande projectbestanden
 openen ongewijzigd.
@@ -42,11 +42,14 @@ openen ongewijzigd.
 `decrypt_age_content` blijft `async` terwijl er niets te wachten valt: dat houdt alle
 aanroepers onveranderd.
 
-Het foutgedrag is hetzelfde gebleven:
+Het foutgedrag, sinds RC-453 een antwoord per soort:
 
 - ontbrekende inhoud of sleutel: `ValueError`;
-- mislukte ontsleuteling: `Exception("Age decryption failed: ...")` uit de async-variant,
-  `None` uit de sync-variant.
+- mislukte ontsleuteling: `AgeDecryptionError` uit de async-variant, `None` uit de
+  sync-variant. `AgeDecryptionError` erft van `ValueError`, zodat een aanroeper met
+  `except ValueError` hem niet mist;
+- een plaintext die geen utf-8 is: dezelfde `AgeDecryptionError`, niet een kale
+  `UnicodeDecodeError` die door de sync-variant heen lekt.
 
 ## De versleutelkant is sinds RC-263 ook in-process
 
@@ -61,10 +64,6 @@ beide richtingen tegen het echte binary, voor de async- en de sync-variant en vo
 bijlage die via base64 door dezelfde versleuteling gaat.
 
 ## Wat niet is omgezet
-
-**De sleutelgeneratie.** `generate_sops_key_pair` in `opi/utils/sops.py` start nog
-`age-keygen` en schrijft de private sleutel naar een tijdelijk bestand. Dat gebeurt een
-keer per projectaanmaak, niet op het refreshpad.
 
 **Geen cache.** Issue #145 stelde caching voor als alternatief. Ontsleutelde geheimen in
 een cache leggen is een risico dat je terugkrijgt voor tijdwinst die de omzetting
@@ -86,4 +85,6 @@ risico niet.
 - `pyrage>=1.4.0` (runtime-dependency in `operations-manager/python/pyproject.toml`).
   De wheel draagt geen license-metadata, dus staat er een `authorized_packages`-regel
   voor in de liccheck-configuratie; de repo zelf is MIT.
-- Het `age`-binary blijft nodig in de image, voor `age-keygen` en voor SOPS.
+- Het `age`-binary blijft nodig in de image, voor SOPS. Sinds RC-453 maakt
+  `generate_age_key_pair` in `opi/utils/age.py` ook het sleutelpaar in het proces, dus
+  `age-keygen` wordt door OPI zelf niet meer gestart.

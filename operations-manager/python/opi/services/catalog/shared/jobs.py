@@ -1,18 +1,18 @@
-"""De job-runner modal, eigendom van de PostgreSQL services (RC-24).
+"""The job-runner modal, owned by the PostgreSQL services.
 
-Een projectlid opent een dialog uit het Acties-menu van een deployment, geeft een image
-en commando, en OPI start een eenmalige Pod met de databaseverbinding van de deployment
-(migraties zijn het use case, daarom hoort dit bij de databaseservices en niet bij de
-pagina). De dialog polt de live pod-toestand (starting → running → succeeded/failed) en
-opent de bestaande componentlogviewer om de logs te volgen. De modal en de status zijn
-voor elk projectlid; starten en stoppen vragen een operationele rol (RC-323), want een
-job voert code uit met de databasecredentials van de deployment. Live status komt uit
-het cluster, geschiedenis uit de runs registry.
+A project member opens a dialog from a deployment's Acties menu, supplies an image and a
+command, and OPI starts a one-off Pod with that deployment's database connection (migrations
+are the use case, which is why this belongs with the database services and not with the page).
+The dialog polls the live pod state (starting -> running -> succeeded/failed) and opens the
+existing component log viewer to follow the logs. The modal and the status are for every
+project member; starting and stopping ask for an operational role, because a job runs code
+with the deployment's database credentials. Live status comes from the cluster, history from
+the runs registry.
 
-De modal template staat naast deze module en de routes zijn gemonteerd via
-``Service.web_routers``, dus het blok en de endpoints die het aandrijven gaan samen.
-Deze module wordt luie geïmporteerd uit ``web_routers`` (nooit op catalogimport-tijd),
-dus de catalog zelf blijft vrij van manager imports.
+The modal template sits next to this module and the routes are mounted through
+``Service.web_routers``, so the block and the endpoints driving it travel together. This module
+is imported lazily from ``web_routers`` (never at catalog import time), so the catalog itself
+stays free of manager imports.
 """
 
 from __future__ import annotations
@@ -22,14 +22,15 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.auth.authz import may
+from opi.http.render.lotc_switch import render
 from opi.manager.job_manager import JobError, get_job_manager
-from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind
-from opi.web.authz import may
-from opi.web.lotc_switch import render
+from opi.services.runs_support import pending_state, spawn
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,14 @@ async def _render(
         if job is not None:
             state = job.state
         elif include_pending:
-            state, error = await pending_state(project_name, deployment_name, RunKind.JOB, "job", error)
+            state, message = await pending_state(project_name, deployment_name, RunKind.JOB, "job")
+            error = message or error
         else:
             state = "none"
 
-    # Hetzelfde blok in twee vormgevingen, net als bij de backupsnapshots. Hier stond een
-    # kale TemplateResponse op het roos-sjabloon: het antwoord komt binnen op een pagina die
-    # of roos of NLDD is, dus op een hertekende projectpagina stond deze dialoog in de oude
-    # vormgeving - en daar wordt hij door geen enkel stijlblad opgemaakt, want lotc_rvo
-    # staat niet in DESIGN_SYSTEMS.
+    # The same block in two designs, as with the backup snapshots. The answer arrives on a
+    # page that is either roos or NLDD, and a roos component on a redrawn page stands there in
+    # the old design, which no style sheet dresses because lotc_rvo is not in DESIGN_SYSTEMS.
     return render(
         request,
         template=_MODAL_TEMPLATE,
@@ -95,8 +95,8 @@ async def _render(
     )
 
 
-# Human labels for the unified Taken table. Runs (console/job) + background
-# tasks (upserts, refreshes, ...) are shown together as one history.
+# Human labels for the unified task table. Runs (console/job) and background tasks (upserts,
+# refreshes, ...) are shown together as one history.
 @jobs_router.get("/{project_name}/jobs/{deployment_name}/modal", response_class=HTMLResponse)
 @action(Action.SERVICE_READ)
 @requires_sso
@@ -114,8 +114,8 @@ async def job_status(request: Request, project_name: str, deployment_name: str) 
 
 
 @jobs_router.post("/{project_name}/jobs", response_class=HTMLResponse)
-# ``command`` blijft erbuiten: een vrij in te tikken shell-regel kan een credential
-# dragen, en de audit bewaart ``fields`` een jaar.
+# ``command`` stays out: a freely typed shell line may carry a credential, and the audit keeps
+# ``fields`` for a year.
 @action(Action.JOB_RUN, audit_fields=("deployment", "image"))
 @requires_sso
 async def job_start(request: Request, project_name: str) -> HTMLResponse:

@@ -144,7 +144,7 @@ def test_een_afzenderadres_buiten_ons_domein_komt_er_niet_door(app_server: str, 
 
     ``minbzk.nl`` is het geval uit het plan: dat domein lijnt niet uit met de envelope en
     haalt geen enkel bericht door DMARC, dus het hoort hier te stranden en niet pas in
-    ``_controleer_adres`` midden in het verwerken van een project.
+    ``_validate_address`` midden in het verwerken van een project.
     """
     wizard = _naar_de_mailstap(auth_page, app_server)
 

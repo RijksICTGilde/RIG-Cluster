@@ -41,7 +41,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
+from opi.http.render.template_helpers import CATALOG_DIR, TEMPLATES_DIR
 
 #: Jinja-commentaar. Dat wordt eruit gehaald voordat er gezocht wordt: ``bg/_modals.html.j2``
 #: LEGT dit patroon uit in een commentaarblok, met de tags erbij, en zou anders zichzelf

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from opi.core.config import settings
 from opi.services.catalog.base import (
@@ -15,9 +16,14 @@ from opi.services.catalog.base import (
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
+from opi.services.secrets import MetricsAuthSecret
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import MetricsAuthSecret
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +40,13 @@ class MetricsScraperService(Service):
     )
     config_model = MetricsScraperConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): scraping is configured on the component and there is
+    # May enrol itself: scraping is configured on the component and there is
     # nothing at project level to choose.
     allows_implicit_project_selection = True
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
     config_component_order = 40
 
-    # --- config field ownership (component-level; hooks into the component form) ----
     # metrics-scraper is a component-level service: no standalone wizard step. It hooks
     # its port/path fieldset into the per-component form via config_component_layout().
 
@@ -49,17 +54,17 @@ class MetricsScraperService(Service):
         # port/path live on the component reference's config.
         return self.config_model_field_names() if layer is ConfigLayer.COMPONENT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.COMPONENT:
             return []
         return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE]
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.metrics_scraper.visualizers import METRICS_PATH, METRICS_PORT
 
         return [METRICS_PORT, METRICS_PATH]
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value
@@ -72,19 +77,11 @@ class MetricsScraperService(Service):
             )
         ]
 
-    # GEEN blok op UIEvent.DEPLOYMENT_SECTIONS meer. Hier hing "Resource Metrics", en dat
-    # haalde exact hetzelfde fragment op als het tabblad Metrics doet
-    # (/projects/details/<project>/metrics/<deployment>, id metrics-content-<naam>): dezelfde
-    # grafieken, twee keer, op twee tabbladen. Het blok was er eerder dan het tabblad; bij het
-    # toevoegen van het tabblad is het blijven staan.
-    #
-    # Dezelfde afweging die bij de backups al gemaakt is en die in project-tabs.html.j2
-    # opgeschreven staat: twee weergaven van dezelfde gegevens lopen uit de pas. Het tabblad
-    # is bovendien ruimer - het toont de grafieken voor ELK project met deployments, ook zonder
-    # deze dienst, omdat verbruik geen dienst-extraatje is.
-    #
-    # De twee meldingen die dit blok droeg zijn niet verdwenen maar verhuisd naar het fragment
-    # zelf (opi/web/router.py), zodat ze op EEN plek staan in plaats van naast een tweede kopie.
+    # NO block on UIEvent.DEPLOYMENT_SECTIONS. The Metrics tab shows these charts for every
+    # project with deployments, including projects without this service, because usage is not
+    # a per-service extra; a block here would be the same fragment on a second tab, and two
+    # views of the same data drift apart (see project-tabs.html.j2). The two messages that
+    # belong with the charts live in the fragment itself (opi/web/router.py).
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         # Contribute the scrape port/path as a template var so the deployment's
@@ -113,6 +110,6 @@ class MetricsScraperService(Service):
             SecretFileSpec(
                 secret_name=MetricsAuthSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=MetricsAuthSecret(token=token).to_k8s_secret_data(),
-                secret_type="metrics",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+                secret_type="metrics",  # noqa: S106  # the name of the key or the secret class, not a secret
             )
         ]

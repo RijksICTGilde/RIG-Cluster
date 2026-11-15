@@ -45,7 +45,6 @@ dependencies = [
     "gitpython>=3.1.50", # CVE-2026-42215/42284/44243/44244 + GHSA-mv93-w799-cj2w
     "deepdiff>=8.0.1",
     "jsonpath-ng>=1.7.0",
-    "tenacity>=9.1.2",
     # Lord of the Components: het componentensysteem waar de interface naartoe gaat. Een
     # gewone runtime-dependency en geen dev-extra, want de applicatie rendert er pagina's
     # mee - hij hoort dus in de image te zitten.
@@ -114,6 +113,7 @@ dev = [
     "debugpy>=1.8.0",
     "pytest>=9.0.3",
     "pip-audit>=2.7.0",
+    "import-linter>=2.16",
 ]
 
 
@@ -123,6 +123,10 @@ line-length = 120
 target-version = "py314"
 src = ["opi","tests"]
 exclude = ["opi/migrations"]
+# De gegenereerde ratchet-baseline: per bestand de regels die daar nog overtreden worden.
+# Regenereren met `task lint-baseline`; de baseline kan alleen krimpen. De handgeschreven
+# uitzonderingen hieronder staan in extend-per-file-ignores, zodat beide samenvoegen.
+extend = "ruff-baseline.toml"
 
 [tool.ruff.format]
 line-ending = "lf"
@@ -143,8 +147,21 @@ extension = "html.j2"
 ignore = "T003,H021,H025,T027,T001,T028,J018,H030,H031"
 
 [tool.ruff.lint]
-select = ["I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY", "RUF", "ANN", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH"]
+select = [
+    "I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY",
+    "RUF", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH",
+    "TID251",                                             # de verboden API's hieronder
+    # De regels uit docs/development/coding-rules.md. Bestaande overtredingen staan in
+    # ruff-baseline.toml; nieuwe code valt er meteen onder.
+    "N",                                                  # naamgeving (hoofdstuk 2)
+    "PLR0912", "PLR0913", "PLR0915",                      # takken, parameters, lengte (hoofdstuk 3)
+    "B904", "BLE001",                                     # raise from, kale except (hoofdstuk 7)
+    "ANN001", "ANN201", "ANN202", "ANN204", "ANN401",     # annotaties (hoofdstuk 8)
+]
 fixable = ["ALL"]
+# De pre-commit-hook draait ruff met --fix. ERA001 zou uitgecommentarieerde code dan stil
+# weghalen, en dat is een beslissing van de auteur en niet van een hook.
+unfixable = ["ERA001"]
 task-tags = ["TODO"]
 # Pre-existing issues to be fixed in a separate PR
 ignore = [
@@ -157,11 +174,8 @@ ignore = [
     "TRY301",   # Abstract raise to inner function
     # B rules - bugbear
     "B008",     # Function call in defaults (FastAPI Body() idiom)
-    "B904",     # Raise from err (73 violations)
     # E rules - pycodestyle errors
     "E501",     # Line too long (handled by ruff format)
-    # ANN rules - annotations
-    "ANN",      # Missing type annotations
     # RUF rules - ruff-specific
     "RUF059",   # Unpacked variable never used
     # F rules - pyflakes
@@ -170,25 +184,49 @@ ignore = [
     # S rules - security
     "S104",     # Binding to all interfaces (intentional server config)
     "S108",     # Probable insecure temp file (intentional config paths)
-    # ERA rules
-    "ERA001",   # Commented out code
     # PT rules - pytest
     "PT009",    # Use pytest.raises
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
-"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
-"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+[tool.ruff.lint.flake8-builtins]
+# opi/http/ is de gedeelde HTTP-laag uit docs/development/coding-rules.md hoofdstuk 5. De
+# naam schaduwt de stdlib `http` niet in de praktijk: Python 3 kent geen impliciete
+# relatieve imports, dus `from http import HTTPStatus` in opi/core/errors.py haalt de stdlib.
+builtins-allowed-modules = ["http"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"yaml" = { msg = "Gebruik opi.utils.yaml_util; PyYAML leest YAML 1.1 en de rest van OPI 1.2." }
+"ruamel.yaml.YAML" = { msg = "Gebruik een profiel uit opi.utils.yaml_util in plaats van een eigen YAML()." }
+"ruamel.yaml.main.YAML" = { msg = "Gebruik een profiel uit opi.utils.yaml_util in plaats van een eigen YAML()." }
+
+# De handgeschreven uitzonderingen. Ze staan onder extend-per-file-ignores zodat ze
+# samenvoegen met de gegenereerde per-file-ignores uit ruff-baseline.toml.
+[tool.ruff.lint.extend-per-file-ignores]
+# TID251: de eigenaar van de YAML-profielen mag de bibliotheek zelf aanroepen.
+"opi/utils/yaml_util.py" = ["TID251"]
+# Tests can use asserts, dynamic types, subprocess calls, hardcoded secrets, complex functions,
+# and TID251 (they verify writer output with an independent parser, which measures something real).
+"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901", "TID251"]
+"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901", "TID251"]
 # Het harnas van de aanvalsproef is testcode: asserts, wegwerpsleutels en subprocess-aanroepen
 # horen erbij.
-"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
-# C901 blijft: de complexiteitsdrempel van bestaande orchestratiefuncties is een eigen
-# opruimtaak, niet een beveiligingsregel.
-"opi/**.py" = ["C901"]
+"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901", "TID251"]
+# PLR0913: FastAPI injecteert zijn dependencies als parameters, dus het aantal zegt in een
+# routemodule niets over de functie (hoofdstuk 3 van docs/development/coding-rules.md).
+"opi/api/**.py" = ["PLR0913"]
+"opi/web/**.py" = ["PLR0913"]
+"opi/services/catalog/**/router.py" = ["PLR0913"]
+"opi/services/catalog/**/web.py" = ["PLR0913"]
+# The same reason, for two route modules named after their block instead of router.py: the
+# parameters are the modal state the route hands to its template.
+"opi/services/catalog/shared/db_console.py" = ["PLR0913"]
+"opi/services/catalog/shared/jobs.py" = ["PLR0913"]
+
+[tool.ruff.lint.pylint]
+max-args = 4
 
 [tool.ruff.lint.mccabe]
-max-complexity = 30
+max-complexity = 10
 
 [tool.pyright]
 pythonVersion = "3.14"
@@ -239,7 +277,9 @@ omit = [
 concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
-fail_under = 90
+# De drempel van CI, hier en nergens anders: de stap in .github/workflows/ci.yml geeft geen
+# eigen --fail-under mee. Omhoog is een eigen beslissing, omlaag niet (docs/development/toetsen.md).
+fail_under = 71
 
 [tool.coverage.html]
 directory = "htmlcov"
@@ -281,7 +321,8 @@ markers = [
    "argocd_live: meet tegen een echte ArgoCD in de gepinde versie; draait met `task test-argocd`",
    "startup_live: meet het hele opstarten van OPI tegen alle echte afhankelijkheden; draait met `task test-startup`",
    "tasks_live: meet elk TaskType van begin tot eind tegen alle echte afhankelijkheden; draait met `task test-taken`",
-   "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun"
+   "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun",
+   "own_kubectl: start zelf een kubectl-stub op PATH en meet wat het proces zag; de grendel van tests/kubectl_probe.py laat die door"
 ]
 pythonpath = "."
 
@@ -339,4 +380,58 @@ runtime-evaluated-decorators = [
     "fastapi.APIRouter.put",
     "fastapi.APIRouter.patch",
     "fastapi.APIRouter.delete",
+]
+
+# Lagen uit coding-rules.md hoofdstuk 5 als ratchet. Uitzonderingen uit ronde 6;
+# een overbodige uitzondering maakt de gate rood.
+[tool.importlinter]
+root_package = "opi"
+# Een import onder TYPE_CHECKING is geen koppeling op looptijd. scripts/measure_code.py
+# telt hem daarom apart; dit contract laat hem buiten beschouwing.
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Layers, docs/development/coding-rules.md chapter 5"
+type = "layers"
+# "|" separates siblings that may not import each other, ":" siblings that may.
+layers = [
+    "opi.server | opi.worker_main | opi.__main__ | opi.tools",
+    "opi.api | opi.web | opi.middleware",
+    "opi.http",
+    "opi.runtime : opi.jobs",
+    "opi.manager",
+    "opi.services : opi.forms : opi.generation",
+    "opi.connectors",
+    "opi.utils",
+    "opi.core",
+]
+unmatched_ignore_imports_alerting = "error"
+# Exact pairs, so a new arrow in the same corner does not pass unnoticed. The one wildcard
+# pair is the catalog, and the comment on it says why.
+ignore_imports = [
+    # A catalog service keeps what belongs to it together, its own entry points included: a
+    # route, a task handler, a scheduler, a flow. Those sit above the manager (they call a use
+    # case) and use the auth decorators and the renderer from opi.http, so they point upwards
+    # out of the catalog. Deliberate, and the reason this is the one wildcard pair in this
+    # list: a new service must not have to come and add a line here. See
+    # docs/development/services.md and chapter 5 of coding-rules.md.
+    "opi.services.catalog.** -> opi.http.**",
+    "opi.services.catalog.** -> opi.manager.**",
+    # Not a catalog service, so not covered above: a domain module that calls a use case.
+    # Inverting it (the manager calls the domain) is an open choice; PR 468 sets out the
+    # options. (1)
+    "opi.services.resource_tuning_service -> opi.manager.project_manager",
+    # The after-sync observation commits once for every hook that changed something. Its two
+    # callers sit on either side of the boundary (manager/project/rollout.py and
+    # services/oom_watcher.py), so handing the commit to the caller moves the arrow instead
+    # of removing it. Same open choice. (1)
+    "opi.services.deployment_observation -> opi.manager.project_manager",
+    # The one LOTC template environment lives in the entry layer (it wires `can` and
+    # `static_url`), while the domain layer produces component markup. Removing these four
+    # needs a decision on where presentation belongs; see PR 468. (4)
+    "opi.forms.renderer -> opi.http.render.templates_lotc",
+    "opi.forms.widgets.fields -> opi.http.render.templates_lotc",
+    "opi.forms.widgets.lotc -> opi.http.render.templates_lotc",
+    "opi.services.help_text -> opi.http.render.templates_lotc",
 ]

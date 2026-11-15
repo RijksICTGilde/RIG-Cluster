@@ -11,10 +11,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class EditableVisualizer:
-    """UI binding - how to visualize an Editable.
+    """UI binding: how to visualize an Editable.
 
-    References an ``Editable`` for data logic (path, validators, converters)
-    and owns all rendering concerns (widget type, label, description, HTMX).
+    References an ``Editable`` for the data logic (path, validators, converters) and owns
+    every rendering concern (widget type, label, description, HTMX).
     """
 
     editable: Editable
@@ -28,16 +28,16 @@ class EditableVisualizer:
     attributes: dict[str, str] | None = None
     readonly: bool = False
     readonly_on_edit: bool = False
-    #: Alleen tonen als er BEWERKT wordt, niet bij het aanmaken.
+    #: Only shown while EDITING, not while creating.
     #:
-    #: Voor velden die over iets gaan dat al bestaat. "Markeer voor verwijdering" bij een
-    #: databaseschema is het voorbeeld: dat stopt het beheer van een schema dat er al is en
-    #: laat de data staan. In de aanmaakwizard sta je een schema te VERZINNEN, en dan is de
-    #: vraag of je het wilt stoppen zinloos - je laat het gewoon weg.
+    #: For a field about something that already exists. "Markeer voor verwijdering" on a
+    #: database schema is the example: it stops managing a schema that is already there and
+    #: leaves its data. In the create wizard the schema is still being INVENTED, so asking
+    #: whether to stop it is meaningless; you simply leave it out.
     #:
-    #: De poort staat in ``should_render_editable``; readonly_on_edit hierboven is de
-    #: tegenhanger (wel tonen, niet aanpasbaar).
-    alleen_bij_bewerken: bool = False
+    #: The gate is in ``should_render_editable``; ``readonly_on_edit`` above is the
+    #: counterpart, shown but not changeable.
+    only_when_editing: bool = False
     locked_by_service: str | None = None
     htmx_trigger: str | None = None
     htmx_target: str | None = None

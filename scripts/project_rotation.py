@@ -45,7 +45,7 @@ from argo_rotation import (  # type: ignore[reportMissingImports]
 )
 from key_rotation import (  # type: ignore[reportMissingImports]
     PROJECT_FIELD_PRIVATE_KEY,
-    ConversionFailed,
+    ConversionError,
     Fingerprint,
     LooseValue,
     MissingKey,
@@ -639,8 +639,8 @@ does not fail loudly, it fails at the next sync or at the next project that gets
 
   project files   repositories[].password, per project, the same loop as the key round
   this repo       the loose values whose plaintext IS a GitHub token. Measured per value, not
-                  by a list of file names: the configmaps and .env hold the platform's own
-                  git-server passwords on that same key, and those must NOT be overwritten
+                  by a list of file names: .env holds the platform's own git-server
+                  passwords on that same key, and those must NOT be overwritten
   argo clone      the password inside every ArgoCD repository secret, which argo_manager put
                   there out of the project file. --argo-applications is required: without it
                   ArgoCD keeps talking to the withdrawn token and nothing says so
@@ -983,7 +983,7 @@ async def run_backup_round(
             continue
         try:
             conversion = await convert_value(content, platform_private, kek_public)
-        except ConversionFailed as e:
+        except ConversionError as e:
             result.unreadable.append(f"{name}: {e}")
             continue
         result.fingerprint_before.set(name, conversion.sha256_before)

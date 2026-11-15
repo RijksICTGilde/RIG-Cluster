@@ -1,6 +1,6 @@
-"""ORM-model voor ``sessions`` (RC-390, migratie 011): één rij is één portaalsessie.
+"""ORM model for ``sessions`` (migration 011): one row is one portal session.
 
-``expires_at`` is het schuivende inactiviteitsvenster. De enige lezer en schrijver is
+``expires_at`` is the sliding inactivity window. The only reader and writer is
 ``opi/services/session_store.py``.
 """
 
@@ -17,7 +17,7 @@ from opi.core.db import Base
 
 
 class PortalSession(Base):
-    """De inhoud van één portaalsessie, achter het id in de sessiecookie."""
+    """The contents of one portal session, behind the id in the session cookie."""
 
     __tablename__ = "sessions"
 

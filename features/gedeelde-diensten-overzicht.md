@@ -38,7 +38,7 @@ Dat heeft een prijs die je moet kennen. De meting die tot deze pagina leidde was
 project-PVC: `production-typesense-data-pvc` in `rig-prd-ubbw-0i1` stond op 18 augustus
 2026 op 92,7% en niemand zag dat. Dat geval valt nu buiten beeld. Wie ook op
 gebruikersvolumes wil letten heeft daar een eigen weg voor nodig, bijvoorbeeld alerting op
-dezelfde `DREMPELS`.
+dezelfde `THRESHOLDS`.
 
 De uitsluiting is een AFTREKKING en geen lijst van onze eigen namespaces: de projecten uit
 de store vallen af, de rest blijft. Zo'n lijst zou drijven, want een nieuw
@@ -65,7 +65,7 @@ zijn gewone URL's.
 
 Menu > Beheer > Services status, of rechtstreeks `/admin/diensten`.
 
-Een rij kleurt volgens `DREMPELS` in `opi/services/gedeelde_diensten.py`:
+Een rij kleurt volgens `THRESHOLDS` in `opi/services/shared_services.py`:
 
 | Meting | Let op vanaf | Kritiek vanaf |
 |---|---|---|
@@ -82,8 +82,8 @@ geen goed nieuws.
 
 ```
 /admin/diensten            de pagina: kaders, drempels, wat er niet gemeten wordt
-  |-- /admin/diensten/opslag      htmx hx-trigger="load" -> haal_opslag()
-  +-- /admin/diensten/databases   htmx hx-trigger="load" -> haal_databases()
+  |-- /admin/diensten/opslag      htmx hx-trigger="load" -> fetch_storage()
+  +-- /admin/diensten/databases   htmx hx-trigger="load" -> fetch_databases()
                                         |
                                   get_metrics_connector()
                                         |
@@ -94,7 +94,7 @@ Bestanden:
 
 | Bestand | Wat |
 |---|---|
-| `opi/services/gedeelde_diensten.py` | Drempels, queries, het omzetten van reeksen naar rijen |
+| `opi/services/shared_services.py` | Drempels, queries, het omzetten van reeksen naar rijen |
 | `opi/web/router_shared_services.py` | De pagina en de twee fragmenten |
 | `opi/templates_lotc/bg/admin-gedeelde-diensten.html.j2` | De pagina |
 | `opi/templates_lotc/bg/_gedeelde-diensten-opslag.html.j2` | Het opslagblok |
@@ -117,7 +117,7 @@ de pagina er meteen staat en een trage bron hem niet ophoudt.
 
 **Een trage bron kost alleen zijn eigen blok - sinds 21 augustus 2026 ook echt.** De
 belofte van het lui laden stond er wel, maar het Keycloak-blok maakte hem stuk. Dat blok
-praat rechtstreeks met `PrometheusConnector`, en `custom_query` was `async` in naam terwijl
+praat rechtstreeks met `PrometheusConnector`, en de instant-query was `async` in naam terwijl
 `prometheus_api_client` synchroon via `requests` praat: de coroutine gaf de event loop niet
 terug voor de duur van het verzoek. Met een Prometheus die niet oplost betekende dat de
 volledige DNS- en retryketen, en zolang die liep handelde de applicatie GEEN ENKEL ander
@@ -155,4 +155,4 @@ alleen de metrieken, dan is het blok leeg met "Niets te melden".
 | `tests/test_gedeelde_diensten.py` | De drempels, de sortering, het onderscheid gemeten/niet-gemeten (inclusief het WARNING-niveau) en dat het aantal queries niet met het aantal rijen meegroeit |
 | `tests/test_admin_diensten_toegang.py` | Dat de pagina EN beide fragmenten een niet-beheerder weigeren |
 | `tests/e2e/test_gedeelde_diensten_pagina.py` | Dat de blokken echt renderen, in de goede volgorde, met Redis en MinIO benoemd |
-| `tests/test_prometheus_custom_query_blokkeert_niet.py` | Dat een trage query de event loop niet vasthoudt - gemeten op een taak die meeloopt en per tick telt, niet op de aanwezigheid van `to_thread` |
+| `tests/test_prometheus_query_blokkeert_de_loop_niet.py` | Dat een trage query de event loop niet vasthoudt - gemeten op een taak die meeloopt en per tick telt, niet op de aanwezigheid van `to_thread` |

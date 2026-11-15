@@ -1,9 +1,8 @@
-"""Editable definitions for the minio-storage service (project-level) -- RC-25.
+"""Editable definitions for the minio-storage service (project level).
 
 ``enable-versioning`` is the one real user setting on ``MinioStorageConfig``; the rest of
 the model is OPI-written clone state on the deployment layer (see ``opi_managed_layers``
-on the service). It was reachable through the API and the model but had no form field
-anywhere, so a project could only get bucket versioning by hand-editing its file.
+on the service).
 """
 
 from __future__ import annotations

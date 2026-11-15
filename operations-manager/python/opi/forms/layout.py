@@ -1,8 +1,4 @@
-"""
-Layout system for form rendering.
-
-This module provides layout elements inspired by Django Crispy Forms,
-allowing programmatic control over form layout without custom templates.
+"""Layout elements that place a form on the screen from Python, without a custom template.
 
 Example:
     layout = Fieldset(
@@ -24,48 +20,32 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-#: De benoemde plek in het componentformulier, direct achter het image-veld. Waarom een
-#: slot en geen anker op de knoop: zie ``docs/development/services.md``.
+#: The named place in the component form, straight after the image field. Why a slot and not
+#: an anchor on the node: see ``docs/development/services.md``.
 COMPONENT_IMAGE_SLOT = "component-image"
 
 
 @dataclass
 class LayoutElement:
-    """
-    Base class for all layout elements.
-
-    Attributes:
-        css_class: Additional CSS classes
-        attributes: Extra HTML attributes
-        slot: Name of the form slot this node belongs in. ``None`` (the
-            default) keeps the existing behaviour: the node is appended
-            where the collecting form appends unslotted nodes.
-    """
+    """Base class for all layout elements."""
 
     css_class: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)
+    #: The form slot this node belongs in. Without one the node is appended where the
+    #: collecting form appends its unslotted nodes.
     slot: str | None = None
 
     def __post_init__(self) -> None:
-        """Initialize default attributes dict if None."""
         if self.attributes is None:
             self.attributes = {}
 
 
-# Type alias for layout children (can be field name string or another element)
 LayoutChild = Union[str, "LayoutElement"]
 
 
 @dataclass
 class Row(LayoutElement):
-    """
-    Horizontal row of fields/columns.
-
-    Used to place multiple fields side-by-side.
-
-    Attributes:
-        children: List of field names or Column elements
-        gap: Gap between columns (e.g., "md", "lg")
+    """Fields or columns side by side; ``gap`` is a size name such as "md" or "lg".
 
     Example:
         Row([
@@ -80,14 +60,7 @@ class Row(LayoutElement):
 
 @dataclass
 class Column(LayoutElement):
-    """
-    Column within a row.
-
-    Uses Bootstrap-style 12-column grid system.
-
-    Attributes:
-        child: Field name or nested layout element
-        width: Column width (1-12, default 12 = full width)
+    """A column in a row, on a 12-column grid; ``width`` is 1 to 12.
 
     Example:
         Column("email", width=6)
@@ -97,7 +70,6 @@ class Column(LayoutElement):
     width: int = 12
 
     def __post_init__(self) -> None:
-        """Validate width is in valid range."""
         super().__post_init__()
         if not 1 <= self.width <= 12:
             raise ValueError(f"Column width must be 1-12, got {self.width}")
@@ -105,25 +77,11 @@ class Column(LayoutElement):
 
 @dataclass
 class Fieldset(LayoutElement):
-    """
-    Group of fields with a legend.
+    """A group of fields behind one legend.
 
-    Used to visually group related fields together.
-
-    Attributes:
-        legend: Legend text (i18n key)
-        children: List of field names or layout elements
-        collapsible: Whether the fieldset can be collapsed
-        collapsed: Initial collapsed state (only if collapsible)
-        description: Optional description text below legend
-        depends_on: YAML path of a field this fieldset depends on.
-            When set, the fieldset is only rendered if the condition
-            specified by ``show_when`` is met. Uses the same semantics
-            as ``Editable.depends_on``. Paths containing ``[*]`` are
-            resolved using the parent sequence index at render time.
-        show_when: Condition dict evaluated against the ``depends_on``
-            value. Supports the same operators as ``Editable.show_when``
-            (e.g. ``{"contains": "metrics-scraper"}``).
+    ``depends_on`` and ``show_when`` work like their namesakes on ``Editable``: with both set
+    the fieldset only renders when the condition holds against the value at ``depends_on``,
+    and a ``[*]`` in that path is resolved with the parent sequence index at render time.
 
     Example:
         Fieldset(
@@ -145,20 +103,7 @@ class Fieldset(LayoutElement):
 
 @dataclass
 class Sequence(LayoutElement):
-    """
-    Repeatable/cloneable field group.
-
-    Used for list fields where users can add/remove items.
-
-    Attributes:
-        field_name: Name of the sequence field in the schema
-        child_layout: Layout for each sequence item
-        min_items: Minimum number of items (0 for optional)
-        max_items: Maximum number of items (None for unlimited)
-        add_label: Label for add button (i18n key)
-        remove_label: Label for remove button (i18n key)
-        item_template: Optional template name for rendering items
-        sortable: Whether items can be reordered
+    """A repeatable field group, for a list the user can add to and remove from.
 
     Example:
         Sequence(
@@ -185,11 +130,7 @@ class Sequence(LayoutElement):
 
 @dataclass
 class Div(LayoutElement):
-    """
-    Generic div wrapper for custom styling.
-
-    Attributes:
-        children: List of field names or layout elements
+    """A plain div wrapper, for custom styling.
 
     Example:
         Div(
@@ -203,13 +144,7 @@ class Div(LayoutElement):
 
 @dataclass
 class HTML(LayoutElement):
-    """
-    Raw HTML insertion into the form.
-
-    Use sparingly - prefer layout elements when possible.
-
-    Attributes:
-        content: Raw HTML content
+    """Raw HTML in the form. Use sparingly: a layout element is preferable.
 
     Example:
         HTML(content='<hr class="separator"/>')
@@ -220,16 +155,8 @@ class HTML(LayoutElement):
 
 @dataclass
 class TemplatePartial(LayoutElement):
-    """
-    Render a Jinja2 template partial into the form layout.
-
-    Use this instead of ``HTML`` for non-trivial content blocks that are
-    easier to maintain as template files.
-
-    Attributes:
-        template: Path relative to the templates directory
-            (e.g. ``wizard/partials/domain_info.html.j2``)
-        context: Optional extra template context variables
+    """A Jinja2 template partial in the form layout; ``template`` is relative to the
+    templates directory. Preferable to ``HTML`` for a content block of any size.
 
     Example:
         TemplatePartial(template="wizard/partials/domain_info.html.j2")
@@ -243,20 +170,12 @@ class TemplatePartial(LayoutElement):
 class DisplayBlock(LayoutElement):
     """Server-rendered display area updated via HTMX.
 
-    Renders a small HTML fragment computed from form data. Source fields
-    trigger ``hx-post`` to a generic endpoint that re-runs ``compute``
-    and swaps only the display div.
+    A source field triggers an ``hx-post`` to a generic endpoint that re-runs ``compute`` and
+    swaps only the display div.
 
-    Attributes:
-        display_id: Unique identifier, used as both the endpoint lookup
-            key and the HTML element id for HTMX targeting.
-        compute: Callable that receives ``yaml_data`` (dict) and a
-            ``context`` dict, and returns a template context dict.
-            The context dict comes from the DisplayBlock's inherited
-            ``context`` field and can carry configuration such as
-            ``deployment_index``.
-        template: Jinja2 template path (relative to templates dir) that
-            renders the computed context into an HTML fragment.
+    ``display_id`` is both the endpoint lookup key and the HTML element id HTMX targets.
+    ``compute`` receives ``yaml_data`` and the element's own ``context`` (which can carry
+    configuration such as ``deployment_index``) and returns the context ``template`` renders.
     """
 
     display_id: str = ""
@@ -267,11 +186,7 @@ class DisplayBlock(LayoutElement):
 
 @dataclass
 class Hidden(LayoutElement):
-    """
-    Hidden field that doesn't render visually.
-
-    Attributes:
-        field_name: Name of the hidden field
+    """A field that is submitted but not shown.
 
     Example:
         Hidden(field_name="csrf_token")
@@ -282,15 +197,7 @@ class Hidden(LayoutElement):
 
 @dataclass
 class Submit(LayoutElement):
-    """
-    Submit button.
-
-    Attributes:
-        label: Button label (i18n key)
-        name: Form field name for the button
-        kind: Button style -- a LOTC button variant ("primary", "secondary", ...)
-        icon: Optional icon name
-        icon_position: Icon position ("before", "after")
+    """A submit button; ``kind`` is a LOTC button variant ("primary", "secondary", ...).
 
     Example:
         Submit(label="common.save", kind="primary")
@@ -305,13 +212,7 @@ class Submit(LayoutElement):
 
 @dataclass
 class ButtonGroup(LayoutElement):
-    """
-    Group of action buttons.
-
-    Attributes:
-        buttons: List of Submit or Button elements
-        alignment: Alignment ("start", "center", "end", "space-between")
-        gap: Gap between buttons ("sm", "md", "lg")
+    """A row of action buttons, aligned "start", "center", "end" or "space-between".
 
     Example:
         ButtonGroup(

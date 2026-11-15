@@ -1,9 +1,4 @@
-"""
-Options providers for dynamic form field population.
-
-This module provides the OptionsProvider protocol and concrete implementations
-for populating select/radio fields with dynamic data from OPI's domain.
-"""
+"""The ``OptionsProvider`` protocol and the providers that fill a select or radio field."""
 
 import logging
 import re
@@ -14,13 +9,12 @@ from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
-from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.keycloak.account_link import account_link_mode
-from opi.services.catalog.keycloak.templates import allows_local_accounts
+from opi.services.catalog.keycloak.templates import allows_local_accounts, allows_sso
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
@@ -35,10 +29,12 @@ from opi.services.catalog.shared.noncurrent_versions import (
     project_noncurrent_expire_days,
 )
 from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.project import Project
+from opi.services.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.services.project_roles import actor_may_set
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
     from opi.services.catalog.config_settings import IntegerSetting
@@ -48,15 +44,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class OptionsSource:
-    """Waar de keuzes van een veld vandaan komen als ze per project verschillen.
+    """Where a field's choices come from when they differ per project.
 
-    De keuzelijst van een formulierveld is ook het antwoord op "welke waarden mag ik
-    hier sturen", en dat antwoord hoort in de API-documentatie te staan. Voor een vaste
-    lijst kan dat als opsomming. Voor een lijst die uit het project zelf komt (de
-    componenten, de deployments van een peer, de bijlagen in de catalogus) kan dat niet:
-    een opsomming zou een momentopname zijn die voor elk ander project onwaar is. Dan is
-    het eerlijke antwoord de BRON, en die staat hier: waar een client de lijst zelf
-    ophaalt en, als er geen endpoint voor is, waarvan de lijst afhangt.
+    The options of a form field are also the answer to "which values may I send here", and
+    that answer belongs in the API documentation. A fixed list can be enumerated there. A
+    list that comes out of the project itself (the components, a peer's deployments, the
+    attachments in the catalogue) cannot: an enumeration would be a snapshot that is untrue
+    for every other project. The honest answer is then the SOURCE, which is what this holds:
+    where a client fetches the list itself and, without an endpoint for it, what the list
+    depends on.
     """
 
     description: str
@@ -68,7 +64,7 @@ class OptionsSource:
     ``components[].name``. None als er geen endpoint is."""
 
     def as_json(self) -> dict[str, str]:
-        """Machineleesbare vorm; lege velden blijven weg in plaats van als null."""
+        """The machine-readable form; an empty field is left out rather than sent as null."""
         data = {"description": self.description}
         if self.endpoint:
             data["endpoint"] = self.endpoint
@@ -77,36 +73,31 @@ class OptionsSource:
         return data
 
 
-#: De schakelaar "ik vul zelf een domein in" in de base-domain-select.
+#: The "I will type a domain myself" switch in the base-domain select.
 #:
-#: Geen waarde maar een SCHAKELAAR: hij zet in het formulier een tweede, tijdelijk veld aan
-#: (``deployments[*]/base-domain:custom``) waar het echte domein in gaat, en wordt bij het
-#: opslaan door dat domein vervangen. Opgeslagen worden kan hij dus niet, en een schrijfactie
-#: die hem toch draagt wordt geweigerd ("Een aangepast domein is geselecteerd maar niet
-#: ingevuld", ``DomainConfigEnforcer``).
+#: Not a value but a SWITCH: in the form it turns on a second, transient field
+#: (``deployments[*]/base-domain:custom``) that holds the real domain, and on save it is
+#: replaced by that domain. It can therefore never be stored, and a write that carries it
+#: anyway is refused ("Een aangepast domein is geselecteerd maar niet ingevuld",
+#: ``DomainConfigEnforcer``).
 #:
-#: Daarom staat hij hier bij naam: wat de API publiceert (``GET .../clusters``, en via
-#: ``options_source`` de ``x-choices-source`` van het veld) moet hem eruit laten, want een
-#: keuzelijst die een waarde noemt die de uitrol weigert stuurt elke client het bos in. Een
-#: eigen domein zet een API-client door de domeinnaam zelf in ``base-domain`` te schrijven.
+#: That is why it is named here: what the API publishes (``GET .../clusters``, and through
+#: ``options_source`` the ``x-choices-source`` of the field) has to leave it out, because a
+#: list of choices naming a value the deployment refuses sends every client the wrong way. An
+#: API client sets its own domain by writing the domain name into ``base-domain`` directly.
 CUSTOM_DOMAIN_SENTINEL: Final = "__custom__"
 
-#: Een provider die nog niet heeft gezegd of zijn lijst vastligt of per project verschilt.
+#: A provider that has not yet said whether its list is fixed or differs per project.
 #:
-#: Onderscheiden van ``options_source = None`` (de lijst ligt vast): wie het niet declareert
-#: krijgt geen keuzelijst in de API-documentatie, want een lijst die een projectafhankelijke
-#: provider zonder projectcontext oplevert is niet leeg maar FOUT -- hij toont dan de paar
-#: opties die zonder context overblijven alsof dat de toegestane waarden zijn.
+#: Distinct from ``options_source = None``, which means the list is fixed: a provider that
+#: declares nothing gets no list of choices in the API documentation, because what a
+#: project-dependent provider yields without project context is not empty but WRONG: it shows
+#: the few options that survive without context as if those were the allowed values.
 UNDECLARED_SOURCE: Final = object()
 
 
 class OptionsProvider(Protocol):
-    """
-    Protocol for dynamic options providers.
-
-    Options providers are used to populate select/radio fields
-    with options from external data sources (databases, configs, APIs).
-    """
+    """Fills a select or radio field with options from outside the form."""
 
     options_source: ClassVar[OptionsSource | None]
     """None als de lijst vastligt, een ``OptionsSource`` als hij per project verschilt.
@@ -118,52 +109,34 @@ class OptionsProvider(Protocol):
     """
 
     def get_options(self) -> list[dict[str, Any]]:
-        """
-        Get options for a select/radio field.
+        """The options, each a dict with ``value`` and ``label``.
 
-        Returns:
-            List of option dicts with 'value' and 'label' keys.
-            May also include 'description', 'disabled', 'group' etc.
+        An option may also carry ``description``, ``disabled``, ``group`` and the like.
         """
         ...
 
 
 class ClusterOptionsProvider:
-    """
-    Provides available Kubernetes cluster options.
-
-    Reads from the cluster configuration to provide available
-    deployment targets.
-    """
+    """The deployment targets this environment offers, from the cluster configuration."""
 
     def __init__(self, include_empty: bool = False, empty_label: str = "Selecteer een cluster") -> None:
-        """
-        Initialize the cluster options provider.
-
-        Args:
-            include_empty: Whether to include an empty "select" option (for dropdowns)
-            empty_label: Label for the empty option
-        """
         self.include_empty = include_empty
         self.empty_label = empty_label
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available cluster options."""
         options: list[dict[str, Any]] = []
 
         if self.include_empty:
             options.append({"value": "", "label": self.empty_label})
 
-        # Map cluster names to user-friendly labels
         cluster_labels = {
             "local": "Lokaal (Kind)",
             "odcn-staging": "Staging Cluster (ODC-Noord)",
             "odcn-production": "Productie Cluster (ODC-Noord)",
         }
 
-        # Only the clusters this environment offers as a deployment target: production
-        # shows just odcn-production, development a configurable set. Driven by the
-        # managing cluster's config, not by every cluster that happens to be defined.
+        # Only the clusters this environment offers as a deployment target, driven by the
+        # managing cluster's config and not by every cluster that happens to be defined.
         for cluster_name in get_selectable_clusters():
             label = cluster_labels.get(cluster_name, cluster_name.title())
             options.append(
@@ -177,31 +150,21 @@ class ClusterOptionsProvider:
 
 
 class ServiceOptionsProvider:
-    """
-    Provides available service options.
-
-    Reads from the ServiceAdapter to provide available
-    services that can be enabled for projects.
-    """
+    """The services a project can enable, from the ServiceAdapter definitions."""
 
     def __init__(self, include_empty: bool = False, project_services: list[str] | None = None) -> None:
-        """
-        Initialize the service options provider.
+        """``project_services`` are the services the project ALREADY has, from the project file.
 
-        Args:
-            include_empty: Whether to include an empty "select" option
-            project_services: The services the project ALREADY has, from the project
-                file. Only a replaced service reads it: its card stays for a project
-                that has it and is left out for one that has not.
+        Only a replaced service reads it: its card stays for a project that has it and is
+        left out for one that has not.
         """
         self.include_empty = include_empty
         self.project_services = project_services or []
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available service options from ServiceAdapter definitions."""
         # Imported here, not at module scope: the registry imports the catalog, whose
-        # services import this forms module back. The catalog breaks the same cycle the
-        # same way (docs/development/services.md, "Keep the catalog import-light").
+        # services import this forms module back. The catalog breaks the same cycle the same
+        # way (docs/development/services.md, "Keep the catalog import-light").
         from opi.services.registry import get_service
 
         options: list[dict[str, Any]] = []
@@ -212,24 +175,22 @@ class ServiceOptionsProvider:
         for service_type in ServiceType:
             definition = ServiceAdapter.get_service_definition(service_type)
 
-            # Skip hidden services and system services (never user-selectable)
             if definition.hidden or definition.kind is ServiceKind.SYSTEM:
                 continue
 
-            # Skip a service this cluster cannot deliver. Asked of the service itself
-            # (Service.available_on_cluster), which answers from the cluster
-            # configuration -- no cluster name appears here. The managing cluster is the
-            # measure because an OPI instance only ever provisions its own cluster. This
-            # is presentation only: the refusal that counts is at save time, in
-            # validate_service_availability, since the API and a hand-written project
-            # file never see a card.
+            # A service this cluster cannot deliver is left out. The service answers that
+            # itself from the cluster configuration, so no cluster name appears here, and the
+            # managing cluster is the measure because an OPI instance only provisions its
+            # own. This is presentation only: the refusal that counts is at save time, in
+            # validate_service_availability, since the API and a hand-written project file
+            # never see a card.
             service = get_service(service_type)
             if not service.available_on_cluster(settings.CLUSTER_MANAGER):
                 continue
 
-            # Een vervangen dienst is geen kaart meer voor wie hem nog niet heeft, maar
-            # blijft staan voor een project dat hem al draait: dat moet te bewerken en uit
-            # te zetten blijven. De weigering die telt staat in validate_service_availability.
+            # A replaced service is no longer a card for a project that does not have it, and
+            # stays for one that runs it, which has to remain editable and switchable. The
+            # refusal that counts is in validate_service_availability.
             replaced = service.replaced_on_cluster(settings.CLUSTER_MANAGER)
             if replaced and service_type.value not in self.project_services:
                 continue
@@ -248,21 +209,21 @@ class ServiceOptionsProvider:
             if definition.help_template:
                 option["help_template"] = definition.help_template
 
-            # Uit de declaratie van de dienst zelf, niet uit een lijstje hier: een dienst
-            # die goedkeuring gaat vereisen draagt de waarschuwing dan vanzelf, op de kaart
-            # en in de uitleg allebei. De vraag is of het AANZETTEN een aanvraag is, niet of
-            # de dienst goedkeuringen heeft: een besluit over een configwaarde (redis zonder
-            # sleutelprefix) geldt pas bij die waarde. De import staat binnenin: de registry
-            # laadt de dienstpakketten en die trekken langs de formulierlaag deze module
-            # weer binnen.
+            # From the service's own declaration and not from a list here, so a service that
+            # starts requiring approval carries the warning by itself, on the card and in the
+            # explanation. The question is whether ENABLING it is a request, not whether the
+            # service has approvals at all: a decision about a config value (redis without a
+            # key prefix) only applies at that value. The import sits inside because the
+            # registry loads the service packages, which pull this module back in through the
+            # forms layer.
             from opi.services.registry import get_service
 
             if get_service(service_type).enabling_needs_approval():
                 option["requires_approval"] = True
 
             if replaced and service.replaced_by is not None:
-                # De dienstNAAM en niet de weergavenaam: de melding op de kaart is een korte
-                # pil, en dit is ook wat je in het projectbestand of de API invult.
+                # The service NAME and not its display name: the notice on the card is a
+                # short pill, and this is also what goes into the project file or the API.
                 option["replaced_by"] = service.replaced_by.value
 
             options.append(option)
@@ -277,7 +238,6 @@ class ComponentTypeOptionsProvider:
         self.include_empty = include_empty
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available component type options."""
         options: list[dict[str, Any]] = []
 
         if self.include_empty:
@@ -307,31 +267,30 @@ class ComponentTypeOptionsProvider:
 
 
 class UserRoleOptionsProvider:
-    """De rollen die een lid kan hebben, uit het rechtenregister.
+    """The roles a member can have, from the authorization register.
 
-    Geen eigen lijst: label en omschrijving komen uit ``ROLE_LABELS`` en
-    ``ROLE_DESCRIPTIONS`` (B13), zodat een andere naam op het scherm een wijziging op een
-    plek is en de keuzelijst nooit een rol kan tonen die geen regels heeft.
+    Not a list of its own: the label and the description come from ``ROLE_LABELS`` and
+    ``ROLE_DESCRIPTIONS``, so another name on the screen is a change in one place and the
+    options can never show a role that has no rules.
     """
 
     def __init__(self, include_empty: bool = False) -> None:
         self.include_empty = include_empty
 
     def get_options(self) -> list[dict[str, Any]]:
-        opties: list[dict[str, Any]] = []
+        options: list[dict[str, Any]] = []
         if self.include_empty:
-            opties.append({"value": "", "label": "Selecteer rol"})
-        opties.extend(
-            {"value": rol.value, "label": role_label(rol), "description": ROLE_DESCRIPTIONS[rol]} for rol in Role
+            options.append({"value": "", "label": "Selecteer rol"})
+        options.extend(
+            {"value": role.value, "label": role_label(role), "description": ROLE_DESCRIPTIONS[role]} for role in Role
         )
-        return opties
+        return options
 
 
 class CpuRequestOptionsProvider:
     """Provides CPU request options for components."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available CPU request options."""
         return [
             {"value": "50m", "label": "50m (minimaal)"},
             {"value": "100m", "label": "100m"},
@@ -344,7 +303,6 @@ class CpuLimitOptionsProvider:
     """Provides CPU limit options for components."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available CPU limit options."""
         return [
             {"value": "500m", "label": "500m"},
             {"value": "1", "label": "1 CPU"},
@@ -402,7 +360,7 @@ class MemoryOptionsProvider:
         options = [{"value": v, "label": lbl} for v, lbl in steps]
 
         if self.current_value and not any(o["value"] == self.current_value for o in options):
-            from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+            from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
             try:
                 current_mi = parse_k8s_memory_to_mi(self.current_value)
@@ -412,7 +370,6 @@ class MemoryOptionsProvider:
             label = f"{int(current_mi)} Mi" if current_mi == int(current_mi) else f"{current_mi:.1f} Mi"
             new_option = {"value": self.current_value, "label": label}
 
-            # Insert at sorted position
             step_mis = [parse_k8s_memory_to_mi(v) for v, _ in steps]
             insert_idx = len(options)
             for i, step_mi in enumerate(step_mis):
@@ -438,7 +395,6 @@ class StorageTypeOptionsProvider:
     """Provides storage type options for container volumes."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available storage type options."""
         return [
             {
                 "value": "persistent",
@@ -456,13 +412,12 @@ class StorageTypeOptionsProvider:
 class StorageSizeOptionsProvider:
     """Provides storage size options for persistent volumes."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
-    #: Alleen het label per maat. De maten zelf staan in ``STORAGE_SIZES``, want daar
-    #: hangt ook de bovengrens aan die het configmodel afdwingt; twee lijsten die uit
-    #: elkaar lopen is precies hoe een keuzelijst iets anders gaat beloven dan de API
-    #: accepteert.
+    #: Only the label per size. The sizes themselves live in ``STORAGE_SIZES``, which also
+    #: carries the upper bound the config model enforces; two lists drifting apart is exactly
+    #: how a list of choices starts promising something the API does not accept.
     LABELS: ClassVar[dict[str, str]] = {
         "50Mi": "50 MB",
         "100Mi": "100 MB",
@@ -472,17 +427,17 @@ class StorageSizeOptionsProvider:
     }
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available storage size options."""
         return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
 
 
 class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
-    """De maten van het platform, plus de opgeslagen waarde als die er niet bij staat.
+    """The platform sizes, plus the stored value when that is not among them.
 
-    Een eigen PostgreSQL-cluster mag tot 20Gi (``POSTGRES_STORAGE``) en zijn volume mag niet
-    krimpen, dus zonder de opgeslagen waarde bood de select een project op 2Gi alleen krimp
-    aan en weigerde het opslaan daarna zijn eigen voorstel. Een eigen klasse en niet de ouder
-    zelf, want bij persistent-storage en temp-storage topt ``check_storage_size`` wel op 1Gi af.
+    A PostgreSQL cluster of its own may go up to 20Gi (``POSTGRES_STORAGE``) and its volume
+    may not shrink, so without the stored value the select offers a project on 2Gi nothing
+    but shrinking and the save then refuses its own proposal. A class of its own and not the
+    parent, because for persistent-storage and temp-storage ``check_storage_size`` does cap
+    at 1Gi.
     """
 
     def __init__(self, current_value: str | None = None) -> None:
@@ -497,17 +452,19 @@ class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
         try:
             return sorted(options, key=lambda option: parse_k8s_memory_to_mi(str(option["value"])))
         except ValueError:
-            # Een onleesbare opgeslagen maat kan niet op zijn plek in de reeks, maar hij
-            # moet wel te kiezen blijven: anders stuurt het formulier een krimp.
+            # A stored size that cannot be read has no place in the series, but it does have
+            # to stay selectable: otherwise the form submits a shrink.
             return options
 
 
 class IntegerStepOptionsProvider:
-    """De stappen van een ``IntegerSetting``, plus de opgeslagen waarde als die er niet bij
-    staat. De lege keuze slaat niets op, en wat dat betekent zegt de laag: op het project de
-    standaard van het platform, op een deployment de waarde van het project.
+    """The steps of an ``IntegerSetting``, plus the stored value when that is not among them.
 
-    De stappen zijn een gemak; de grens zelf staat in de declaratie, en die is wat valideert.
+    The empty choice stores nothing, and what that means depends on the layer: on the project
+    the platform default, on a deployment the project's value.
+
+    The steps are a convenience; the limit itself is in the declaration, and that is what
+    validates.
     """
 
     options_source: ClassVar[OptionsSource | None] = None
@@ -535,7 +492,7 @@ class IntegerStepOptionsProvider:
 
 
 class ConnectionLimitOptionsProvider(IntegerStepOptionsProvider):
-    """De connectielimiet van de projectdatabase (RC-201)."""
+    """The connection limit of the project database."""
 
     setting: ClassVar[IntegerSetting] = CONNECTION_LIMIT
     steps: ClassVar[tuple[int, ...]] = CONNECTION_LIMIT_STEPS
@@ -549,10 +506,10 @@ class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
 
 
 class MaxNoncurrentVersionsOptionsProvider(IntegerStepOptionsProvider):
-    """Hoeveel oude versies een bucket met versioning houdt (RC-380).
+    """How many old versions a bucket with versioning keeps.
 
-    Op de projectlaag is de lege keuze de standaard van het platform, en die is voor beide
-    object-opslagdiensten dezelfde declaratie; de dienst doet hier dus niet mee.
+    On the project layer the empty choice is the platform default, and both object-storage
+    services share that declaration, so the service plays no part here.
     """
 
     setting: ClassVar[IntegerSetting] = MAX_NONCURRENT_VERSIONS
@@ -560,14 +517,14 @@ class MaxNoncurrentVersionsOptionsProvider(IntegerStepOptionsProvider):
 
 
 class NoncurrentExpireDaysOptionsProvider(IntegerStepOptionsProvider):
-    """De leeftijdsgrens op oude versies, bovenop het aantal (RC-380)."""
+    """The age limit on old versions, on top of their number."""
 
     setting: ClassVar[IntegerSetting] = NONCURRENT_EXPIRE_DAYS
     steps: ClassVar[tuple[int, ...]] = NONCURRENT_EXPIRE_DAYS_STEPS
 
 
 class DeploymentMaxNoncurrentVersionsOptionsProvider(MaxNoncurrentVersionsOptionsProvider):
-    """Op een deployment volgt de lege keuze het project, en dat is per dienst."""
+    """On a deployment the empty choice follows the project, which is per service."""
 
     service: ClassVar[ServiceType]
 
@@ -600,7 +557,7 @@ class SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurren
 
 
 class KeycloakTemplateOptionsProvider:
-    """The three realm blueprints, named after what a user gets rather than after the file.
+    """The realm blueprints, named after what a user gets rather than after the file.
 
     What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
     browser flow at "External IDP Redirector", so whoever opens the application travels
@@ -608,17 +565,12 @@ class KeycloakTemplateOptionsProvider:
     the standard browser flow, so Keycloak asks the question: continue with SSO Rijk, or sign
     in with a local account of this realm.
 
-    The labels used to promise something else. They said ``sso-support`` turned on local
-    accounts by setting ``registrationAllowed`` / ``loginWithEmailAllowed`` /
-    ``resetPasswordAllowed``, and that has not been true since RC-159: BOTH blueprints keep
-    those three off (``sso-support.yaml`` says so itself, in a comment that also parks the
-    question of whether they should be turned on). Local accounts do exist under
-    ``sso-support`` -- OPI's invite flow creates them -- there is simply no self-registration
-    and no password reset next to it.
-
-    A user of ``sso-only`` never reaches a screen where a local account could be typed in, so
-    that is the one that really excludes them. ``InviteAuthMethodOptionsProvider`` reads the
-    same difference for the invite auth methods.
+    BOTH blueprints keep ``registrationAllowed``, ``loginWithEmailAllowed`` and
+    ``resetPasswordAllowed`` off, so neither offers self-registration or a password reset.
+    Local accounts do exist under ``sso-support``, created by OPI's invite flow; a user of
+    ``sso-only`` never reaches a screen where one could be typed in, which is what really
+    excludes them. ``InviteAuthMethodOptionsProvider`` reads the same difference for the
+    invite auth methods.
 
     ``sso-support-otp`` extends ``sso-support`` with a second factor on the local password path:
     a password login requires an OTP code and configures the authenticator app on first login.
@@ -629,7 +581,6 @@ class KeycloakTemplateOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available Keycloak template options."""
         return [
             {
                 "value": "sso-only",
@@ -657,6 +608,16 @@ class KeycloakTemplateOptionsProvider:
                     "inlogt merkt er niets van."
                 ),
             },
+            {
+                "value": "local-only",
+                "label": "Alleen lokale accounts",
+                "description": (
+                    "Geen SSO Rijk. Alleen lokale accounts uit het realm van dit project kunnen inloggen. "
+                    "Accounts worden aangeleverd of komen via een uitnodiging; aanmelden, een wachtwoord "
+                    "herstellen of het eigen profiel beheren kan niemand zelf. Wie eerder via SSO Rijk "
+                    "binnenkwam, heeft na deze keuze geen weg naar binnen tot hij een lokaal account krijgt."
+                ),
+            },
         ]
 
 
@@ -664,7 +625,6 @@ class PullPolicyOptionsProvider:
     """Provides Kubernetes image pull policy options."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available image pull policy options."""
         return [
             {"value": "Always", "label": "Always"},
             {"value": "IfNotPresent", "label": "IfNotPresent"},
@@ -673,14 +633,14 @@ class PullPolicyOptionsProvider:
 
 
 class EnvironmentOptionsProvider:
-    """De OTAP-markering van een deployment: de vier vaste fasen.
+    """The OTAP marking of a deployment: the four fixed phases.
 
-    Ontwikkeling is de standaard en heeft de lege waarde: een deployment zonder markering
-    is ontwikkeling, en zo hoeft die standaard niet in elk bestand te staan. Een bestand dat
-    ``ontwikkeling`` expliciet draagt, valt in de lijst op die lege keuze terug.
+    Development is the default and carries the empty value, so a deployment without a marking
+    is development and that default need not sit in every file. A file that does carry
+    ``ontwikkeling`` explicitly falls back to that empty choice in the list.
     """
 
-    # De waarden liggen vast; een opsomming is het goede antwoord.
+    # The values are fixed, so an enumeration is the right answer.
     options_source: ClassVar[OptionsSource | None] = None
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
@@ -688,9 +648,9 @@ class EnvironmentOptionsProvider:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        # Van en naar productie gaat alleen voor wie de markering mag zetten
-        # (environment.set); anders weigert het opslaan pas achteraf. De huidige waarde
-        # blijft altijd te kiezen.
+        # Moving to or away from production is only for whoever may set the marking
+        # (environment.set); otherwise the save refuses it only afterwards. The current value
+        # always stays selectable.
         may_set = actor_may_set(Action.ENVIRONMENT_SET, self.yaml_data, environment=Omgeving.PRODUCTIE)
         in_production = self.current_value == Omgeving.PRODUCTIE.value
 
@@ -699,8 +659,8 @@ class EnvironmentOptionsProvider:
                 return {"value": value, "label": label}
             return {"value": value, "label": f"{label} (alleen ops)", "disabled": True}
 
-        # .value: elke andere provider levert een gewone string, en een enumlid dat
-        # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
+        # ``.value``, because every other provider yields a plain string and an enum member
+        # that ends up as a value breaks the YAML dumper.
         return [
             option("", ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT], production=False),
             *(
@@ -715,7 +675,6 @@ class BaseDomainOptionsProvider:
     """Provides base domain options for deployment URLs."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available base domain options."""
         return [
             {"value": "", "label": "Standaard (clusternaam)"},
             {"value": "rijksapp.nl", "label": "rijksapp.nl"},
@@ -745,11 +704,7 @@ class ClusterBaseDomainOptionsProvider:
         self.cluster = cluster
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get base domain options, filtered by cluster.
-
-        When no cluster is explicitly provided, falls back to the
-        CLUSTER_MANAGER setting (the cluster this OPI instance manages).
-        """
+        """The base domain options of *cluster*, or of the cluster this OPI instance manages."""
         from opi.core.config import settings
 
         def _extract_domain(entry: str | dict[str, Any]) -> str:
@@ -767,7 +722,6 @@ class ClusterBaseDomainOptionsProvider:
             options.append({"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."})
             return options
 
-        # Fallback: no matching cluster config - return empty with custom option
         return [
             {"value": "", "label": "Cluster standaard"},
             {"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."},
@@ -775,20 +729,14 @@ class ClusterBaseDomainOptionsProvider:
 
 
 class FilteredServiceOptionsProvider:
-    """
-    Provides service options filtered to project-level enabled services.
-
-    Used by component `services` checkbox group. Only shows services
-    that the project has enabled (cross-part dependency).
-    """
+    """The services the project has enabled, for the component ``services`` checkbox group."""
 
     def __init__(self, project_services: list[str] | None = None) -> None:
         self.project_services = project_services or []
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get service options filtered to project-enabled services."""
-        # Lazy: de registry laadt de dienstencatalogus, en die leest ``opi.forms`` en daarmee
-        # deze module.
+        # Imported here: the registry loads the service catalog, which reads ``opi.forms``
+        # and with it this module.
         from opi.services.registry import get_service
 
         options: list[dict[str, Any]] = []
@@ -811,11 +759,7 @@ class FilteredServiceOptionsProvider:
 
 
 class ComponentReferenceOptionsProvider:
-    """
-    Provides component names from the project as select options.
-
-    Used by deployment component reference selects (cross-part dependency).
-    """
+    """The project's component names, for a deployment's component reference select."""
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description="De componenten van dit project.",
@@ -836,7 +780,7 @@ class ComponentReferenceOptionsProvider:
         self.exclude_references = set(exclude_references or [])
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get component name options, excluding already-used references."""
+        """The component names, minus the references the other rows already took."""
         options: list[dict[str, Any]] = []
         if self.include_empty:
             options.append({"value": "", "label": self.empty_label})
@@ -934,8 +878,8 @@ class BackupResourceTypesOptionsProvider:
         self._yaml_path = yaml_path or ""
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import create_project_file_handler
         from opi.services import ServiceAdapter
+        from opi.services.project_file_handler import create_project_file_handler
 
         all_labels = ServiceAdapter.get_backupable_labels()
         deployment_name = self._resolve_deployment_name()
@@ -1016,17 +960,12 @@ class RestoreConfigSourceOptionsProvider(DeploymentCloneFromOptionsProvider):
 
 
 class RepositoryOptionsProvider:
-    """
-    Provides repository names from the project as select options.
-
-    Used by deployment repository selects (cross-part dependency).
-    """
+    """The project's repository names, for a deployment's repository select."""
 
     def __init__(self, repository_names: list[str] | None = None) -> None:
         self.repository_names = repository_names or []
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get repository name options."""
         return [{"value": name, "label": name} for name in self.repository_names]
 
 
@@ -1124,7 +1063,6 @@ class ApprovalStatusOptionsProvider:
         ]
 
 
-# Registry of all available providers
 class AttachmentOptionsProvider:
     """Provides the ids of attachments in the project-level attachments catalog as options."""
 
@@ -1141,7 +1079,7 @@ class AttachmentOptionsProvider:
         self._yaml_data = yaml_data or {}
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import extract_attachment_catalog
+        from opi.services.project_file_handler import extract_attachment_catalog
 
         catalog = extract_attachment_catalog(self._yaml_data)
         if not catalog:
@@ -1164,7 +1102,7 @@ class AttachmentOptionsProvider:
 class AttachmentProvideAsOptionsProvider:
     """Static options for how an attachment is delivered into the pod."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1180,34 +1118,34 @@ _PUBLISH_TLS_MODE_OPTIONS = [
     {"value": "provided", "label": "Eigen certificaat op de ingress (aangeleverd)"},
 ]
 
-#: Wat 'aangeleverd' heet zolang het project geen bijlage heeft om aan te leveren.
-#: ``PublishOnWebComponentConfig`` weigert ``tls: provided`` zonder ``attachment``, en het
-#: bijlageveld dat ernaast verschijnt heeft bij een lege catalogus geen enkele waarde om te
-#: kiezen -- dus wie de modus toch koos kwam in een scherm dat hij niet kon opslaan en niet
-#: kon herstellen. De optie blijft STAAN en wordt uitgeschakeld: wie ernaar zoekt vindt hem
-#: met de reden erbij, waar een optie die stil verdwijnt alleen een tweede raadsel geeft.
+#: What 'provided' is called while the project has no attachment to provide.
+#: ``PublishOnWebComponentConfig`` refuses ``tls: provided`` without an ``attachment``, and
+#: with an empty catalogue the attachment field next to it has nothing to pick, so choosing
+#: the mode leads to a screen that can neither be saved nor undone. The option STAYS and is
+#: disabled: whoever looks for it finds it with the reason, where an option that silently
+#: disappears is only a second riddle.
 _PROVIDED_WITHOUT_CERTIFICATE = "Eigen certificaat op de ingress - upload eerst een certificaat bij Bijlagen"
 
 
 def publish_tls_mode_options(yaml_data: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """De drie TLS-modi, met 'provided' uitgeschakeld zolang er geen bijlage is.
+    """The three TLS modes, with 'provided' disabled while there is no attachment.
 
-    Eén helper voor beide lagen (component en de per-deployment override): een modus die
-    op het component niet te kiezen is, moet dat op de override ook niet zijn.
+    One helper for both layers, the component and the per-deployment override: a mode that
+    cannot be chosen on the component may not be choosable on the override either.
 
-    Zonder project (een kale render, een voorbeeld) blijft alles staan. Dat is dezelfde
-    keuze als bij het erf-label van ``PublishTlsOverrideOptionsProvider``: geen gegevens is
-    geen reden om te gokken, en een lege catalogus concluderen uit een ontbrekende context
-    zou de modus uitschakelen op een scherm dat er niets over weet.
+    Without a project (a bare render, an example) everything stays, the same choice as the
+    inherit label of ``PublishTlsOverrideOptionsProvider`` makes: no data is no reason to
+    guess, and concluding an empty catalogue from a missing context would disable the mode on
+    a screen that knows nothing about it.
     """
-    # Lokaal, zoals bij AttachmentOptionsProvider hieronder: project_file_handler importeert
-    # deze module langs de vormenlaag terug.
-    from opi.handlers.project_file_handler import extract_attachment_catalog
+    # Imported here, as in AttachmentOptionsProvider below: project_file_handler imports this
+    # module back through the forms layer.
+    from opi.services.project_file_handler import extract_attachment_catalog
 
-    kan_aangeleverd = not yaml_data or bool(extract_attachment_catalog(yaml_data))
+    can_provide = not yaml_data or bool(extract_attachment_catalog(yaml_data))
     return [
         {**option, "label": _PROVIDED_WITHOUT_CERTIFICATE, "disabled": True}
-        if option["value"] == "provided" and not kan_aangeleverd
+        if option["value"] == "provided" and not can_provide
         else dict(option)
         for option in _PUBLISH_TLS_MODE_OPTIONS
     ]
@@ -1217,11 +1155,12 @@ class PublishTlsModeOptionsProvider:
     """Options for how TLS is handled on a published component.
 
     ``yaml_data`` is handed to every provider that accepts it (see
-    ``bridge._resolve_options``); zonder project valt de lijst terug op alle drie de modi.
+    ``bridge._resolve_options``); without a project the list falls back to all three modes.
     """
 
-    # De WAARDEN liggen vast: elk project krijgt deze drie. Alleen of 'provided' te kiezen
-    # is hangt van de bijlagencatalogus af, en dat verandert niets aan wat de API accepteert.
+    # The VALUES are fixed: every project gets these three. Only whether 'provided' can be
+    # chosen depends on the attachment catalogue, which changes nothing about what the API
+    # accepts.
     options_source: ClassVar[OptionsSource | None] = None
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
@@ -1244,9 +1183,9 @@ class PublishTlsOverrideOptionsProvider:
     option falls back to the plain wording rather than guessing.
     """
 
-    # Geen bron: de waarden liggen vast (dezelfde drie modi als op het component, plus leeg
-    # voor erven). Alleen het LABEL van de lege keuze wordt uit het project afgeleid, en een
-    # label verandert niets aan wat je mag sturen.
+    # No source: the values are fixed, the same three modes as on the component plus empty
+    # for inheriting. Only the LABEL of the empty choice is derived from the project, and a
+    # label changes nothing about what may be sent.
     options_source: ClassVar[OptionsSource | None] = None
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, yaml_path: str | None = None) -> None:
@@ -1256,7 +1195,7 @@ class PublishTlsOverrideOptionsProvider:
     def _inherited_label(self) -> str:
         """What the component (or the project default) says, as an option label."""
         from opi.forms.editables.path import get_value
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         # ".../components[0]/services/publish-on-web/config/tls" -> the row's component.
         row, _, _ = self._yaml_path.partition("/services/")
@@ -1277,7 +1216,7 @@ class PublishTlsOverrideOptionsProvider:
 class YesNoOptionsProvider:
     """Ja/Nee options for boolean config fields (stored as an explicit YAML boolean)."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1290,7 +1229,7 @@ class YesNoOptionsProvider:
 class WakeModeOptionsProvider:
     """The three sleep-mode wake modes: how a sleeping deployment is woken."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1321,8 +1260,8 @@ class SleepAfterDeployOptionsProvider:
     a test run). This only asks.
     """
 
-    # De lijst ligt vast per cluster: hij hangt niet van het project af, alleen van het
-    # cluster dat deze OPI beheert, en dat is ook het cluster dat deze documentatie serveert.
+    # The list is fixed per cluster: it does not depend on the project, only on the cluster
+    # this OPI manages, which is also the cluster serving this documentation.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1335,8 +1274,8 @@ class SleepAfterDeployOptionsProvider:
 class SleepAfterWakeOptionsProvider:
     """How long a woken deployment stays awake before its deadline is set again."""
 
-    # De lijst ligt vast per cluster: hij hangt niet van het project af, alleen van het
-    # cluster dat deze OPI beheert, en dat is ook het cluster dat deze documentatie serveert.
+    # The list is fixed per cluster: it does not depend on the project, only on the cluster
+    # this OPI manages, which is also the cluster serving this documentation.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -1375,22 +1314,22 @@ class WakerComponentOptionsProvider:
         return options
 
 
-#: De niet-waarde bij een component: niets in het bestand.
+#: The non-value on a component: nothing in the file.
 AUTOMATIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
 
-#: Dezelfde niet-waarde bij een DEPLOYMENT-component, waar leeg iets anders betekent:
-#: niet "automatisch" maar "wat het component zelf koos".
+#: The same non-value on a DEPLOYMENT component, where empty means something else: not
+#: "automatic" but "whatever the component itself chose".
 INHERIT_REGISTRY_LABEL = "Zoals het component (geen afwijking)"
 
 
 class ImageRegistryOptionsProvider:
-    """De registries die dit project zelf heeft opgegeven, om er bij een component naar te verwijzen.
+    """The registries this project declared itself, to point a component at.
 
-    Via ``smart_get_value``, want in de wizard staat de config onder de virtuele
-    ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
-    gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
+    Through ``smart_get_value``, because in the wizard the config sits under the virtual
+    ``_services-config`` root. A stored value that no longer exists stays as a flagged option,
+    or the next save falls back to the first option.
 
-    Een lege lijst laat het veld verdwijnen (``hidden_without_options``).
+    An empty list makes the field disappear (``hidden_without_options``).
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1404,7 +1343,7 @@ class ImageRegistryOptionsProvider:
         yaml_data: dict[str, Any] | None = None,
         row_data: dict[str, Any] | None = None,
         yaml_path: str | None = None,
-        current_value: Any = None,
+        current_value: Any = None,  # noqa: ANN401  # a project-file value
     ) -> None:
         self._yaml_data = yaml_data or {}
         self._row_data = row_data or {}
@@ -1421,22 +1360,22 @@ class ImageRegistryOptionsProvider:
         )
         entries = [r for r in registries if isinstance(r, dict) and r.get("name")]
 
-        # Vooruit invullen zodra de image-prefix bij precies EEN registry past; passen er
-        # twee, dan is de keuze juist het punt.
+        # Pre-selected as soon as the image prefix matches exactly ONE registry; with two
+        # matches the choice is the point.
         image = self._component_image()
         if image:
             normalized = normalize_image(image)
-            passend = [
+            matching = [
                 entry
                 for entry in entries
                 if (prefix := normalize_prefix(str(entry.get("upstream", ""))))
                 and (normalized == prefix or normalized.startswith(prefix + "/"))
             ]
-            if len(passend) == 1:
-                entries = [passend[0], *(e for e in entries if e is not passend[0])]
+            if len(matching) == 1:
+                entries = [matching[0], *(e for e in entries if e is not matching[0])]
 
-        # Het LABEL op het scherm, de slug als waarde: de afnemer noemde hem "Code
-        # Overheid" en hoort dat terug te zien, ook al verwijst het bestand met de slug.
+        # The LABEL on the screen and the slug as the value: a team that called its registry
+        # "Code Overheid" should see that back, even though the file refers to it by slug.
         labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
         names = [entry["name"] for entry in entries]
         if not names and not self._current_value:
@@ -1449,13 +1388,13 @@ class ImageRegistryOptionsProvider:
         return options
 
     def _empty_label(self) -> str:
-        """Wat "niets gekozen" op deze laag betekent, afgeleid uit het gerenderde pad."""
+        """What "nothing chosen" means on this layer, derived from the rendered path."""
         return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else AUTOMATIC_REGISTRY_LABEL
 
     def _component_image(self) -> str:
-        """De image van het component waar dit veld bij staat, of "".
+        """The image of the component this field sits on, or "".
 
-        Uit ``row_data``, anders via de index in ``yaml_path``.
+        From ``row_data``, else through the index in ``yaml_path``.
         """
         image = self._row_data.get("image")
         if isinstance(image, str) and image:
@@ -1529,11 +1468,10 @@ def _cross_domain_peer_ref(
 def _cross_domain_peer_project_data(yaml_data: dict[str, Any], project_name: str | None) -> dict[str, Any] | None:
     """The peer project's stored data, or None when it may not or cannot be read.
 
-    Reading another project's file while rendering a form is a real dependency, so it is
-    kept narrow and lazy: only a project on the authorized ``_cross_domain_projects`` list is
-    looked up, and the lookup is the ProjectStore's in-memory cache (no I/O). A peer that was
-    deleted, or that this user may no longer see, simply yields None and the field falls back
-    to keeping whatever is stored.
+    Reading another project's file while rendering a form is a real dependency, so it is kept
+    narrow and lazy: only a project on the authorized ``_cross_domain_projects`` list is looked
+    up, and the lookup goes to the ProjectStore's in-memory cache. A peer that was deleted, or
+    that this user may no longer see, yields None and the field keeps whatever is stored.
     """
     if not project_name:
         return None
@@ -1543,13 +1481,6 @@ def _cross_domain_peer_project_data(yaml_data: dict[str, Any], project_name: str
 
     summary = get_project_store().get(project_name)
     return summary.data if summary is not None and isinstance(summary.data, dict) else None
-
-
-def _cross_domain_deployment(project_data: dict[str, Any] | None, deployment_name: str | None) -> dict[str, Any]:
-    for deployment in (project_data or {}).get("deployments") or []:
-        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-            return deployment
-    return {}
 
 
 def _cross_domain_options(
@@ -1611,7 +1542,7 @@ class CrossDomainProjectOptionsProvider:
         names = [n for n in (self.yaml_data.get("_cross_domain_projects") or []) if n]
         labels = dict(self.yaml_data.get("_cross_domain_project_labels") or {})
         # The wildcard is deliberately NOT offered: opening a port to every source is a
-        # decision for the owner of a shared facility, taken through the API or the project
+        # decision for the owner of a shared facility, made through the API or the project
         # file, not a menu item next to the peer projects. A rule that already carries it is
         # kept and NAMED, because a select that quietly drops a value it does not recognise
         # changes the configuration with nobody touching it.
@@ -1732,7 +1663,7 @@ class CrossDomainPeerComponentOptionsProvider:
             for deployment in (project_data or {}).get("deployments") or []
             if isinstance(deployment, dict) and deployment.get("cluster") == settings.CLUSTER_MANAGER
         ]
-        chosen = _cross_domain_deployment(project_data, peer.get("deployment"))
+        chosen = Project(project_data or {}).find("deployments", name=peer.get("deployment")) or {}
         if chosen:
             deployments = [chosen]
         names: list[str] = []
@@ -1833,14 +1764,14 @@ class CrossDomainLocalComponentOptionsProvider:
 
 WALL_PORT = 4180
 
-#: Het label van de wall-poort in een keuzelijst. Waarom 4180 erbij staat hoort in de optie
-#: zelf, niet in een hulptekst onder het veld: het geldt voor een van de opties en niet voor
-#: het veld, en het is een randgeval dat je alleen hoeft te snappen als je het kiest.
+#: The label of the wall port in a list of options. Why 4180 is there belongs in the option
+#: itself and not in a help text under the field: it holds for one option and not for the
+#: field, and it is an edge case you only need to understand if you pick it.
 WALL_PORT_LABEL = f"{WALL_PORT} (via authorization wall)"
 
 
 def _component_has_wall(component: dict[str, Any]) -> bool:
-    """Of er een authorization-wall voor dit component staat."""
+    """Whether an authorization wall fronts this component."""
     return any(
         service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value for entry in component.get("services") or []
     )
@@ -1870,12 +1801,6 @@ class CrossDomainPortOptionsProvider:
     * outbound -- ``to`` is the peer's component, so the list is read from the peer project.
 
     Both are per-row questions (which component did THIS row pick), answered from ``row_data``.
-    It used to be one precomputed union of the project's OWN ports for both directions, on the
-    stated grounds that the framework cannot filter options per row. It can: the sequence
-    renderer builds an ``item_context`` PER ROW and providers receive exactly the kwargs they
-    declare in ``__init__`` (``_filter_provider_kwargs``). ``exclude_references`` has always
-    travelled that way, and ``row_data`` carries the row's own stored values.
-
     With no component chosen yet the list falls back to the union of the own project's ports
     (``_cross_domain_ports``) for inbound, and stays empty with an explanation for outbound.
     """
@@ -1909,9 +1834,8 @@ class CrossDomainPortOptionsProvider:
                 return _cross_domain_component_ports(component), "Dit component heeft geen inbound-poorten"
         # No own component picked yet (or it vanished): the union over my components, so the
         # field is usable before the rest of the row is filled in. Derived from the form's own
-        # data rather than precomputed per flow, which is what left it empty in the create
-        # wizard; ``_cross_domain_ports`` is the pre-RC-42 precomputed union and is still read
-        # so an older wizard session in flight keeps working.
+        # data rather than precomputed per flow; ``_cross_domain_ports`` is the older
+        # precomputed union and is still read, so a wizard session in flight keeps working.
         union: list[int] = [port for port in (self.yaml_data.get("_cross_domain_ports") or []) if isinstance(port, int)]
         for component in self.yaml_data.get("components") or []:
             if not isinstance(component, dict):
@@ -1951,19 +1875,21 @@ class CrossDomainPortOptionsProvider:
         )
 
     def _wall_port_is_the_walls(self, ports: list[int]) -> bool:
-        """Of 4180 in deze lijst van de authorization-wall komt.
+        """Whether 4180 is in this list because of the authorization wall.
 
-        Een component mag 4180 ook gewoon zelf als inbound-poort hebben; dan is het label
-        "via authorization wall" onjuist. Dus alleen labelen als er echt een wall voor staat.
+        A component may simply carry 4180 as an inbound port of its own, and then the label
+        "via authorization wall" is wrong, so only label it when a wall really fronts it.
         """
         if WALL_PORT not in ports:
             return False
-        bron = self.yaml_data
+        source = self.yaml_data
         if _cross_domain_direction(self.yaml_path) == "outbound":
             peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
-            bron = _cross_domain_peer_project_data(self.yaml_data, peer.get("project")) or {}
+            source = _cross_domain_peer_project_data(self.yaml_data, peer.get("project")) or {}
         return any(
-            _component_has_wall(component) for component in bron.get("components") or [] if isinstance(component, dict)
+            _component_has_wall(component)
+            for component in source.get("components") or []
+            if isinstance(component, dict)
         )
 
 
@@ -1980,20 +1906,14 @@ def _peer_component_ports(project_data: dict[str, Any] | None, component_name: s
 
 
 class KeycloakAccountLinkOptionsProvider:
-    """Hoe een bestaand account gekoppeld wordt als iemand via een identity provider inlogt.
+    """How an existing account is linked when someone signs in through an identity provider.
 
-    De waarden komen uit ``AccountLink`` in het configmodel; ``build_project_realm_context``
-    geeft ze als ``account_link`` door aan de realm-template. Niets ingevuld is de
-    Keycloak-standaard: de gebruiker bevestigt de koppeling via een e-mail.
-
-    Hier stond een derde keuze, ``verify``, met het label "Verificatie via e-mail" en de
-    omschrijving "Expliciet dezelfde weg als de standaard". Dat was letterlijk waar: geen
-    enkele code deed iets anders met ``verify`` dan met niets. Een keuze aanbieden die de
-    uitkomst niet verandert is geen extra vrijheid maar een leugen over de werking, dus hij
-    is weg -- uit de enum, uit het schema en hier.
+    The values come from ``AccountLink`` in the config model, and
+    ``build_project_realm_context`` passes them to the realm template as ``account_link``.
+    Nothing filled in is the Keycloak default: the user confirms the link by email.
     """
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -2022,7 +1942,7 @@ class KeycloakAccountLinkOptionsProvider:
 class InviteLanguageOptionsProvider:
     """The two languages an invite's default-language can take."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -2033,7 +1953,7 @@ class InviteLanguageOptionsProvider:
 
 
 class InviteAuthMethodOptionsProvider:
-    """The auth methods an invite may allow, taken from the project's keycloak template.
+    """The auth methods an invite may allow, read from the project's keycloak template.
 
     An invite can only narrow what the realm offers, never widen it (``invite_routes``
     computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
@@ -2041,26 +1961,26 @@ class InviteAuthMethodOptionsProvider:
 
     * ``sso-only``    -- the browser flow redirects straight to SSO Rijk, so there is no
       screen on which a local account could ever be typed in;
-    * ``sso-support`` en ``sso-support-otp`` -- Keycloak's own login screen, which offers
-      both. Welke blauwdruk een lokaal account toelaat staat op één plek:
-      ``allows_local_accounts``.
+    * ``sso-support`` and ``sso-support-otp``: Keycloak's own login screen, which offers
+      both. Which blueprint allows a local account is decided in one place,
+      ``allows_local_accounts``;
+    * ``local-only``  -- no identity provider, so SSO is not offered (``allows_sso``).
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
 
-    Koppelt het realm een SSO-identiteit op e-mailadres (``account-link``), dan vervalt
-    "Lokaal account" ook: daar is geen account met een zelf ingetypt adres toegestaan. De
-    uitnodigingsweg weigert die methode dan al en opslaan wordt geweigerd, dus hem hier
-    aanbieden zou een keuze zijn die bij het bewaren alsnog afketst. Anders dan bij sso-only
-    blijft het veld in dat geval wel staan, met alleen SSO: de hulptekst van het veld zegt
-    waarom "Lokaal account" er niet bij staat, en dat is het enige dat het hier nog meldt.
+    When the realm links an SSO identity by email address (``account-link``), "Lokaal account"
+    drops out too: an account with a self-typed address is not allowed there. The invite path
+    already refuses that method and the save refuses it as well, so offering it here would be
+    a choice that bounces on save. Unlike under sso-only the field does stay, with SSO only;
+    the field's help text says why "Lokaal account" is missing.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
-            "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (sso-support of sso-support-otp) en het realm niet "
-            "automatisch koppelt op e-mailadres (account-link)."
+            "sso tenzij het keycloak-template local-only is; local alleen als het template "
+            "lokale accounts toestaat (sso-support, sso-support-otp of local-only) en het "
+            "realm niet automatisch koppelt op e-mailadres (account-link)."
         ),
         endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
         path="configurations[].config.template",
@@ -2072,13 +1992,14 @@ class InviteAuthMethodOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         from opi.forms.editables.service_path import smart_get_value
 
-        options = [{"value": "sso", "label": "Single sign-on (SSO)"}]
         # Absent template means sso-only (the default on KeycloakConfig.template),
         # which is what the realm gets. Treating it as "unknown, allow both" would
         # conflict with the field's show_when rule, which hides the field in that case.
         template = smart_get_value(self.yaml_data, "services/keycloak/config/template")
-        # Via smart_get_value en niet via de project-ingang van de helper: in de wizard staat
-        # de keycloak-config onder de virtuele root, waar een lezing op "services" niets vindt.
+        options = [{"value": "sso", "label": "Single sign-on (SSO)"}] if allows_sso(template) else []
+        # Through smart_get_value and not through the helper's project entrance: in the
+        # wizard the keycloak config sits under the virtual root, where a read on "services"
+        # finds nothing.
         links_on_email = account_link_mode(smart_get_value(self.yaml_data, "services/keycloak/config")) is not None
         if allows_local_accounts(template) and not links_on_email:
             options.append({"value": "local", "label": "Lokaal account"})
@@ -2125,6 +2046,9 @@ class InviteRealmRoleOptionsProvider:
                 if name and name not in roles:
                     roles.append(str(name))
         wall_role = smart_get_value(self.yaml_data, "services/keycloak/config/restrict-access/realm-role")
+        # A client role replaces the realm role at the gate, so the realm role grants nothing.
+        if smart_get_value(self.yaml_data, "services/keycloak/config/restrict-access/role"):
+            wall_role = None
         if wall_role and str(wall_role) not in roles:
             roles.append(str(wall_role))
 
@@ -2141,7 +2065,7 @@ class HealthCheckSchemeOptionsProvider:
     """Probe scheme options for the health-check service. The empty value means
     'default': fall back to a plain TCP probe on the first inbound port."""
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -2182,8 +2106,8 @@ class InviteApplicationUrlOptionsProvider:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.publish_on_web.urls import public_urls_for_project
+        from opi.services.project_file_handler import ProjectFileHandler
 
         options: list[dict[str, Any]] = [{"value": "", "label": "Geen knop tonen"}]
         try:
@@ -2194,45 +2118,43 @@ class InviteApplicationUrlOptionsProvider:
             logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
             urls = []
 
-        # Een component MAG meerdere paden publiceren, en dat zijn dan evenzoveel adressen.
-        # Het label noemde alleen deployment en component, dus die adressen kwamen als twee
-        # regels "production / frontend" in de lijst: niet te onderscheiden, terwijl je er
-        # wel een van moet kiezen. De ontdubbeling hieronder pakt ze niet, en terecht, want
-        # de URL's verschillen echt. Het pad komt er dus bij, maar alleen waar het iets
-        # oplost: bij een component met een enkel pad is "/" achter de naam alleen ruis.
+        # A component MAY publish several paths, and those are as many addresses. A label of
+        # deployment and component alone then lists them as two identical lines, while one of
+        # them has to be picked; the dedupe below does not catch them, and rightly so, because
+        # the URLs really differ. So the path is added, but only where it resolves something:
+        # on a component with a single path a "/" behind the name is noise.
         seen: set[str] = set()
-        gekozen: list[dict[str, str]] = []
+        chosen: list[dict[str, str]] = []
         for entry in urls:
             url = entry.get("url")
             if not url or url in seen:
                 continue
             seen.add(url)
-            gekozen.append(entry)
+            chosen.append(entry)
 
-        meervoudig: set[tuple[str, str]] = set()
-        geteld: set[tuple[str, str]] = set()
-        for entry in gekozen:
-            sleutel = (entry["deployment_name"], entry["component_name"])
-            if sleutel in geteld:
-                meervoudig.add(sleutel)
-            geteld.add(sleutel)
+        multiple: set[tuple[str, str]] = set()
+        counted: set[tuple[str, str]] = set()
+        for entry in chosen:
+            key = (entry["deployment_name"], entry["component_name"])
+            if key in counted:
+                multiple.add(key)
+            counted.add(key)
 
-        for entry in gekozen:
+        for entry in chosen:
             label = f"{entry['deployment_name']} / {entry['component_name']}"
-            if (entry["deployment_name"], entry["component_name"]) in meervoudig:
+            if (entry["deployment_name"], entry["component_name"]) in multiple:
                 label = f"{label} ({entry.get('path') or '/'})"
             options.append({"value": entry["url"], "label": label})
 
-        # Alleen een ADRES kan hier nog bij. De opgeslagen waarde is sinds RC-136 de KEUZE
-        # ("frontend:production"), en het formulier geeft de RAUWE opslag als huidige waarde
-        # door: die kwam zo als "frontend:production (niet meer afleidbaar)" in de lijst
-        # terecht -- een regel die niets betekent en die je ook nog kon kiezen. Een keuze die
-        # nog wel oplost staat sowieso al in de lijst hierboven; een die dat niet meer doet
-        # heeft geen adres om te tonen, en dan is "geen knop" het eerlijke antwoord, want dat
-        # is ook precies wat de succespagina doet.
-        huidig = self.current_value if isinstance(self.current_value, str) else None
-        if huidig and huidig.startswith(("http://", "https://")) and huidig not in seen:
-            options.append({"value": huidig, "label": f"{huidig} (niet meer afleidbaar)"})
+        # Only an ADDRESS may be added here. The stored value is the CHOICE
+        # ("frontend:production"), and the form passes the RAW storage as the current value,
+        # so without this test a line reading "frontend:production (niet meer afleidbaar)"
+        # lands in the list and can be picked. A choice that still resolves is already in the
+        # list above; one that does not has no address to show, and then "no button" is the
+        # honest answer, which is exactly what the success page does.
+        current = self.current_value if isinstance(self.current_value, str) else None
+        if current and current.startswith(("http://", "https://")) and current not in seen:
+            options.append({"value": current, "label": f"{current} (niet meer afleidbaar)"})
         return options
 
 
@@ -2303,29 +2225,12 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
 
 
 def get_provider(name: str, **kwargs: str | bool | int) -> OptionsProvider:
-    """
-    Get a provider instance by name.
-
-    Args:
-        name: Provider class name
-        **kwargs: Arguments to pass to provider constructor
-
-    Returns:
-        Provider instance
-
-    Raises:
-        KeyError: If provider not found in registry
-    """
+    """The provider registered under *name*, built with *kwargs*; raises ``KeyError``."""
     if name not in PROVIDER_REGISTRY:
         raise KeyError(f"Unknown provider: {name}")
     return PROVIDER_REGISTRY[name](**kwargs)
 
 
 def get_all_providers() -> dict[str, OptionsProvider]:
-    """
-    Get instances of all registered providers.
-
-    Returns:
-        Dict mapping provider names to instances
-    """
+    """An instance of every registered provider, by name."""
     return {name: cls() for name, cls in PROVIDER_REGISTRY.items()}

@@ -1,53 +1,64 @@
-"""De naampatronen die de rand van de API en de dienstconfig delen.
+"""The name patterns shared by the edge of the API and the service config.
 
-Een patroon hoort op een plek te staan: zodra dezelfde regel op twee plekken als regex
-staat, betekent hij vroeg of laat twee dingen. ``DNS1123_LABEL`` stond in het pakket
-``cross_domain_access``, dat het als eerste nodig had; het is hierheen verhuisd toen de
-terugzet-endpunten hetzelfde patroon nodig bleken te hebben (RC-339).
+A pattern belongs in one place: the moment the same rule sits in two files as a regex, it
+means two things sooner or later. ``DNS1123_LABEL`` lived in the ``cross_domain_access``
+package, which needed it first; it moved here when the restore endpoints turned out to need
+the same pattern (RC-339).
 
-De patronen zijn geankerd, zodat ze zowel in ``pydantic``-``pattern=`` als in
-``re.match`` dezelfde betekenis hebben.
+The patterns are anchored, so they mean the same thing in a ``pydantic`` ``pattern=`` as in
+``re.match``.
 """
 
-#: Een DNS-1123-label: wat Kubernetes toestaat als naam van een namespace of een label.
+#: A DNS-1123 label: what Kubernetes accepts as the name of a namespace or a label.
 DNS1123_LABEL = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 
-#: Een DNS-1123-subdomein: wat Kubernetes toestaat als naam van een object (PVC,
-#: StorageClass). Een of meer labels, gescheiden door punten.
+#: A DNS-1123 subdomain: what Kubernetes accepts as the name of an object (PVC,
+#: StorageClass). One or more labels separated by dots.
 DNS1123_SUBDOMAIN = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 
-#: Een Kubernetes-hoeveelheid zoals 500Mi, 1Gi of 262144k. Dezelfde vorm die
-#: ``parse_k8s_memory_to_mi`` ontleedt; hier als patroon, omdat de rand een waarde
-#: moet kunnen weigeren voordat er iets mee gebeurt.
+#: A Kubernetes quantity such as 500Mi, 1Gi or 262144k. The same shape that
+#: ``parse_k8s_memory_to_mi`` parses; as a pattern here, because the edge has to be able to
+#: refuse a value before anything is done with it.
 KUBERNETES_QUANTITY = r"^\d+(\.\d+)?(Ki|Mi|Gi|Ti|Pi|k|M|G|T|P)?$"
 
-#: Een PostgreSQL-identifier, voor een schema- of gebruikersnaam.
-#: ``PostgresConnector._validate_identifier`` leest hem hier.
+#: A PostgreSQL identifier, for a schema or user name.
+#: ``PostgresConnector._validate_identifier`` reads it here.
 POSTGRES_IDENTIFIER = r"^[a-zA-Z_][a-zA-Z0-9_$]*$"
 
-#: Een schemanaam die een kloon mag overnemen uit een brondatabase (RC-360). Strenger dan
-#: ``POSTGRES_IDENTIFIER``: de ``psql -c``-statements van de kloon quoten niet, dus een
-#: hoofdletter of een ``$`` komt daar niet door.
+#: A schema name a clone may carry over from a source database (RC-360). Stricter than
+#: ``POSTGRES_IDENTIFIER``: the ``psql -c`` statements of the clone do not quote, so an
+#: uppercase letter or a ``$`` does not get through there.
 POSTGRES_CLONEABLE_SCHEMA = r"^[a-z_][a-z0-9_]*$"
 
-#: Een S3-bucketnaam volgens de regels van AWS: 3 tot 63 tekens, kleine letters, cijfers,
-#: streepjes en punten, beginnend en eindigend op een letter of cijfer.
+#: An S3 bucket name by the AWS rules: 3 to 63 characters, lowercase letters, digits,
+#: hyphens and dots, starting and ending on a letter or a digit.
 S3_BUCKET_NAME = r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
 
-#: Een hostnaam of IP-adres, eventueel met poort. Hoofdletters zijn toegestaan omdat een
-#: DNS-naam case-insensitive is; de poort omdat een doelhost zo wordt aangeleverd
-#: (``postgresql.elsewhere:5432``), naast het aparte poortveld.
+#: A host name or IP address, optionally with a port. Uppercase is allowed because a DNS name
+#: is case insensitive; the port because a target host is supplied that way
+#: (``postgresql.elsewhere:5432``), next to the separate port field.
 HOST_WITH_OPTIONAL_PORT = (
     r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:\d{1,5})?$"
 )
 
-#: Een endpoint als URL of als host:poort, zoals een MinIO-endpoint wordt opgegeven.
+#: An endpoint as a URL or as host:port, the way a MinIO endpoint is given.
 ENDPOINT_URL_OR_HOST_PORT = (
     r"^(https?://)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*"
     r"(:\d{1,5})?(/[A-Za-z0-9._~\-/]*)?$"
 )
 
-#: Een kopia-snapshot-id: een hexadecimale sleutel met een letterprefix (``k1f2a...``).
-#: Ruimer gezet dan dat, want de id komt uit kopia en de rand hoort hem niet nauwer te
-#: beschrijven dan nodig is om tekst met regeleindes en quotes te weigeren.
+#: A kopia snapshot id: a hexadecimal key with a letter prefix (``k1f2a...``). Set wider than
+#: that, because the id comes from kopia and the edge should not describe it more narrowly
+#: than it takes to refuse text with newlines and quotes.
 KOPIA_SNAPSHOT_ID = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+#: A project name: a lowercase letter first, then lowercase letters, digits and dashes.
+#: ``validate_project_name`` in ``opi/utils/project_names.py`` is the guard that reads it.
+PROJECT_NAME = r"^[a-z][a-z0-9-]*\Z"
+
+#: ``PROJECT_NAME`` for a ``pydantic`` ``pattern=``: that engine rejects ``\Z``, and its ``$``
+#: already means end of string.
+PROJECT_NAME_PYDANTIC = PROJECT_NAME.replace(r"\Z", "$")
+
+#: The longest project name ``validate_project_name`` accepts.
+PROJECT_NAME_MAX_LENGTH = 20

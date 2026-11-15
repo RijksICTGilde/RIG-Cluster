@@ -28,8 +28,8 @@ omgeving (logging staat al voordat `config.py` wordt geladen), en `_get_settings
 `opi/core/config.py` geeft hem daarna door vanuit de settings.
 
 Met `INFO` verdwijnen de regels die per verzoek het e-mailadres noemen
-(`opi/middleware/authorization.py`, `opi/core/auth_decorators.py`,
-`opi/api/user_token_auth.py`). Toegang van een platformbeheerder tot een project waar hij
+(`opi/middleware/authorization.py`, `opi/http/auth/auth_decorators.py`,
+`opi/http/auth/user_token_auth.py`). Toegang van een platformbeheerder tot een project waar hij
 geen lid van is, staat juist op INFO: zonder die regel is er in productie geen spoor van
 die toegang.
 
@@ -41,7 +41,7 @@ verwatert het spoor waar hij voor bedoeld is.
 
 ## Het redactiefilter
 
-`SecretRedactionFilter` in `opi/utils/logging_redact.py` hangt op de stdout-handler en op
+`SecretRedactionFilter` in `opi/core/logging_redact.py` hangt op de stdout-handler en op
 de bestandshandlers in `setup_logging`. Hij draait dus op elke regel die langs de
 root-logger komt, ook op die van een bibliotheek die de redactiehelpers niet kent, en
 maskeert in het samengestelde bericht:
@@ -122,7 +122,7 @@ Drie lagen, in deze volgorde:
 ## Afhankelijkheden
 
 Geen. Het filter gebruikt alleen de standaardbibliotheek en de bestaande
-`_SENSITIVE_HEADERS` uit `opi/utils/logging_redact.py`.
+`_SENSITIVE_HEADERS` uit `opi/core/logging_redact.py`.
 
 ## Zie ook
 

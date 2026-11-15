@@ -303,6 +303,25 @@ def test_multiline_velden_zijn_alleen_wat_ze_moeten_zijn() -> None:
     assert {"TRANSIP_PRIVATE_KEY"} == rotate.MULTILINE_FIELDS
 
 
+def test_env_pairs_is_empty_for_a_component_without_zad_env() -> None:
+    """transip has two rotate_fields and no copy in the env file: gather_ctx used to loop
+    here with strict=True over an empty zad_env, breaking every one of the 18 components
+    without an env-file copy ('zip() argument 2 is shorter than argument 1')."""
+    component = rotate.BY_KEY["transip"]
+    assert component.zad_env == ()
+    assert len(component.rotate_fields) > 1
+    assert rotate.env_pairs(component) == []
+
+
+def test_env_pairs_matches_zad_env_one_to_one_and_adds_the_copies() -> None:
+    component = rotate.BY_KEY["platform-repo-pat"]
+    assert rotate.env_pairs(component) == [
+        ("PROJECT_REPO_PASSWORD", "PROJECT_REPO_PASSWORD"),
+        ("PROJECT_REPO_PASSWORD", "GIT_PROJECTS_SERVER_PASSWORD"),
+        ("PROJECT_REPO_PASSWORD", "GIT_ARGO_APPLICATIONS_PASSWORD"),
+    ]
+
+
 # --- de categorie-volgordes als eigenschap -----------------------------------------------
 
 
@@ -708,6 +727,26 @@ def test_secret_key_toont_de_herstart_van_opi_na_de_secret_gate(monkeypatch: pyt
     assert any(rotate.OPI_DEPLOYMENT in line for step in steps for line in step.dry_text)
 
 
+def test_a_pat_round_writes_every_env_name_that_carries_the_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The platform PAT sits in the env file under three names; a round that missed one left
+    OPI pulling with the old token."""
+    path = tmp_path / ".env-odcn-production.secrets"
+    path.write_text(
+        "PROJECT_REPO_PASSWORD=old\nGIT_PROJECTS_SERVER_PASSWORD=old\nGIT_ARGO_APPLICATIONS_PASSWORD=old\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rotate, "env_file_for", lambda _cluster: path)
+    component = rotate.BY_KEY["platform-repo-pat"]
+    step = rotate.env_step(component, _cluster())
+    ctx = _dry_ctx(_dry_kube(monkeypatch), component)
+    ctx.new = {"PROJECT_REPO_PASSWORD": "new"}
+    assert step.run is not None
+    step.run(ctx)
+    assert set(rotate.read_env_file(path).values()) == {"new"}
+
+
 def test_de_handmatige_stap_noemt_de_deploy_task_per_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
     """De OPI-overlay hangt in geen ArgoCD-Application: zonder deze stap blijft het nieuwe
     envsecret in git staan en loopt de gate erna leeg op zijn time-out."""
@@ -735,6 +774,34 @@ def test_de_externe_rijen_voor_het_envsecret_tonen_check_extern_en_verify(
         assert fases.index("check") < fases.index("manual") < fases.index("verify") < fases.index("env"), (
             f"{key}: {fases}"
         )
+
+
+def test_the_platform_pat_env_step_also_writes_the_two_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OPI reads its own three repos with the same token: without the copy names in the env
+    step, the envsecret keeps the old token for the git server while PROJECT_REPO_PASSWORD
+    does rotate. That happened on 2026-09-28."""
+    component = rotate.BY_KEY["platform-repo-pat"]
+    cluster = _cluster()
+    path = tmp_path / ".env.odcn-production.secrets"
+    path.write_text("PROJECT_REPO_PASSWORD=old\nGIT_PROJECTS_SERVER_PASSWORD=old\nGIT_ARGO_APPLICATIONS_PASSWORD=old\n")
+    monkeypatch.setattr(rotate, "env_file_for", lambda _name: path)
+
+    step = rotate.env_step(component, cluster)
+    assert sorted(step.dry_text) == sorted(
+        f"{name}=<NIEUW> in {path.name}"
+        for name in ("PROJECT_REPO_PASSWORD", "GIT_PROJECTS_SERVER_PASSWORD", "GIT_ARGO_APPLICATIONS_PASSWORD")
+    )
+
+    ctx = rotate.Ctx(
+        cluster=cluster, kube=None, current={}, new={"PROJECT_REPO_PASSWORD": "ghp_new"}, apply_changes=True
+    )  # type: ignore[arg-type]
+    assert step.run is not None
+    step.run(ctx)
+
+    written = rotate.read_env_file(path)
+    assert written["PROJECT_REPO_PASSWORD"] == "ghp_new"
+    assert written["GIT_PROJECTS_SERVER_PASSWORD"] == "ghp_new"
+    assert written["GIT_ARGO_APPLICATIONS_PASSWORD"] == "ghp_new"
 
 
 class _ExecKube:

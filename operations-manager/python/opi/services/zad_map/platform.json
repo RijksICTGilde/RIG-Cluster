@@ -20,7 +20,7 @@
     {
      "name": "kubectl",
      "file": "opi/connectors/kubectl.py",
-     "uses": 38
+     "uses": 42
     }
    ],
    "services": [
@@ -70,7 +70,7 @@
     {
      "name": "argo",
      "file": "opi/connectors/argo.py",
-     "uses": 15
+     "uses": 20
     }
    ],
    "services": [],
@@ -124,7 +124,7 @@
     {
      "name": "git",
      "file": "opi/connectors/git.py",
-     "uses": 6
+     "uses": 7
     }
    ],
    "services": [],
@@ -174,7 +174,7 @@
     {
      "name": "keycloak",
      "file": "opi/connectors/keycloak.py",
-     "uses": 12
+     "uses": 13
     }
    ],
    "services": [
@@ -221,8 +221,8 @@
      "title": "External Keycloak Provider"
     },
     {
-     "file": "features/keycloak-logout-path.md",
-     "title": "Keycloak logout-pad per component"
+     "file": "features/keycloak-local-only.md",
+     "title": "Keycloak: alleen lokale accounts (local-only)"
     }
    ]
   },
@@ -374,7 +374,7 @@
     {
      "name": "kopia",
      "file": "opi/connectors/kopia.py",
-     "uses": 9
+     "uses": 10
     }
    ],
    "services": [],
@@ -580,7 +580,7 @@
     {
      "name": "grafana_prometheus",
      "file": "opi/connectors/grafana_prometheus.py",
-     "uses": 4
+     "uses": 3
     },
     {
      "name": "prometheus",

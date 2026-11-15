@@ -18,13 +18,87 @@ from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+UPSERT_TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+@pytest.fixture
+def upsert_answered(app_schoon: FastAPI) -> Any:
+    """Give the app a queue whose upsert task is already finished, with this answer.
+
+    ``sync=true`` enqueues the ordinary ``upsert_deployment`` task and waits for it
+    (RC-483), so these tests set the answer the handler would have written rather than
+    mocking the manager behind it.
+    """
+
+    def answer_with(answer: dict[str, Any]) -> None:
+        queued = {"task_id": UPSERT_TASK_ID, "task_type": "upsert_deployment", "status": "pending"}
+        service = AsyncMock()
+        service.create_task.return_value = queued
+        service.get_task.return_value = {**queued, "status": "completed", "result": answer}
+        app_schoon.state.task_service = service
+
+    return answer_with
+
+
+def upsert_succeeded(deployment_name: str, *, created: bool, components: int = 1) -> dict[str, Any]:
+    """The answer the upsert handler writes for a round that went through."""
+    return {
+        "status": "success",
+        "message": f"Deployment '{deployment_name}' {'created' if created else 'updated'} successfully",
+        "deployment": {
+            "name": deployment_name,
+            "project": "test-project",
+            "components": [{"reference": f"c{i}", "image": "nginx:1.21"} for i in range(components)],
+            "forceClone": False,
+            "created": created,
+        },
+        "urls": {},
+        "approvals": [],
+        "processing": {"status": "completed"},
+    }
+
+
+DELETE_TASK_ID = "550e8400-e29b-41d4-a716-446655440001"
+
+
+@pytest.fixture
+def delete_answered(app_schoon: FastAPI) -> Any:
+    """Give the app a queue whose delete task is already finished, with this answer.
+
+    ``sync=true`` enqueues the ordinary ``delete_deployment`` task and waits for it
+    (RC-484), so these tests set the answer the handler would have written.
+    """
+
+    def answer_with(status: str, answer: dict[str, Any]) -> None:
+        queued = {"task_id": DELETE_TASK_ID, "task_type": "delete_deployment", "status": "pending"}
+        service = AsyncMock()
+        service.create_task.return_value = queued
+        service.get_task.return_value = {**queued, "status": status, "result": answer}
+        app_schoon.state.task_service = service
+
+    return answer_with
+
+
+@pytest.fixture
+def removable_deployments() -> Any:
+    """The store the removal guard reads: ``test-project`` has a ``staging`` on this cluster."""
+    store = MagicMock()
+    store.get.return_value = MagicMock(
+        data={"name": "test-project", "deployments": [{"name": "staging", "cluster": "local"}]}
+    )
+    with patch("opi.http.task_helpers.get_project_store", return_value=store):
+        yield store
 
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
     """Mock project service for authentication."""
-    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+    with patch("opi.http.auth.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
         test_project = ProjectSummary(
@@ -185,22 +259,22 @@ class TestUpsertDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
         """Test creating a new deployment via upsert."""
-        mock_pm = create_mock_project_manager(upsert_result={"success": True, "created": True})
+        upsert_answered(upsert_succeeded("production", created=True, components=2))
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-                json={
-                    "deploymentName": "production",
-                    "components": [
-                        {"reference": "web", "image": "nginx:1.21"},
-                        {"reference": "api", "image": "python:3.11"},
-                    ],
-                },
-            )
+        response = test_client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "deploymentName": "production",
+                "components": [
+                    {"reference": "web", "image": "nginx:1.21"},
+                    {"reference": "api", "image": "python:3.11"},
+                ],
+            },
+        )
 
         assert response.status_code == 201
         data = response.json()
@@ -213,19 +287,19 @@ class TestUpsertDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
         """Test updating an existing deployment via upsert."""
-        mock_pm = create_mock_project_manager(upsert_result={"success": True, "created": False})
+        upsert_answered(upsert_succeeded("main", created=False))
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-                json={
-                    "deploymentName": "main",
-                    "components": [{"reference": "web", "image": "nginx:1.22"}],
-                },
-            )
+        response = test_client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "web", "image": "nginx:1.22"}],
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -236,21 +310,21 @@ class TestUpsertDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
         """Test creating deployment with cloneFrom parameter."""
-        mock_pm = create_mock_project_manager()
+        upsert_answered(upsert_succeeded("staging", created=True))
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-                json={
-                    "deploymentName": "staging",
-                    "components": [{"reference": "web", "image": "nginx:latest"}],
-                    "cloneFrom": "production",
-                    "forceClone": False,
-                },
-            )
+        response = test_client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "deploymentName": "staging",
+                "components": [{"reference": "web", "image": "nginx:latest"}],
+                "cloneFrom": "production",
+                "forceClone": False,
+            },
+        )
 
         assert response.status_code == 201
 
@@ -277,8 +351,15 @@ class TestUpsertDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
-        """Test upsert deployment with empty components list."""
+        """An empty components list is allowed: a deployment that runs nothing yet.
+
+        The field documents it, and the components are attached afterwards through
+        POST .../deployments/{deployment_name}/components.
+        """
+        upsert_answered(upsert_succeeded("main", created=True, components=0))
+
         response = test_client.post(
             "/api/projects/test-project/:upsert-deployment?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
@@ -288,9 +369,8 @@ class TestUpsertDeploymentEndpoint:
             },
         )
 
-        # FastAPI validation should reject empty list
-        # May return 422 (validation) or 500 (if caught by generic handler)
-        assert response.status_code in (422, 500)
+        assert response.status_code == 201
+        assert response.json()["deployment"]["components"] == []
 
     def test_upsert_deployment_missing_component_fields(
         self,
@@ -313,25 +393,26 @@ class TestUpsertDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
         """Test upsert deployment when operation fails."""
-        mock_pm = create_mock_project_manager(
-            upsert_result={
-                "success": False,
+        upsert_answered(
+            {
+                "status": "failed",
+                "deployment_name": "main",
                 "error": "Invalid component references",
                 "error_type": "invalid_component_references",
             }
         )
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-                json={
-                    "deploymentName": "main",
-                    "components": [{"reference": "nonexistent", "image": "nginx:latest"}],
-                },
-            )
+        response = test_client.post(
+            "/api/projects/test-project/:upsert-deployment?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "deploymentName": "main",
+                "components": [{"reference": "nonexistent", "image": "nginx:latest"}],
+            },
+        )
 
         assert response.status_code == 400
         data = response.json()
@@ -602,7 +683,7 @@ class TestDeleteProjectEndpoint:
         meet is wat de handler daarna doet, dus de step-up is hier voldaan verklaard;
         dat hij ECHT afgedwongen wordt staat in ``tests/test_api_delete_project_step_up.py``.
         """
-        with patch("opi.api.otp_step_up.verify_api_step_up", AsyncMock(return_value=None)):
+        with patch("opi.http.auth.otp_step_up.verify_api_step_up", AsyncMock(return_value=None)):
             yield
 
     def test_delete_project_success(
@@ -695,15 +776,16 @@ class TestDeleteDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        delete_answered: Any,
+        removable_deployments: Any,
     ) -> None:
         """Test successfully deleting a deployment."""
-        mock_pm = create_mock_project_manager()
+        delete_answered("completed", {"status": "completed", "deletion_results": {"success": True}})
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = test_client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-            )
+        response = test_client.delete(
+            "/api/projects/test-project/staging?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -714,15 +796,18 @@ class TestDeleteDeploymentEndpoint:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        delete_answered: Any,
+        removable_deployments: Any,
     ) -> None:
         """Test delete deployment with partial failure."""
-        mock_pm = create_mock_project_manager(delete_result={"success": False, "errors": ["Some error"]})
+        delete_answered(
+            "failed", {"status": "failed", "deletion_results": {"success": False, "errors": ["Some error"]}}
+        )
 
-        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
-            response = test_client.delete(
-                "/api/projects/test-project/staging?sync=true",
-                headers={"X-API-Key": "test-api-key-12345"},
-            )
+        response = test_client.delete(
+            "/api/projects/test-project/staging?sync=true",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
 
         assert response.status_code == 207
 
@@ -851,9 +936,10 @@ class TestProjectApiInputValidation:
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
+        upsert_answered: Callable[[dict[str, Any]], None],
     ) -> None:
         """Test various image URL formats are accepted."""
-        mock_pm = create_mock_project_manager()
+        upsert_answered(upsert_succeeded("test", created=True))
 
         valid_images = [
             "nginx",
@@ -864,17 +950,16 @@ class TestProjectApiInputValidation:
             "gcr.io/project/image@sha256:abc123",
         ]
 
-        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
-            for image in valid_images:
-                response = test_client.post(
-                    "/api/projects/test-project/:upsert-deployment?sync=true",
-                    headers={"X-API-Key": "test-api-key-12345"},
-                    json={
-                        "deploymentName": "test",
-                        "components": [{"reference": "web", "image": image}],
-                    },
-                )
-                assert response.status_code in (200, 201), f"Failed for image: {image}"
+        for image in valid_images:
+            response = test_client.post(
+                "/api/projects/test-project/:upsert-deployment?sync=true",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "deploymentName": "test",
+                    "components": [{"reference": "web", "image": image}],
+                },
+            )
+            assert response.status_code in (200, 201), f"Failed for image: {image}"
 
 
 @pytest.mark.integration

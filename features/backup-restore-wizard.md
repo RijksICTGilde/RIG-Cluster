@@ -61,7 +61,7 @@ the AGE key, is the same one, so nothing is decrypted. Changing them is the env-
 job, with its own step-up.
 
 What a new deployment inherits from an existing one is one derivation,
-`derive_deployment_from_source` in `opi/manager/clone_validation.py`. The upsert with
+`derive_deployment_from_source` in `opi/services/clone_validation.py`. The upsert with
 `cloneFrom` uses it too, so cloning and restoring cannot drift apart; see
 `features/kloon-erft-de-vorm-van-het-webadres.md`. On top of that,
 `build_restore_target_deployment` adds the wizard's choices and the `clone-from` pointing at
@@ -69,7 +69,7 @@ the backup run.
 
 That builder runs twice on the same input: in the confirmation request on a copy of the
 project, to weigh the rights and the step-up against the state it would produce, and in the
-restore task, to save it. The task saves and not the wizard, because `_pre_restore_pvcs` has
+restore task, to save it. The task saves and not the wizard, because `pre_restore_pvcs` has
 to fill the PVCs before ArgoCD syncs the project.
 
 ## Who may restore
@@ -91,23 +91,33 @@ The wizard itself opens as soon as restoring is allowed on at least one deployme
 project (`require_on_any_deployment`); the real decision falls at the confirmation, and that
 is the one the audit records.
 
+## Who may back up
+
+Since RC-475 `backup.create` follows the same rule: the wizard opens as soon as backing up
+is allowed on at least one deployment, and the decision that lands in the audit is weighed
+on the deployment the user picked. It used to be weighed against the highest marking in the
+project, so a developer in a project that has production could not open the wizard at all
+while the API did let them back up a non-production deployment.
+
 ## Architecture
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `opi/core/backup_tasks.py` | Background task wrappers (`run_backup_task`, `run_restore_task`) with `TaskProgressManager` |
-| `opi/templates/wizard/partials/backup_select_deployment.html.j2` | Deployment + resource type selection |
+| `opi/manager/backup/run.py` | `backup_deployment`: the one path every entry point runs, and `resolve_deployment_target` |
+| `opi/runtime/backup/task_handlers_backup.py` | The task handlers; `handle_backup` only translates between the payload and the use case |
+| `opi/runtime/backup/backup_tasks.py` | The helpers the restore handler shares with the clone-from flow |
+| `opi/forms/visualizers/wizard_sections.py` (`BACKUP_SELECT_SECTION`) | Deployment + resource type selection |
 | `opi/templates/wizard/partials/restore_select_backup.html.j2` | Backup run selection |
 | `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection (mode toggle) |
 | `opi/forms/visualizers/wizard_sections.py` (`build_restore_new_deployment_sections`) | New deployment config editables (steps 3 to 5, conditional) |
-| `opi/manager/clone_validation.py` | `derive_deployment_from_source` and `build_restore_target_deployment` |
+| `opi/services/clone_validation.py` | `derive_deployment_from_source` and `build_restore_target_deployment` |
 
 ### Key Design Decisions
 
 - **No project file changes**: Backup/restore flows skip the YAML save step - they trigger operations directly (except when creating a new deployment, which modifies the project file)
-- **Member-level auth**: Any project member can create backups. Restore is weighed on the source and the target deployment, see "Who may restore"
+- **Per-deployment auth**: Backup and restore are both weighed on the deployment the user picks, see "Who may restore" and "Who may back up"
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
@@ -157,6 +167,15 @@ clone-from:
 ```
 
 `run` names the backup run, and `run` only: which snapshots that run holds is runtime state at Kopia, not project data. Each manager looks the run up itself through `clone_backup_items` (`opi/manager/backup/runs.py`) and picks the item for its own resource type. A run that no longer exists is an error naming the run and the source deployment, not an empty restore that reports success.
+
+### The items of the run are read when the task starts
+
+The wizard writes the chosen `backup_run_id` into the task, and not the snapshots of that
+run. The task reads them itself, through `backup_run_items` (`opi/manager/backup/runs.py`),
+when it starts: between choosing a run and running the task the retention sweep can have
+removed it, and a list from the session would then restore from something that no longer
+exists. A run that is gone fails the task with its name in the message, instead of being an
+empty restore that reports success.
 
 ## Scope
 

@@ -1,4 +1,4 @@
-"""Config model for the ``metrics-scraper`` service (RC-5 Phase 2).
+"""Config model for the ``metrics-scraper`` service.
 
 Component-level config. Note the on-disk shape is unusual: ``port``/``path`` sit
 inline on the service value (``- metrics-scraper: {port: 8000, path: /metrics}``),
@@ -37,6 +37,5 @@ class MetricsScraperConfig(BaseModel):
     @field_validator("path")
     @classmethod
     def _safe_path(cls, value: str | None) -> str | None:
-        # Dezelfde tekenset als een component-path (opi/utils/url_paths.py), want het is
-        # hetzelfde soort waarde: een pad van een tenant dat in een manifest terechtkomt.
+        # Same character set as a component path: a tenant value that reaches a manifest.
         return None if value is None else sanitize_path_value(value, "path")

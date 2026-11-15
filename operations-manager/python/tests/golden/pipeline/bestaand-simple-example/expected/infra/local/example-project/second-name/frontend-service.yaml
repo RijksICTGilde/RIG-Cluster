@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "second-name-frontend"
+  namespace: "rig-example-project"
+  labels:
+    app: "second-name-frontend"
+    project: "example-project"
+spec:
+  selector:
+    app: "second-name-frontend"
+    component: application
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP

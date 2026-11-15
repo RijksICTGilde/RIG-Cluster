@@ -86,7 +86,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Clone state for a PostgreSQL database, carried on the deployment layer.\n\nThe shape is shared with ``minio-storage`` (see ``catalog/shared/revisions.py``);\nthis service only decides that it uses it. The generation lives in the *database\nname*, not the schema name, which is exactly why extra schemas (RC-17) can share a\ndatabase without disturbing generations, clones or backups.",
+  "description": "Clone state for a PostgreSQL database, carried on the deployment layer.\n\nThe shape is shared with ``minio-storage`` (see ``catalog/shared/revisions.py``);\nthis service only decides that it uses it. The generation lives in the *database\nname*, not the schema name, which is exactly why extra schemas can share a database\nwithout disturbing generations, clones or backups.",
   "properties": {
     "connection-limit": {
       "anyOf": [

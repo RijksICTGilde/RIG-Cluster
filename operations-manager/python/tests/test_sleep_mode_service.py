@@ -105,3 +105,13 @@ class TestWakeTokenSecret:
 
     def test_secret_data_is_the_token_env(self) -> None:
         assert WakeTokenSecret(token="s3cr3t").to_k8s_secret_data() == {"ZAD_WAKE_TOKEN": "s3cr3t"}
+
+
+class TestMalformedDeployments:
+    """A malformed ``deployments`` list must read and write as "not found"."""
+
+    def test_read_skips_non_dict_entry(self) -> None:
+        assert read({"deployments": ["PR-1"]}, "PR-1").state == STATE_AWAKE
+
+    def test_write_reports_not_found_on_non_dict_entry(self) -> None:
+        assert not service.to_sleeping({"deployments": ["PR-1"]}, "PR-1", encrypted_token="x")

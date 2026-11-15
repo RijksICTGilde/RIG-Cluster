@@ -1,7 +1,7 @@
 """One schema per schema-version (RC-32).
 
 The project schema used to be a single file for the whole 2.x range, and
-``git_monitor`` validated a file straight from git against it, before any
+The gate validated a file straight from git against it, before any
 migration. That combination meant every old form had to stay in the schema for
 as long as one unprocessed file still carried it, so a migration could be
 written but never finished.
@@ -19,13 +19,11 @@ These tests hold the new arrangement in place:
 """
 
 import json
-import logging
 import re
 from typing import cast
 
 import pytest
-from opi.core.git_monitor import file_change_handler
-from opi.core.project_schema import (
+from opi.services.project_schema import (
     LEGACY_PATCH_DIR,
     SCHEMA_PATH,
     ProjectSchemaError,
@@ -350,38 +348,3 @@ class TestMigrationsCanBeFinished:
         assert "uses-services" not in component
         assert "storage" not in component
         assert "publish-on-web" not in component
-
-
-class TestGitMonitorGate:
-    """The gate is wired to the declared version, and says so when it rejects."""
-
-    @pytest.mark.asyncio
-    async def test_file_without_declared_version_is_rejected_and_logged(self, caplog) -> None:
-        data = _project(deployments=[{"name": "prod", "cluster": "local", "namespace": "voorbeeld"}])
-        del data["schema-version"]
-
-        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
-            await file_change_handler("voorbeeld.yaml", data)
-
-        # Loud, and explicit that the file was skipped: the old silent warning is
-        # exactly how 22 production files went unprocessed unnoticed.
-        assert any("NIET verwerkt" in record.message for record in caplog.records)
-
-    @pytest.mark.asyncio
-    async def test_legacy_file_is_no_longer_rejected_by_the_gate(self, caplog) -> None:
-        # A v2.2 file with the pre-v2.3 config.keycloak block: rejected by the old
-        # gate (it validated against the newest schema), accepted now.
-        data = _project(
-            **{
-                "schema-version": 2.2,
-                "config": {"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]},
-            }
-        )
-        validate_declared_project_schema(data)
-
-        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
-            await file_change_handler("voorbeeld.yaml", data)
-
-        # No deployments block, so nothing downstream runs; the point is that the
-        # gate did not reject it.
-        assert not any("NIET verwerkt" in record.message for record in caplog.records)

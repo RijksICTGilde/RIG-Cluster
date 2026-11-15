@@ -3,11 +3,9 @@
 The ONE place OPI talks to the relay. Everything above it (``MailManager``, the
 ``send-email`` service) speaks in accounts and limits and never in HTTP.
 
-The relay is Stalwart (see ``plans/mailrelay.md`` for why): its management API models an
-SMTP account as a *principal*, so creating a project's account is one POST, changing its
-limit is one PATCH and removing it is one DELETE. That is the whole reason the product was
-chosen over Postfix -- the alternative is writing account files and reloading a daemon,
-which is provisioning by side effect.
+The relay is Stalwart: its management API models an SMTP account as a *principal*, so
+creating a project's account is one POST, changing its limit is one PATCH and removing it is
+one DELETE.
 """
 
 from __future__ import annotations
@@ -20,21 +18,26 @@ from typing import Any
 
 import aiohttp
 
+from opi.connectors.http import client_session
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.utils.age import decrypt_password_smart_auto
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import mail_sender_address_error
 
 logger = logging.getLogger(__name__)
 
-#: Hoelang een management-aanroep mag blijven proberen te verbinden. Een podwissel van de
-#: relay laat de Service even zonder endpoint, en zonder deze marge kost dat een hele
-#: uitrol. Zelfde budget en dezelfde helper als de ArgoCD-connector.
+#: How long a management call may keep trying to connect. A pod swap of the relay leaves the
+#: Service without an endpoint for a moment, and without this margin that costs a whole
+#: rollout. Same budget and same helper as the ArgoCD connector.
 RELAY_CONNECT_RETRY_SECONDS = 30.0
 
-#: Een readiness-meting mag niet in een trage relay blijven hangen: de uitkomst van een
-#: meting die langer duurt dan de tik zelf is toch niet meer actueel.
+#: A readiness check may not hang in a slow relay: the outcome of a check that takes longer
+#: than the tick itself is no longer current anyway.
 RELAY_READY_TIMEOUT_SECONDS = 5.0
+
+#: Budget for one management call. Generous: the relay writes its account store to disk.
+#: Without it aiohttp waits out its own 300 seconds.
+RELAY_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 class MailRelayError(RuntimeError):
@@ -42,9 +45,10 @@ class MailRelayError(RuntimeError):
 
 
 class MailRelayUnavailableError(MailRelayError):
-    """De relay was niet bereikbaar. Dit is een storing van het platform, niet van het project.
-    Taakhandlers die een uitrol met ``processing_failed`` rapporteren zetten ``error_category: InternalError``,
-    zodat de gebruiker weet dat hij niets kan repareren.
+    """The relay was unreachable: a platform outage, not a project's.
+
+    Task handlers that report a rollout with ``processing_failed`` set
+    ``error_category: InternalError``, so the user knows there is nothing to repair.
     """
 
 
@@ -79,19 +83,18 @@ MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 
 #: Settings prefix for each account's sender address override. The exception and not the
 #: rule: an account derives its address from its name, and a key here exists only for an
-#: account that has a different one (Keycloak's, and since RC-399 a project whose
-#: requested address a platform administrator approved). A second series (not a second field
-#: on the same key) because relay settings are flat: one key, one value. Both are rendered
-#: into the same script.
+#: account that has a different one (Keycloak's, and a project whose requested address a
+#: platform administrator approved). A second series and not a second field on the same key,
+#: because relay settings are flat: one key, one value. Both are rendered into the same script.
 MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
 
 #: Settings prefix under which each account's PROJECT is stored, one key per account.
 #:
-#: Since RC-401 an account belongs to a DEPLOYMENT and its name carries a hash, so the
-#: project is no longer readable from it -- and the relay cannot look anything up per
-#: account while a message is being accepted. So OPI writes it here, and the identity rules
-#: read it to compose the ``X-ZAD-Project`` header. An account without a key gets no header,
-#: which is exactly right for the platform accounts: they send on nobody's behalf.
+#: An account belongs to a DEPLOYMENT and its name carries a hash, so the project is not
+#: readable from it, and the relay cannot look anything up per account while a message is
+#: being accepted. So OPI writes it here, and the identity rules read it to compose the
+#: ``X-ZAD-Project`` header. An account without a key gets no header, which is exactly right
+#: for the platform accounts: they send on nobody's behalf.
 MAIL_ACCOUNT_PROJECT_PREFIX = "zad.project"
 
 #: Settings prefix for each account's own rate limiter. ``queue.limiter.*`` is not a
@@ -109,15 +112,15 @@ MAIL_SENDER_SCRIPT_NAME = "zad-afzenders"
 MAIL_SENDER_TABLE_KEY = f"sieve.trusted.scripts.{MAIL_SENDER_SCRIPT_NAME}.contents"
 
 #: What an account name may look like before it is written into that generated script.
-#: Belt and braces around a value that is already computed by ``generate_mail_account_name``
-#: -- it ends up inside a sieve string literal, and this is the layer that would have to
-#: hold if it ever stopped being computed.
+#: Belt and braces around a value that ``generate_mail_account_name`` already computes: it
+#: ends up inside a sieve string literal, and this is the layer that would have to hold if it
+#: ever stopped being computed.
 #:
 #: ``\A``/``\Z`` and not ``^``/``$``: ``$`` also matches just BEFORE a closing newline, so
-#: ``"zad-keycloak\n"`` passes an anchored ``$`` pattern -- and a newline is exactly the
+#: ``"zad-keycloak\n"`` passes an anchored ``$`` pattern, and a newline is exactly the
 #: character that ends the sieve string literal this value goes into. ``\Z`` is the end of
 #: the string and nothing else.
-_ACCOUNT_PATROON = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
+_ACCOUNT_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 
 #: Same for a display name. This list and ``FROM_NAME_PATTERN`` (the rule the form and the
 #: API validate against) hold exactly the same characters, and they have to: a character only
@@ -125,9 +128,9 @@ _ACCOUNT_PATROON = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 #: processing a project, where nothing catches it. Refusing them here as well means the
 #: generated script cannot be broken open by a value that reached this connector some other
 #: way. Note ``$``: a sieve string interpolates ``${...}``, so a name containing it would
-#: read a variable instead of being text -- which is why it belongs in both lists, and why
+#: read a variable instead of being text, which is why it belongs in both lists, and why
 #: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
-_NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
+_NAME_FORBIDDEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
 
 
 #: How many accounts one page of the principal listing asks for.
@@ -138,11 +141,11 @@ _PRINCIPAL_PAGE = 100
 #:
 #: Writing one account's name means rendering the table from ALL of them, so two projects
 #: being processed at the same time would both read the table as it was, and the one that
-#: writes last would drop the other one's name -- silently, and until someone happens to
+#: writes last would drop the other one's name, silently, and until someone happens to
 #: process that project again. OPI runs one replica per cluster, so a lock in the process is
 #: the whole of the concurrency; a second replica would need the relay to offer a conditional
 #: write, which v0.11.8 does not.
-_TABEL_SLOT = asyncio.Lock()
+_TABLE_LOCK = asyncio.Lock()
 
 
 class MailSenderNameError(ValueError):
@@ -162,49 +165,48 @@ class MailConnector:
         self,
         method: str,
         path: str,
-        payload: Any | None = None,
+        payload: Any | None = None,  # noqa: ANN401  # the JSON body of the mail API
         allow_missing: bool = False,
     ) -> dict[str, Any] | None:
         """One management call. ``allow_missing`` turns a 404 into ``None``.
 
-        Een relay die niet antwoordt wordt hier een ``MailRelayUnavailableError``. Zonder
-        die omzetting ontsnapt de transportfout van aiohttp aan elke aanroeper die op
-        ``MailRelayError`` rekent, en komt hij bij de gebruiker uit als een onverklaarde
-        mislukking op zijn eigen project.
+        A relay that does not answer becomes a ``MailRelayUnavailableError`` here. Without
+        that translation aiohttp's transport error escapes every caller that counts on
+        ``MailRelayError``, and reaches the user as an unexplained failure on their own
+        project.
         """
 
-        async def _eenmaal() -> dict[str, Any] | None:
-            return await self._eenmalig_verzoek(method, path, payload, allow_missing)
+        async def _once() -> dict[str, Any] | None:
+            return await self._single_request(method, path, payload, allow_missing)
 
         try:
-            return await retry_on_connect_error(_eenmaal, RELAY_CONNECT_RETRY_SECONDS, f"{method} {path}")
+            return await retry_on_connect_error(_once, RELAY_CONNECT_RETRY_SECONDS, f"{method} {path}")
         except (aiohttp.ClientError, TimeoutError, OSError) as error:
             raise MailRelayUnavailableError(
                 "De mailservice van het platform is niet bereikbaar, dit ligt niet aan je project "
                 f"({method} {path}: {error or type(error).__name__})"
             ) from error
 
-    async def _eenmalig_verzoek(
+    async def _single_request(
         self,
         method: str,
         path: str,
-        payload: Any | None,
+        payload: Any | None,  # noqa: ANN401  # the JSON body of the mail API
         allow_missing: bool,
     ) -> dict[str, Any] | None:
-        """Een management-aanroep zonder herhaling en zonder omzetting van transportfouten."""
+        """One management call, without retries and without translating transport errors."""
         url = f"{self.base_url}{path}"
         auth = aiohttp.BasicAuth(self._username, self._password)
-        connector = aiohttp.TCPConnector(ssl=self._verify_tls)
         async with (
-            aiohttp.ClientSession(connector=connector) as session,
+            client_session(RELAY_REQUEST_TIMEOUT_SECONDS, ssl=self._verify_tls) as session,
             session.request(method, url, json=payload, auth=auth) as response,
         ):
             if response.status == 404 and allow_missing:
                 return None
             body = await response.text()
             if response.status >= 400:
-                # Afgekapt: het foutlichaam van de relay kan een heel antwoord zijn en de
-                # tekst komt in de logregel terecht. De eerste regel zegt wat er mis is.
+                # Truncated: the relay's error body can be a whole response and it lands in
+                # the log line. The first line says what is wrong.
                 detail = body.strip().splitlines()[0][:200] if body.strip() else ""
                 raise MailRelayError(f"{method} {path} gaf {response.status}: {detail}")
             if not body:
@@ -212,11 +214,11 @@ class MailConnector:
             result = await response.json(content_type=None)
             if not isinstance(result, dict):
                 return result
-            # Een onbekend account is bij Stalwart GEEN 404: het antwoord is 200 met
-            # {"error": "notFound", "item": "<naam>"} in het lichaam (gemeten tegen
-            # v0.11.8). Wie alleen op de statuscode kijkt, leest dat als een bestaand
-            # account en gaat bijwerken in plaats van aanmaken -- dan wordt het account
-            # nooit gemaakt en authenticeert de applicatie nergens.
+            # An unknown account is NOT a 404 on Stalwart: the answer is 200 with
+            # {"error": "notFound", "item": "<name>"} in the body (measured against v0.11.8).
+            # Looking only at the status code reads that as an existing account and updates
+            # instead of creating, so the account is never made and the application
+            # authenticates nowhere.
             error = result.get("error")
             if error is None:
                 return result
@@ -225,18 +227,16 @@ class MailConnector:
             raise MailRelayError(f"{method} {path} gaf fout {error}: {str(result.get('details') or result)[:200]}")
 
     async def is_ready(self) -> bool:
-        """Of de relay zijn eigen ``/healthz/ready`` met 200 antwoordt.
+        """Whether the relay answers its own ``/healthz/ready`` with 200.
 
-        Dezelfde ingang als de readiness-probe van de pod: geen inloggegevens, geen
-        mailsessie, en dus ook geen tik in ``queue.limiter.inbound.platform``. Buiten
-        ``_request`` gehouden omdat het antwoordlichaam geen JSON is en een herhaling
-        hier juist niet hoort: wie meet of de relay er is, wil het antwoord van nu.
+        The same entry as the pod's readiness probe: no credentials, no mail session, and so
+        no tick in ``queue.limiter.inbound.platform``. Kept outside ``_request`` because the
+        response body is not JSON and a retry is exactly what does not belong here: whoever
+        measures whether the relay is there wants the answer of right now.
         """
-        connector = aiohttp.TCPConnector(ssl=self._verify_tls)
-        timeout = aiohttp.ClientTimeout(total=RELAY_READY_TIMEOUT_SECONDS)
         try:
             async with (
-                aiohttp.ClientSession(connector=connector, timeout=timeout) as session,
+                client_session(RELAY_READY_TIMEOUT_SECONDS, ssl=self._verify_tls) as session,
                 session.get(f"{self.base_url}/healthz/ready") as response,
             ):
                 return response.status == 200
@@ -257,14 +257,14 @@ class MailConnector:
         """Every individual account the relay holds, by name.
 
         What the orphan sweep needs: it compares the relay's inventory with the accounts the
-        project files ask for, and an inventory it cannot read must be reported as
-        INCOMPLETE and never as empty -- an empty answer would make every account look like
-        an orphan. So a failure raises (``MailRelayError``) rather than returning nothing.
+        project files ask for, and an inventory it cannot read must be reported as INCOMPLETE
+        and never as empty: an empty answer would make every account look like an orphan. So
+        a failure raises (``MailRelayError``) rather than returning nothing.
 
         Paged, because the management API answers a page at a time and a cluster has one
         account per deployment plus the platform's own.
         """
-        namen: list[str] = []
+        names: list[str] = []
         page = 1
         while True:
             result = await self._request("GET", f"/api/principal?types=individual&page={page}&limit={_PRINCIPAL_PAGE}")
@@ -276,11 +276,11 @@ class MailConnector:
                 # Stalwart answers a list of principal objects; older builds answer a list
                 # of plain names. Both are read, because an inventory that silently skips
                 # every entry reads as "no accounts" and that is the one wrong answer here.
-                naam = item.get("name") if isinstance(item, dict) else item
-                if isinstance(naam, str) and naam:
-                    namen.append(naam)
+                name = item.get("name") if isinstance(item, dict) else item
+                if isinstance(name, str) and name:
+                    names.append(name)
             if len(items) < _PRINCIPAL_PAGE:
-                return namen
+                return names
             page += 1
 
     async def create_principal(
@@ -332,9 +332,6 @@ class MailConnector:
         logger.info(f"Mailaccount {name} verwijderd van de relay")
         return True
 
-    # The sender ADDRESS is derived from the account name; the DISPLAY NAME is the one
-    # value OPI keeps per account in relay settings, rendered into a sieve script.
-
     async def get_sender_names(self) -> dict[str, str]:
         """Every account's display name, as the relay currently holds it.
 
@@ -363,7 +360,7 @@ class MailConnector:
         """One settings series, keyed by account name with the prefix stripped."""
         result = await self._request("GET", f"/api/settings/list?prefix={prefix}.")
         items = ((result or {}).get("data") or {}).get("items") or {}
-        return {account: waarde for account, waarde in items.items() if waarde}
+        return {account: value for account, value in items.items() if value}
 
     async def set_sender(self, account: str, display_name: str, from_address: str = "", project: str = "") -> bool:
         """Give this account the sender recipients see. Returns whether anything changed.
@@ -378,8 +375,8 @@ class MailConnector:
         configuration behind it.
 
         ``project`` is which project this account sends for, for the ``X-ZAD-Project``
-        header; since RC-401 the account name no longer says so. Empty for a platform
-        account, which sends on nobody's behalf and gets no header.
+        header; the account name no longer says so. Empty for a platform account, which sends
+        on nobody's behalf and gets no header.
 
         An empty value is a REMOVAL, not an empty value stored: no display name is a valid
         outcome (the message then leaves with the account's address and nothing in front of
@@ -388,23 +385,23 @@ class MailConnector:
         settings has to interpret. That removal is also how a withdrawn approval lands: the
         next run passes an empty address and the account falls back to the derived one.
         """
-        _controleer_naam(account, display_name)
-        _controleer_adres(account, from_address)
-        _controleer_project(account, project)
-        async with _TABEL_SLOT:
-            namen = await self.get_sender_names()
-            adressen = await self.get_sender_addresses()
-            projecten = await self.get_account_projects()
+        _validate_display_name(account, display_name)
+        _validate_address(account, from_address)
+        _validate_project(account, project)
+        async with _TABLE_LOCK:
+            names = await self.get_sender_names()
+            addresses = await self.get_sender_addresses()
+            projects = await self.get_account_projects()
             if (
-                namen.get(account, "") == display_name
-                and adressen.get(account, "") == from_address
-                and projecten.get(account, "") == project
+                names.get(account, "") == display_name
+                and addresses.get(account, "") == from_address
+                and projects.get(account, "") == project
             ):
                 return False
-            self._zet_of_verwijder(namen, account, display_name)
-            self._zet_of_verwijder(adressen, account, from_address)
-            self._zet_of_verwijder(projecten, account, project)
-            await self._write_sender_keys(account, display_name, from_address, project, namen, adressen, projecten)
+            self._set_or_remove(names, account, display_name)
+            self._set_or_remove(addresses, account, from_address)
+            self._set_or_remove(projects, account, project)
+            await self._write_sender_keys(account, display_name, from_address, project, names, addresses, projects)
             return True
 
     async def set_sender_name(self, account: str, display_name: str) -> bool:
@@ -420,12 +417,12 @@ class MailConnector:
         await self.set_sender(account, "", "", "")
 
     @staticmethod
-    def _zet_of_verwijder(waarden: dict[str, str], account: str, waarde: str) -> None:
+    def _set_or_remove(values: dict[str, str], account: str, value: str) -> None:
         """Store the value, or drop the key when it is empty."""
-        if waarde:
-            waarden[account] = waarde
+        if value:
+            values[account] = value
         else:
-            waarden.pop(account, None)
+            values.pop(account, None)
 
     async def _write_sender_keys(
         self,
@@ -433,9 +430,9 @@ class MailConnector:
         display_name: str,
         from_address: str,
         project: str,
-        namen: dict[str, str],
-        adressen: dict[str, str],
-        projecten: dict[str, str],
+        names: dict[str, str],
+        addresses: dict[str, str],
+        projects: dict[str, str],
     ) -> None:
         """The keys and the generated script in ONE request, then a reload.
 
@@ -443,33 +440,30 @@ class MailConnector:
         reads: two requests could leave the relay reading a table that no longer matches
         what OPI thinks it wrote.
         """
-        wijzigingen: list[dict[str, Any]] = []
-        for prefix, waarde in (
+        changes: list[dict[str, Any]] = []
+        for prefix, value in (
             (MAIL_SENDER_NAME_PREFIX, display_name),
             (MAIL_SENDER_ADDRESS_PREFIX, from_address),
             (MAIL_ACCOUNT_PROJECT_PREFIX, project),
         ):
-            sleutel = f"{prefix}.{account}"
-            if waarde:
-                wijzigingen.append({"type": "insert", "values": [[sleutel, waarde]], "assert_empty": False})
+            key = f"{prefix}.{account}"
+            if value:
+                changes.append({"type": "insert", "values": [[key, value]], "assert_empty": False})
             else:
-                wijzigingen.append({"type": "delete", "keys": [sleutel]})
-        wijzigingen.append(
+                changes.append({"type": "delete", "keys": [key]})
+        changes.append(
             {
                 "type": "insert",
-                "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen, adressen, projecten)]],
+                "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(names, addresses, projects)]],
                 "assert_empty": False,
             }
         )
-        await self._request("POST", "/api/settings", payload=wijzigingen)
+        await self._request("POST", "/api/settings", payload=changes)
         await self.reload()
         logger.info(
             f"Afzender van mailaccount {account} bijgewerkt op de relay: naam {display_name!r}, "
             f"adres {from_address!r}, project {project!r}"
         )
-
-    # Elk account krijgt zijn eigen limiter, zodat het getal uit het projectbestand ook
-    # echt wordt afgedwongen in plaats van alleen vastgelegd.
 
     async def set_rate_limit(self, account: str, messages_per_day: int) -> bool:
         """Give this account its own daily limit. Returns whether anything changed.
@@ -479,21 +473,21 @@ class MailConnector:
         relay's whole configuration behind it.
 
         The account name ends up inside the limiter's ``match`` EXPRESSION, between single
-        quotes, so it is checked against the same pattern the sender script uses -- a name
-        with a quote or a space in it would break that expression open.
+        quotes, so it is checked against the same pattern the sender script uses: a name with
+        a quote or a space in it would break that expression open.
         """
-        _controleer_account(account)
+        _validate_account(account)
         prefix = f"{MAIL_LIMITER_PREFIX}-{account}"
         rate = f"{messages_per_day}/1d"
-        # Alle vier vergelijken: een limiter zonder ``match`` telt per verbinding, niet per bericht.
-        gewenst = {
+        # Compare all four: a limiter without ``match`` counts per connection, not per message.
+        wanted = {
             "enable": "true",
             "key": "authenticated_as",
             "match": f"authenticated_as == '{account}'",
             "rate": rate,
         }
-        bestaand = await self._get_limiter_keys(prefix)
-        if all(bestaand.get(deel) == waarde for deel, waarde in gewenst.items()):
+        existing = await self._get_limiter_keys(prefix)
+        if all(existing.get(part) == value for part, value in wanted.items()):
             return False
         await self._request(
             "POST",
@@ -502,7 +496,7 @@ class MailConnector:
                 {
                     "type": "insert",
                     "assert_empty": False,
-                    "values": [[f"{prefix}.{deel}", waarde] for deel, waarde in gewenst.items()],
+                    "values": [[f"{prefix}.{part}", value] for part, value in wanted.items()],
                 }
             ],
         )
@@ -516,14 +510,14 @@ class MailConnector:
         Without this the limiter stays behind after the account is gone, and the next
         account by that name silently inherits a number nobody asked for.
         """
-        _controleer_account(account)
+        _validate_account(account)
         prefix = f"{MAIL_LIMITER_PREFIX}-{account}"
         if not await self._get_limiter_keys(prefix):
             return
         await self._request(
             "POST",
             "/api/settings",
-            payload=[{"type": "delete", "keys": [f"{prefix}.{deel}" for deel in ("enable", "key", "match", "rate")]}],
+            payload=[{"type": "delete", "keys": [f"{prefix}.{part}" for part in ("enable", "key", "match", "rate")]}],
         )
         await self.reload()
         logger.info(f"Dagbudget van mailaccount {account} van de relay verwijderd")
@@ -536,12 +530,12 @@ class MailConnector:
         """
         result = await self._request("GET", f"/api/settings/list?prefix={prefix}.")
         items = ((result or {}).get("data") or {}).get("items") or {}
-        return {sleutel.removeprefix(f"{prefix}."): waarde for sleutel, waarde in items.items()}
+        return {key.removeprefix(f"{prefix}."): value for key, value in items.items()}
 
     async def reload(self) -> None:
         """Rebuild the relay's configuration, so a written value takes effect.
 
-        A build error on ANY key leaves the whole rebuild where it was -- measured, and it is
+        A build error on ANY key leaves the whole rebuild where it was, measured, and it is
         the trap in this path: a value written correctly stays invisible because something
         entirely unrelated does not compile. The errors the relay reports are therefore
         logged rather than swallowed, even when none of them is ours.
@@ -552,7 +546,7 @@ class MailConnector:
             logger.warning(f"De mailrelay meldt configuratiefouten bij het herladen: {list(errors)}")
 
 
-def _controleer_account(account: str) -> None:
+def _validate_account(account: str) -> None:
     """Refuse an account name that would not be text inside a generated expression.
 
     Belt and braces around a value ``generate_mail_account_name`` computes, and the layer
@@ -564,21 +558,21 @@ def _controleer_account(account: str) -> None:
         MailSenderNameError: The name carries a character that would end the string it is
             written into.
     """
-    if not _ACCOUNT_PATROON.match(account):
+    if not _ACCOUNT_PATTERN.match(account):
         raise MailSenderNameError(
             f"Mailaccountnaam {account!r} hoort alleen kleine letters, cijfers en streepjes te bevatten"
         )
 
 
-def _controleer_naam(account: str, display_name: str) -> None:
+def _validate_display_name(account: str, display_name: str) -> None:
     """Refuse anything that would not be text inside the generated sieve script.
 
     Raises:
         MailSenderNameError: The account name or the display name carries a character that
             would end the string it is written into.
     """
-    _controleer_account(account)
-    if _NAAM_VERBODEN.search(display_name):
+    _validate_account(account)
+    if _NAME_FORBIDDEN.search(display_name):
         raise MailSenderNameError(
             f"Weergavenaam {display_name!r} bevat een teken dat niet in een mailheader hoort "
             "(regeleinde, @, punthaak, aanhalingsteken, backslash of dollarteken)"
@@ -587,39 +581,39 @@ def _controleer_naam(account: str, display_name: str) -> None:
         raise MailSenderNameError(f"Weergavenaam {display_name!r} is langer dan 64 tekens")
 
 
-def _controleer_adres(account: str, adres: str) -> None:
+def _validate_address(account: str, address: str) -> None:
     """Refuse a sender address that may not be written into the generated sieve script.
 
-    HET TWEEDE SLOT. Sinds RC-399 kan een adres uit een projectbestand komen, langs het
-    formulier, de API en een goedkeuring. Deze laag toetst het nog een keer, met dezelfde
-    regel (``mail_sender_address_error``), zodat een waarde die langs de goedkeuring heen
-    hier arriveert alsnog strandt voordat ze in de sieve-stringliteraal belandt.
+    THE SECOND LOCK. An address can come out of a project file, past the form, the API and an
+    approval. This layer checks it once more against the same rule
+    (``mail_sender_address_error``), so a value that got around the approval still fails here
+    before it lands in the sieve string literal.
 
-    Een leeg adres is geldig en betekent "leid het af uit de accountnaam".
+    An empty address is valid and means "derive it from the account name".
 
     Raises:
         MailSenderNameError: The address is malformed or lives outside
             ``MAIL_SENDER_DOMAIN_ALLOWLIST`` (``opi.utils.naming``).
     """
-    fout = mail_sender_address_error(adres)
-    if fout:
-        raise MailSenderNameError(f"Afzenderadres {adres!r} voor {account!r}: {fout}")
+    error = mail_sender_address_error(address)
+    if error:
+        raise MailSenderNameError(f"Afzenderadres {address!r} voor {account!r}: {error}")
 
 
-def _controleer_project(account: str, project: str) -> None:
+def _validate_project(account: str, project: str) -> None:
     """Refuse a project name that would not be text inside the generated sieve script.
 
     The name goes into a sieve string literal and from there into the ``X-ZAD-Project``
     header, so the same characters are refused as in a display name. A project name is
-    computed nowhere -- it comes straight out of the project file -- which is exactly why
-    this layer has to hold.
+    computed nowhere, it comes straight out of the project file, which is exactly why this
+    layer has to hold.
 
     Raises:
         MailSenderNameError: The account or the project name carries a character that would
             end the string it is written into.
     """
-    _controleer_account(account)
-    if _NAAM_VERBODEN.search(project):
+    _validate_account(account)
+    if _NAME_FORBIDDEN.search(project):
         raise MailSenderNameError(
             f"Projectnaam {project!r} bevat een teken dat niet in een mailheader hoort "
             "(regeleinde, @, punthaak, aanhalingsteken, backslash of dollarteken)"
@@ -627,35 +621,30 @@ def _controleer_project(account: str, project: str) -> None:
 
 
 def render_sender_table(
-    namen: dict[str, str],
-    adressen: dict[str, str] | None = None,
-    projecten: dict[str, str] | None = None,
+    names: dict[str, str],
+    addresses: dict[str, str] | None = None,
+    projects: dict[str, str] | None = None,
 ) -> str:
     """The sieve script the identity rules include, rendered from the stored names and addresses.
-
-    Deliberately dull: one ``if`` per account, no expressions, no data structures. It is
-    generated code, so the only thing it may do is be obvious -- and the reader of a relay
-    configuration should be able to see at a glance that this file cannot do anything except
-    set two variables.
 
     ``global`` is what makes a value visible to the including script (RFC 6609: an included
     script shares only variables declared global), and both are declared in both scripts.
 
-    ``adressen`` is almost always empty. An account's address is DERIVED from its name by
-    the including script, and a key here exists only for an account that has to send under
-    a different one; setting ``afzender`` is what makes the including script skip its own
-    derivation. An account with an address but no name is a normal outcome and gets a rule
-    of its own, which is why the maps are walked together instead of nested.
+    ``addresses`` is almost always empty. An account's address is DERIVED from its name by
+    the including script, and a key here exists only for an account that has to send under a
+    different one; setting ``afzender`` is what makes the including script skip its own
+    derivation. An account with an address but no name is a normal outcome and gets a rule of
+    its own, which is why the maps are walked together instead of nested.
 
-    ``projecten`` holds which project an account sends for, and since RC-401 that is the
-    only place it can come from: an account belongs to a DEPLOYMENT and its name carries a
-    hash, so the including script can no longer cut the project off it. An account without
-    an entry gets no ``project`` and therefore no ``X-ZAD-Project`` header, which is what
-    the platform accounts need.
+    ``projects`` holds which project an account sends for, and it is the only place that can
+    come from: an account belongs to a DEPLOYMENT and its name carries a hash, so the
+    including script can no longer cut the project off it. An account without an entry gets
+    no ``project`` and therefore no ``X-ZAD-Project`` header, which is what the platform
+    accounts need.
     """
-    adressen = adressen or {}
-    projecten = projecten or {}
-    regels = [
+    addresses = addresses or {}
+    projects = projects or {}
+    lines = [
         "# Gegenereerd door ZAD (RC-145/RC-159/RC-401). Niet met de hand bewerken: elke wijziging",
         f"# van een project schrijft dit script opnieuw, uit de sleutels onder {MAIL_SENDER_NAME_PREFIX}.",
         f"# {MAIL_SENDER_ADDRESS_PREFIX}. en {MAIL_ACCOUNT_PROJECT_PREFIX}.",
@@ -664,26 +653,25 @@ def render_sender_table(
         'global "afzender";',
         'global "project";',
     ]
-    for account in sorted(set(namen) | set(adressen) | set(projecten)):
-        naam = namen.get(account, "")
-        adres = adressen.get(account, "")
-        project = projecten.get(account, "")
-        if not naam and not adres and not project:
-            # Niets om te zetten is geen regel: een leeg item zou een regel opleveren die
-            # niets doet.
+    for account in sorted(set(names) | set(addresses) | set(projects)):
+        name = names.get(account, "")
+        address = addresses.get(account, "")
+        project = projects.get(account, "")
+        if not name and not address and not project:
+            # Nothing to set is no rule: an empty entry would yield a rule that does nothing.
             continue
-        _controleer_naam(account, naam)
-        _controleer_adres(account, adres)
-        _controleer_project(account, project)
-        toekenningen = []
-        if naam:
-            toekenningen.append(f'set "naam" "{naam}";')
-        if adres:
-            toekenningen.append(f'set "afzender" "{adres}";')
+        _validate_display_name(account, name)
+        _validate_address(account, address)
+        _validate_project(account, project)
+        assignments = []
+        if name:
+            assignments.append(f'set "naam" "{name}";')
+        if address:
+            assignments.append(f'set "afzender" "{address}";')
         if project:
-            toekenningen.append(f'set "project" "{project}";')
-        regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ {" ".join(toekenningen)} }}')
-    return "\n".join(regels) + "\n"
+            assignments.append(f'set "project" "{project}";')
+        lines.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ {" ".join(assignments)} }}')
+    return "\n".join(lines) + "\n"
 
 
 async def create_mail_connector() -> MailConnector:

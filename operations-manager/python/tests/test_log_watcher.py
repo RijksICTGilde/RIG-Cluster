@@ -35,8 +35,8 @@ def captured_ntfy(monkeypatch) -> list[dict]:
     """Replace send_ntfy with a recorder; returns the list of sent notifications."""
     sent: list[dict] = []
 
-    def _fake_send(client, cfg, title, body, priority, tags):
-        sent.append({"title": title, "body": body, "priority": priority, "tags": tags})
+    def _fake_send(target, message):
+        sent.append({"title": message.title, "body": message.body, "priority": message.priority, "tags": message.tags})
         return True
 
     monkeypatch.setattr(log_watcher, "send_ntfy", _fake_send)
@@ -207,7 +207,7 @@ _SYNC_TIMEOUT_ROWS = [
         1000,
         _line(
             "ERROR",
-            "opi.core.persistent_task_progress",
+            "opi.runtime.tasks.persistent_task_progress",
             f"{_SYNC_TIMEOUT_FLOW} Failed task: Wachten tot 1 applicatie(s) gesynchroniseerd zijn: "
             "Sync failures: mpfm-w3h-pr-302 (pr-302): timed out after 300s waiting for sync",
         ),
@@ -226,7 +226,7 @@ _SYNC_TIMEOUT_ROWS = [
         1200,
         _line(
             "ERROR",
-            "opi.core.persistent_task_progress",
+            "opi.runtime.tasks.persistent_task_progress",
             f"{_SYNC_TIMEOUT_FLOW} Failed task: Deployment pr-302 opnieuw verwerken: "
             "mpfm-w3h-pr-302 (pr-302): timed out after 300s waiting for sync",
         ),
@@ -326,7 +326,7 @@ def test_clean_run_ignores_newly_added_patterns(monkeypatch, captured_ntfy):
 
 def test_human_strips_uuids():
     msg = (
-        "2026-07-02 10:49:56,979 - opi.core.persistent_task_progress - ERROR - "
+        "2026-07-02 10:49:56,979 - opi.runtime.tasks.persistent_task_progress - ERROR - "
         "[-] Task 52c247eb-b497-4a73-8f39-4121f9d66d8b: Failed task: Processing deployment "
         "(74838d37-fa03-4d9f-beee-9fe206f886c4): wies-pr-429"
     )
@@ -369,12 +369,12 @@ def test_argocd_timeout_cascade_collapses_to_root(monkeypatch, captured_ntfy):
         [
             _line(
                 "ERROR",
-                "opi.core.persistent_task_progress",
+                "opi.runtime.tasks.persistent_task_progress",
                 "Failed task: Deployment processing: mpfm-w3h-pr-120: timed out waiting for application to be created",
             ),
             _line(
                 "ERROR",
-                "opi.core.persistent_task_progress",
+                "opi.runtime.tasks.persistent_task_progress",
                 "Failed task: Waiting for ArgoCD deployment sync: Sync failures: mpfm-w3h-pr-120: "
                 "timed out waiting for application to be created",
             ),
@@ -418,7 +418,7 @@ def test_build_logql_filters_by_level_and_excludes_self_logs():
     assert '| detected_level=~"(?i)(error|crit|fatal)"' in expr
     # Self-exclusion applied as line filters, before the label filter.
     assert '!= "opi.services.log_watcher"' in expr
-    assert '!= "opi.core.logwatcher_scheduler"' in expr
+    assert '!= "opi.runtime.periodic.logwatcher_scheduler"' in expr
     assert expr.index('!= "opi.services.log_watcher"') < expr.index("| detected_level")
 
 

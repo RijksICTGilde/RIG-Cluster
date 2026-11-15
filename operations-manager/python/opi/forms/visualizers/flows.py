@@ -1,12 +1,7 @@
-"""Flow definitions for project wizard forms.
+"""The flow definitions of the project wizard forms.
 
-Merges the FlowMode/FormFlow dataclasses (from editables/flow.py) and
-predefined flow instances (from editables/flows.py) into one module.
-
-Step order is determined by the sections list - the first section
-in the list is step 1, the second is step 2, etc. Conditional
-sections (e.g., keycloak-config) are included in the list but
-only shown when their visibility condition is met.
+The sections list is the step order: its first section is step 1. A conditional section
+(keycloak-config, for one) is in the list too, and only shown when its condition holds.
 """
 
 from __future__ import annotations
@@ -66,11 +61,9 @@ class FlowMode(Enum):
 class FlowTarget:
     """The one list item a flow writes to.
 
-    The index is known the moment the flow is built (that is what makes the
-    flow's sections point at ``components[3]`` rather than ``components[*]``).
-    Declaring it here keeps it a number: before, it was pushed into the
-    ``flow_id`` string and picked back out of that text in the router, in
-    several places, each with its own prefix comparison.
+    The index is known the moment the flow is built, which is what makes the flow's sections
+    point at ``components[3]`` rather than ``components[*]``. Declared here it stays a number,
+    instead of being pushed into the ``flow_id`` string and parsed back out of that text.
     """
 
     list_key: str
@@ -131,11 +124,11 @@ CREATE_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
-        # Voor COMPONENTS_SECTION, want de registry-select op een component leest deze lijst.
+        # Before COMPONENTS_SECTION: the registry select on a component reads this list.
         IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         # After KEYCLOAK_CONFIG_SECTION: the realm-role picker reads the keycloak config
-        # (realm-roles + authorization-wall role) from the draft entered in the step before.
+        # (realm-roles plus the authorization-wall role) from the draft of the step before.
         INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         POSTGRESQL_SCHEMAS_SECTION,
@@ -190,10 +183,6 @@ EDIT_FLOW = FormFlow(
 )
 
 
-# ---------------------------------------------------------------------------
-# Modal edit flows - focused mini-wizards for the detail-page edit modal
-# ---------------------------------------------------------------------------
-
 MODAL_EDIT_IDENTITY_FLOW = FormFlow(
     flow_id="modal-edit-identity",
     title="Projectgegevens bewerken",
@@ -210,7 +199,7 @@ MODAL_EDIT_TEAM_FLOW = FormFlow(
     sections=[TEAM_SECTION],
 )
 
-#: De componentdefinities op het project, de lijst waar de componentenmodal op werkt.
+#: The component definitions on the project, the list the components modal works on.
 COMPONENTS_SELECTABLE = ListSelectable("components", "name")
 
 MODAL_EDIT_COMPONENTS_FLOW = FormFlow(
@@ -349,10 +338,6 @@ MODAL_EDIT_IMAGE_REGISTRIES_FLOW = FormFlow(
     sections=[IMAGE_REGISTRIES_CONFIG_SECTION],
 )
 
-# ---------------------------------------------------------------------------
-# Backup & Restore modal flows
-# ---------------------------------------------------------------------------
-
 MODAL_BACKUP_FLOW = FormFlow(
     flow_id="modal-backup",
     title="Backup aanmaken",
@@ -400,9 +385,8 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 
-# Lookup: service name → modal flow ID (for detail page config buttons)
-# service name -> modal-edit flow id, derived from the provider registry
-# (modal_flow_id) instead of hand-synced (RC-5 Phase 3).
+# Service name -> modal-edit flow id, for the config buttons on the detail page. Derived from
+# the provider registry (modal_flow_id) rather than hand-synced.
 SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
     service_type.value: provider.modal_flow_id
     for service_type in ServiceType
@@ -440,7 +424,6 @@ def build_component_edit_flow(component_index: int, is_new: bool = False) -> For
     title = "Component toevoegen" if is_new else "Component bewerken"
     sections = [section]
 
-    # When adding a new component, ask which deployments should reference it
     if is_new:
         sections.append(build_component_deployment_select_section(component_index))
 
@@ -495,10 +478,10 @@ def build_backup_schedule_flow(deployment_index: int) -> FormFlow:
 
 
 def build_cross_domain_deployment_flow(deployment_index: int) -> FormFlow:
-    """The per-deployment cross-domain PATCH form (RC-42).
+    """The per-deployment cross-domain PATCH form.
 
-    One step, owned by the service: which project rule, and which peer deployment it points
-    at for THIS deployment. Everything else the rule already says at project level.
+    One step, owned by the service: which project rule, and which peer deployment it points at
+    for THIS deployment. Everything else the rule already says at project level.
     """
     from opi.services.registry import get_service
     from opi.services.services_enums import ServiceType
@@ -515,7 +498,7 @@ def build_cross_domain_deployment_flow(deployment_index: int) -> FormFlow:
 
 
 def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
-    """The per-deployment database settings (RC-201): the connection limit."""
+    """The per-deployment database settings: the connection limit."""
     from opi.services.registry import get_service
     from opi.services.services_enums import ServiceType
 
@@ -531,11 +514,11 @@ def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
 
 
 def build_send_email_deployment_flow(deployment_index: int, inherited: dict[str, str] | None = None) -> FormFlow:
-    """De afzender en het dagbudget van een deployment (RC-401).
+    """The sender address and the daily budget of a deployment.
 
-    ``inherited`` zijn de waarden van het PROJECT, die een leeg veld hier gebruikt. Ze gaan
-    als placeholder het veld in, zodat wie dit formulier opent ziet wat er nu geldt in
-    plaats van een leeg vak.
+    ``inherited`` holds the PROJECT values, which an empty field here falls back to. They go
+    into the field as a placeholder, so whoever opens this form sees what applies now instead
+    of an empty box.
     """
     section = get_service(ServiceType.SEND_EMAIL).deployment_form_section(deployment_index, inherited=inherited)
     return FormFlow(
@@ -549,14 +532,14 @@ def build_send_email_deployment_flow(deployment_index: int, inherited: dict[str,
 
 
 def build_minio_deployment_flow(deployment_index: int) -> FormFlow:
-    """De grens op oude versies van de bucket van een deployment (RC-380)."""
+    """The limit on old versions of a deployment's bucket."""
     return _build_noncurrent_deployment_flow(
         ServiceType.MINIO_STORAGE, "modal-edit-minio-deployment-", deployment_index
     )
 
 
 def build_seaweedfs_deployment_flow(deployment_index: int) -> FormFlow:
-    """Dezelfde grens voor de bucket van seaweedfs-storage (RC-380)."""
+    """The same limit for a seaweedfs-storage bucket."""
     return _build_noncurrent_deployment_flow(
         ServiceType.SEAWEEDFS_STORAGE, "modal-edit-seaweedfs-deployment-", deployment_index
     )
@@ -598,11 +581,10 @@ def build_domain_edit_flow(deployment_index: int) -> FormFlow:
 class IndexedFlow:
     """A family of flows that each edit one item of one list.
 
-    One entry per family, and everything the rest of the code used to work
-    out from the flow-id text lives in it: which list the family writes to,
-    whether it appends a new item or edits an existing one, how to build the
-    flow for an index, and what the flow builder needs from the wizard
-    session (``component_count``, ``is_new``).
+    One entry per family, holding everything that would otherwise have to be worked out from
+    the flow-id text: which list the family writes to, whether it appends a new item or edits
+    an existing one, how to build the flow for an index, and what the builder needs from the
+    wizard session (``component_count``, ``is_new``).
     """
 
     prefix: str
@@ -629,11 +611,11 @@ def _component_count_context(base_data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _send_email_inherited_context(base_data: dict[str, Any]) -> dict[str, Any]:
-    """Wat een leeg veld in de send-email-stap van een deployment betekent.
+    """What an empty field in a deployment's send-email step means.
 
-    De EFFECTIEVE waarden van het project, want dat is wat een deployment die niets invult
-    werkelijk krijgt: het goedgekeurde adres (leeg = de relay leidt het af) en het budget
-    dat de poort doorlaat, niet het gevraagde.
+    The EFFECTIVE project values, because that is what a deployment filling in nothing really
+    gets: the approved address (empty means the relay derives it) and the budget the gate lets
+    through, not the one that was asked for.
     """
     from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day, project_from_name
 
@@ -740,26 +722,19 @@ def flow_context_from_base(flow_id: str, base_data: dict[str, Any] | None) -> di
     return match[0].context_from_base(base_data)
 
 
-def get_flow(flow_id: str, **context: Any) -> FormFlow:
+def get_flow(flow_id: str, **context: Any) -> FormFlow:  # noqa: ANN401  # a project-file value
     """Get a FormFlow by its ID.
 
-    Supports both static registry flows and the indexed families in
-    ``INDEXED_FLOWS`` (``modal-edit-domain-N`` and friends, where N is the
-    list index the flow targets).
-
-    Args:
-        flow_id: The flow identifier.
-        **context: Extra context forwarded to dynamic flow builders.
-            ``component_count`` is used by deployment edit flows.
-
-    Raises:
-        KeyError: If the flow_id is not registered.
+    Both a static registry flow and an indexed family from ``INDEXED_FLOWS``
+    (``modal-edit-domain-N`` and friends, where N is the list index the flow targets).
+    ``context`` is forwarded to a dynamic flow builder; a deployment edit flow reads
+    ``component_count`` from it. Raises ``KeyError`` for an unregistered flow_id.
     """
     if flow_id in FLOW_REGISTRY:
         return FLOW_REGISTRY[flow_id]
 
-    # Restore flow — built dynamically so the new-deployment sections
-    # target the correct deployment index (passed via context).
+    # The restore flow is built dynamically, so its new-deployment sections target the
+    # deployment index the context names.
     if flow_id == "modal-restore":
         return build_restore_flow(context.get("deployment_index", 0))
 

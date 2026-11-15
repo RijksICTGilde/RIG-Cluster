@@ -1,23 +1,22 @@
 """Keep encrypted values out of the disk-backed wizard session, without a field list.
 
-The modal wizard puts a copy of the project file in its state (``base_data`` plus
-the per-section ``step_data``) and serializes that to JSON under ``TEMP_DIR``. Every
-encrypted value in the project therefore landed on disk, for every edit, no matter how
-small: editing only the authorization-wall banner wrote the keycloak realm admin
-password, the api key and the attachment blocks along with it. Worse, the untouched
-values then travelled back out of that JSON copy into the saved file, which is how a
-realm password lost its literal-block formatting.
+The modal wizard puts a copy of the project file in its state (``base_data`` plus the
+per-section ``step_data``) and serializes that to JSON under ``TEMP_DIR``. Without this,
+every encrypted value in the project lands on disk for every edit, however small: editing
+only the authorization-wall banner writes the keycloak realm admin password, the api key and
+the attachment blocks along with it. And the untouched values then travel back out of that
+JSON copy into the saved file, which is how a realm password loses its literal-block
+formatting.
 
 Naming the offending fields one by one does not hold: the next encrypted field is added
-without anyone remembering this file. So the rule here is default-deny and derived from
-the flow itself -- an encrypted value is kept only when some editable in the flow can
-actually reach it, and is redacted otherwise. Add an editable and its value is kept
-automatically; add an encrypted field with no editable and it is dropped automatically.
+without anyone remembering this file. So the rule here is default-deny and derived from the
+flow itself: an encrypted value is kept only when some editable in the flow can actually
+reach it, and is redacted otherwise. Add an editable and its value is kept automatically; add
+an encrypted field with no editable and it is dropped automatically.
 
 What counts as encrypted comes from ``carries_encrypted_value``, which knows both stored
-forms the schema declares. Testing for the armored block alone was not enough: the
-repository password, the api key and the project private key are stored with the
-``base64+age:`` prefix, so they were left in the session file untouched.
+forms the schema declares. Testing for the armored block alone is not enough: the repository
+password, the api key and the project private key are stored with the ``base64+age:`` prefix.
 
 The pair is:
 
@@ -27,7 +26,7 @@ The pair is:
   back exactly as it was stored.
 
 The one deliberate exception is ``config/age-private-key``. It is not user-editable, but
-the converters decrypt and re-encrypt field values with it (``resolve_project_private_key``),
+the converters decrypt and re-encrypt field values with it (``project_private_key_or_none``),
 so removing it would break editing every encrypted field.
 """
 
@@ -35,9 +34,12 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.utils.age import carries_encrypted_value
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +66,14 @@ def _leaf_key(yaml_path: str) -> str:
     return segment
 
 
-def reachable_leaf_keys(editables: Any) -> set[str]:
+def reachable_leaf_keys(editables: list[EditableVisualizer]) -> set[str]:
     """Leaf keys every editable in a flow can address, children included.
 
-    Matching on the leaf key rather than the full path is deliberately coarse: paths in
-    the state carry concrete list indices while an editable's path may carry a filter or
-    none at all, so aligning them exactly would be its own source of bugs. Coarse here
-    errs toward keeping a value, which is the harmless direction -- the strict direction
-    would silently drop a field the form needs.
+    Matching on the leaf key rather than the full path is deliberately coarse: paths in the
+    state carry concrete list indices while an editable's path may carry a filter or none at
+    all, so aligning them exactly would be its own source of bugs. Coarse errs toward keeping
+    a value, which is the harmless direction; the strict direction silently drops a field the
+    form needs.
     """
     keys: set[str] = set()
     for visualizer in editables or []:
@@ -84,7 +86,7 @@ def reachable_leaf_keys(editables: Any) -> set[str]:
     return keys
 
 
-def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, list[str]]:
+def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, list[str]]:  # noqa: ANN401  # a project-file value
     """Return a copy of *data* with out-of-reach encrypted values replaced by REDACTED.
 
     Returns ``(redacted_copy, paths)``; *paths* names what was removed, so a caller can
@@ -95,27 +97,18 @@ def redact_unreachable_secrets(data: Any, keep_keys: set[str]) -> tuple[Any, lis
     return _redact(copy.deepcopy(data), [], keep, removed), removed
 
 
-def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> Any:
+def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
         for key, item in value.items():
             if str(key) in keep:
-                # BEREIKBAAR, en dan de hele inhoud. Er werd hier afgedaald en binnenin
-                # opnieuw geoordeeld, op de naam van het onderliggende veld -- en die naam
-                # kent geen editable, dus alles eronder werd weggestreept. Zichtbaar bij de
-                # aliassen toen die nog PER WAARDE versleuteld werden: onder de bereikbare
-                # sleutel "aliases" stonden sleutels als POSTGRES_HOST, en de gebruiker
-                # kreeg in het bewerkveld de tekst __opi-redacted-secret__ te zien in plaats
-                # van zijn eigen alias. user-env-vars ontsprong de dans omdat dat EEN
-                # versleuteld blok is en dus nooit een afdaling werd; sinds RC-106 geldt dat
-                # voor aliassen ook.
-                #
-                # Deze regel blijft staan, en niet alleen omdat aliassen nu een blok zijn:
-                # dit is wat de module bedoelt. Bereikbaarheid gaat erover of het formulier
-                # de waarde kan terugzetten, en de editable van een map bezit die map in
-                # zijn geheel. Grof in de richting van bewaren, zoals reachable_leaf_keys
-                # al opschrijft.
+                # REACHABLE, and then the whole content. Do not descend and judge again on
+                # the name of a key inside: that name has no editable of its own, so
+                # everything under a reachable key would be redacted. Reachability is about
+                # whether the form can put the value back, and the editable of a map owns
+                # that map in its entirety. Coarse in the direction of keeping, as
+                # reachable_leaf_keys already writes down.
                 continue
             if carries_encrypted_value(item):
                 removed.append("/".join([*path, str(key)]))
@@ -130,23 +123,22 @@ def _redact(value: Any, path: list[str], keep: set[str], removed: list[str]) -> 
     return value
 
 
-def restore_redacted_secrets(data: Any, original: Any) -> Any:
-    """Return a copy of *data* with every REDACTED placeholder taken from *original*.
+def restore_redacted_secrets(data: Any, original: Any) -> Any:  # noqa: ANN401  # a project-file value
+    """Return a copy of *data* with every REDACTED placeholder filled in from *original*.
 
     A placeholder with nothing to restore from (a list item the form added) has its key
     dropped rather than written, so the placeholder can never reach the project file.
 
-    Dropping is the safe direction but it is not free: a field that is required shows up
-    as a refused save, and a field that is optional (``totp_secret`` next to the realm
-    password) simply disappears from the project file with nobody the wiser. So every drop
-    is logged with its path -- the drop that is correct (a list item the form just added)
-    and the drop that is a pairing bug read the same here, and only the log tells them
-    apart afterwards.
+    Dropping is the safe direction but it is not free: a required field shows up as a refused
+    save, and an optional one (``totp_secret`` next to the realm password) simply disappears
+    from the project file with nobody the wiser. So every drop is logged with its path: the
+    correct drop (a list item the form just added) and the drop that is a pairing bug read
+    the same here, and only the log tells them apart afterwards.
     """
     return _restore(data, original, [])
 
 
-def _restore(data: Any, original: Any, path: list[str]) -> Any:
+def _restore(data: Any, original: Any, path: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     if isinstance(data, dict):
         source = original if isinstance(original, dict) else {}
         restored: dict[Any, Any] = {}
@@ -172,7 +164,7 @@ def _restore(data: Any, original: Any, path: list[str]) -> Any:
     return data
 
 
-def _pair_with(item: Any, source: list[Any], index: int) -> Any:
+def _pair_with(item: Any, source: list[Any], index: int) -> Any:  # noqa: ANN401  # a project-file value
     """The element of *source* that corresponds to *item*: by identifier, else position."""
     if isinstance(item, dict):
         for key in _IDENTIFIER_KEYS:

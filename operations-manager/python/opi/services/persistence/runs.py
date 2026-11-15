@@ -1,4 +1,4 @@
-"""ORM model for the ``runs`` table (user-launched ephemeral workloads, RC-5).
+"""ORM model for the ``runs`` table (user-launched ephemeral workloads).
 
 Schema-as-code mirror of ``RUNS_TABLE_SQL``. The repository + the RunKind/RunStatus
 enums live in ``opi/services/runs_service.py``.
@@ -6,8 +6,8 @@ enums live in ``opi/services/runs_service.py``.
 
 from __future__ import annotations
 
-import uuid  # noqa: TC003 (runtime-resolved by SQLAlchemy Mapped)
-from datetime import datetime  # noqa: TC003
+import uuid  # noqa: TC003  # runtime-resolved by SQLAlchemy Mapped
+from datetime import datetime  # noqa: TC003  # runtime-resolved by SQLAlchemy Mapped
 from typing import Any
 
 from sqlalchemy import DateTime, Index, String, Text, Uuid, text

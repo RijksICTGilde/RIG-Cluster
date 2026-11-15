@@ -24,7 +24,7 @@ SANDBOX_KUSTOMIZATION = (
     REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/kustomization.yaml"
 )
 BASE_DEPLOYMENT = REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml"
-STARTUP = Path(__file__).resolve().parents[1] / "opi/core/startup.py"
+STARTUP = Path(__file__).resolve().parents[1] / "opi/runtime/startup/startup.py"
 
 # Een e-mailadres in een waarde. De base64+age-blobs in deze configmap bevatten geen @,
 # dus die halen deze vorm niet.

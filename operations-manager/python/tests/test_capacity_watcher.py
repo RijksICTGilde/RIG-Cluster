@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.connectors.grafana_prometheus import GrafanaConnectionError, GrafanaQueryError
-from opi.core import capacity_watcher
-from opi.core.capacity_watcher import HIGH, OK, WARNING, CapacityWatcher, Quota, evaluate
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
+from opi.runtime.periodic import capacity_watcher
+from opi.runtime.periodic.capacity_watcher import HIGH, OK, WARNING, CapacityWatcher, Quota, evaluate
 
 GIB = 1024**3
 
@@ -67,14 +68,24 @@ async def test_notifies_once_per_level_and_rearms(monkeypatch: pytest.MonkeyPatc
         await watcher.tick()
 
     assert [c.args[1] for c in send.await_args_list] == ["default", "high", "default"]
-    assert "cpu-limits: 290.0 van 320" in send.await_args_list[0].args[0]
+    assert "cpu-limits: van 290.0 naar 290.0, maximaal 320, 91% in gebruik" in send.await_args_list[0].args[0]
 
 
-def test_memory_is_shown_in_gib() -> None:
-    assert capacity_watcher._format(_q("memory-limits", 200 * GIB, 240 * GIB)) == "200 van 240 GiB"
+def test_format_shows_yesterday_today_and_the_limit() -> None:
+    assert capacity_watcher._format(_q("cpu-limits", 180, 500, ago=170)) == "van 170.0 naar 180.0, maximaal 500"
+    assert (
+        capacity_watcher._format(_q("memory-limits", 200 * GIB, 240 * GIB, ago=150 * GIB))
+        == "van 150 naar 200 GiB, maximaal 240 GiB"
+    )
+    assert capacity_watcher._format(Quota("memory-limits", 200 * GIB, 240 * GIB, None)) == "200 van 240 GiB"
 
 
-@pytest.mark.parametrize("fout", [GrafanaConnectionError("niet beschikbaar"), GrafanaQueryError("status 500")])
+def test_growth_reason_is_relative_to_yesterday() -> None:
+    assert evaluate(_q("cpu-limits", 160, 320, ago=120))[1] == ["stijging 33% in 24 uur"]
+    assert evaluate(_q("services-lb", 1, 3, ago=0))[1] == ["stijging in 24 uur"]
+
+
+@pytest.mark.parametrize("fout", [MetricsUnavailableError("niet beschikbaar"), MetricsQueryError("status 500")])
 async def test_tick_slaat_de_ronde_over_zonder_metrics(fout: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
     """Een storing in de metingsbron is een overgeslagen ronde, geen crash van de watcher."""
     watcher = CapacityWatcher()
@@ -94,3 +105,36 @@ async def test_tick_laat_andere_fouten_door(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(RuntimeError, match="iets anders"):
         await watcher.tick()
+
+
+async def test_fetch_queries_the_billing_datasource_and_builds_quotas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_fetch`` must call the renamed ``query``, with the billing datasource.
+
+    A resource present only in the limit query and not in the usage query is dropped:
+    with no usage there is nothing to report.
+    """
+    monkeypatch.setattr(capacity_watcher.settings, "CAPACITY_WATCH_TENANT", "rig-demo")
+    monkeypatch.setattr(capacity_watcher.settings, "GRAFANA_BILLING_DATASOURCE_UID", "billing-uid")
+
+    def answer(query: str, *, datasource_uid: str | None = None) -> list[dict[str, Any]]:
+        assert datasource_uid == "billing-uid"
+        if "offset 24h" in query:
+            return [{"metric": {"resource": "cpu-limits"}, "value": [0, "180"]}]
+        if "_limit{" in query:
+            return [
+                {"metric": {"resource": "cpu-limits"}, "value": [0, "320"]},
+                {"metric": {"resource": "orphan-limit-only"}, "value": [0, "10"]},
+            ]
+        return [{"metric": {"resource": "cpu-limits"}, "value": [0, "200"]}]
+
+    connector = AsyncMock()
+    connector.query.side_effect = answer
+    monkeypatch.setattr(capacity_watcher, "create_grafana_prometheus_connector", AsyncMock(return_value=connector))
+
+    quotas = await CapacityWatcher()._fetch()
+
+    assert quotas == [Quota(resource="cpu-limits", used=200.0, limit=320.0, used_24h_ago=180.0)]
+    queried = [call.args[0] for call in connector.query.call_args_list]
+    assert any("_resource_usage" in q and "offset 24h" not in q for q in queried)
+    assert any("_resource_limit" in q for q in queried)
+    assert any("offset 24h" in q for q in queried)

@@ -22,16 +22,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.api.principal import NotRecognised, recognise_principal
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
-from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
+from opi.forms.wizard.members import members_for_form, restore_hidden_members
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
-from opi.services.project_leden import hash_van
+from opi.forms.wizard.write_set import apply_write_paths
+from opi.http.auth.principal import NotRecognisedError, recognise_principal
+from opi.services.project_members import hash_of
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
-from opi.web.project_edit_security import apply_form_data_to_project
 from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections
 
@@ -44,7 +44,7 @@ SA_TOKEN = "zad_satoken_example_value_00003"
 def _token(naam: str, waarde: str) -> dict[str, Any]:
     return {
         "name": naam,
-        "hash": hash_van(waarde),
+        "hash": hash_of(waarde),
         "expires": "2030-01-01T00:00:00+00:00",
         "created": "2026-01-01T00:00:00+00:00",
     }
@@ -82,34 +82,34 @@ BODY_DEV_WEG = {"users": [{"email": "baas@rijksoverheid.nl", "roles": ["admin", 
 # --- de twee functies zelf, op hun randen -----------------------------------
 
 
-def test_leden_voor_formulier_laat_data_zonder_ledenlijst_ongewijzigd() -> None:
+def test_members_for_form_laat_data_zonder_ledenlijst_ongewijzigd() -> None:
     """``users`` kan ontbreken (een nieuw project) of geen lijst zijn; dan is er niets te
     scheiden en komt de data onveranderd terug, in plaats van een AttributeError."""
     data = {"name": "leeg"}
 
-    assert leden_voor_formulier(data) is data or leden_voor_formulier(data) == data
+    assert members_for_form(data) is data or members_for_form(data) == data
 
 
-def test_zet_verborgen_leden_terug_doet_niets_zonder_ledenlijst() -> None:
+def test_restore_hidden_members_doet_niets_zonder_ledenlijst() -> None:
     merged = {"name": "x"}
     stored = {"name": "x", "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}]}
 
-    zet_verborgen_leden_terug(merged, stored)
+    restore_hidden_members(merged, stored)
 
     assert "users" not in merged
 
 
-def test_zet_verborgen_leden_terug_laat_een_niet_dict_lid_ongemoeid() -> None:
+def test_restore_hidden_members_laat_een_niet_dict_lid_ongemoeid() -> None:
     """Geknoeide invoer (een lid dat geen dict is) crasht niet en reist gewoon mee."""
     merged = {"users": ["geen-dict"]}
     stored = {"users": []}
 
-    zet_verborgen_leden_terug(merged, stored)
+    restore_hidden_members(merged, stored)
 
     assert merged["users"] == ["geen-dict"]
 
 
-def test_zet_verborgen_leden_terug_negeert_een_service_account_in_het_ingediende() -> None:
+def test_restore_hidden_members_negeert_een_service_account_in_het_ingediende() -> None:
     """Het formulier maakt zelf geen service account; komt er toch een in de inzending
     terecht, dan telt alleen het exemplaar uit het bestand, niet een tweede ernaast."""
     merged = {
@@ -125,7 +125,7 @@ def test_zet_verborgen_leden_terug_negeert_een_service_account_in_het_ingediende
         ]
     }
 
-    zet_verborgen_leden_terug(merged, stored)
+    restore_hidden_members(merged, stored)
 
     namen = [lid.get("name") for lid in merged["users"] if lid.get("type") == "service-account"]
     assert namen == ["bouwstraat"]
@@ -139,7 +139,7 @@ async def _teamstap(flow_id: str, *, modaal: bool) -> dict[str, Any]:
     owned = _fully_owned_list_keys(flow)
 
     # De prefill, zoals ``modal_wizard_init`` en ``wizard_edit_page`` hem maken.
-    form_data = leden_voor_formulier(opgeslagen) if "users" in owned else opgeslagen
+    form_data = members_for_form(opgeslagen) if "users" in owned else opgeslagen
     state = WizardState(flow_id=flow_id, current_step=section.section_id, project_name=PROJECT)
     state.step_data = _split_data_across_sections(flow, form_data)
     state.active_sections = [s.section_id for s in flow.sections]
@@ -166,8 +166,8 @@ async def _teamstap(flow_id: str, *, modaal: bool) -> dict[str, Any]:
             state=state,
             project_name=PROJECT,
         )
-    resultaat = apply_form_data_to_project(copy.deepcopy(opgeslagen), {"users": final.get("users")})
-    zet_verborgen_leden_terug(resultaat, opgeslagen)
+    resultaat = apply_write_paths(copy.deepcopy(opgeslagen), {"users": final.get("users")}, ["users"])
+    restore_hidden_members(resultaat, opgeslagen)
     return resultaat
 
 
@@ -195,7 +195,7 @@ async def test_het_token_van_het_weggehaalde_lid_legitimeert_niemand(flow_id: st
     assert project is not None
     get_user_service().add_allowed_emails(["baas@rijksoverheid.nl"])
 
-    with pytest.raises(NotRecognised):
+    with pytest.raises(NotRecognisedError):
         await recognise_principal(DEV_TOKEN, project)
 
     assert (await recognise_principal(BAAS_TOKEN, project)).name == "baas@rijksoverheid.nl"
@@ -216,8 +216,8 @@ FORMULIERWEGEN = {
 def test_elke_formulierweg_scheidt_de_leden_en_zet_ze_terug(bestand: str) -> None:
     """De scheiding mist geen weg: anders is de ene modaal veilig en de andere niet."""
     tekst = (Path(__file__).resolve().parents[2] / bestand).read_text()
-    assert "leden_voor_formulier" in tekst or "zet_verborgen_leden_terug" in tekst, (
+    assert "members_for_form" in tekst or "restore_hidden_members" in tekst, (
         f"{bestand} ({FORMULIERWEGEN[bestand]}) schrijft 'users' als geheel maar gebruikt "
-        "opi/forms/wizard/leden.py niet; de tokens van een weggehaald lid schuiven dan naar "
+        "opi/forms/wizard/members.py niet; de tokens van een weggehaald lid schuiven dan naar "
         "de rij die zijn plaats inneemt"
     )

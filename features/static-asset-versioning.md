@@ -22,7 +22,7 @@ In een template, in plaats van een kaal pad:
 <img src="{{ static_url('cloud.jpg') }}" alt="...">
 ```
 
-`static_url()` is een Jinja-global (`opi/core/templates.py`). Het pad is relatief aan
+`static_url()` is een Jinja-global (`opi/http/render/template_helpers.py`). Het pad is relatief aan
 `operations-manager/python/static/`, met of zonder leidende slash.
 
 Staat de aanroep in een attribuut dat zelf al enkele quotes gebruikt - zoals het ROOS-attribuut
@@ -34,7 +34,7 @@ Een testwacht (`tests/test_static_references_versioned.py`) faalt op elke kale `
 
 ## Cache-header
 
-De `/static`-mount is `CacheControlledStaticFiles` (`opi/core/static_files.py`):
+De `/static`-mount is `CacheControlledStaticFiles` (`opi/http/render/static_files.py`):
 
 | Verzoek | `Cache-Control` |
 |---|---|

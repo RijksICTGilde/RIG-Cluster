@@ -162,7 +162,7 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 
 | File | Purpose |
 |------|---------|
-| `opi/handlers/project_file_handler.py` | Fixed path parsing for numeric indices |
+| `opi/services/project_file_handler.py` | Fixed path parsing for numeric indices |
 | `opi/core/marked_for_deletion_schema.py` | SQL schema for the table |
 | `opi/services/marked_for_deletion_service.py` | CRUD service layer |
 | `opi/migrations/versions/002_add_marked_for_deletion.py` | Alembic migration |
@@ -171,11 +171,12 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 | `opi/manager/minio_manager.py` | `handle_service_removal()` for MinIO |
 | `opi/manager/redis_manager.py` | `handle_service_removal()` for Redis |
 | `opi/manager/keycloak_manager.py` | `handle_service_removal()` for Keycloak |
-| `opi/manager/delete_project_manager.py` | `delete_deployment_from_yaml_change()` and `cleanup_removed_services_from_yaml_change()` |
+| `opi/manager/project/deployment_removal.py` | `remove_deployment()`, the one removal path; the YAML edit is `RemovalTrigger.PROJECT_FILE_EDIT` |
+| `opi/manager/delete_project_manager.py` | `cleanup_removed_services_from_yaml_change()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job: compares expected vs marked resources |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
 | `opi/manager/project_manager.py` | Wired deletion + service removal into `process_project_from_git()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job with backup purge support |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
-| `opi/api/user_token_auth.py` | `validate_platform_admin_token` decorator |
+| `opi/http/auth/user_token_auth.py` | `validate_platform_admin_token` decorator |
 | `opi/core/config.py` | `DELETION_GRACE_PERIOD_DAYS` setting |

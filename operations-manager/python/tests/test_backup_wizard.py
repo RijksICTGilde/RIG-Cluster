@@ -14,7 +14,7 @@ Covers:
 from typing import Any
 
 import pytest
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     create_project_file_handler,
     extract_service_names_from_component,
 )
@@ -396,171 +396,32 @@ class TestDeploymentUsesServiceForBackup:
                 found_labels.append(bl["label"])
         assert found_labels == []
 
+    def test_service_types_names_the_match_in_declared_order(self, handler) -> None:
+        """deployment_service_types names WHICH service matched, not just that one did.
 
-# ---------------------------------------------------------------------------
-# Template rendering tests
-# ---------------------------------------------------------------------------
-
-
-class TestBackupWizardTemplate:
-    """Tests for backup wizard template rendering with jinja-roos-components."""
-
-    @pytest.fixture
-    def templates(self):
-        from opi.core.templates_lotc import templates_lotc
-
-        return templates_lotc
-
-    def _render(self, templates, context: dict) -> str:
-        template = templates.get_template("wizard/partials/backup_select_deployment.html.j2")
-        rendered = template.render(context)
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-        return rendered
-
-    def test_renders_with_deployments(self, templates) -> None:
-        context = {
-            "_cluster_deployments": [
-                {"name": "production", "namespace": "rig-myapp", "resource_types": ["pvc", "database"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-                {"label": "database", "name": "PostgreSQL Database", "color": "donkerblauw"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-        }
-        html = self._render(templates, context)
-        assert "production" in html
-        assert "rig-myapp" in html
-        assert "<select" in html
-        assert 'name="deployment_name"' in html
-        assert 'name="resource_types"' in html
-
-    def test_renders_empty_state(self, templates) -> None:
-        context = {
-            "_cluster_deployments": [],
-            "_backupable_labels": [],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-        }
-        html = self._render(templates, context)
-        assert "Geen deployments met backup-mogelijkheden" in html
-        assert "<select" not in html
-
-    def test_renders_resource_types_for_selected_deployment(self, templates) -> None:
-        context = {
-            "_cluster_deployments": [
-                {"name": "staging", "namespace": "rig-staging", "resource_types": ["pvc"]},
-                {"name": "production", "namespace": "rig-prod", "resource_types": ["pvc", "database", "minio"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-                {"label": "database", "name": "PostgreSQL Database", "color": "donkerblauw"},
-                {"label": "minio", "name": "MinIO Object Storage", "color": "rood"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-            "_selected_deployment": "production",
-        }
-        html = self._render(templates, context)
-        # All three resource types should appear for production
-        assert 'value="pvc"' in html
-        assert 'value="database"' in html
-        assert 'value="minio"' in html
-
-    def test_preselects_selected_deployment_in_dropdown(self, templates) -> None:
-        """When _selected_deployment is set, that <option> must be marked selected.
-
-        Regression test: without this, the dropdown defaulted to deployments[0]
-        and users who opened the backup modal from deployment B silently got
-        deployment A backed up instead.
+        _fallback_reference (manager/backup/run.py, decision B4) takes the first entry to
+        build the reference a backup without a component lands under, so the order here is
+        not cosmetic.
         """
-        context = {
-            "_cluster_deployments": [
-                {"name": "staging", "namespace": "rig-staging", "resource_types": ["pvc"]},
-                {"name": "production", "namespace": "rig-prod", "resource_types": ["pvc"]},
-                {"name": "main", "namespace": "rig-main", "resource_types": ["pvc"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-            "_selected_deployment": "production",
-        }
-        html = self._render(templates, context)
-        assert '<option value="production"  selected>' in html or '<option value="production" selected>' in html
-        assert '<option value="staging" selected>' not in html
-        assert '<option value="main" selected>' not in html
+        project = self._make_project(component_services=["minio-storage", "postgresql-database"])
+        assert handler.deployment_service_types(project, "production", ["postgresql-database", "minio-storage"]) == [
+            "minio-storage",
+            "postgresql-database",
+        ]
 
-    def test_falls_back_to_first_when_no_selection(self, templates) -> None:
-        """Without _selected_deployment, the first cluster deployment is preselected."""
-        context = {
-            "_cluster_deployments": [
-                {"name": "staging", "namespace": "rig-staging", "resource_types": ["pvc"]},
-                {"name": "production", "namespace": "rig-prod", "resource_types": ["pvc"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-        }
-        html = self._render(templates, context)
-        assert '<option value="staging" selected>' in html or '<option value="staging"  selected>' in html
+    def test_service_types_has_no_duplicate_when_both_component_and_helm_chart_declare_it(self, handler) -> None:
+        """The same service declared by a component and by a helm-chart counts once."""
+        project = self._make_project(component_services=["postgresql-database"])
+        project["helm-charts"] = [{"name": "chart", "services": ["postgresql-database"]}]
+        project["deployments"][0]["helm-charts"] = [{"reference": "chart"}]
 
-    def test_renders_only_available_resource_types(self, templates) -> None:
-        context = {
-            "_cluster_deployments": [
-                {"name": "staging", "namespace": "rig-staging", "resource_types": ["pvc"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-                {"label": "database", "name": "PostgreSQL Database", "color": "donkerblauw"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test-project",
-        }
-        html = self._render(templates, context)
-        assert 'value="pvc"' in html
-        assert 'value="database"' not in html
+        assert handler.deployment_service_types(project, "production", ["postgresql-database"]) == [
+            "postgresql-database"
+        ]
 
-    def test_htmx_attributes_present(self, templates) -> None:
-        context = {
-            "_cluster_deployments": [
-                {"name": "prod", "namespace": "rig-prod", "resource_types": ["pvc"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "my-project",
-        }
-        html = self._render(templates, context)
-        assert "hx-get" in html
-        assert "/projects/my-project/modal-wizard/modal-backup/select-deployment" in html
-        assert 'hx-target="#edit-section-inner"' in html
-
-    def test_dropdown_not_radio(self, templates) -> None:
-        """Verify deployment selection uses dropdown, not radio buttons."""
-        context = {
-            "_cluster_deployments": [
-                {"name": "a", "namespace": "ns-a", "resource_types": ["pvc"]},
-                {"name": "b", "namespace": "ns-b", "resource_types": ["database"]},
-            ],
-            "_backupable_labels": [
-                {"label": "pvc", "name": "Permanente opslag", "color": "grijs-600"},
-                {"label": "database", "name": "PostgreSQL Database", "color": "donkerblauw"},
-            ],
-            "_current_cluster": "local",
-            "_project_name": "test",
-        }
-        html = self._render(templates, context)
-        assert "<select" in html
-        assert "<option" in html
-        assert 'type="radio"' not in html
+    def test_service_types_empty_when_nothing_matches(self, handler) -> None:
+        project = self._make_project(component_services=["publish-on-web"])
+        assert handler.deployment_service_types(project, "production", ["postgresql-database"]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -662,7 +523,7 @@ class TestRestoreTargetSummary:
 
 
 class TestCreateDeploymentFromSource:
-    """Tests for _create_deployment_from_source structure logic."""
+    """Tests for create_deployment_for_restore structure logic."""
 
     def test_clone_exclude_keys(self) -> None:
         """Verify the correct keys are excluded when copying deployment config."""
@@ -758,7 +619,7 @@ class TestRestoreTargetTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc
 
@@ -848,7 +709,7 @@ class TestRestoreTargetTemplate:
 
 
 class TestPreRestorePvcNaming:
-    """Tests for PVC name calculation used in _pre_restore_pvcs."""
+    """Tests for PVC name calculation used in pre_restore_pvcs."""
 
     def test_source_pvc_name_gen0(self) -> None:
         """Source PVC name with generation 0 has no version suffix."""

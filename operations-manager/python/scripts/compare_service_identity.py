@@ -57,8 +57,15 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-import yaml
+# Make ``opi`` importable no matter the working directory: Python puts scripts/ on
+# sys.path, not the package root, so ``uv run python scripts/...`` would not find it.
+_OPI_ROOT = Path(__file__).resolve().parents[1]
+if str(_OPI_ROOT) not in sys.path:
+    sys.path.insert(0, str(_OPI_ROOT))
+
+from opi.utils.yaml_util import YAMLError, load_yaml_documents_safe  # noqa: E402
 
 # The identity of a service is the value of these generated secret/env keys. The key
 # names are the canonical env-var names OPI writes into each deployment's secret (see
@@ -253,7 +260,7 @@ def _sops_decrypt(path: str) -> str | None:
 
 def _parse_docs(text: str) -> list[dict]:
     """Parse a possibly multi-document YAML string into a list of mapping docs."""
-    return [doc for doc in yaml.safe_load_all(text) if isinstance(doc, dict)]
+    return [doc for doc in load_yaml_documents_safe(text) if isinstance(doc, dict)]
 
 
 def load_tree(root: str) -> tuple[dict[str, list[dict]], list[str]]:
@@ -281,7 +288,7 @@ def load_tree(root: str) -> tuple[dict[str, list[dict]], list[str]]:
             try:
                 with open(path) as handle:
                     docs_by_path[rel] = _parse_docs(handle.read())
-            except OSError, yaml.YAMLError:
+            except OSError, YAMLError:
                 undecryptable.append(rel)
 
     return docs_by_path, undecryptable

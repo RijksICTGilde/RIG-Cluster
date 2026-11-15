@@ -12,7 +12,7 @@ bedoeling: de aanroep met shell=True hoort hier juist te staan.
 import subprocess
 
 from fastapi import APIRouter, Request
-from opi.core.auth_decorators import requires_sso
+from opi.http.auth.auth_decorators import requires_sso
 
 router = APIRouter()
 
@@ -34,6 +34,13 @@ async def beschermde_pagina(request: Request) -> str:
 @router.get("/open-met-reden")
 async def open_pagina(request: Request) -> str:
     """BEWUST ZONDER ``@requires_sso``: een publieke uitlegpagina."""
+    return "open"
+
+
+# ok: zad-webroute-zonder-sso
+@router.get("/open-with-reason")
+async def open_page(request: Request) -> str:
+    """DELIBERATELY WITHOUT ``@requires_sso``: a public explanation page."""
     return "open"
 
 

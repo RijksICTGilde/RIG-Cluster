@@ -50,7 +50,7 @@ Een vorm die de naam nodig heeft die net is gewist, kan niet blijven staan:
   `pr-857-.cluster.tld` op.
 
 Welke formaten overblijven wordt afgeleid bij de sjablonen zelf,
-`SELF_CONTAINED_FORMAT_IDS` in `opi/utils/naming.py`: vandaag `component-deployment-project`
+`SELF_CONTAINED_FORMAT_IDS` in `opi/services/catalog/publish_on_web/domain_config.py`: vandaag `component-deployment-project`
 en `deployment-project`.
 
 ## Het subdomein van de bron
@@ -62,7 +62,7 @@ componenten één hostnaam delen en zich met paden onderscheiden.
 ## Wie deze afleiding gebruikt
 
 De splitsing hierboven staat in één afleiding, `derive_deployment_from_source` in
-`opi/manager/clone_validation.py`. Twee wegen bouwen een deployment uit een bestaande, en
+`opi/services/clone_validation.py`. Twee wegen bouwen een deployment uit een bestaande, en
 ze gebruiken allebei die functie:
 
 - `upsert_deployment` met `cloneFrom`, de PR-previews. De componenten gaan niet mee: de

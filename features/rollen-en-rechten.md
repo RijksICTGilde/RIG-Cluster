@@ -89,9 +89,9 @@ er iets mee kan.
 
 ## Waar het wordt afgedwongen
 
-- **API**: `opi/api/principal.py` bouwt de principal uit het bewijsmiddel en roept
+- **API**: `opi/http/auth/principal.py` bouwt de principal uit het bewijsmiddel en roept
   `decide()` aan.
-- **Portaal**: `opi/web/authz.py`. `enforce_route_action` hangt als dependency op de
+- **Portaal**: `opi/http/auth/authz.py`. `enforce_route_action` hangt als dependency op de
   web-router, leest de action van de route en beslist; een handler kan de poort dus niet
   vergeten. `authorize(...)` is dezelfde beslissing voor een handler die het project en
   het e-mailadres nodig heeft.
@@ -106,7 +106,7 @@ er iets mee kan.
 
   Een eigen conditie blijft voor de twee gevallen waar geen projectbeslissing is om uit
   te lezen: de platformroutes (`platform.*`, een eigen `Audience` zonder grants) en de
-  API-tokenroutes, die achter een SSO-bearer hangen in plaats van achter `handhaaf` en
+  API-tokenroutes, die achter een SSO-bearer hangen in plaats van achter `enforce` en
   hun rolregel in `api_token_service` afdwingen. Daarnaast wat een scope niet kan zien:
   of een aanroep de OTAP-markering ZET of VERLAAGT staat in de body van de
   deployment-upsert, niet in het pad.
@@ -137,7 +137,7 @@ verklaring leest `enforce_route_action` alleen het pad: een aangeplakte
 
 `env-vars.manage` staat daarom op de componentscopes en niet op die van een deployment,
 anders dan de rij in ontwerp paragraaf 4: de waarden hangen aan het component, en de route
-die ze bewerkt heeft geen deployment in het pad. Een component dat in een
+die het venster opent heeft geen deployment in het pad. Een component dat in een
 productiedeployment zit vraagt dus `ops`, ook op de deployment-variant van die route.
 
 ## Rollen schrijven
@@ -145,11 +145,11 @@ productiedeployment zit vraagt dus `ops`, ook op de deployment-variant van die r
 De Team-kaart en de API-route `PUT /api/projects/{project}/leden/{naam}/rol` (die
 `roles: [...]` neemt) wijzigen één lid, en lopen langs `set_member_roles` in
 `opi/services/api_token_service.py`. De team-wizard schrijft de hele ledenlijst in één
-keer, dus hij gaat niet per lid door die functie; `bewaak_ledenlijst`
-(`opi/forms/wizard/leden.py`) roept wel dezelfde guards aan als zij:
+keer, dus hij gaat niet per lid door die functie; `guard_member_list`
+(`opi/forms/wizard/members.py`) roept wel dezelfde guards aan als zij:
 
-- `schoon_rollen`: weigert een lege lijst en een onbekende rol;
-- `eis_een_admin`: weigert een lijst waarin niemand `admin` heeft.
+- `clean_roles`: weigert een lege lijst en een onbekende rol;
+- `require_an_admin`: weigert een lijst waarin niemand `admin` heeft.
 
 Eén lezer per invariant, dus de drie wegen kunnen niet uit elkaar lopen op wat een
 geldige rol is of op de eis dat er een admin overblijft. Het JSON-schema houdt daarnaast
@@ -172,8 +172,8 @@ productieregel met één klik.
 ## Wat de body nog meer aanwijst
 
 Een body kan een ANDER doelwit noemen dan het pad of `@deployment_from`. Dan toetst de
-route die tweede handeling zelf, met `eis_handeling(request, project, action,
-deployment=...)` (`opi/api/endpoint_util.py`), op de principal die de poort al herkende.
+route die tweede handeling zelf, met `require_api_action(request, project, action,
+deployment=...)` (`opi/http/auth/endpoint_util.py`), op de principal die de poort al herkende.
 Op `:upsert-deployment` zijn dat er vijf:
 
 | veld in de body | handeling | gewogen tegen |

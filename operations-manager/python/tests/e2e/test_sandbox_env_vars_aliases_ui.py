@@ -261,7 +261,8 @@ def test_deployment_component_env_vars_override_through_the_step_up_window(
         page.goto(f"{sandbox_url}/projects/{envali_project}/deployments")
         page.wait_for_load_state("networkidle")
         open_tab(page, "deployments")
-        button = page.locator("nldd-button:has-text('Omgevingsvariabelen bewerken')").first
+        # On the deployments tab the button per deployment component reads "Bekijken en bewerken".
+        button = page.locator("nldd-button:has-text('Bekijken en bewerken')").first
         button.wait_for(state="visible")
         button.click()
         editor = page.locator("#edit-section-inner .kv-editor .cm-content")

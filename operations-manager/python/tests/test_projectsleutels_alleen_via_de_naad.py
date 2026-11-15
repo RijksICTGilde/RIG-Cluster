@@ -40,16 +40,18 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
     ("opi/utils/age.py", "decrypt_password_smart_auto_sync"): "platformcredentials, sync kant",
     ("opi/utils/age.py", "project_key_candidates"): "de naad: de platformsleutel als terugval bij uitpakken",
     ("opi/utils/age.py", "project_wrapping_public_key"): "de naad: de platformsleutel zolang er geen KEK is",
-    ("opi/utils/sops.py", "get_sops_private_key"): "platformsecrets: de SOPS-bestanden van het platform",
-    ("opi/utils/sops.py", "decrypt_sops_file"): "platformsecrets: sops krijgt de sleutel per aanroep mee",
     (
         "opi/api/router.py",
         "_encrypt_for_task",
     ): "een geheim uit het verzoek in async_tasks.payload, geen projectsleutel",
     (
-        "opi/utils/project_utils.py",
-        "generate_self_service_project_yaml",
+        "opi/services/project_utils.py",
+        "encrypted_repository_password",
     ): "repositories[].password blijft bewust op de platformsleutel",
+    (
+        "opi/services/schema_migration.py",
+        "encrypt_plain_secrets",
+    ): "versleutelt een plain: repositories[].password met de sleutel van zijn lezer",
     ("opi/manager/argo_manager.py", "ArgoManager.prepare_repository_variables"): "repositories[].password",
     (
         "opi/manager/argo_manager.py",
@@ -57,16 +59,8 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
     ): "de ArgoCD repository-secrets zijn platformsecrets",
     (
         "opi/manager/argo_manager.py",
-        "ArgoManager.create_infrastructure_application._infrastructuur",
+        "ArgoManager.create_infrastructure_application._infrastructure",
     ): "de ArgoCD repository-secrets zijn platformsecrets",
-    (
-        "opi/forms/editables/converters.py",
-        "AGEEncryptConverter._get_public_key",
-    ): "de generieke AGEEncryptConverter, geen projectsleutel",
-    (
-        "opi/forms/editables/converters.py",
-        "AGEEncryptConverter.read",
-    ): "de generieke AGEEncryptConverter, geen projectsleutel",
     (
         "opi/services/user_otp_service.py",
         "UserOtpService.start_registration",

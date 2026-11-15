@@ -1,11 +1,11 @@
-"""Contract v1 van de kaart: de graaf die ``<zad-map>`` tekent.
+"""Contract v1 of the map: the graph ``<zad-map>`` draws.
 
-Het element kent geen ZAD-begrippen. Het leest kolommen (links naar rechts), groepen,
-knopen en lijnen, en tekent die. Alle tekst is platte tekst; alleen ``html`` in een
-infosectie is markup, en dat veld krijgt uitsluitend markdown uit de repo.
+The element knows no ZAD concepts. It reads columns (left to right), groups, nodes and
+edges, and draws those. All text is plain text; only ``html`` in an info section is markup,
+and that field takes markdown from the repo and nothing else.
 
-De modellen staan hier zodat elke uitvoer gevalideerd is: een graaf die het element niet
-kan lezen valt hier om, bij het bouwen, en niet in de browser.
+Every graph is validated against these models, so one the element cannot read fails here, at
+build time, instead of in the browser.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
-#: De vormen die het element kent.
+#: The shapes the element knows.
 Shape = Literal["card", "pill", "stack", "hub", "frame", "external"]
 
-#: Kleuren zijn NAMEN, geen hex: het element vertaalt ze naar de Rijkshuisstijl.
+#: Colors are NAMES, not hex: the element translates them to the Rijkshuisstijl.
 Color = Literal[
     "component",
     "deployment",
@@ -35,20 +35,20 @@ Color = Literal[
     "external",
 ]
 
-#: Wat een klik op een knoop doet.
+#: What a click on a node does.
 Click = Literal["focus", "expand", "info"]
 
-#: Een knoop die er wel is maar hier niet draait; het element geeft hem een stippelrand.
+#: A node that exists but does not run here; the element gives it a dashed border.
 State = Literal["elders", "extern", "uit"]
 
 
 class Glyph(StrEnum):
-    """De lijnicoontjes die het element zelf tekent.
+    """The line icons the element draws itself.
 
-    Dit is NIET de NLDD-iconenset: ze staan als pad in ``zad-map/src/lib/icons.js`` en
-    komen nooit door het ``nldd_icon``-filter. Een gesloten verzameling, zodat een naam
-    die het element niet kent hier omvalt in plaats van als niets te renderen;
-    ``tests/test_zad_map_element.py`` legt de twee lijsten naast elkaar.
+    NOT the NLDD icon set: these live as paths in ``zad-map/src/lib/icons.js`` and never pass
+    through the ``nldd_icon`` filter. A closed set, so a name the element does not know fails
+    here instead of rendering as nothing; ``tests/test_zad_map_element.py`` holds the two
+    lists against each other.
     """
 
     HEALTH = "health"
@@ -60,17 +60,17 @@ class Glyph(StrEnum):
 
 
 class Column(BaseModel):
-    """Een kolom in de plaat; de volgorde in de lijst is links naar rechts."""
+    """One column of the drawing; the order in the list is left to right."""
 
     id: str
 
 
 class Group(BaseModel):
-    """Een kader met knopen erin.
+    """A frame with nodes in it.
 
-    ``pack`` zegt wie de inhoud neerlegt: ``elk`` laat de layout het doen (nodig zodra er
-    lijnen naar binnen lopen), ``grid`` en ``row`` laat het element zelf doen.
-    ``band`` is de brede balk onder de plaat.
+    ``pack`` says who lays the contents out: ``elk`` leaves it to the layout, which is needed
+    as soon as edges run into the group, while ``grid`` and ``row`` leave it to the element.
+    ``band`` is the wide bar under the drawing.
     """
 
     id: str
@@ -84,10 +84,10 @@ class Group(BaseModel):
 
 
 class Row(BaseModel):
-    """Een regel op een kaart: een staafje, of een icoon met tekst.
+    """One line on a card: a bar, or an icon with text.
 
-    Een staafje toont ``req`` en ``lim`` op de schaal ``max``; ``text`` is wat eronder
-    staat. ``href`` mag alleen een webadres zijn dat de kaart zelf heeft afgeleid.
+    A bar shows ``req`` and ``lim`` on the scale of ``max``, with ``text`` underneath.
+    ``href`` may only be a web address the map derived itself.
     """
 
     bar: Literal["mem", "cpu"] | None = None
@@ -106,7 +106,7 @@ class InfoItem(BaseModel):
 
 
 class InfoSection(BaseModel):
-    """Een blok in het paneel: een lijst, of gerenderde markdown uit de repo."""
+    """One block in the panel: a list, or rendered markdown from the repo."""
 
     heading: str = ""
     items: list[InfoItem] = Field(default_factory=list)
@@ -121,7 +121,7 @@ class Info(BaseModel):
 
 
 class Node(BaseModel):
-    """Een knoop. ``column`` of ``group`` zegt waar hij hoort, nooit allebei."""
+    """One node. ``column`` or ``group`` says where it belongs, never both."""
 
     id: str
     column: str | None = None
@@ -134,21 +134,18 @@ class Node(BaseModel):
     rows: list[Row] = Field(default_factory=list)
     state: State | None = None
     click: Click | None = None
-    #: Knopen die mee oplichten bij focus, zonder dat er een lijn naartoe loopt.
+    #: Nodes that light up along with this one on focus, without an edge running to them.
     related: list[str] = Field(default_factory=list)
     children: list[Node] = Field(default_factory=list)
     info: Info | None = None
 
 
 class Edge(BaseModel):
-    """Een lijn tussen twee knoop- of groep-ids.
+    """An edge between two node or group ids."""
 
-    ``from`` is een gereserveerd woord in Python, vandaar de alias.
-    """
-
-    # Gesplitste aliassen: de JSON heet ``from``, de Python-naam ``from_``. Een enkele
-    # ``alias`` zou de constructor alleen nog ``from=`` laten accepteren, en dat is geen
-    # geldige Python.
+    # Split aliases, because ``from`` is reserved in Python: the JSON field is ``from``, the
+    # Python name ``from_``. A single ``alias`` would leave the constructor accepting only
+    # ``from=``, which does not parse.
     from_: str = Field(serialization_alias="from", validation_alias=AliasChoices("from", "from_"))
     to: str
     color: Color | None = None
@@ -163,5 +160,5 @@ class Graph(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
 
     def as_json(self) -> dict:
-        """De graaf zoals het element hem leest: aliassen, zonder lege velden."""
+        """The graph as the element reads it: aliases, with empty fields left out."""
         return self.model_dump(by_alias=True, exclude_none=True)

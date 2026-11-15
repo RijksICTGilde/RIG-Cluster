@@ -1,4 +1,4 @@
-"""Visualizers owned by the ``aliases`` system service (RC-25)."""
+"""Visualizers owned by the ``aliases`` system service."""
 
 from __future__ import annotations
 
@@ -16,12 +16,11 @@ COMPONENT_ALIASES = EditableVisualizer(
         "Gebruik $VARIABELE_NAAM om platform-variabelen te refereren. "
         "Bijvoorbeeld: POSTGRES_HOST=$DATABASE_SERVER_HOST"
     ),
-    # De hulptekst somt de variabelen op die je hier mag gebruiken. Het hulptekstje
-    # hierboven zei "gebruik $VARIABELE_NAAM" zonder ooit een naam te noemen, en die
-    # staan verspreid over de dienstdefinities; niemand wist dus wat hier in moest.
+    # The help dialog lists the variables usable here, which the help text above does not
+    # name.
     help_template="aliassen.html.j2",
-    # kv_completions zet het aanvullen na een dollarteken aan. De lijst wordt door de
-    # widget-adapter opgehaald uit dezelfde bron als de hulpdialoog en de validatie, dus
-    # de editor kan nooit een naam voorstellen die het formulier afkeurt.
+    # kv_completions turns on completion after a dollar sign. The widget adapter reads that
+    # list from the same source as the help dialog and the validation, so the editor can
+    # never suggest a name the form rejects.
     attributes={"kv_format": "env", "kv_completions": "aliassen"},
 )

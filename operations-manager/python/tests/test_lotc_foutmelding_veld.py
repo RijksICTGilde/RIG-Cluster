@@ -29,7 +29,7 @@ from pathlib import Path
 
 import lotc_forms
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 #: De veldsoorten die hun serverfout zelf bedraden, met de tag van de besturing. De
 #: losse-aankruisvakje-tak staat er als laatste bij: die rendert GEEN ``nldd-form-field``

@@ -1,7 +1,7 @@
 """Which lists inside a service config a PATCH addresses entry by entry.
 
 A service whose config IS a list (storage mounts, attachment couplings) has had a PATCH
-next to its PUT since RC: vraag 18: ``ITEM_KEY`` on the ``RootModel`` names the field
+had a PATCH next to its PUT first: ``ITEM_KEY`` on the ``RootModel`` names the field
 that identifies one entry, and the generated route lets a caller add or remove one
 without resending the rest.
 
@@ -58,7 +58,7 @@ class PatchableList:
         return f"/{self.name}" if self.name else ""
 
 
-def list_item_type(annotation: Any) -> Any:
+def list_item_type(annotation: Any) -> Any:  # noqa: ANN401  # a type annotation object
     """The entry type of a ``list[...]`` annotation, or ``None`` for anything else."""
     if get_origin(annotation) is not list:
         return None

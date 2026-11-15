@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.catalog.approval import ApprovalSpec, config_value_approval
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD, RedisConfig
 from opi.services.catalog.redis.variables import RedisVariables
+from opi.services.secrets import RedisSecret
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.secrets import RedisSecret
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
 
 logger = logging.getLogger(__name__)
 
-#: De goedkeuring op het uitzetten van de sleutelbeperking. De gedeelde Redis is een
-#: gedeelde datastore: meer dan de eigen partitie is geen zelfbediening maar een aanvraag
-#: met een beslisser (BIO2 8.22 en 8.03). Zolang die er niet is houdt de ACL-gebruiker het
-#: eigen prefix, dus de applicatie blijft werken binnen haar eigen sleutels.
+#: The approval on switching off the key restriction. The shared Redis is a shared datastore:
+#: more than one's own partition is not self-service but a request with a decision maker (BIO2
+#: 8.22 and 8.03). Until there is one the ACL user keeps its own prefix, so the application
+#: keeps working within its own keys.
 APPROVAL = config_value_approval(
     ServiceType.REDIS,
     field=ACL_KEY_PREFIX_FIELD,
@@ -28,7 +32,7 @@ APPROVAL = config_value_approval(
     required_when=lambda config: config.get(ACL_KEY_PREFIX_FIELD, True) is False,
 )
 
-#: DE POORT: de opt-out geldt pas als hij is goedgekeurd. ``redis_manager`` hangt hieraan.
+#: THE GUARD: the opt-out only applies once approved. ``redis_manager`` hangs off this.
 is_acl_key_prefix_approved = APPROVAL.is_approved
 
 
@@ -41,16 +45,16 @@ class RedisService(Service):
         icon="zandloper",
         color="rood",
         shared_per_deployment=True,
-        secret_class="RedisSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="RedisSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in RedisVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )
     config_model = RedisConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): binding redis to a component decides nothing that the
-    # project layer would have decided differently -- the one project-level field
-    # (acl-key-prefix) defaults to the narrow, safe value, so the approval on the wide
-    # value does not fire for the config it enrols with.
+    # May enrol itself: binding redis to a component decides nothing that the project layer
+    # would have decided differently -- the one project-level field (acl-key-prefix) defaults
+    # to the narrow, safe value, so the approval on the wide value does not fire for the
+    # config it enrols with.
     allows_implicit_project_selection = True
     cleanup_manager_key = ManagerKey.REDIS
     provision_order = 40
@@ -63,11 +67,10 @@ class RedisService(Service):
     modal_flow_id = "modal-edit-redis-config"
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        # acl-key-prefix is a project-level setting; derive the accepted-field hint from
-        # the model so a validation error names it (checklist 3), matching the siblings.
+        # From the model, so a validation error names acl-key-prefix.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.redis.editables import REDIS_ACL_KEY_PREFIX_EDITABLE
@@ -80,7 +83,7 @@ class RedisService(Service):
     def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
         APPROVAL.ensure_requested(project_data)
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         # Cached: consumers compare section identity (EDIT_SECTIONS[...] is X).
@@ -131,7 +134,7 @@ class RedisService(Service):
             SecretFileSpec(
                 secret_name=RedisSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="redis",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+                secret_type="redis",  # noqa: S106  # the name of the key or the secret class, not a secret
                 resolve_aliases=True,
             )
         ]

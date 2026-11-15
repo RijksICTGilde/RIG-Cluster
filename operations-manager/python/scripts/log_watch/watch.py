@@ -41,8 +41,6 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_ROOT = Path(__file__).resolve().parents[2]  # operations-manager/python (has the opi package)
@@ -60,6 +58,7 @@ from opi.services.log_watcher import (  # noqa: E402  # pyright: ignore[reportMi
     LogWatchConfig,
     run_cycle,
 )
+from opi.utils.yaml_util import load_yaml_safe  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 # --- Config: defaults live in config.py (edit that file). A few are overridable
 #     per-run via CLI flags in main(). The Grafana token is the only secret and
@@ -105,7 +104,7 @@ def load_token() -> str:
     )
     if out.returncode != 0:
         raise SystemExit(f"could not decrypt GRAFANA_TOKEN: {out.stderr[:300]}")
-    data = yaml.safe_load(out.stdout)
+    data = load_yaml_safe(out.stdout)
     val = (data.get("stringData") or {}).get("GRAFANA_TOKEN")
     if not val and (data.get("data") or {}).get("GRAFANA_TOKEN"):
         val = base64.b64decode(data["data"]["GRAFANA_TOKEN"]).decode()

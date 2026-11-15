@@ -134,8 +134,8 @@ class TestUpsertRegistryBySecret:
 
 class TestUpsertRegistryByCredentials:
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
-    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    @patch("opi.manager.project.registry_mutations.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value="age1publickey123")
     async def test_add_new_registry(
         self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
     ) -> None:
@@ -157,8 +157,8 @@ class TestUpsertRegistryByCredentials:
         mock_encrypt.assert_awaited_once_with("mytoken", "age1publickey123")
 
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
-    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    @patch("opi.manager.project.registry_mutations.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value="age1publickey123")
     async def test_update_existing_registry(
         self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
     ) -> None:
@@ -179,8 +179,8 @@ class TestUpsertRegistryByCredentials:
         assert _registries(project_data)[0]["password"] == "encrypted-new"
 
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
-    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    @patch("opi.manager.project.registry_mutations.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value="age1publickey123")
     async def test_zonder_gebruikersnaam_komt_de_sleutel_er_niet_in(
         self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
     ) -> None:
@@ -199,8 +199,8 @@ class TestUpsertRegistryByCredentials:
         assert "username" not in _registries(project_data)[0]
 
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
-    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    @patch("opi.manager.project.registry_mutations.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value="age1publickey123")
     async def test_een_bestaande_gebruikersnaam_verdwijnt_als_hij_wordt_weggelaten(
         self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
     ) -> None:
@@ -219,7 +219,7 @@ class TestUpsertRegistryByCredentials:
         assert "username" not in _registries(project_data)[0]
 
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.get_project_public_key", return_value=None)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value=None)
     async def test_fails_without_public_key(self, mock_pubkey: MagicMock, project_manager: ProjectManager) -> None:
         project_data: dict = {"name": "test-project"}
         project_manager.get_contents = AsyncMock(return_value=project_data)
@@ -233,8 +233,8 @@ class TestUpsertRegistryByCredentials:
         project_manager.save_and_commit_project.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
-    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    @patch("opi.manager.project.registry_mutations.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project.registry_mutations.get_project_public_key", return_value="age1publickey123")
     async def test_commit_message_add(
         self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
     ) -> None:

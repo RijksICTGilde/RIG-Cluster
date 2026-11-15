@@ -17,21 +17,22 @@ class PlatformService(Service):
         help_template="platform/help.md",
         icon="info",
         color="lintblauw",
-        secret_class="PlatformSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="PlatformSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in PlatformVariables],
         # Always on, never chosen by a project -> a system service. kind=SYSTEM
         # also keeps it out of the picker, so an explicit hidden is not needed.
         kind=ServiceKind.SYSTEM,
     )
-    # May enrol itself (RC-84): a system service is not a user choice, so there is no
+    # May enrol itself: a system service is not a user choice, so there is no
     # project-level decision to make first.
     allows_implicit_project_selection = True
 
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
-        """De eigen serviceaccount van het project, zonder pull-secrets.
+        """The project's own service account, without pull secrets.
 
-        Bij het platform en niet bij image-registries, want elk project heeft hem nodig,
-        ook een project zonder eigen registry. Zie ``generate_project_service_account_name``.
+        With the platform and not with image-registries, because every project needs it,
+        including a project without a private registry. See
+        ``generate_project_service_account_name``.
         """
         name = generate_project_service_account_name(ctx.project_name)
         return [

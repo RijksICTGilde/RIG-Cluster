@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from opi.core.config import settings
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.services_enums import ServiceType
 from opi.web.services_router import replacement_marker
 

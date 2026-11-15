@@ -1,4 +1,4 @@
-"""``authorized_project`` (opi/web/authz.py): een handler leest het project uit de
+"""``authorized_project`` (opi/http/auth/authz.py): een handler leest het project uit de
 beslissing die ``enforce_route_action`` al nam, in plaats van ``authorize`` nog eens
 aan te roepen.
 """
@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from opi.web.authz import authorized_project
+from opi.http.auth.authz import authorized_project
 
 
 def test_geeft_het_project_terug_dat_de_poort_al_toeliet() -> None:

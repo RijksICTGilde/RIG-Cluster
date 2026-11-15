@@ -25,7 +25,7 @@ dat de naam letterlijk op het scherm komt staat in
 
 import re
 
-from opi.core.template_helpers import STATIC_DIR, TEMPLATES_DIR
+from opi.http.render.template_helpers import STATIC_DIR, TEMPLATES_DIR
 
 #: Wat in de code niet voor mag komen, met de naam waaronder de melding hem noemt.
 VERBODEN = {

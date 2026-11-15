@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from opi.connectors.transip import TransIPConnector
 from opi.core.dns_config import NO_MAIL_NAMES, no_mail_names
-from opi.core.no_mail_reconciler import reconcile_no_mail_records
+from opi.runtime.periodic.no_mail_reconciler import reconcile_no_mail_records
 
 ZONES = list(NO_MAIL_NAMES)
 NAMES_PER_ZONE = {zone: no_mail_names(zone) for zone in ZONES}
@@ -37,8 +37,8 @@ def _connector(domains: list[str], entries_per_zone: dict[str, list[dict[str, An
 async def _reconcile(connector: AsyncMock) -> None:
     """Draai de reconciler met credentials en een gemockte connector."""
     with (
-        patch("opi.core.no_mail_reconciler.settings") as mock_settings,
-        patch("opi.core.no_mail_reconciler.TransIPConnector", return_value=connector),
+        patch("opi.runtime.periodic.no_mail_reconciler.settings") as mock_settings,
+        patch("opi.runtime.periodic.no_mail_reconciler.TransIPConnector", return_value=connector),
     ):
         mock_settings.TRANSIP_ACCOUNT_NAME = "digigilde"
         mock_settings.TRANSIP_PRIVATE_KEY = "PEM"
@@ -64,8 +64,8 @@ async def test_no_credentials_skips() -> None:
     """Zonder credentials wordt de TransIP-API niet aangeraakt."""
     connector = _connector([], {})
     with (
-        patch("opi.core.no_mail_reconciler.settings") as mock_settings,
-        patch("opi.core.no_mail_reconciler.TransIPConnector", return_value=connector) as factory,
+        patch("opi.runtime.periodic.no_mail_reconciler.settings") as mock_settings,
+        patch("opi.runtime.periodic.no_mail_reconciler.TransIPConnector", return_value=connector) as factory,
     ):
         mock_settings.TRANSIP_ACCOUNT_NAME = None
         mock_settings.TRANSIP_PRIVATE_KEY = "PEM"
@@ -157,7 +157,7 @@ async def test_normalization_off_would_duplicate() -> None:
     }
     connector = _connector(ZONES, entries)
 
-    with patch("opi.core.no_mail_reconciler._normalize_txt", side_effect=lambda content: content):
+    with patch("opi.runtime.periodic.no_mail_reconciler._normalize_txt", side_effect=lambda content: content):
         await _reconcile(connector)
 
     # Zonder de TXT-normalisatie herkent hij zijn eigen SPF en DMARC niet terug.

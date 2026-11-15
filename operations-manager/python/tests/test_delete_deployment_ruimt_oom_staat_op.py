@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_handlers_deployment import handle_delete_deployment
+from opi.manager.project.deployment_removal import DeploymentRemovalResult
+from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 from opi.services import oom_watcher
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ def _progress() -> MagicMock:
 def _pm() -> MagicMock:
     pm = MagicMock()
     pm.delete_deployment = AsyncMock(
-        return_value={"success": True, "errors": [], "operations": [], "already_absent": False}
+        return_value=DeploymentRemovalResult({"success": True, "errors": [], "operations": [], "already_absent": False})
     )
     pm.close = AsyncMock()
     return pm

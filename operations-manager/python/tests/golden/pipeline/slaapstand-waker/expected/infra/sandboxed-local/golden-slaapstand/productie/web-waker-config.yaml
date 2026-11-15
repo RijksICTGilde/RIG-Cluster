@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "productie-web-waker-config"
+  namespace: "rig-golden-slaapstand"
+  labels:
+    app: "productie-web"
+    project: "golden-slaapstand"
+data:
+  ZAD_API_URL: "http://operations-manager.rig-system.svc.cluster.local:8000"
+  ZAD_PROJECT: "golden-slaapstand"
+  ZAD_DEPLOYMENT: "productie"
+  ZAD_APP_TITLE: "productie"
+  ZAD_APP_DESCRIPTION: ""
+  ZAD_WAKE_MODE: "confirm"
+  ZAD_POLL_INTERVAL_SEC: "3"
+  ZAD_PORT: "8080"

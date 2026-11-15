@@ -1,13 +1,13 @@
-"""De uitkomst van een scanner tegen een ingecheckte uitzonderingslijst toetsen.
+"""Weigh a scanner's outcome against a checked-in exception list.
 
-De aanvalsproef draait meerdere scanners: nuclei tegen een zelf opgezet doelwit,
-kube-linter en checkov tegen de manifests. Elke scanner heeft zijn eigen uitvoerformaat,
-maar dezelfde poort: een bevinding die niet in ``aanvalsproef/uitzonderingen.yaml`` staat
-laat de run falen. Een uitzondering heeft een reden en een vervaldatum, net als in
-``.trivyignore.yaml``, en een verlopen uitzondering zwijgt niet meer, dus de bevinding
-komt vanzelf terug.
+The attack proof runs several scanners: nuclei against a self-provisioned target,
+kube-linter and checkov against the manifests. Every scanner has its own output format
+but the same gate: a finding that is not in ``aanvalsproef/uitzonderingen.yaml`` makes
+the run fail. An exception carries a statement and an expiry date, as in
+``.trivyignore.yaml``, and an expired exception no longer silences anything, so the
+finding comes back by itself.
 
-Gebruik::
+Usage::
 
     uv run python -m opi.tools.aanvalsproef grendel http://127.0.0.1:8111
     uv run python -m opi.tools.aanvalsproef nuclei nuclei.jsonl --drempel medium
@@ -27,204 +27,207 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import yaml
+from opi.utils.yaml_util import load_yaml_safe
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-#: Repo-root: vier mappen boven dit bestand (opi/tools -> opi -> python -> operations-manager).
+#: Repo root: four directories above this file (opi/tools -> opi -> python -> operations-manager).
 REPO_ROOT = Path(__file__).resolve().parents[4]
-UITZONDERINGEN = REPO_ROOT / "aanvalsproef" / "uitzonderingen.yaml"
+EXCEPTIONS_FILE = REPO_ROOT / "aanvalsproef" / "uitzonderingen.yaml"
 
-#: De ernstniveaus van nuclei, van laag naar hoog. De drempel kiest er een uit.
-ERNST_OPLOPEND = ("info", "low", "medium", "high", "critical")
+#: The severity levels of nuclei, from low to high. The threshold picks one of them.
+SEVERITY_ASCENDING = ("info", "low", "medium", "high", "critical")
 
-#: Namen die als loopback gelden. Alles daarbuiten is geen zelf opgezet doelwit.
-LOOPBACK_NAMEN = ("localhost", "127.0.0.1", "::1")
+#: Names that count as loopback. Anything else is not a self-provisioned target.
+LOOPBACK_NAMES = ("localhost", "127.0.0.1", "::1")
 
 
-class Grendelfout(Exception):
-    """Het doelwit is geen zelf opgezette instantie."""
+class GuardError(Exception):
+    """The target is not a self-provisioned instance."""
 
 
 @dataclass(frozen=True)
-class Bevinding:
-    """Een bevinding van een scanner, los van het formaat waarin hij stond."""
+class Finding:
+    """A finding from a scanner, detached from the format it was reported in."""
 
     id: str
-    plek: str
-    ernst: str
+    location: str
+    severity: str
 
 
-def grendel(doelwit: str) -> None:
-    """Weiger elk doelwit dat niet op de loopback van deze runner staat.
+def guard_target(doelwit: str) -> None:
+    """Refuse every target that is not on this runner's loopback.
 
-    De aanvalsproef vuurt echt aanvalsverkeer af. Alleen een instantie die de run zelf
-    heeft opgezet mag dat ontvangen, nooit productie en nooit de gedeelde sandbox.
+    The attack proof fires real attack traffic. Only an instance the run provisioned itself
+    may receive that, never production and never the shared sandbox.
     """
-    ontleed = urlparse(doelwit)
-    if ontleed.scheme not in ("http", "https"):
-        raise Grendelfout(f"doelwit {doelwit!r} heeft geen http(s)-schema")
-    host = ontleed.hostname
+    parsed = urlparse(doelwit)
+    if parsed.scheme not in ("http", "https"):
+        raise GuardError(f"doelwit {doelwit!r} heeft geen http(s)-schema")
+    host = parsed.hostname
     if not host:
-        raise Grendelfout(f"doelwit {doelwit!r} noemt geen host")
-    if host in LOOPBACK_NAMEN:
+        raise GuardError(f"doelwit {doelwit!r} noemt geen host")
+    if host in LOOPBACK_NAMES:
         return
     try:
-        adres = ip_address(host)
-    except ValueError as fout:
-        raise Grendelfout(f"doelwit {host!r} is geen loopback-adres en geen loopback-naam") from fout
-    if not adres.is_loopback:
-        raise Grendelfout(f"doelwit {host!r} is geen loopback-adres")
+        address = ip_address(host)
+    except ValueError as error:
+        raise GuardError(f"doelwit {host!r} is geen loopback-adres en geen loopback-naam") from error
+    if not address.is_loopback:
+        raise GuardError(f"doelwit {host!r} is geen loopback-adres")
 
 
-def geldige_uitzonderingen(soort: str, vandaag: date, pad: Path = UITZONDERINGEN) -> set[str]:
-    """De id's die voor deze scanner zwijgen, zonder de verlopen en de onvolledige regels."""
-    inhoud = yaml.safe_load(pad.read_text(encoding="utf-8")) or {}
-    geldig = set()
-    for regel in inhoud.get(soort) or []:
-        vervalt = regel.get("expired_at")
-        if not isinstance(vervalt, date) or not str(regel.get("statement") or "").strip():
+def valid_exceptions(scanner: str, today: date, path: Path = EXCEPTIONS_FILE) -> set[str]:
+    """The ids that stay silent for this scanner, without the expired and incomplete entries.
+
+    The scanner name is also the section in the list, so it keeps the name the CLI takes.
+    """
+    content = load_yaml_safe(path.read_text(encoding="utf-8")) or {}
+    valid = set()
+    for entry in content.get(scanner) or []:
+        expires_at = entry.get("expired_at")
+        if not isinstance(expires_at, date) or not str(entry.get("statement") or "").strip():
             continue
-        if vervalt >= vandaag:
-            geldig.add(str(regel["id"]))
-    return geldig
+        if expires_at >= today:
+            valid.add(str(entry["id"]))
+    return valid
 
 
-def lees_nuclei(rapport: Path) -> list[Bevinding]:
-    """De bevindingen uit de JSONL-uitvoer van nuclei (``-jsonl-export``)."""
-    bevindingen = []
-    for regel in rapport.read_text(encoding="utf-8").splitlines():
-        if not regel.strip():
+def read_nuclei(report: Path) -> list[Finding]:
+    """The findings from nuclei's JSONL output (``-jsonl-export``)."""
+    findings = []
+    for entry in report.read_text(encoding="utf-8").splitlines():
+        if not entry.strip():
             continue
-        treffer = json.loads(regel)
-        bevindingen.append(
-            Bevinding(
-                id=str(treffer.get("template-id", "<zonder template-id>")),
-                plek=str(treffer.get("matched-at") or treffer.get("host") or ""),
-                ernst=str((treffer.get("info") or {}).get("severity", "unknown")).lower(),
+        hit = json.loads(entry)
+        findings.append(
+            Finding(
+                id=str(hit.get("template-id", "<zonder template-id>")),
+                location=str(hit.get("matched-at") or hit.get("host") or ""),
+                severity=str((hit.get("info") or {}).get("severity", "unknown")).lower(),
             )
         )
-    return bevindingen
+    return findings
 
 
-def lees_kube_linter(rapport: Path) -> list[Bevinding]:
-    """De bevindingen uit ``kube-linter lint --format json``.
+def read_kube_linter(report: Path) -> list[Finding]:
+    """The findings from ``kube-linter lint --format json``.
 
-    kube-linter geeft geen ernst mee: de selectie in ``aanvalsproef/kube-linter.yaml`` is
-    de drempel, dus elke bevinding telt even zwaar.
+    kube-linter reports no severity: the selection in ``aanvalsproef/kube-linter.yaml`` is
+    the threshold, so every finding weighs the same.
     """
-    inhoud = json.loads(rapport.read_text(encoding="utf-8")) or {}
-    bevindingen = []
-    for melding in inhoud.get("Reports") or []:
-        voorwerp = melding.get("Object") or {}
-        k8s = voorwerp.get("K8sObject") or {}
-        soort = (k8s.get("GroupVersionKind") or {}).get("Kind", "?")
-        bestand = (voorwerp.get("Metadata") or {}).get("FilePath", "?")
-        bevindingen.append(
-            Bevinding(
-                id=str(melding.get("Check", "<zonder check>")),
-                plek=f"{soort}/{k8s.get('Name', '?')} in {bestand}",
-                ernst="high",
+    content = json.loads(report.read_text(encoding="utf-8")) or {}
+    findings = []
+    for report_entry in content.get("Reports") or []:
+        scanned = report_entry.get("Object") or {}
+        k8s = scanned.get("K8sObject") or {}
+        kind = (k8s.get("GroupVersionKind") or {}).get("Kind", "?")
+        file_path = (scanned.get("Metadata") or {}).get("FilePath", "?")
+        findings.append(
+            Finding(
+                id=str(report_entry.get("Check", "<zonder check>")),
+                location=f"{kind}/{k8s.get('Name', '?')} in {file_path}",
+                severity="high",
             )
         )
-    return bevindingen
+    return findings
 
 
-def lees_checkov(rapport: Path) -> list[Bevinding]:
-    """De gefaalde checks uit ``checkov -o json``.
+def read_checkov(report: Path) -> list[Finding]:
+    """The failed checks from ``checkov -o json``.
 
-    Checkov schrijft een lijst zodra er meerdere frameworks draaien, en anders een object.
+    Checkov writes a list as soon as several frameworks run, and an object otherwise.
     """
-    inhoud = json.loads(rapport.read_text(encoding="utf-8"))
-    rapporten = inhoud if isinstance(inhoud, list) else [inhoud]
+    content = json.loads(report.read_text(encoding="utf-8"))
+    reports = content if isinstance(content, list) else [content]
     return [
-        Bevinding(
+        Finding(
             id=str(check.get("check_id", "<zonder check_id>")),
-            plek=f"{check.get('resource', '?')} in {check.get('file_path', '?')}",
-            ernst=str(check.get("severity") or "high").lower(),
+            location=f"{check.get('resource', '?')} in {check.get('file_path', '?')}",
+            severity=str(check.get("severity") or "high").lower(),
         )
-        for deel in rapporten
-        for check in ((deel.get("results") or {}).get("failed_checks") or [])
+        for part in reports
+        for check in ((part.get("results") or {}).get("failed_checks") or [])
     ]
 
 
-def lees_semgrep(rapport: Path) -> list[Bevinding]:
-    """De bevindingen uit ``semgrep scan --json``.
+def read_semgrep(report: Path) -> list[Finding]:
+    """The findings from ``semgrep scan --json``.
 
-    De ernst van semgrep (INFO, WARNING, ERROR) wordt op de schaal van de drempel gelegd.
+    Semgrep's severity (INFO, WARNING, ERROR) is mapped onto the scale of the threshold.
     """
-    ernst_per_niveau = {"INFO": "low", "WARNING": "medium", "ERROR": "high"}
-    inhoud = json.loads(rapport.read_text(encoding="utf-8")) or {}
+    severity_per_level = {"INFO": "low", "WARNING": "medium", "ERROR": "high"}
+    content = json.loads(report.read_text(encoding="utf-8")) or {}
     return [
-        Bevinding(
-            id=str(treffer.get("check_id", "<zonder check_id>")),
-            plek=f"{treffer.get('path', '?')}:{(treffer.get('start') or {}).get('line', '?')}",
-            ernst=ernst_per_niveau.get(str((treffer.get("extra") or {}).get("severity", "")), "high"),
+        Finding(
+            id=str(hit.get("check_id", "<zonder check_id>")),
+            location=f"{hit.get('path', '?')}:{(hit.get('start') or {}).get('line', '?')}",
+            severity=severity_per_level.get(str((hit.get("extra") or {}).get("severity", "")), "high"),
         )
-        for treffer in inhoud.get("results") or []
+        for hit in content.get("results") or []
     ]
 
 
-#: De lezers per scanner. De sleutel is ook de sectie in de uitzonderingslijst.
-LEZERS: dict[str, Callable[[Path], list[Bevinding]]] = {
-    "nuclei": lees_nuclei,
-    "kube-linter": lees_kube_linter,
-    "checkov": lees_checkov,
-    "semgrep": lees_semgrep,
+#: The readers per scanner. The key is also the section in the exception list.
+READERS: dict[str, Callable[[Path], list[Finding]]] = {
+    "nuclei": read_nuclei,
+    "kube-linter": read_kube_linter,
+    "checkov": read_checkov,
+    "semgrep": read_semgrep,
 }
 
 
-def boven_drempel(bevindingen: Iterable[Bevinding], drempel: str) -> list[Bevinding]:
-    """De bevindingen met een ernst vanaf de drempel. Een onbekende ernst telt altijd mee."""
-    grens = ERNST_OPLOPEND.index(drempel)
+def above_threshold(findings: Iterable[Finding], threshold: str) -> list[Finding]:
+    """The findings from the threshold severity upwards. An unknown severity always counts."""
+    floor = SEVERITY_ASCENDING.index(threshold)
     return [
-        bevinding
-        for bevinding in bevindingen
-        if bevinding.ernst not in ERNST_OPLOPEND or ERNST_OPLOPEND.index(bevinding.ernst) >= grens
+        finding
+        for finding in findings
+        if finding.severity not in SEVERITY_ASCENDING or SEVERITY_ASCENDING.index(finding.severity) >= floor
     ]
 
 
-def gate(bevindingen: Iterable[Bevinding], uitgezonderd: set[str], drempel: str) -> list[Bevinding]:
-    """Wat er na drempel en uitzonderingen overblijft, en dus de run rood maakt."""
-    return [bevinding for bevinding in boven_drempel(bevindingen, drempel) if bevinding.id not in uitgezonderd]
+def gate(findings: Iterable[Finding], silenced: set[str], threshold: str) -> list[Finding]:
+    """What is left after threshold and exceptions, and so makes the run red."""
+    return [finding for finding in above_threshold(findings, threshold) if finding.id not in silenced]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Toets de uitkomst van een aanvalsproef-scanner.")
-    parser.add_argument("soort", choices=["grendel", *LEZERS], help="de scanner, of grendel voor de doelwitcontrole")
+    parser.add_argument("soort", choices=["grendel", *READERS], help="de scanner, of grendel voor de doelwitcontrole")
     parser.add_argument("doelwit", help="het rapportbestand, of de URL bij grendel")
     parser.add_argument(
-        "--drempel", choices=ERNST_OPLOPEND, default="medium", help="vanaf welke ernst een bevinding meetelt"
+        "--drempel", choices=SEVERITY_ASCENDING, default="medium", help="vanaf welke ernst een bevinding meetelt"
     )
-    parser.add_argument("--uitzonderingen", type=Path, default=UITZONDERINGEN, help="pad naar de uitzonderingslijst")
+    parser.add_argument("--uitzonderingen", type=Path, default=EXCEPTIONS_FILE, help="pad naar de uitzonderingslijst")
     args = parser.parse_args(argv)
 
     if args.soort == "grendel":
         try:
-            grendel(args.doelwit)
-        except Grendelfout as fout:
-            sys.stderr.write(f"grendel: {fout}\n")
+            guard_target(args.doelwit)
+        except GuardError as error:
+            sys.stderr.write(f"grendel: {error}\n")
             return 1
         sys.stdout.write(f"grendel: {args.doelwit} is een zelf opgezet doelwit\n")
         return 0
 
-    rapport = Path(args.doelwit)
-    if not rapport.exists():
-        sys.stderr.write(f"rapport {rapport} bestaat niet, de scanner heeft niets geschreven\n")
+    report = Path(args.doelwit)
+    if not report.exists():
+        sys.stderr.write(f"rapport {report} bestaat niet, de scanner heeft niets geschreven\n")
         return 1
 
-    bevindingen = LEZERS[args.soort](rapport)
-    uitgezonderd = geldige_uitzonderingen(args.soort, datetime.now(tz=UTC).date(), args.uitzonderingen)
-    nieuw = gate(bevindingen, uitgezonderd, args.drempel)
+    findings = READERS[args.soort](report)
+    silenced = valid_exceptions(args.soort, datetime.now(tz=UTC).date(), args.uitzonderingen)
+    blocking = gate(findings, silenced, args.drempel)
 
     sys.stdout.write(
-        f"{args.soort}: {len(bevindingen)} bevindingen, drempel {args.drempel},"
-        f" {len(uitgezonderd)} geldige uitzonderingen, {len(nieuw)} blokkerend\n"
+        f"{args.soort}: {len(findings)} bevindingen, drempel {args.drempel},"
+        f" {len(silenced)} geldige uitzonderingen, {len(blocking)} blokkerend\n"
     )
-    for bevinding in nieuw:
-        sys.stderr.write(f"  {bevinding.ernst:>8}  {bevinding.id}  {bevinding.plek}\n")
-    if nieuw:
+    for finding in blocking:
+        sys.stderr.write(f"  {finding.severity:>8}  {finding.id}  {finding.location}\n")
+    if blocking:
         sys.stderr.write(
             "Nieuwe bevindingen boven de drempel. Dicht ze, of zet ze met een reden en een"
             f" vervaldatum in {args.uitzonderingen}.\n"

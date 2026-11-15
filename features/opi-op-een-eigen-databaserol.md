@@ -63,7 +63,7 @@ verbinding van Alembic, met marge, is 25. Een pool verhogen betekent die limiet 
 het commentaar bij de rol in `cluster.yaml` rekent de som voor.
 
 **Het eigendom van bestaande objecten** verhuist met
-`python -m opi.core.app_database_owner`, die de entrypoint draait vóór
+`python -m opi.runtime.startup.app_database_owner`, die de entrypoint draait vóór
 `alembic upgrade head`. Die stap gebruikt de admin-credentials, en verzet de database en
 elke tabel, sequence, view, materialized view, type en functie in `public` die nog van
 `DATABASE_ADMIN_NAME` is, inclusief `alembic_version`. Hij is idempotent: wat al goed staat
@@ -86,7 +86,7 @@ ontwikkelomgeving (`local`, `sandboxed-local`) is het een WARNING, zodat
 | `DATABASE_APP_USER` | `operations_manager` | De rol waarmee OPI zijn eigen database opent |
 | `DATABASE_APP_PASSWORD` | geen | Het wachtwoord van die rol; leeg is een fout, geen terugval |
 
-`DATABASE_APP_PASSWORD` staat in de denylist van `opi/utils/subprocess_env.py`, dus een
+`DATABASE_APP_PASSWORD` staat in de denylist van `opi/core/subprocess_env.py`, dus een
 subproces dat OPI start erft hem niet.
 
 ## Uitrolvolgorde

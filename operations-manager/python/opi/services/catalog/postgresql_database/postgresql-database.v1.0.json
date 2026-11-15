@@ -1,7 +1,7 @@
 {
   "$defs": {
     "DatabasePrivilege": {
-      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.",
       "enum": [
         "SUPERUSER",
         "NOSUPERUSER",
@@ -167,7 +167,7 @@
     },
     "RequestsQuantities": {
       "additionalProperties": false,
-      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
+      "description": "CPU/memory *requests*. Per-field defaults, so a config overriding only\n``requests.memory`` keeps the default ``cpu``.",
       "properties": {
         "cpu": {
           "default": "100m",
@@ -187,7 +187,7 @@
     },
     "SchemaEntry": {
       "additionalProperties": false,
-      "description": "One extra schema, project-wide (RC-17 decision 10.5).\n\n``postfix`` is the user-chosen short name; the full schema becomes\n``{project}_{deployment}_{postfix}`` per deployment and an env variable\n``DATABASE_SCHEMA_{POSTFIX}`` is exposed. The pattern keeps the postfix a valid\nidentifier fragment; uniqueness within the list, the 63-char full-name limit and\nvariable-name collisions are enforced at save time (they need the project and\ndeployment names, which this model does not have).",
+      "description": "One extra schema, project-wide.\n\n``postfix`` is the user-chosen short name; the full schema becomes\n``{project}_{deployment}_{postfix}`` per deployment and an env variable\n``DATABASE_SCHEMA_{POSTFIX}`` is exposed. The pattern keeps the postfix a valid\nidentifier fragment; uniqueness within the list, the 63-char full-name limit and\nvariable-name collisions are enforced at save time (they need the project and\ndeployment names, which this model does not have).",
       "properties": {
         "description": {
           "default": "",
@@ -252,7 +252,7 @@
       "type": "object"
     }
   },
-  "description": "Project-layer config: a ``scope``-discriminated union of the two shapes above.\n\n``scope`` defaults to ``shared`` when absent, so an existing project that sets no\nscope validates as a shared database and its behaviour is unchanged.",
+  "description": "Project-layer config: a ``scope``-discriminated union of the two shapes above.\n\n``scope`` defaults to ``shared`` when absent, so a project that sets no scope validates\nas a shared database.",
   "discriminator": {
     "mapping": {
       "project": "#/$defs/ProjectScopeConfig",

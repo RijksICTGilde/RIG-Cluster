@@ -191,7 +191,7 @@ async def sweep(
 
     actual_databases: set[str] = set()
 
-    # --- PostgreSQL databases ---
+    # PostgreSQL databases
     try:
         postgres = create_postgres_connector(
             host=settings.DATABASE_HOST,
@@ -218,7 +218,7 @@ async def sweep(
         logger.exception("Orphan sweep: database inventory failed")
         report["errors"].append(f"database inventory failed: {e}")
 
-    # --- Keycloak realms and clients ---
+    # Keycloak realms and clients
     try:
         url = keycloak_url or settings.KEYCLOAK_URL
         keycloak = await create_keycloak_connector(
@@ -306,7 +306,7 @@ async def sweep(
         logger.exception("Orphan sweep: Keycloak inventory failed")
         report["errors"].append(f"keycloak inventory failed: {e}")
 
-    # --- MinIO buckets ---
+    # MinIO buckets
     try:
         from opi.core.cluster_config import get_minio_host, get_minio_port
 
@@ -341,12 +341,10 @@ async def sweep(
         logger.exception("Orphan sweep: MinIO inventory failed")
         report["errors"].append(f"minio inventory failed: {e}")
 
-    # --- Mail accounts on the relay ---
-    #
-    # Deze categorie ontbrak, en sinds RC-401 is zij ook de enige plek waar een mailaccount
-    # nog opduikt: het projectbestand draagt geen accountgegevens meer, dus wat de relay
-    # houdt is alleen tegen de VERWACHTE namen te leggen. Een mislukte inventarisatie wordt
-    # als fout gemeld en niet als lege lijst: leeg zou elk account een wees laten lijken.
+    # Mail accounts on the relay. The project file carries no account data, so what the
+    # relay holds can only be weighed against the EXPECTED names. A failed inventory is
+    # reported as an error and not as an empty list: empty would make every account look
+    # like an orphan.
     try:
         mail = await create_mail_connector()
         for account in await mail.list_principals():
@@ -358,18 +356,10 @@ async def sweep(
         logger.exception("Orphan sweep: mail inventory failed")
         report["errors"].append(f"mail inventory failed: {e}")
 
-    # --- ArgoCD GitOps folders ---
-    #
-    # Deze categorie ontbrak, en dat is duur geweest. Vijf verwijderde projecten lieten hun
-    # map in zad-argo-user-applications staan; de root-application maakte hun Application
-    # daardoor telkens opnieuw aan, die faalde op "app path does not exist", en met
-    # retry limit -1 gebeurde dat elke 30 seconden opnieuw - eindeloos, ook zonder dat er
-    # iemand iets deed. Ze waren met kubectl niet weg te krijgen (de app-of-apps zette ze
-    # meteen terug) en er was niets dat ze meldde: het opruimrapport keek naar databases,
-    # realms, clients en buckets, maar niet naar de GitOps-repo zelf.
-    #
-    # Een map hier is een wees zodra er geen project met die naam meer bestaat. Dat is een
-    # goedkope en eenduidige controle, want beide kanten komen uit dezelfde bron.
+    # ArgoCD GitOps folders. A folder here is an orphan as soon as no project of that name
+    # exists: both sides come from the same source. A left-behind folder cannot be removed
+    # with kubectl, because the app-of-apps puts its Application straight back and that one
+    # fails on "app path does not exist" every 30 seconds.
     try:
         config = argo_repo_config()
         repo = get_git_repo(config["url"], config["branch"])
@@ -377,20 +367,19 @@ async def sweep(
         # This sweep decides on removals, so it must not read a stale state.
         tip = await repo.sync(credentials)
 
-        bekende_projecten = {p.get("name") for p in project_yamls if p.get("name")}
+        known_projects = {p.get("name") for p in project_yamls if p.get("name")}
         # Named by the same helper that writes them, so the two cannot drift apart.
-        infrastructuurmappen = {
-            generate_infrastructure_argocd_folder_path(cluster, str(naam)).rsplit("/", 1)[-1]
-            for naam in bekende_projecten
+        infrastructure_folders = {
+            generate_infrastructure_argocd_folder_path(cluster, str(name)).rsplit("/", 1)[-1] for name in known_projects
         }
-        # Een projectmap bestaat alleen als er iets in staat: {cluster}/{project}/<bestand>.
-        mappen = {delen[1] for pad in await repo.list_tree(cluster, tip) if len(delen := pad.split("/")) > 2}
-        for map_naam in sorted(mappen):
-            if map_naam in bekende_projecten:
+        # A project folder only exists when something is in it: {cluster}/{project}/<file>.
+        folders = {parts[1] for path in await repo.list_tree(cluster, tip) if len(parts := path.split("/")) > 2}
+        for folder_name in sorted(folders):
+            if folder_name in known_projects:
                 classification, reason = "expected", "belongs to an existing project"
-            elif map_naam in infrastructuurmappen:
+            elif folder_name in infrastructure_folders:
                 classification, reason = "expected", "the infrastructure of an existing project"
-            elif map_naam == BOOTSTRAP_FOLDER:
+            elif folder_name == BOOTSTRAP_FOLDER:
                 classification, reason = (
                     "expected",
                     "placed by the bootstrap, keeps user-applications from rendering empty",
@@ -403,8 +392,8 @@ async def sweep(
                 )
             report["gitops_folders"].append(
                 {
-                    "path": f"{cluster}/{map_naam}",
-                    "project": map_naam,
+                    "path": f"{cluster}/{folder_name}",
+                    "project": folder_name,
                     "classification": classification,
                     "reason": reason,
                 }
@@ -413,7 +402,7 @@ async def sweep(
         logger.exception("Orphan sweep: GitOps folder inventory failed")
         report["errors"].append(f"gitops folder inventory failed: {e}")
 
-    # --- Stale / wrong marks ---
+    # Stale or wrong marks
     try:
         service = MarkedForDeletionService()
         for mark in await service.get_all_marks():

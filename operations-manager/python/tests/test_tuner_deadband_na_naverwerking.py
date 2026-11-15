@@ -42,7 +42,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.resource_tuning_service import _analyze_component_resources
 
 _CLUSTER = "odcn-production"
@@ -93,13 +93,13 @@ def _project() -> dict[str, Any]:
 def _connector(gemeten_mi: float) -> Any:
     """Een Prometheus-connector die één meting teruggeeft en geen OOM-kills kent."""
 
-    async def custom_query(query: str) -> list[dict[str, Any]]:
+    async def answer(query: str) -> list[dict[str, Any]]:
         if "kube_pod_container_status_last_terminated_reason" in query:
             return []
         bytes_waarde = gemeten_mi * 1024 * 1024
         return [{"value": [0, str(bytes_waarde)]}]
 
-    return AsyncMock(custom_query=AsyncMock(side_effect=custom_query))
+    return AsyncMock(query=AsyncMock(side_effect=answer))
 
 
 async def _analyse(gemeten_mi: float) -> Any:

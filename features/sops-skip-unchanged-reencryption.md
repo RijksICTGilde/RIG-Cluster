@@ -47,7 +47,8 @@ worst it re-encrypts unnecessarily, exactly as before.
 A deployment writes its secrets, prunes the files this run did not generate, and
 encrypts last. The `.sops.yaml` of a secret written this run as `.to-sops.yaml`
 is its previous ciphertext, so the prune keeps it (`_is_generated` in
-`project_manager.py`, used by the component, service and project prune alike).
+`opi/manager/project/manifests/pruning.py`, used by the component, service and project
+prune alike).
 Removing it would leave the skip nothing to compare against. A secret that is no
 longer generated loses both forms.
 
@@ -72,8 +73,8 @@ private key is available:
 
 - **Project secrets** (deployment secrets, helm values, helmfile values,
   infrastructure secrets) use the project's own AGE key, resolved via
-  `ProjectManager._sops_private_key_for()`, which returns `None` for legacy
-  projects without an `age-private-key` (those fall back to always
+  `project_private_key_or_none()` (`opi/utils/age.py`), which returns `None` for
+  legacy projects without an `age-private-key` (those fall back to always
   re-encrypting).
 - **ArgoCD repository secrets** use the cluster's `SOPS_AGE_PRIVATE_KEY` from
   settings.
@@ -89,7 +90,7 @@ encrypt_to_sops_files_or_fail(
     target_path,
     public_key,
     f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-    private_key=await self._sops_private_key_for(project_data),
+    private_key=project_private_key_or_none(project_data),
 )
 
 # Always re-encrypt (no key) — original behaviour:

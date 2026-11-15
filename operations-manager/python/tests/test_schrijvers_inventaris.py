@@ -59,13 +59,10 @@ INVENTARIS: dict[str, Schrijver] = {
         "disabled/disabled-reason op de deploymentcomponent bij het opschonen van kapotte componenten",
         "test_het_uitzetten_van_een_deploymentcomponent_blijft_geldig",
     ),
-    "opi/core/backup_tasks.py": Schrijver(
-        "generatienummers per dienst op de deployment, en een hele nieuwe deployment bij een kloon",
+    "opi/manager/backup/restore_run.py": Schrijver(
+        "generatienummers per dienst na een restore, en een hele nieuwe deployment bij een restore naar een nieuwe",
         "test_generatienummers_van_de_backuptaken_blijven_geldig",
-    ),
-    "opi/api/restore_router.py": Schrijver(
-        "generatienummers en de kloonstatus na een restore",
-        "test_de_kloonstatus_blijft_geldig",
+        "Deels: de nieuwe deployment gaat met enforce_validation=True door de save.",
     ),
     "opi/services/catalog/sleep_mode/flow.py": Schrijver(
         "deployments[].sleep: stand, deadline en het versleutelde wektoken",
@@ -82,6 +79,42 @@ INVENTARIS: dict[str, Schrijver] = {
         "Deels: registries en bijlagen worden gedraaid; de andere methoden hebben elk hun eigen test "
         "in tests/test_component_*.py en tests/test_*_api.py, die het resultaat nog niet langs de poorten leggen.",
     ),
+    "opi/manager/project/attachment_mutations.py": Schrijver(
+        "de bijlagecatalogus onder de dienst attachments, en het gebruik ervan op de component",
+        "test_een_bijlage_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443.",
+    ),
+    "opi/manager/project/deployment_mutations.py": Schrijver(
+        "een hele deployment bij een aanmaak, en de images, domeininstellingen en OTAP-markering bij een update",
+        None,
+        "Uit project_manager.py gehaald in RC-443. De upsert-toetsen draaien de methode, maar "
+        "leggen het resultaat nog niet langs de poorten van een save.",
+    ),
+    "opi/manager/project/component_mutations.py": Schrijver(
+        "componentdefinities op de projectwortel, en hun verwijzingen in de deployments",
+        None,
+        "Uit project_manager.py gehaald in RC-443. tests/test_component_*.py en "
+        "tests/test_update_component.py draaien de methodes, maar leggen het resultaat nog niet "
+        "langs de poorten van een save.",
+    ),
+    "opi/manager/project/database_schema_mutations.py": Schrijver(
+        "schemas in de config van de dienst namespace-postgresql-database, inclusief de markering",
+        None,
+        "Uit project_manager.py gehaald in RC-443. tests/test_database_schemas_api.py draait de "
+        "methode, maar legt het resultaat nog niet langs de poorten van een save.",
+    ),
+    "opi/manager/project/registry_mutations.py": Schrijver(
+        "de registries in de config van de dienst image-registries",
+        "test_een_registry_op_een_bestaand_secret_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443; de schrijfweg is dezelfde save_and_commit_project, nu via de host.",
+    ),
+    "opi/manager/project/service_config_mutations.py": Schrijver(
+        "de config van elke dienst op alle vier de lagen, en de waarden die een dienst op een component bezit",
+        "test_een_registry_met_inloggegevens_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443. Deels: de registry-toets draait langs "
+        "configure_service; de andere methoden hebben elk hun eigen test die het resultaat nog "
+        "niet langs de poorten legt.",
+    ),
     "opi/manager/keycloak_manager.py": Schrijver(
         "services/keycloak/config/realms: host, realm, gebruikersnaam, versleuteld wachtwoord en totp_secret",
         None,
@@ -94,34 +127,18 @@ INVENTARIS: dict[str, Schrijver] = {
         None,
         "Zelfde blok als de keycloak-manager, en dezelfde reden.",
     ),
-    "opi/web/router_wizard.py": Schrijver(
-        "het hele bestand zoals het formulier het oplevert",
-        "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
+    "opi/manager/project/update.py": Schrijver(
+        "het hele bestand zoals de merge van de ingang het oplevert: de wizard, de drie wegen van een "
+        "bewerkmodal en het goedkeuringsbesluit (RC-483)",
+        "test_a_project_change_writes_a_valid_file",
     ),
-    "opi/web/router_detail_edit.py": Schrijver(
-        "het deel van het bestand dat de bewerkte stroom beslaat",
-        None,
-        "De formulierstromen valideren hun eigen resultaat via tests/forms/; de schrijfweg zelf is enforce=True, "
-        "dus een schemafout hier blokkeert de bewerking in plaats van stil te landen.",
-    ),
-    "opi/web/router_approvals.py": Schrijver(
-        "de goedkeuringsstaat van domeinen en subdomeinen onder publish-on-web",
-        None,
-        "De goedkeuringsblokken hebben hun eigen modeltests in tests/test_domain_approval*.py; de schrijfweg is "
-        "enforce=True.",
-    ),
-    "opi/core/task_handlers_project.py": Schrijver(
+    "opi/runtime/tasks/task_handlers_project.py": Schrijver(
         "het projectbestand zoals de aanmaaktaak het opbouwt",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),
     "opi/api/router.py": Schrijver(
         "het projectbestand zoals een zelfbedieningsaanvraag het aanlevert",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
-    ),
-    "opi/web/router_env_vars.py": Schrijver(
-        "user-env-vars op een component of deployment-override: het AGE-versleutelde blok "
-        "van de gebruiker, achter een verse step-up (RC-388)",
-        "test_het_env_vars_venster_schrijft_geldig",
     ),
     "opi/services/api_token_service.py": Schrijver(
         "leden onder users: een service account toevoegen of verwijderen, een rol wijzigen, "
@@ -163,7 +180,7 @@ HANDLER_MUTATOREN: dict[str, str] = {
 
 def _handler_mutatoren() -> set[str]:
     """Elke functie in ``project_file_handler`` die project_data aanpast."""
-    pad = OPI_DIR / "handlers" / "project_file_handler.py"
+    pad = OPI_DIR / "services" / "project_file_handler.py"
     boom = ast.parse(pad.read_text(encoding="utf-8"))
     return {
         knoop.name

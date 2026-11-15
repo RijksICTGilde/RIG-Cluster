@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.connectors.transip import TransIPConnector
-from opi.core.caa_reconciler import reconcile_caa_records
 from opi.core.dns_config import MANAGED_DNS_ZONES
+from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
 
 
 def _entry(content: str, name: str = "@", record_type: str = "CAA") -> dict[str, Any]:
@@ -34,8 +34,8 @@ async def test_no_credentials_skips() -> None:
     """Zonder credentials wordt de TransIP-API niet aangeraakt."""
     connector = _connector([], {})
     with (
-        patch("opi.core.caa_reconciler.settings") as mock_settings,
-        patch("opi.core.caa_reconciler.TransIPConnector", return_value=connector) as factory,
+        patch("opi.runtime.periodic.caa_reconciler.settings") as mock_settings,
+        patch("opi.runtime.periodic.caa_reconciler.TransIPConnector", return_value=connector) as factory,
     ):
         mock_settings.TRANSIP_ACCOUNT_NAME = None
         mock_settings.TRANSIP_PRIVATE_KEY = "PEM"
@@ -142,8 +142,8 @@ async def test_unexpected_caa_is_warned_not_deleted(caplog: pytest.LogCaptureFix
 async def _reconcile(connector: AsyncMock) -> None:
     """Draai de reconciler met credentials en een gemockte connector."""
     with (
-        patch("opi.core.caa_reconciler.settings") as mock_settings,
-        patch("opi.core.caa_reconciler.TransIPConnector", return_value=connector),
+        patch("opi.runtime.periodic.caa_reconciler.settings") as mock_settings,
+        patch("opi.runtime.periodic.caa_reconciler.TransIPConnector", return_value=connector),
     ):
         mock_settings.TRANSIP_ACCOUNT_NAME = "digigilde"
         mock_settings.TRANSIP_PRIVATE_KEY = "PEM"

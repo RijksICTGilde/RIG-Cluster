@@ -103,7 +103,7 @@ gelijke regel opnieuw zetten schrijft niets. Een bucket zonder lifecycle-configu
 MinIO voert ILM asynchroon uit, in een scanronde. De regel staat dus meteen op de bucket,
 maar de oude versies verdwijnen pas als de scanner langs is geweest.
 
-Bij `seaweedfs-storage` doet `SeaweedfsManager._grens_op_oude_versies` hetzelfde, met
+Bij `seaweedfs-storage` doet `SeaweedfsManager._limit_noncurrent_versions` hetzelfde, met
 `get_versioning` als poort en hetzelfde document; zie "SeaweedFS" hieronder voor de twee
 verschillen.
 
@@ -163,5 +163,5 @@ Twee dingen zijn anders dan bij MinIO:
 - `opi/connectors/minio_mc.py` - `get_bucket_lifecycle`, `ensure_noncurrent_version_rule`
 - `opi/connectors/seaweedfs_shell.py` - `ensure_noncurrent_version_rule` over de S3-poort
 - `opi/manager/minio_manager.py` - `_apply_noncurrent_version_limit`
-- `opi/manager/seaweedfs_manager.py` - `_grens_op_oude_versies`
+- `opi/manager/seaweedfs_manager.py` - `_limit_noncurrent_versions`
 - `features/speelruimte-van-een-dienst.md` - het mechanisme eronder

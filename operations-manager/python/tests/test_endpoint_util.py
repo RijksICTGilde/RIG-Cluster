@@ -1,7 +1,7 @@
 """
-Tests for opi.api.endpoint_util module.
+Tests for opi.http.auth.endpoint_util module.
 
-Tests parse_ports, normalize_project_name and validate_api_token.
+Tests parse_ports and validate_api_token.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -11,21 +11,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import (
-    REQUIRES_METRICS_SCRAPE_TOKEN,
-    REQUIRES_PROJECT_NAME,
-    image_push_refusal,
-    normalize_project_name,
-    parse_ports,
-    validate_api_token,
-    validate_metrics_scrape_token,
-)
 from opi.api.image_router import push_image
 from opi.core.actor import get_actor, project_api_key_actor
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause
-from opi.core.leden import LidSoort
-from opi.services.project_leden import hash_van
+from opi.http.auth.endpoint_util import (
+    REQUIRES_METRICS_SCRAPE_TOKEN,
+    REQUIRES_PROJECT_NAME,
+    image_push_refusal,
+    parse_ports,
+    validate_api_token,
+    validate_metrics_scrape_token,
+)
+from opi.services.members import MemberKind
+from opi.services.project_members import hash_of
 from starlette.requests import Request
 
 _VER_IN_DE_TOEKOMST = datetime.now(UTC) + timedelta(days=30)
@@ -55,31 +54,6 @@ class TestParsePorts:
 
     def test_trailing_comma(self):
         assert parse_ports("80,443,") == [80, 443]
-
-
-class TestNormalizeProjectName:
-    """Tests for normalize_project_name pure function."""
-
-    def test_lowercase_conversion(self):
-        assert normalize_project_name("MyProject") == "myproject"
-
-    def test_removes_special_chars(self):
-        assert normalize_project_name("my-project!@#") == "myproject"
-
-    def test_keeps_underscores(self):
-        assert normalize_project_name("my_project") == "my_project"
-
-    def test_keeps_numbers(self):
-        assert normalize_project_name("project123") == "project123"
-
-    def test_empty_string(self):
-        assert normalize_project_name("") == ""
-
-    def test_all_special_chars(self):
-        assert normalize_project_name("!@#$%^&*()") == ""
-
-    def test_spaces_removed(self):
-        assert normalize_project_name("my project") == "myproject"
 
 
 class TestValidateApiToken:
@@ -141,7 +115,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = mock_project
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="test-project")
@@ -169,7 +143,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = mock_project
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="test-project")
@@ -195,7 +169,7 @@ class TestValidateApiToken:
         mock_service = MagicMock()
         mock_service.get.return_value = mock_project
 
-        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
             result = await dummy_route(request=mock_request, project_name="test-project")
 
         assert result == {"project": "test-project"}
@@ -219,7 +193,7 @@ class TestValidateApiToken:
         mock_service = MagicMock()
         mock_service.get.return_value = mock_project
 
-        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
             result = await dummy_route(request=mock_request, project_name="test-project")
 
         assert result == {"actor": project_api_key_actor("test-project")}
@@ -241,7 +215,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = None
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="nonexistent")
@@ -262,12 +236,12 @@ class TestImagePushRefusal:
             data={},
             users=[
                 SimpleNamespace(
-                    type=LidSoort.SERVICE_ACCOUNT,
+                    type=MemberKind.SERVICE_ACCOUNT,
                     name="bouwstraat",
-                    principaal="bouwstraat",
+                    principal="bouwstraat",
                     email=None,
                     roles=rollen,
-                    tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_van(token_waarde))],
+                    tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_of(token_waarde))],
                 )
             ],
         )
@@ -288,7 +262,7 @@ class TestImagePushRefusal:
     async def _weigering(self, presented: str | None, project_name: str, project: Any) -> HTTPException | None:
         store = MagicMock()
         store.get.return_value = project
-        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
             return await image_push_refusal(self._request(), presented, project_name, push_image)
 
     @pytest.mark.asyncio
@@ -311,7 +285,7 @@ class TestImagePushRefusal:
     @pytest.mark.asyncio
     async def test_een_onbekend_token_geeft_401(self) -> None:
         """Een token dat dit project niet draagt (bijvoorbeeld van een ander project) is
-        hier niet te onderscheiden van een geraden token: beide geven ``NotRecognised``,
+        hier niet te onderscheiden van een geraden token: beide geven ``NotRecognisedError``,
         want de zoektocht gebeurt binnen het project uit de URL en dat project draagt
         deze hash niet."""
         project = self._project("eigen-project", "zad_vaneigen", ["ops"])

@@ -1,45 +1,38 @@
-"""De attribuutbundel van een formulierveld, als dict voor de LOTC-spread.
+"""The attribute bundle of a form field, as the dict LOTC spreads onto a component.
 
-Onze widgets dragen twee bundels attributen die pas tijdens het renderen bekend zijn:
-``field.htmx_attrs`` (hx-get, hx-target, hx-trigger, ...) en ``field.attributes``
-(losse data-, aria- en HTML-attributen). In de roos-templates werden die uitgeschreven
-door macro's die een stuk attribuut-TEKST teruggaven, midden in de componenttag:
+A widget carries two bundles of attributes that are only known at render time:
+``field.htmx_attrs`` (hx-get, hx-target, hx-trigger, ...) and ``field.attributes`` (loose
+data-, aria- and HTML attributes). They cannot be written out as attribute TEXT inside a
+component tag, because LOTC reads the braces as an attribute name; it offers
+``:attrs="<dict>"`` for this, which merges a flat dict onto the input field, and this module
+builds that dict.
 
-    <c-text-input-field id="..." {{ htmx_attrs(field) }} {{ extra_attrs(field) }} />
-
-Dat kan bij LOTC niet: die leest de haakjes als een attribuutnaam. LOTC heeft daar
-``:attrs="<dict>"`` voor, dat een platte dict op het invoerveld merget. Deze module
-levert die dict.
-
-Beide bundels zijn aan onze kant al dicts, dus dit is een samenvoeging en geen
-omzetting. Het enige echte werk is de overslaan-lijst: ``field.attributes`` draagt naast
-HTML-attributen ook velddefinitie-instellingen (welke converter, welke validator, hoeveel
-rijen) en die horen niet in de HTML terecht te komen.
+Both bundles are already dicts, so this is a merge and not a conversion. The real work is the
+skip list: besides HTML attributes ``field.attributes`` also carries field-definition settings
+(which converter, which validator, how many rows), and those must not reach the HTML.
 """
 
 from typing import Any
 
 
 def attr_escape(value: object) -> str:
-    """Escape een waarde voor gebruik binnen een dubbel aangehaald HTML-attribuut.
+    """Escape a value for use inside a double-quoted HTML attribute.
 
-    Anders dan het ingebouwde ``|e``-filter van Jinja2 escapet dit GEEN enkele
-    aanhalingstekens. Web-componenten lezen een attribuutwaarde als platte tekst, dus
-    ``&#39;`` zou letterlijk op het scherm komen; onze attributen staan altijd tussen
-    dubbele aanhalingstekens, dus ``'`` escapen is niet nodig.
+    Unlike Jinja2's built-in ``|e`` filter this does NOT escape a single quote. A web
+    component reads an attribute value as plain text, so ``&#39;`` would end up on the screen
+    literally, and our attributes always sit between double quotes.
 
-    Staat hier en niet bij de widgets omdat de templateomgeving hem als filter
-    registreert: importeren uit ``opi.forms.widgets`` zou die omgeving via het
-    ``__init__`` van dat pakket naar zichzelf laten terugwijzen.
+    Here and not with the widgets because the template environment registers it as a filter:
+    importing from ``opi.forms.widgets`` would point that environment back at itself through
+    the package's ``__init__``.
     """
-    tekst = str(value)
-    return tekst.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    text = str(value)
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-# Sleutels in field.attributes die de velddefinitie beschrijven en geen HTML-attribuut
-# zijn. Overgenomen uit de extra_attrs-macro in templates/widgets/_macros.html.j2, die
-# tot nu toe dezelfde scheiding maakte. Wijzigt die lijst, dan hoort hij hier mee te
-# wijzigen - vandaar de test die beide naast elkaar legt.
+#: Keys in field.attributes that describe the field definition and are not an HTML attribute.
+#: The same separation as the extra_attrs macro in templates/widgets/_macros.html.j2, and a
+#: test lays the two side by side, so a change there belongs here too.
 NON_HTML_ATTRIBUTES = frozenset(
     {
         "rows",
@@ -56,24 +49,21 @@ NON_HTML_ATTRIBUTES = frozenset(
         "converter",
         "validator",
         "kv_format",
+        "kv_mask_values",
         "icon",
         "icon_color",
     }
 )
 
 
-def field_attrs(field: Any, handled: list[str] | None = None) -> dict[str, Any]:
-    """Alle losse attributen van een veld als een platte dict voor ``:attrs``.
+def field_attrs(field: Any, handled: list[str] | None = None) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
+    """Every loose attribute of a field as the flat dict ``:attrs`` wants.
 
-    Args:
-        field: het veld dat gerenderd wordt.
-        handled: sleutels die dit widget zelf al als expliciet attribuut zet en die
-            dus niet nog eens in de bundel moeten. Standaard de niet-HTML-sleutels.
+    ``handled`` names the keys this widget already sets as an explicit attribute and that must
+    therefore stay out of the bundle; by default the non-HTML keys.
 
-    Returns:
-        Een dict van attribuutnaam naar waarde. LOTC laat een waarde die ``None`` of
-        leeg is zelf weg, dus dat hoeft hier niet gefilterd te worden - en dat is maar
-        goed ook, want een lege string is voor sommige aria-attributen betekenisvol.
+    A ``None`` or empty value is not filtered out, because LOTC drops it itself and an empty
+    string is meaningful for some aria attributes.
     """
     skip = NON_HTML_ATTRIBUTES if handled is None else frozenset(handled)
     merged: dict[str, Any] = dict(getattr(field, "htmx_attrs", None) or {})

@@ -34,13 +34,13 @@ De platform-sidecar heeft geen token en geen Role: zijn sleutel is een mount. Ee
 
 ### Wie de sleutellezer zet, en wanneer
 
-Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het secret zelf plaatst. Dat is `SopsHandler.ensure_cmp_key_reader(namespace)`, en er is maar die ene weg:
+Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het secret zelf plaatst. Dat is `ProjectKeySecretHandler.ensure_cmp_key_reader(namespace)`, en er is maar die ene weg:
 
 | wanneer | wat |
 |---|---|
 | bij het plaatsen of vervangen van het secret | `store_project_sops_key_in_namespace` zet de Role erbij; faalt dat, dan faalt het plaatsen |
-| bij elke verwerking van een project | `_ensure_sops_secret_in_namespace` zet hem ook als het secret klopt; faalt het, dan faalt de verwerking met de namespace in de melding |
-| bij het opstarten van OPI | `ensure_cmp_key_readers` in `opi/core/startup.py` loopt alle deployment-namespaces langs en zet de Role waar hij ontbreekt. Op de achtergrond, dus de readiness wacht er niet op. Logt een telling: gezet, al aanwezig, overgeslagen, gefaald. |
+| bij elke verwerking van een project | `Infrastructure.ensure_sops_secret_in_namespace` zet hem ook als het secret klopt; faalt het, dan faalt de verwerking met de namespace in de melding |
+| bij het opstarten van OPI | `ensure_cmp_key_readers` in `opi/runtime/startup/startup.py` loopt alle deployment-namespaces langs en zet de Role waar hij ontbreekt. Op de achtergrond, dus de readiness wacht er niet op. Logt een telling: gezet, al aanwezig, overgeslagen, gefaald. |
 
 `task cmp-sops-role-backfill` doet hetzelfde met de hand en blijft bestaan voor een cluster waar OPI nog niet is uitgerold; `DRY_RUN=true` telt alleen.
 
@@ -98,7 +98,7 @@ Mode `0440` met `fsGroup: 1001`, niet `0400`: kubelet geeft bestanden in een sec
 aan root, en de groep is het enige wat met `fsGroup` naar de uid van OPI te brengen is.
 
 **Geef een kindproces zijn omgeving met `child_env()`, nooit met `os.environ`.**
-`child_env()` (`opi/utils/subprocess_env.py`) weert alles met prefix `SOPS_AGE_` plus elke
+`child_env()` (`opi/core/subprocess_env.py`) weert alles met prefix `SOPS_AGE_` plus elke
 naam uit de env-bronnen van het deployment: elke `secretKeyRef` en elk secret achter een
 `envFrom`, dat laatste zowel uit `base/deployment.yaml` als uit de patches van de overlays
 (productie zet er met een inline JSON-patch in `kustomization.yaml` een derde bij,
@@ -124,10 +124,6 @@ programma echt nodig heeft.
 `kopia` is de uitzondering op `child_env()`: die connector bouwt zijn omgeving uit een
 allow-list (`_KOPIA_ENV_PASSTHROUGH`), en laat daarmee ook weg wat vandaag nog geen geheim
 is. Strikter mag, ruimer niet.
-
-`decrypt_sops_file` in `opi/utils/sops.py` is daarbij de enige die een platformgeheim
-expliciet terugkrijgt: hij ontsleutelt platformbestanden, en zonder `SOPS_AGE_KEY` kan dat
-niet. Die twee functies hebben vandaag geen aanroeper.
 
 Platte SOPS-inhoud gaat tijdelijk naar `SECRET_TEMP_DIR`, een `emptyDir` met
 `medium: Memory`, en niet naar `TEMP_DIR` op de schijf van de node.

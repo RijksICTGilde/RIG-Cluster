@@ -1,36 +1,30 @@
-"""
-Subdomain availability check and cluster domain helpers for the web interface.
-"""
+"""Subdomain availability check and cluster domain helpers for the web interface."""
 
 import logging
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from opi.api.router import IPRateLimiter
-from opi.connectors.subdomain import (
-    validate_base_domain,
-    validate_subdomain_for_domain,
-)
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
+from opi.core.request_user import get_current_user
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.rate_limiter import IPRateLimiter
+from opi.services.catalog.publish_on_web.subdomain import (
+    validate_base_domain,
+    validate_subdomain_for_domain,
+)
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 
 logger = logging.getLogger(__name__)
 
-# Rate limiter for web subdomain checks (same limits as API endpoint: 30 requests/minute per client)
-# Even though SSO-protected, we still rate limit to prevent abuse by authenticated users
+# Rate limited even though the endpoint is SSO-protected, with the same limits as the API one.
 web_subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
 
 
 def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
-    """Get base domain options per cluster for the self-service portal.
-
-    Returns:
-        Dict mapping cluster name to list of base domain options.
-    """
+    """The base domain options per cluster, keyed by cluster name."""
     result = {}
     for cluster_name, config in CLUSTER_CONFIG.items():
         domains_config = config.get("domains", {})
@@ -39,7 +33,6 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
         domain_options = []
         for entry in raw_domains:
             domain = entry["domain"] if isinstance(entry, dict) else entry
-            # Add descriptive label
             label = f"{domain} (lokaal)" if domain in ("kind", "local") else domain
             domain_options.append({"value": domain, "label": label})
 
@@ -51,22 +44,11 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
 @action(Action.PORTAL_READ)
 @requires_sso
 async def check_subdomain_availability_web(request: Request) -> JSONResponse:
+    """Is the ``subdomain`` free on ``base_domain``? SSO-protected and rate limited.
+
+    Both come in as query parameters. The SSO requirement and the rate limit are what keep the
+    subdomain registry out of reach of an enumeration attack.
     """
-    SSO-protected endpoint to check subdomain availability.
-
-    This endpoint requires the user to be authenticated via SSO, preventing
-    unauthenticated enumeration attacks on the subdomain registry.
-
-    Rate limited to prevent abuse even by authenticated users.
-
-    Query Parameters:
-        subdomain: The subdomain to check (e.g., "myapp")
-        base_domain: The base domain (e.g., "rijks.app")
-
-    Returns:
-        JSON response with availability status and optional validation error code
-    """
-    # Rate limiting check - use robust client identification
     client_id = IPRateLimiter.get_client_identifier(request)
     if not web_subdomain_check_rate_limiter.is_allowed(client_id):
         raise HTTPException(
@@ -80,7 +62,6 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     user = get_current_user(request)
     user_email = user.get("email", "unknown") if user else "unknown"
 
-    # Audit log
     safe_subdomain = subdomain[:64].replace("\n", "").replace("\r", "") if subdomain else ""
     safe_base_domain = base_domain[:64].replace("\n", "").replace("\r", "") if base_domain else ""
     logger.info(
@@ -88,10 +69,8 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     )
 
     try:
-        # Validate subdomain format first
         is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
         if not is_valid:
-            # Map validation error to error code for frontend translation
             error_code = _get_validation_error_code(validation_error)
             return JSONResponse(
                 {
@@ -103,7 +82,6 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
                 }
             )
 
-        # Validate base_domain is supported
         is_valid_domain, domain_error = validate_base_domain(base_domain)
         if not is_valid_domain:
             return JSONResponse(
@@ -137,27 +115,17 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
 
 
 def _get_validation_error_code(error_message: str | None) -> str:
-    """Map validation error messages to error codes for frontend translation.
+    """Map a validation error message, Dutch or English, to a code the frontend translates.
 
-    This allows the frontend to use its own translations instead of relying
-    on fragile string matching.
-
-    NOTE: Reserved subdomains now return a generic "not available" message
-    to prevent enumeration attacks. The error code SUBDOMAIN_NOT_AVAILABLE
-    is used for both reserved and taken subdomains.
-
-    Args:
-        error_message: The validation error message (in Dutch or English)
-
-    Returns:
-        An error code string that the frontend can map to translations
+    A reserved subdomain gets the same ``SUBDOMAIN_NOT_AVAILABLE`` as one already in use, so
+    the answer does not tell an attacker which of the two it is.
     """
     if not error_message:
         return "UNKNOWN_ERROR"
 
     error_lower = error_message.lower()
 
-    # Check for common error patterns (order matters - check more specific patterns first)
+    # Order matters: the more specific patterns come first.
     if "leeg" in error_lower or "empty" in error_lower:
         return "SUBDOMAIN_EMPTY"
     if "kort" in error_lower or "short" in error_lower or "minimaal" in error_lower:
@@ -172,11 +140,11 @@ def _get_validation_error_code(error_message: str | None) -> str:
         return "SUBDOMAIN_INVALID_CHARS"
     if "ongeldige tekens" in error_lower or "invalid character" in error_lower:
         return "SUBDOMAIN_INVALID_CHARS"
-    # Generic "not available" for both reserved and taken subdomains (security: no enumeration)
+    # One answer for reserved and for already in use, so neither can be enumerated.
     if "niet beschikbaar" in error_lower or "not available" in error_lower:
         return "SUBDOMAIN_NOT_AVAILABLE"
-    # Legacy patterns (kept for backwards compatibility)
+    # An older wording the validators may still produce.
     if "gereserveerd" in error_lower or "reserved" in error_lower:
-        return "SUBDOMAIN_NOT_AVAILABLE"  # Changed from SUBDOMAIN_RESERVED
+        return "SUBDOMAIN_NOT_AVAILABLE"
 
     return "SUBDOMAIN_INVALID"

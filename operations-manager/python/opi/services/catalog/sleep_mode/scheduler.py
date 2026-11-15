@@ -23,6 +23,7 @@ from opi.services.catalog.sleep_mode import config as sleep_config
 from opi.services.catalog.sleep_mode import flow, service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_WAKING
+from opi.services.project import Project
 from opi.services.project_store import ConflictError
 
 logger = logging.getLogger(__name__)
@@ -141,9 +142,9 @@ class SleepModeScheduler:
                 await asyncio.sleep(settings.SLEEP_MODE_PACE_SECONDS)
 
     async def _apply(self, project_name: str, filename: str, plan: list[tuple[str, str]], now: datetime) -> bool:
-        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.manager.project_manager import ProjectManager
         from opi.services.catalog.sleep_mode import manifests, token
+        from opi.services.project_file_handler import ProjectFileHandler
         from opi.services.resource_tuning_service import trigger_reprocessing
 
         project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
@@ -152,9 +153,7 @@ class SleepModeScheduler:
             project_data = await project_manager.get_contents()
             handler = ProjectFileHandler()
             for deployment_name, action in plan:
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if deployment is None:
                     continue
                 if action == STAMP:

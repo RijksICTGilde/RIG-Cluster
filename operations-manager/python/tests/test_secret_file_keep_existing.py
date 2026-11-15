@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_manager import ProjectManager, _existing_secret_pairs
+from opi.manager.project.manifests.secrets import existing_secret_pairs
+from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.base import ManifestContribution, SecretFileSpec
 from opi.utils.sops import encrypt_to_sops_files
 
@@ -190,15 +191,15 @@ class TestFaaltNaarDeNieuweWaarde:
     def test_onbruikbaar_ontsleuteld_document(self, tmp_path, decrypted):
         path = tmp_path / "x.sops.yaml"
         path.write_text("ciphertext")
-        with patch("opi.manager.project_manager.decrypt_sops_with_key", return_value=decrypted):
-            assert _existing_secret_pairs(str(path), PRIVATE_KEY) == {}
+        with patch("opi.manager.project.manifests.secrets.decrypt_sops_with_key", return_value=decrypted):
+            assert existing_secret_pairs(str(path), PRIVATE_KEY) == {}
 
     def test_alleen_tekstwaarden_worden_overgenomen(self, tmp_path):
         path = tmp_path / "x.sops.yaml"
         path.write_text("ciphertext")
         decrypted = "stringData:\n  cookie-secret: oud\n  poort: 8080\n  leeg: null\n"
-        with patch("opi.manager.project_manager.decrypt_sops_with_key", return_value=decrypted):
-            assert _existing_secret_pairs(str(path), PRIVATE_KEY) == {"cookie-secret": "oud"}
+        with patch("opi.manager.project.manifests.secrets.decrypt_sops_with_key", return_value=decrypted):
+            assert existing_secret_pairs(str(path), PRIVATE_KEY) == {"cookie-secret": "oud"}
 
 
 class TestDeployment:
@@ -215,9 +216,9 @@ class TestDeployment:
         git.get_working_dir = AsyncMock(return_value=working_dir)
         spec = SecretFileSpec(secret_name=NAME, secret_pairs={"cookie-secret": value}, keep_existing_values=True)
         with (
-            patch("opi.manager.project_manager.get_decoded_project_private_key", AsyncMock(return_value=PRIVATE_KEY)),
+            patch("opi.manager.project.manifests.application.project_private_key_or_none", return_value=PRIVATE_KEY),
             patch(
-                "opi.manager.project_manager.collect_manifest_contributions",
+                "opi.manager.project.manifests.application.collect_manifest_contributions",
                 return_value=[ManifestContribution(secret_files=[spec])],
             ),
         ):

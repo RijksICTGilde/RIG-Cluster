@@ -30,7 +30,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 CATALOG_DIR = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog"
 
@@ -106,7 +106,7 @@ BLOKKEN: dict[str, dict[str, Any]] = {
                         "host": "https://kc.example",
                         "realm": "voorbeeld-realm",
                         "username": "voorbeeld_admin",
-                        "password": "VOORBEELDWAARDE-geen-echt-geheim",
+                        "password": "base64+age:Vk9PUkJFRUxEV0FBUkRFLWdlZW4tZWNodC1nZWhlaW0=",
                         "has_totp": True,
                         "totp_code": "123456",
                     }
@@ -296,12 +296,15 @@ def test_de_dialoogroutes_gaan_langs_de_gedeelde_render() -> None:
     """Twee sjablonen zijn niets waard als de route er langs rendert.
 
     Precies dat was het geval: beide modules riepen ``templates_lotc`` rechtstreeks aan.
-    Gemeten op de BRON van de module en niet op een gerenderd antwoord, want de route
+    Gemeten op de BRON van de routemodule en niet op een gerenderd antwoord, want de route
     erachter heeft een cluster nodig.
     """
+    routes = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog" / "shared"
     for module in ("jobs", "db_console"):
-        bron = (CATALOG_DIR / "shared" / f"{module}.py").read_text()
-        assert "templates_lotc" not in bron, f"{module}.py rendert rechtstreeks; ga via opi.web.lotc_switch.render()"
+        bron = (routes / f"{module}.py").read_text()
+        assert "templates_lotc" not in bron, (
+            f"{module}.py rendert rechtstreeks; ga via opi.http.render.lotc_switch.render()"
+        )
         assert "template=_MODAL_TEMPLATE" in bron, f"{module}.py geeft geen sjabloon mee aan render()"
 
 

@@ -26,13 +26,29 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.project_schema import ProjectIntegrityError
-from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.minio_manager import MinioManager
-from opi.manager.project_validation import validate_project_structure
+from opi.manager.project.deployment_mutations import DeploymentMutations
+from opi.services.clone_validation import composite_name_collision, other_project_deployments
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
+from opi.services.project_validation import validate_project_structure
+
+
+@pytest.fixture(autouse=True)
+def _accept_component_references():
+    """The project fixtures here name components the project itself does not define.
+
+    The stub used to sit on the manager instance; since RC-443 the validator lives on
+    DeploymentMutations, one object further, so an instance stub would silently stop
+    reaching it.
+    """
+    with patch.object(
+        DeploymentMutations, "_validate_component_references", return_value={"success": True, "error": None}
+    ):
+        yield
+
 
 # Het paar dat de opdrachtgever natelde: beide spellingen bestaan los van elkaar en
 # leveren samen dezelfde databasenaam, databasegebruiker en bucketnaam op.
@@ -148,7 +164,7 @@ class TestSchrijfguard:
 
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -165,7 +181,6 @@ class TestSchrijfguard:
         manager.get_contents = AsyncMock(return_value=project_data)
         manager.get_name = AsyncMock(return_value=EIGEN_PROJECT)
         manager.get_deployments = AsyncMock(return_value=project_data["deployments"])
-        manager._validate_component_references = MagicMock(return_value={"success": True, "error": None})
 
         async def alleen_valideren(name, data, **kwargs):
             await store._validate(data, enforce=kwargs.get("enforce_validation", True))
@@ -175,7 +190,7 @@ class TestSchrijfguard:
 
         with (
             patch("opi.manager.project_manager.get_project_store", return_value=schrijver),
-            patch("opi.manager.project_manager.ensure_domain_requests"),
+            patch("opi.manager.project.deployment_mutations.ensure_approval_requests"),
         ):
             result = await manager.upsert_deployment(
                 deployment_name=EIGEN_DEPLOYMENT,

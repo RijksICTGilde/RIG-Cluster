@@ -1,12 +1,11 @@
-"""ORM-model voor ``otp_herlogins``: een herlogin bij Keycloak voor het inrichten van een 2-factor.
+"""ORM model for ``otp_herlogins``: a Keycloak re-login for setting up a second factor.
 
-Een rij is een lopende of geslaagde herlogin. De OIDC-state (state, nonce, PKCE-verifier)
-staat hier en niet in de sessie, omdat dit gebouwd is toen de sessie nog in een cookie van
-~4 KB zat. Sinds RC-390 staat de sessie server-side, dus deze tabel kan vervallen (open vraag).
+A row is a running or a succeeded re-login, holding the OIDC state (state, nonce, PKCE
+verifier).
 
-``login_at`` bindt de rij aan de sessie waarin de herlogin begon, zodat een andere sessie van
-dezelfde gebruiker er niets aan heeft. ``expires_at`` is eerst de tijd om bij Keycloak in te
-loggen en wordt na een geslaagde herlogin het einde van het venster.
+``login_at`` binds the row to the session the re-login started in, so another session of the
+same user cannot use it. ``expires_at`` is first the time to log in at Keycloak, and becomes
+the end of the window once the re-login succeeds.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from opi.core.db import Base
 
 
 class OtpHerlogin(Base):
-    """Een herlogin van dit e-mailadres, in deze sessie."""
+    """One re-login of this email address, in this session."""
 
     __tablename__ = "otp_herlogins"
 

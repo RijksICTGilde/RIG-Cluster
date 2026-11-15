@@ -492,7 +492,7 @@ poort, of `localhost`), eventueel een pad, kleine letters, geen protocol en geen
 digest. Allebei de waarden die de vloot werkelijk heeft (`ghcr.io` en `rcr.rijksapps.nl/rig`)
 komen er nog door.
 
-**`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_OR_PLAIN_PATTERN`). Dat is niet alleen
+**`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_PATTERN` in `opi/utils/age.py`). Dat is niet alleen
 een vormregel: `find_plaintext_secret_violations` herkent een AGE-veld AAN dat patroon, en
 `ProjectStore._validate` draait die controle op ELKE schrijfroute, ook op de elf plekken
 met `enforce_validation=False`, waar de rest van de validatie alleen wordt gelogd. De reden
@@ -502,7 +502,7 @@ AGE-waarde in de boom, dus ook deze.
 
 Die controle keek alleen naar `project_v2.json`, en een dienstconfig staat daar bewust niet
 in. De helft die een dienst zelf beschrijft wordt daarom gemeten door
-`find_plaintext_service_config_violations` (`opi/manager/project_validation.py`), die
+`find_plaintext_service_config_violations` (`opi/services/project_validation.py`), die
 dezelfde detectie op de configmodellen van de diensten draait. Beide helften worden in
 `ProjectStore._validate` naast elkaar aangeroepen, en die AANHAKING heeft een eigen test die
 via de store gaat (`test_de_store_weigert_het_token_ook_zonder_enforce`), zodat het opvalt
@@ -510,12 +510,12 @@ als iemand de tweede helft eruit haalt. Ook hier is de detectie AFGELEID van het
 schema (een `pattern` met de AGE-markering) en niet van een handgeschreven veldenlijst, dus
 een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zegt.
 
-### Drie opslagvormen, een lezer
+### Twee opslagvormen, een lezer
 
-Datzelfde patroon laat het token in drie vormen toe: het armored AGE-blok, de eenregelige
-`base64+age:`-vorm en een expliciet als platte tekst gemarkeerde `plain:`-waarde. Dat is
-geen randgeval maar de huisvorm van een projectbestand: de repository-password, de
-api-key en de projectsleutel dragen allemaal de eenregelige vorm.
+Datzelfde patroon laat het token in twee vormen toe: het armored AGE-blok en de eenregelige
+`base64+age:`-vorm. Dat laatste is geen randgeval maar de huisvorm van een projectbestand:
+de repository-password, de api-key en de projectsleutel dragen allemaal de eenregelige vorm.
+Een derde vorm, de expliciet als platte tekst gemarkeerde `plain:`-waarde, mocht hier tot RC-463. De LEESkant kent hem nog, voor een bestand dat nog niet gemigreerd is.
 
 Wie de waarde uitleest moet ze dus alle drie kennen. Toetsen op alleen de armored markering
 zet de andere twee LETTERLIJK in de `.dockerconfigjson` (of in het
@@ -605,7 +605,7 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 | Clusterconfig | `get_image_registries_config` in `opi/core/cluster_config.py` |
 | Organization-sjabloon | `manifests/quay-proxy-organization.yaml.jinja` |
 | Projectniveau-haak | `contribute_project_manifests` in `opi/services/catalog/base.py` |
-| Emitter en prune | `_process_project_manifests` in `opi/manager/project_manager.py` |
+| Emitter en prune | `process_project_manifests` in `opi/manager/project/manifests/repository.py` |
 | ArgoCD-applicatie | `create_project_application` in `opi/manager/argo_manager.py` |
 
 ## De eigen serviceaccount per project

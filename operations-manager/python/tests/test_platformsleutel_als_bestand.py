@@ -14,7 +14,7 @@ import pathlib
 import pytest
 import yaml
 from opi.core.config import _get_settings, load_sops_age_key_content, parse_sops_age_key_content
-from opi.utils.subprocess_env import PLATFORM_SECRET_NAMES, PLATFORM_SECRET_PREFIXES, child_env
+from opi.core.subprocess_env import PLATFORM_SECRET_NAMES, PLATFORM_SECRET_PREFIXES, child_env
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 KUSTOMIZE_ROOT = REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager"
@@ -30,7 +30,7 @@ ENV_SOURCE_MANIFESTS = {
     "operations-manager-env-secrets": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-env-secrets.yaml",
 }
 # Dit secret staat niet in git: OPI schrijft het zelf bij het opstarten
-# (opi/bootstrap/keycloak_setup.py, _update_operations_secret), met deze sleutels.
+# (opi/manager/bootstrap/keycloak_setup.py, _update_operations_secret), met deze sleutels.
 OPI_WRITTEN_ENV_SOURCES = {
     "operations-manager-keycloak": {
         "OIDC_CLIENT_ID",
@@ -248,38 +248,6 @@ def test_overlays_zetten_de_sleutel_niet_terug_in_de_omgeving() -> None:
             assert "SOPS_AGE_KEY_CONTENT" not in env, manifest
             assert "SOPS_AGE_KEY_FILE" not in env, manifest
             assert "SECRET_TEMP_DIR" not in env, manifest
-
-
-async def test_sops_handler_schrijft_in_de_secret_temp_dir(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from opi.core.config import settings
-    from opi.handlers.sops import SopsHandler
-
-    secret_temp_dir = tmp_path / "secret-tmp"
-    secret_temp_dir.mkdir()
-    monkeypatch.setattr(settings, "SECRET_TEMP_DIR", str(secret_temp_dir))
-    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path / "schijf"))
-
-    gebruikte_paden: list[str] = []
-
-    class Resultaat:
-        returncode = 0
-        stdout = "versleuteld"
-        stderr = ""
-
-    async def nep_run_command(cmd: list[str], env: dict[str, str] | None = None) -> Resultaat:
-        gebruikte_paden.append(cmd[-1])
-        return Resultaat()
-
-    handler = SopsHandler()
-    monkeypatch.setattr(handler, "_run_command", nep_run_command)
-
-    await handler.encrypt_content("geheim", "age1publiek")
-    await handler.decrypt_content("geheim", "AGE-SECRET-KEY-1")
-
-    assert gebruikte_paden
-    assert all(pathlib.Path(pad).parent == secret_temp_dir for pad in gebruikte_paden)
 
 
 def _mist_een_echte_env(knoop: ast.Call) -> bool:

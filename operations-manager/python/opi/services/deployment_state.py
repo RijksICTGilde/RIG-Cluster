@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact
+from opi.services.project import Project
 from opi.services.registry import listeners
 from opi.services.services_enums import UIEvent
 
@@ -84,7 +85,7 @@ def collect_deployment_state(project_data: dict[str, Any], deployment_name: str)
     name yields an empty state rather than an error: a caller asking about a deployment
     that is not in the file has no state to weigh, which is exactly what it gets.
     """
-    deployment = next((d for d in project_data.get("deployments", []) or [] if d.get("name") == deployment_name), None)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return DeploymentState()
 

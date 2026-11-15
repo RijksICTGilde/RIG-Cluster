@@ -1,7 +1,7 @@
 """The web address belongs to the service: one read path, one write path (RC-60).
 
 ``domain_config`` is the single authority on WHERE a deployment's seven web-address
-settings live, exactly as ``connectors/subdomain.py`` is for the project-level ``domains``
+settings live, exactly as ``services/catalog/publish_on_web/subdomain.py`` is for the project-level ``domains``
 block. These tests hold it to the two properties that make the relocation safe:
 
 * readers accept both locations, so a file that has not been migrated yet keeps working;

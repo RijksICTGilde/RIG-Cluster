@@ -1,16 +1,12 @@
-"""Wizard state persistence.
+"""Wizard state persistence, as JSON files in ``{TEMP_DIR}/wizard-sessions/{token}.json``.
 
-Wizard state is stored server-side as JSON files, keyed by a small
-UUID token.  This avoids the ~4 KB browser cookie size limit which
-the full wizard state can easily exceed.
+The state is stored server-side and keyed by a small UUID token, because the full wizard
+state easily exceeds the ~4 KB browser cookie limit.
 
-Full-page wizard: token stored in the Starlette session cookie.
-Modal wizard: token passed through the HTMX request chain (hidden
-input / query param) to avoid the session cookie race condition
-where concurrent requests (e.g. progress polling) overwrite each
-other's session data.
-
-Files are stored in ``{TEMP_DIR}/wizard-sessions/{token}.json``.
+The full-page wizard keeps that token in the Starlette session cookie. The modal wizard
+passes it through the HTMX request chain (a hidden input or a query param) instead, to avoid
+the session-cookie race in which a concurrent request such as progress polling overwrites
+the other's session data.
 """
 
 from __future__ import annotations
@@ -24,8 +20,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
+from opi.core.request_user import get_current_user
 from opi.forms.wizard.state import WizardState
 
 if TYPE_CHECKING:
@@ -36,11 +32,16 @@ logger = logging.getLogger(__name__)
 SESSION_KEY = "wizard_token"
 """Cookie key - holds only a short UUID, not the full state."""
 
-# Tokens are generated as uuid.uuid4().hex — exactly 32 lowercase hex chars.
-# Reject anything else to prevent path traversal via user-supplied tokens.
+# A token is a uuid.uuid4().hex, exactly 32 lowercase hex characters. Anything else is
+# refused, to prevent path traversal through a user-supplied token.
 _TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 
 _STORE_DIR: str | None = None
+
+#: A state file holds a copy of a project file, encrypted secrets included, so it is for
+#: its owner only. Same modes as ``services/upload_staging.py``, which stages uploads.
+_DIR_MODE = 0o700
+_FILE_MODE = 0o600
 
 
 def _get_store_dir() -> str:
@@ -48,7 +49,7 @@ def _get_store_dir() -> str:
     global _STORE_DIR
     if _STORE_DIR is None:
         _STORE_DIR = os.path.join(settings.TEMP_DIR, "wizard-sessions")
-    os.makedirs(_STORE_DIR, exist_ok=True)
+    os.makedirs(_STORE_DIR, mode=_DIR_MODE, exist_ok=True)
     return _STORE_DIR
 
 
@@ -68,9 +69,9 @@ _last_sweep_at: float | None = None
 def purge_expired_states(max_age_seconds: float = SESSION_MAX_AGE_SECONDS) -> int:
     """Delete session files not modified for *max_age_seconds*. Returns the count.
 
-    State files are removed when a wizard is submitted or cancelled, but a user who
-    closes the tab leaves one behind, and TEMP_DIR is a persistent volume -- so they
-    accumulated for the lifetime of the volume, each holding a copy of a project file.
+    A state file is removed when a wizard is submitted or cancelled, but a user who closes
+    the tab leaves one behind, and TEMP_DIR is a persistent volume: without this sweep they
+    pile up for the lifetime of the volume, each holding a copy of a project file.
     """
     cutoff = time.time() - max_age_seconds
     removed = 0
@@ -90,9 +91,9 @@ def purge_expired_states(max_age_seconds: float = SESSION_MAX_AGE_SECONDS) -> in
 def _sweep_if_due() -> None:
     """Run the purge at most once per interval.
 
-    Hooked to session *creation* rather than a scheduler: that is exactly when the store
-    is in use, and a store nobody writes to cannot grow. It keeps the cleanup local to
-    this module instead of adding another background task to the app lifespan.
+    Hooked to session *creation* rather than to a scheduler: that is when the store is in
+    use, and a store nobody writes to cannot grow. It keeps the cleanup local to this module
+    instead of adding another background task to the app lifespan.
     """
     global _last_sweep_at
 
@@ -104,11 +105,10 @@ def _sweep_if_due() -> None:
 
 
 def _store_path(token: str) -> Path:
-    """Resolve the on-disk path for a token.
+    """Resolve the on-disk path for a token; raises ``ValueError`` on a malformed one.
 
-    Raises ValueError if the token is not a well-formed uuid4 hex string.
-    This defends against path traversal when tokens arrive via HTMX request
-    params (query string / hidden input), which are attacker-controllable.
+    A token arrives through an HTMX request param (query string or hidden input), which is
+    attacker-controllable, so only a well-formed uuid4 hex string is accepted.
     """
     if not _is_valid_token(token):
         raise ValueError(f"invalid wizard token: {token!r}")
@@ -116,10 +116,7 @@ def _store_path(token: str) -> Path:
 
 
 def get_wizard_state(request: Request) -> WizardState | None:
-    """Load wizard state from the file-based store.
-
-    Returns None if no wizard is in progress.
-    """
+    """Load wizard state from the file-based store, or None when no wizard is in progress."""
     token = request.session.get(SESSION_KEY)
     if token is None:
         return None
@@ -139,13 +136,19 @@ def get_wizard_state(request: Request) -> WizardState | None:
         return None
 
 
+def _write_state(path: Path, state: WizardState) -> None:
+    """Write one state file, readable by its owner only."""
+    path.write_text(json.dumps(state.to_dict()))
+    os.chmod(path, _FILE_MODE)
+
+
 def save_wizard_state(request: Request, state: WizardState) -> None:
     """Save wizard state to the file-based store."""
     token = request.session.get(SESSION_KEY)
     if token is None:
         token = uuid.uuid4().hex
         request.session[SESSION_KEY] = token
-    _store_path(token).write_text(json.dumps(state.to_dict()))
+    _write_state(_store_path(token), state)
 
 
 def clear_wizard_state(request: Request) -> None:
@@ -164,19 +167,10 @@ def init_wizard_state(
     active_sections: list[str],
     project_name: str | None = None,
 ) -> WizardState:
-    """Initialize a new wizard state and save it to the store.
+    """Initialize a new wizard state, save it to the store and return it.
 
-    Args:
-        request: The current request (for session access).
-        flow_id: FormFlow ID (e.g., "create-project").
-        first_step: Section_id of the first step.
-        active_sections: Initial ordered list of active section_ids.
-        project_name: Project name for edit mode, None for create.
-
-    Returns:
-        The newly created WizardState.
+    ``project_name`` is the project in edit mode and None while creating.
     """
-    # Clear any existing wizard state first
     clear_wizard_state(request)
     _sweep_if_due()
 
@@ -188,16 +182,6 @@ def init_wizard_state(
     )
     save_wizard_state(request, state)
     return state
-
-
-# ---------------------------------------------------------------------------
-# Token-based modal wizard session (no session cookie dependency)
-#
-# These functions pass the wizard token through the HTMX request chain
-# (hidden input / query param) instead of the session cookie. This avoids
-# the race condition where concurrent requests (e.g. progress polling)
-# overwrite the session cookie with stale data.
-# ---------------------------------------------------------------------------
 
 
 def _load_state_by_token(token: str) -> WizardState | None:
@@ -230,7 +214,7 @@ def save_modal_state_by_token(token: str | None, state: WizardState) -> None:
     """Save modal wizard state by token."""
     if not token or not _is_valid_token(token):
         return
-    _store_path(token).write_text(json.dumps(state.to_dict()))
+    _write_state(_store_path(token), state)
 
 
 def clear_modal_state_by_token(token: str | None) -> None:
@@ -284,8 +268,8 @@ def init_modal_state_tokenized(
 ) -> tuple[str, WizardState]:
     """Create a new modal wizard state and return (token, state).
 
-    No session cookie involvement — the caller is responsible for
-    passing the token to the client (e.g. as a hidden form field).
+    No session cookie is involved: the caller passes the token to the client itself, for
+    instance as a hidden form field.
     """
     _sweep_if_due()
     token = uuid.uuid4().hex

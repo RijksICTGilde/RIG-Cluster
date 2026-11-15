@@ -1,7 +1,7 @@
 """Tests for re-enabling components disabled by ImagePullBackOff on image update."""
 
-from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.oom_watcher import ComponentFailure
+from opi.services.project_file_handler import ProjectFileHandler
 
 
 class TestImagePullDisabledReset:

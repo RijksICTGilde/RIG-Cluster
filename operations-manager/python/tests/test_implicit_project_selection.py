@@ -17,10 +17,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from opi.core.project_schema import validate_project_schema
 from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.approval import config_value_approval, service_use_approval
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.project_schema import validate_project_schema
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, ServiceValidationError, service_entry_name
 from opi.services.services_enums import ServiceType

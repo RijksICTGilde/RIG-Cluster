@@ -22,11 +22,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from opi.core.leden import LidSoort
 from opi.services.catalog.sleep_mode import flow
-from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeResult
+from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeResult
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
-from opi.services.project_leden import hash_van
+from opi.services.members import MemberKind
+from opi.services.project_members import hash_of
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.router import sleep_deployment_web, wake_deployment_web
 
@@ -59,15 +59,15 @@ def test_status_missing_token_returns_401(client: TestClient) -> None:
 
 def test_wake_wrong_deployment_token_returns_401(client: TestClient) -> None:
     # A token minted for another deployment does not match this deployment's stored
-    # token, so flow raises InvalidWakeToken; the router must map that to 401.
-    with patch.object(flow, "wake", AsyncMock(side_effect=InvalidWakeToken("Wake token mismatch"))):
+    # token, so flow raises InvalidWakeTokenError; the router must map that to 401.
+    with patch.object(flow, "wake", AsyncMock(side_effect=InvalidWakeTokenError("Wake token mismatch"))):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers=TOKEN_HEADER)
     assert resp.status_code == 401
     assert resp.json()["detail"] == "Invalid wake token"
 
 
 def test_status_wrong_deployment_token_returns_401(client: TestClient) -> None:
-    with patch.object(flow, "status", AsyncMock(side_effect=InvalidWakeToken("Wake token mismatch"))):
+    with patch.object(flow, "status", AsyncMock(side_effect=InvalidWakeTokenError("Wake token mismatch"))):
         resp = client.get(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/status", headers=TOKEN_HEADER)
     assert resp.status_code == 401
     assert resp.json()["detail"] == "Invalid wake token"
@@ -176,7 +176,7 @@ def test_de_spec_noemt_beide_manieren(path: str, verb: str) -> None:
 
 # --- API router: een ``zad_`` token loopt langs hetzelfde handhavingspunt ------------
 #
-# De slaapstand deed zijn eigen sleutelcontrole en is meeverhuisd naar ``handhaaf``, zodat
+# De slaapstand deed zijn eigen sleutelcontrole en is meeverhuisd naar ``enforce``, zodat
 # een token hier hetzelfde werkt als op de rest van de API. ``test_task_router.py`` heeft
 # dezelfde proef voor taken; dit is de sleep-mode-kant van die verhuizing.
 
@@ -189,12 +189,12 @@ def _store_met_token(rol: str) -> MagicMock:
         filename=f"projects/{PROJECT}.yaml",
         users=[
             ProjectUser(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
                 role=rol,
                 tokens=[
                     ProjectToken(
-                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van(TOKEN_WAARDE)
+                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_of(TOKEN_WAARDE)
                     )
                 ],
             )
@@ -260,14 +260,14 @@ def test_een_token_van_een_viewer_kan_niet_wekken(client: TestClient) -> None:
 
 
 def test_wake_unknown_deployment_returns_404(client: TestClient) -> None:
-    with patch.object(flow, "wake", AsyncMock(side_effect=DeploymentNotFound("Deployment 'PR-1' not found"))):
+    with patch.object(flow, "wake", AsyncMock(side_effect=DeploymentNotFoundError("Deployment 'PR-1' not found"))):
         resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers=TOKEN_HEADER)
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Deployment 'PR-1' not found"
 
 
 def test_status_unknown_project_returns_404(client: TestClient) -> None:
-    with patch.object(flow, "status", AsyncMock(side_effect=DeploymentNotFound("Project 'demo' not found"))):
+    with patch.object(flow, "status", AsyncMock(side_effect=DeploymentNotFoundError("Project 'demo' not found"))):
         resp = client.get(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/status", headers=TOKEN_HEADER)
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Project 'demo' not found"

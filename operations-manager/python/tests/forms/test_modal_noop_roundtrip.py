@@ -27,7 +27,7 @@ from opi.forms.wizard.mutation import apply_component_services_mutation, apply_s
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.selection import narrow_to_selection
 from opi.forms.wizard.state import WizardState
-from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.services.project_file_handler import extract_attachment_catalog
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import service_entry_name
 from opi.web.router_detail_edit import (

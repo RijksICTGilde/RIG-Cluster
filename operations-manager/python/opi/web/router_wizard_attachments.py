@@ -27,14 +27,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
     get_wizard_state,
@@ -42,14 +40,17 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
     save_wizard_state,
 )
-from opi.handlers.project_file_handler import (
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.render.templates_lotc import templates_lotc
+from opi.services import upload_staging
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
+from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
+from opi.services.project_file_handler import (
     attachment_is_referenced,
     extract_attachment_catalog,
     find_attachment_data_list,
 )
-from opi.services import upload_staging
-from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
-from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
+from opi.utils.age import get_project_public_key
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 
 logger = logging.getLogger(__name__)
@@ -61,17 +62,18 @@ wizard_attachments_router = APIRouter(prefix="/forms/wizard", tags=["wizard-atta
 #: merged data) and outside every editable's write set, so it never reaches the project.
 REPLACE_TARGET_KEY = "_replace_attachment"
 
-#: What the form says it is doing. Anything else is an add -- the default, and the value
-#: an unmodified add form does not send at all.
+#: What the form says it is doing. Anything else is an add, the default, and the value an
+#: unmodified add form does not send at all.
 REPLACE_MODE = "replace"
 
 
 def _resolve_state(
     request: Request, wizard_token: str | None, flow_id: str
 ) -> tuple[Any, Callable[[Any], None] | None]:
-    """Resolve the wizard state from session cookie (if it matches the flow) or modal token (for this user).
+    """The wizard state from the session cookie when it matches the flow, else from the modal
+    token of this user.
 
-    Returns (state, save_fn) or (None, None) if no active wizard session.
+    Returns ``(state, save_fn)``, or ``(None, None)`` when there is no active wizard session.
     """
     state = get_wizard_state(request)
     if state is not None and state.flow_id == flow_id:
@@ -82,29 +84,28 @@ def _resolve_state(
     return None, None
 
 
-def _staged(state: Any) -> dict[str, dict[str, Any]]:
-    """Return the staged-attachments map (id -> {filename, content}) from session state.
+def _staged(state: WizardState) -> dict[str, dict[str, Any]]:
+    """The staged-attachments map (id -> {filename, content}) from the session state.
 
-    Stored on the dedicated ``staged_attachments`` field, NOT in ``step_data``: the
-    latter is keyed by section_id and ``stash_inactive_sections`` would discard a
-    stray non-section key on the next step navigation.
+    Stored on the dedicated ``staged_attachments`` field and NOT in ``step_data``: the latter
+    is keyed by section_id, and ``stash_inactive_sections`` would discard a stray non-section
+    key on the next step navigation.
     """
     return state.staged_attachments
 
 
 def _attachments_list_response(
     request: Request,
-    state: Any,
+    state: WizardState,
     wizard_token: str | None,
     error: str | None = None,
     reset: bool = False,
-):
-    """Render the unified attachments list (existing catalog + files staged this session).
+) -> Response:
+    """The unified attachments list: the existing catalog plus the files staged this session.
 
-    htmx does not swap non-2xx responses and an HTTPException renders as JSON, so upload
-    errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-list.
-    ``reset`` adds out-of-band swaps that clear the inputs and flash a success tick after a
-    successful upload so the form is ready for the next one.
+    htmx does not swap a non-2xx response and an ``HTTPException`` renders as JSON, so an
+    upload error comes back as this 200 HTML fragment instead. ``reset`` adds the out-of-band
+    swaps that clear the inputs after a successful upload.
     """
     staged = _staged(state) if state else {}
     staged_items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
@@ -122,8 +123,8 @@ def _attachments_list_response(
     )
 
 
-def _id_field_response(request: Request, error: str | None, attachment_id: str):
-    """Re-render the identifier field with the standard field-error state (invalid + errorText)."""
+def _id_field_response(request: Request, error: str | None, attachment_id: str) -> Response:
+    """Re-render the identifier field with the standard field-error state."""
     return templates_lotc.TemplateResponse(
         request,
         "wizard/partials/attachments_id_field.html.j2",
@@ -134,33 +135,29 @@ def _id_field_response(request: Request, error: str | None, attachment_id: str):
 def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str]:
     """Validate an attachment id against the shared editable, with this session's ids.
 
-    Returns the error messages (empty when valid). The uniqueness half of the rule needs
-    to know which ids are taken, which is per-session knowledge the editable cannot carry.
+    Returns the error messages, empty when valid. The uniqueness half of the rule needs to know
+    which ids are in use, which is per-session knowledge the editable cannot carry.
     """
     return validate_field(ATTACHMENT_ID_EDITABLE, attachment_id, {"existing_attachment_ids": existing})
 
 
-def _replace_target(state: Any) -> str:
+def _replace_target(state: WizardState) -> str:
     """The attachment this session was opened to replace, or "" when it is an add.
 
-    Set once, when the modal is opened from the Vervangen button
-    (``router_detail_edit.modal_wizard_init``), and read here rather than taken from the
-    request. The form shows the id fixed, and a form that fixes a value is a convenience,
-    not a check: the id a replacement writes over has to be decided by the session that
-    was opened for it, or a hand-made POST could point the upload at somebody else's
-    certificate.
+    Set once, when the modal is opened from the Vervangen button, and read here rather than
+    from the request: a form that fixes a value is a convenience and not a check, so a
+    hand-made POST could otherwise point the upload at somebody else's certificate.
     """
     if state is None:
         return ""
     return (getattr(state, "base_data", None) or {}).get(REPLACE_TARGET_KEY) or ""
 
 
-def _check_replace(state: Any, attachment_id: str) -> str | None:
+def _check_replace(state: WizardState, attachment_id: str) -> str | None:
     """Refuse a replacement that is not the one this session was opened for.
 
-    Three ways it is wrong, and all three are the same answer to the caller: this session
-    is not replacing anything, it is replacing a different attachment, or the id is not in
-    the catalog at all -- a replacement of something that is not there.
+    Three ways it is wrong: this session is not replacing anything, it is replacing a different
+    attachment, or the id is not in the catalog at all.
     """
     target = _replace_target(state)
     if not target:
@@ -172,19 +169,24 @@ def _check_replace(state: Any, attachment_id: str) -> str | None:
     return None
 
 
-def _session_services(state: Any) -> list:
+def _session_services(state: WizardState) -> list:
     """The project services carried in the wizard session (includes the attachments catalog)."""
     if state is None:
         return []
     return state.get_merged_data().get("services") or []
 
 
-def _catalog_ids(state: Any) -> list[str]:
+def _session_public_key(state: WizardState) -> str | None:
+    """The AGE public key of the project this session edits, or of the one it is creating."""
+    return get_project_public_key(state.get_merged_data())
+
+
+def _catalog_ids(state: WizardState) -> list[str]:
     """Identifiers already present in the project's attachments catalog (this session)."""
     return list(extract_attachment_catalog(state.get_merged_data()).keys()) if state else []
 
 
-def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
+def _remove_from_session_catalog(state: WizardState, attachment_id: str) -> None:
     """Drop an attachment from the catalog carried in step_data so the save persists the removal."""
     for section_data in state.step_data.values():
         data = find_attachment_data_list(section_data.get("services"))
@@ -195,7 +197,9 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
 @action(Action.WIZARD_USE)
 @requires_sso
-async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
+async def list_staged(
+    request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")
+) -> Response:
     """Render the unified attachments list (used on section load)."""
     state, _ = _resolve_state(request, wizard_token, flow_id)
     return _attachments_list_response(request, state, wizard_token)
@@ -211,14 +215,13 @@ async def stage_attachment(
     file: UploadFile = File(...),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
     mode: str = Form(""),
-):
+) -> Response:
     """Stage an uploaded file and record a reference in the wizard session.
 
-    With ``mode=replace`` the file is new content for an attachment that is already in the
-    catalog: the id has to be the one this session was opened for, and it has to exist.
-    The staged entry carries that fact through to the save, where the catalog entry is
-    written over instead of a second one being added -- which is what keeps every
-    component that couples to that id pointing at it.
+    With ``mode=replace`` the file is new content for an attachment already in the catalog: the
+    id has to be the one this session was opened for, and it has to exist. The staged entry
+    carries that through to the save, which writes over the catalog entry instead of adding a
+    second one, so every component coupled to that id keeps pointing at it.
     """
     state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
@@ -227,12 +230,10 @@ async def stage_attachment(
     staged = _staged(state)
     replacing = mode == REPLACE_MODE
     attachment_id = attachment_id.strip()
-    # One rule per field: the shared ATTACHMENT_ID_EDITABLE is what the API upload
-    # validates against too, so an id the wizard accepts is an id the API accepts.
-    # Emptiness rides on the editable's ``required``; uniqueness needs the ids this
-    # session already knows about, which is why the context is passed here and not there.
-    # A replacement is the one case where a taken id is the point, so uniqueness is not
-    # asked -- existence is, and the session decides which id that may be.
+    # One rule per field: the API upload validates against the same ATTACHMENT_ID_EDITABLE.
+    # Uniqueness needs the ids this session already knows, hence the context here. For a
+    # replacement uniqueness is not asked at all: existence is, and the session decides which
+    # id that may be.
     errors = _validate_attachment_id(attachment_id, [] if replacing else list(staged.keys()) + _catalog_ids(state))
     if errors:
         return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
@@ -241,21 +242,32 @@ async def stage_attachment(
         if replace_error:
             return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
-    # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES): a
-    # limit only one road honours just moves the problem to the other one. The slot caps
-    # how many uploads read at once, over all three upload routes together.
+    # The same ceiling the API upload enforces; a limit only one road honours moves the
+    # problem to the other one. The slot caps how many uploads read at once, over all three
+    # upload routes together.
     async with upload_slot():
         raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
     if raw is None:
         return _attachments_list_response(request, state, wizard_token, error=too_large_detail(MAX_ATTACHMENT_BYTES))
+    # Staged encrypted to the session's own key pair, which the wizard owns from its first
+    # step. Refused in words rather than left to stage_file: its ValueError is an internal
+    # English string, and this one renders in the banner the user reads.
+    public_key = _session_public_key(state)
+    if not public_key:
+        logger.error(f"Wizard flow '{flow_id}' carries no AGE public key; refusing to stage an upload")
+        return _attachments_list_response(
+            request,
+            state,
+            wizard_token,
+            error="Deze wizardsessie heeft geen sleutel, dus de bijlage kan niet veilig worden opgeslagen. Begin de wizard opnieuw.",
+        )
     try:
-        token = upload_staging.stage_file(raw, file.filename or attachment_id)
+        token = upload_staging.stage_file(raw, file.filename or attachment_id, public_key)
     except ValueError as exc:
         return _attachments_list_response(request, state, wizard_token, error=str(exc))
 
     # The new file's own name is kept, also when replacing: the id is what every coupling
-    # hangs on, the filename is the label next to it, and a label that still says
-    # ``oud-cert.pem`` over new content is the more confusing of the two.
+    # hangs on, and a label that still names the old file over new content misleads.
     staged[attachment_id] = {
         "filename": file.filename or attachment_id,
         "content": f"staging:{token}",
@@ -277,16 +289,14 @@ async def validate_attachment_id(
     attachment_id: str = Form(""),
     wizard_token: str | None = Form(None, alias="_wizard_token"),
     mode: str = Form(""),
-):
-    """Validate the identifier on change so the error surfaces before the file upload.
+) -> Response:
+    """Validate the identifier on change, so the error surfaces before the file upload.
 
-    Returns an inline HTML alert (or empty to clear it). An empty field is not an error
-    (the user has not finished typing yet).
+    Returns an inline HTML alert, or empty to clear it; an empty field is not an error.
 
-    Which id is good depends on what is being done, and the two are each other's opposite:
-    adding wants an id nobody has yet, replacing wants exactly the one that is there. A
-    check that accepts both would let a typo in a new id land on an existing attachment
-    and overwrite it, which is the accident this endpoint exists to prevent.
+    Which id is good is the opposite per mode: adding wants an id nobody has yet, replacing
+    wants exactly the one that is there. A check that accepts both would let a typo in a new id
+    land on an existing attachment and overwrite it.
     """
     state, _ = _resolve_state(request, wizard_token, flow_id)
     staged = _staged(state) if state else {}
@@ -308,7 +318,7 @@ async def unstage_attachment(
     flow_id: str,
     attachment_id: str,
     wizard_token: str | None = Form(None, alias="_wizard_token"),
-):
+) -> Response:
     """Remove a staged attachment and delete its staged file.
 
     ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the c-button
@@ -336,7 +346,7 @@ async def remove_existing_attachment(
     flow_id: str,
     attachment_id: str,
     wizard_token: str | None = Form(None, alias="_wizard_token"),
-):
+) -> Response:
     """Remove an existing catalog attachment within the wizard session (applied on save).
 
     Done in the session (not an immediate delete) because the wizard carries the catalog

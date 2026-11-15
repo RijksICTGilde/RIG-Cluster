@@ -11,13 +11,14 @@ All classes previously in backup_manager.py are re-exported here,
 so existing imports continue to work.
 """
 
+from opi.core.backup_constants import ResourceType
 from opi.manager.backup.base import (
     BackupConfig,
     BackupLock,
+    BackupLockBusyError,
     BackupResult,
     BackupStatus,
     BaseBackupManager,
-    ResourceType,
     RestoreResult,
     SnapshotInfo,
     get_backup_bucket_name,
@@ -43,6 +44,8 @@ from opi.manager.backup.pvc_backup import (
 )
 from opi.manager.backup.runs import (
     backup_run_items,
+    backup_run_items_for_restore,
+    backup_run_source_deployments,
     clone_backup_items,
     group_snapshots_into_runs,
 )
@@ -50,6 +53,7 @@ from opi.manager.backup.runs import (
 __all__ = [
     "BackupConfig",
     "BackupLock",
+    "BackupLockBusyError",
     "BackupManager",
     "BackupResult",
     "BackupStatus",
@@ -65,6 +69,8 @@ __all__ = [
     "RestoreResult",
     "SnapshotInfo",
     "backup_run_items",
+    "backup_run_items_for_restore",
+    "backup_run_source_deployments",
     "clone_backup_items",
     "create_backup_manager",
     "create_bucket_backup_manager",

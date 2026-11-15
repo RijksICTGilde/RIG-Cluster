@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.actor import ACTOR_UNKNOWN, get_actor, user_actor
-from opi.core.task_worker import TaskWorker
+from opi.runtime.tasks.task_worker import TaskWorker
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def mock_task_service() -> AsyncMock:
 @pytest.fixture
 def mock_worker_settings() -> Any:
     """Mock settings with short intervals for fast tests."""
-    with patch("opi.core.task_worker.settings") as s:
+    with patch("opi.runtime.tasks.task_worker.settings") as s:
         s.TASK_WORKER_POLL_INTERVAL = 0.05
         s.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         s.TASK_WORKER_STALE_THRESHOLD = 120
@@ -120,7 +120,7 @@ class TestRegisterHandler:
 class TestWorkerClaimsAndDispatches:
     """Tests for the core claim-and-dispatch flow."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_claims_and_dispatches(
         self,
         mock_progress_cls: MagicMock,
@@ -132,9 +132,6 @@ class TestWorkerClaimsAndDispatches:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
-        # Sync methods on the real manager; keep them sync on the mock too
-        mock_progress_instance.mark_legacy_completed = MagicMock()
-        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         handler = AsyncMock(return_value={"status": "ok"})
@@ -160,15 +157,12 @@ class TestWorkerClaimsAndDispatches:
         mock_task_service.start_task.assert_called_once_with("test-id")
         mock_task_service.complete_task.assert_called_once_with("test-id", {"status": "ok"})
         mock_progress_instance.close.assert_called_once()
-        # The legacy in-memory entry must be marked COMPLETED, otherwise the
-        # periodic cleanup later reports the task as "stuck RUNNING"
-        mock_progress_instance.mark_legacy_completed.assert_called_once()
 
 
 class TestWorkerNoHandler:
     """Tests for tasks with no registered handler."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_no_handler(
         self,
         mock_progress_cls: MagicMock,
@@ -202,7 +196,7 @@ class TestWorkerNoHandler:
 class TestWorkerHandlerException:
     """Tests for handler exceptions."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_handler_exception(
         self,
         mock_progress_cls: MagicMock,
@@ -214,9 +208,6 @@ class TestWorkerHandlerException:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
-        # Sync methods on the real manager; keep them sync on the mock too
-        mock_progress_instance.mark_legacy_completed = MagicMock()
-        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         handler = AsyncMock(side_effect=RuntimeError("something broke"))
@@ -241,10 +232,6 @@ class TestWorkerHandlerException:
         mock_task_service.complete_task.assert_not_called()
         # Progress manager should still be closed on failure
         mock_progress_instance.close.assert_called_once()
-        # The legacy in-memory entry must be marked FAILED so it is not
-        # reported as "stuck RUNNING" later
-        mock_progress_instance.mark_legacy_failed.assert_called_once()
-        assert "something broke" in mock_progress_instance.mark_legacy_failed.call_args.args[0]
 
 
 class TestWorkerStop:
@@ -277,7 +264,7 @@ class TestWorkerStop:
 class TestWorkerHeartbeat:
     """Tests for heartbeat during task execution."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_heartbeat(
         self,
         mock_progress_cls: MagicMock,
@@ -289,9 +276,6 @@ class TestWorkerHeartbeat:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
-        # Sync methods on the real manager; keep them sync on the mock too
-        mock_progress_instance.mark_legacy_completed = MagicMock()
-        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         # Handler that takes long enough for a heartbeat to fire
@@ -333,8 +317,6 @@ class TestWorkerSetsActor:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
-        mock_progress_instance.mark_legacy_completed = MagicMock()
-        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         async def handler(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
@@ -354,7 +336,7 @@ class TestWorkerSetsActor:
 
         await _run_worker_until(worker, done)
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_handler_ziet_de_actor_van_created_by(
         self,
         mock_progress_cls: MagicMock,
@@ -368,7 +350,7 @@ class TestWorkerSetsActor:
 
         assert seen["actor"] == user_actor("iemand@example.org")
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_zonder_created_by_ziet_de_handler_onbekend(
         self,
         mock_progress_cls: MagicMock,
@@ -397,7 +379,7 @@ class TestWorkerCleanupLoop:
         mock_task_service.cleanup_old_tasks.side_effect = _stop_after_call
         worker._running = True
 
-        with patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock()):
+        with patch("opi.runtime.tasks.task_worker.asyncio.sleep", new=AsyncMock()):
             await worker._cleanup_loop()
 
         mock_task_service.cleanup_old_tasks.assert_awaited_once_with(
@@ -423,9 +405,9 @@ class TestWorkerCleanupLoop:
         worker._running = True
 
         with (
-            patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
-            patch("opi.core.task_worker.UserOtpService", return_value=otp_service),
-            patch("opi.core.task_worker.get_session_store", return_value=store),
+            patch("opi.runtime.tasks.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
+            patch("opi.runtime.tasks.task_worker.UserOtpService", return_value=otp_service),
+            patch("opi.runtime.tasks.task_worker.get_session_store", return_value=store),
         ):
             await worker._cleanup_loop()
 

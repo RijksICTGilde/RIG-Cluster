@@ -1,4 +1,4 @@
-"""De provisioning-backends: het enige dat per cluster verschilt."""
+"""The provisioning backends: the only thing that differs per cluster."""
 
 from __future__ import annotations
 
@@ -16,27 +16,27 @@ from opi.services.catalog.image_registries.naming import (
 )
 from opi.services.catalog.image_registries.quota import effective_quota_gib
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
+from opi.services.secrets import RegistrySecret
 from opi.services.services_enums import ServiceType
 from opi.utils.age import (
     carries_encrypted_value,
     decrypt_password_smart_sync,
     get_decoded_project_private_key_sync,
 )
-from opi.utils.secrets import RegistrySecret
 
-#: Elk bestand van deze dienst op het projectniveau begint hiermee, voor de prune.
+#: Every project-level file of this service starts with this, for the prune's sake.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
-#: Terugval als de clusterconfig geen ``organization_api_version`` noemt: de gemeten
-#: ODCN-waarde, zie features/image-registries.md.
+#: Fallback when the cluster config names no ``organization_api_version``: the measured ODCN
+#: value, see features/image-registries.md.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
-#: Terugval als de clusterconfig geen ``quota_limit_gib`` noemt. Hele gibibytes, want
-#: ``limitGiB`` is een integer in de CR.
+#: Fallback when the cluster config names no ``quota_limit_gib``. Whole gibibytes, because
+#: ``limitGiB`` is an integer in the CR.
 DEFAULT_QUOTA_LIMIT_GIB = 3
 
 
 class MissingRegistryCredentialsError(ValueError):
-    """Een registry zonder secretName en zonder token."""
+    """A registry with neither a secretName nor a token."""
 
     def __init__(self, registry: str, project: str) -> None:
         super().__init__(
@@ -46,34 +46,34 @@ class MissingRegistryCredentialsError(ValueError):
 
 
 class RegistryBackend(Protocol):
-    """Wat er moet worden aangemaakt voor een registry die een afnemer opgeeft.
+    """What has to be created for a registry a consumer supplies.
 
-    Geen ``remove``: verwijderen is declaratief. Levert de backend geen spec meer, dan
-    ruimt de prune het bestand op en verwijdert ArgoCD de resource.
+    No ``remove``: deleting is declarative. Once the backend yields no spec, the prune clears
+    the file and ArgoCD removes the resource.
     """
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
-        """De projectbrede manifesten voor één registry, replay-safe."""
+        """The project-wide manifests for one registry, replay safe."""
         ...
 
 
 class DirectSecretBackend:
-    """Een dockerconfigjson-secret in de namespace; de image blijft ongewijzigd."""
+    """A dockerconfigjson secret in the namespace; the image stays unchanged."""
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
         if registry.get("secretName"):
-            # Het secret staat er al, gezet door het platform.
+            # The secret is already there, put in place by the platform.
             return []
         upstream = registry.get("upstream")
         password = _plain_password(registry, ctx)
         if not upstream or not password:
-            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een token. Toch luid,
-            # anders merkt de afnemer het pas als de pod niet kan pullen.
+            # Unreachable: ``RegistryEntry`` demands a secretName or a token. Loud anyway,
+            # otherwise the consumer only notices when the pod cannot pull.
             raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
         username = _pull_username(registry)
 
         name = direct_secret_name(ctx.project_name, str(registry.get("name", "")))
-        # De volledige upstream inclusief pad, want kubelet kiest de meest specifieke match.
+        # The full upstream including path, because kubelet picks the most specific match.
         secret = RegistrySecret(registry_url=str(upstream), username=username, password=password)
         return [
             ProjectManifestSpec(
@@ -92,7 +92,7 @@ class DirectSecretBackend:
 
 
 class QuayProxyOrganizationBackend:
-    """Een ``Organization`` met proxyCache in RCR, plus het credentials-secret ernaast."""
+    """An ``Organization`` with proxyCache in RCR, plus the credentials secret beside it."""
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
         if registry.get("secretName"):
@@ -113,7 +113,7 @@ class QuayProxyOrganizationBackend:
 
         password = _plain_password(registry, ctx)
         if not password:
-            # Onbereikbaar, om dezelfde reden als in ``DirectSecretBackend``.
+            # Unreachable, for the same reason as in ``DirectSecretBackend``.
             raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
         username = _pull_username(registry)
 
@@ -155,17 +155,17 @@ class QuayProxyOrganizationBackend:
 
 
 def backend_for_cluster(cluster: str) -> RegistryBackend:
-    """De backend die op dit cluster geldt."""
+    """The backend that applies on this cluster."""
     if get_image_registries_config(cluster).get("backend") == BACKEND_QUAY_PROXY:
         return QuayProxyOrganizationBackend()
     return DirectSecretBackend()
 
 
 def _pull_username(registry: dict[str, Any]) -> str:
-    """De gebruikersnaam voor de dockerconfigjson: wat de afnemer opgaf, anders de plaatshouder.
+    """The username for the dockerconfigjson: what the consumer gave, else the placeholder.
 
-    Hier en niet bij het opslaan, want dit is de enige plek waar hij nodig is. Zie
-    ``PULL_USERNAME_PLACEHOLDER`` voor waarom er iets moet staan.
+    Here and not at save time, because this is the only place it is needed. See
+    ``PULL_USERNAME_PLACEHOLDER`` for why something has to be there.
     """
     username = registry.get("username")
     if isinstance(username, str) and username:
@@ -174,10 +174,10 @@ def _pull_username(registry: dict[str, Any]) -> str:
 
 
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:
-    """Het token in leesbare vorm, of None als er geen token is opgegeven.
+    """The token in readable form, or None when no token was supplied.
 
-    Met de fail-closed sleutelzoeker: dit is de SCHRIJFkant, dus een ontbrekende sleutel
-    blaast op in plaats van stil een onbruikbaar credential naar git te schrijven.
+    With the fail-closed key resolver: this is the WRITE side, so a missing key blows up
+    instead of silently writing an unusable credential to git.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:

@@ -39,13 +39,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
-from opi.api.image_router import image_router
-from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
+from opi.api.image_router import image_router, push_image
 from opi.core.authz.engine import Cause
 from opi.core.config import settings
-from opi.core.leden import LidSoort
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
+from opi.http.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
 from opi.middleware.body_limit import (
     BodyLimitMiddleware,
     attachment_body_limit,
@@ -54,7 +53,8 @@ from opi.middleware.body_limit import (
 )
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
-from opi.services.project_leden import hash_van
+from opi.services.members import MemberKind
+from opi.services.project_members import hash_of
 from opi.utils import uploads
 from opi.utils.uploads import CHUNK_SIZE, read_capped, spill_capped, upload_slot
 from opi.web.router_wizard_attachments import stage_attachment
@@ -222,7 +222,7 @@ def _app(*, leest_de_body: bool = False) -> FastAPI:
 
     if leest_de_body:
         app.add_middleware(_LeestDeBody)
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, image_push_endpoint=push_image)
     return app
 
 
@@ -318,7 +318,7 @@ def test_een_te_grote_image_push_wordt_geweigerd_voor_de_route_draait(monkeypatc
         request.app.state.gedraaid.append("push")
         return {"gelezen": len(await request.body())}
 
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, image_push_endpoint=push_image)
     client = TestClient(app)
 
     response = client.post("/api/v1/projects/test-project/images/push", content=b"x" * (image_push_body_limit() + 1))
@@ -627,7 +627,7 @@ def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestCli
     project = SimpleNamespace(name="test-project", api_key="de-juiste-sleutel", users=[])
     store = MagicMock()
     store.get.return_value = project
-    monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.http.auth.endpoint_util.get_project_store", lambda: store)
 
     connector = MagicMock()
     connector.validate_push_target = MagicMock()
@@ -637,7 +637,7 @@ def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestCli
     app = FastAPI()
     app.include_router(image_router)
     teller = _TeltOntvangen(app)
-    return TestClient(BodyLimitMiddleware(teller)), teller
+    return TestClient(BodyLimitMiddleware(teller, image_push_endpoint=push_image)), teller
 
 
 def test_een_push_zonder_sleutel_leest_geen_body(
@@ -645,7 +645,7 @@ def test_een_push_zonder_sleutel_leest_geen_body(
 ) -> None:
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
+    with caplog.at_level("WARNING", logger="opi.http.auth.endpoint_util"):
         response = client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)})
 
     assert response.status_code == 401
@@ -660,7 +660,7 @@ def test_een_push_met_een_verkeerde_sleutel_leest_geen_body(
     """Een sleutel die niet bij het project in het pad hoort komt even ver als geen sleutel."""
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
+    with caplog.at_level("WARNING", logger="opi.http.auth.endpoint_util"):
         response = client.post(
             PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-sleutel-van-een-ander"}
         )
@@ -755,16 +755,16 @@ def _project_met_rol(*rollen: str) -> SimpleNamespace:
         data={},
         users=[
             SimpleNamespace(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
-                principaal="bouwstraat",
+                principal="bouwstraat",
                 email=None,
                 roles=list(rollen),
                 tokens=[
                     SimpleNamespace(
                         name="pijplijn",
                         expires=datetime.now(UTC) + timedelta(days=30),
-                        hash=hash_van(TOKEN_VAN_DE_PIJPLIJN),
+                        hash=hash_of(TOKEN_VAN_DE_PIJPLIJN),
                     )
                 ],
             )
@@ -789,11 +789,11 @@ def push_met_rol(
     def bouw(rol: str) -> tuple[TestClient, _TeltOntvangen]:
         store = MagicMock()
         store.get.return_value = _project_met_rol(rol)
-        monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.http.auth.endpoint_util.get_project_store", lambda: store)
         app = FastAPI()
         app.include_router(image_router)
         teller = _TeltOntvangen(app)
-        return TestClient(BodyLimitMiddleware(teller)), teller
+        return TestClient(BodyLimitMiddleware(teller, image_push_endpoint=push_image)), teller
 
     return bouw
 
@@ -811,7 +811,7 @@ def test_een_te_smalle_rol_leest_geen_body(
     response = _push(client)
 
     assert response.status_code == 403
-    # Dezelfde body als handhaaf geeft: de reden als eigen veld naast de tekst.
+    # Dezelfde body als enforce geeft: de reden als eigen veld naast de tekst.
     assert response.json()["detail"]["cause"] == Cause.INSUFFICIENT_ROLE.value
     assert response.json()["detail"]["message"]
     assert teller.ontvangen == 0, "de body is toch gelezen"

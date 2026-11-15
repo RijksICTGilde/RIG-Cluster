@@ -21,8 +21,8 @@ class ServiceType(Enum):
 
     # Object storage services
     MINIO_STORAGE = "minio-storage"
-    # De opvolger van minio-storage als proef, naast hem en niet in zijn plaats (RC-331).
-    # Alleen beschikbaar op een cluster waarvan de configuratie een seaweedfs_host noemt.
+    # A trial alongside minio-storage and not in its place. Only available on a cluster
+    # whose configuration names a seaweedfs_host.
     SEAWEEDFS_STORAGE = "seaweedfs-storage"
 
     # Outgoing mail: an SMTP account on the platform relay, which authenticates once
@@ -37,8 +37,8 @@ class ServiceType(Enum):
     # Platform services (always-on, not user-selectable)
     PLATFORM = "platform"
 
-    # Waar de images van dit project vandaan komen, en wat er op dit cluster onder
-    # gebeurt (een pull-secret, of een proxy-organisatie in RCR).
+    # Where this project's images come from, and what happens under it on this cluster
+    # (a pull secret, or a proxy organisation in RCR).
     IMAGE_REGISTRIES = "image-registries"
 
     # File attachments (uploaded files mounted into a pod or exposed as env-var)

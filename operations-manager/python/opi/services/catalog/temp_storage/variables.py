@@ -1,7 +1,7 @@
 """Environment variables the temp-storage service provides.
 
-Lives in the service's own package (RC-36). The mount path is handed to the pod
-directly (no secret), so a component knows where its scratch space lives.
+Lives in the service's own package. The mount path is handed to the pod directly (no
+secret), so a component knows where its scratch space lives.
 """
 
 from enum import Enum

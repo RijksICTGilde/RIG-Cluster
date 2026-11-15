@@ -92,3 +92,12 @@ def test_broken_config_shows_no_button() -> None:
 
 def test_unknown_deployment_shows_no_button() -> None:
     assert sleep_actions(_project(state=None), "GHOST") == []
+
+
+def test_non_dict_deployment_entry_is_skipped() -> None:
+    """A malformed ``deployments`` entry must not crash the toggle."""
+    project = _project(state=None)
+    project["deployments"].insert(0, "PR-1")
+    actions = sleep_actions(project, "PR-1")
+    assert len(actions) == 1
+    assert actions[0].label == "Deployment slapen"

@@ -1,7 +1,7 @@
-"""ORM model for the ``async_tasks`` table (the async task queue, RC-5).
+"""ORM model for the ``async_tasks`` table (the async task queue).
 
 Schema-as-code mirror of ``ASYNC_TASKS_TABLE_SQL``. The repository lives in
-``opi/core/async_task_service.py``. Queries still add ``FOR UPDATE SKIP LOCKED`` for
+``opi/services/tasks/async_task_service.py``. Queries still add ``FOR UPDATE SKIP LOCKED`` for
 safe concurrent claiming.
 """
 
@@ -50,16 +50,13 @@ class AsyncTask(Base):
     created_by: Mapped[str | None] = mapped_column(String(255))
     attempt_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
     max_attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("3"))
-    #: De deployments die deze taak raakt; NULL is projectbreed, net als None in
-    #: ``scope_of()``, dat de enige schrijver van deze kolom is.
-    #:
-    #: De postgresql-ARRAY en niet de generieke uit ``sqlalchemy`` (die ``logs`` gebruikt):
-    #: alleen de dialect-variant heeft ``.overlap()`` in zijn comparator, en daarop draait
-    #: het overlappredicaat waarmee ``claim_next_task`` bepaalt of twee taken elkaar in de
-    #: weg kunnen zitten.
+    #: The deployments this task touches; NULL is project-wide, as None is in ``scope_of()``,
+    #: the only writer of this column. The postgresql ARRAY and not the generic one from
+    #: ``sqlalchemy`` (which ``logs`` uses): only the dialect variant has ``.overlap()`` in its
+    #: comparator, and that is what ``claim_next_task`` builds its overlap predicate on.
     affects_deployments: Mapped[list[str] | None] = mapped_column(PG_ARRAY(String(63)))
-    #: Wanneer de werkgegevens van deze rij zijn leeggemaakt; NULL is "nog niet".
-    #: Zie ``cleanup_old_tasks``, de enige schrijver van deze kolom.
+    #: When this row's working data was emptied; NULL is "not yet". Written only by
+    #: ``cleanup_old_tasks``.
     details_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (

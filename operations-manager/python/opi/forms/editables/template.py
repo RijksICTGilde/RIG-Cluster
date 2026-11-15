@@ -10,17 +10,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from opi.core.config import settings
+from opi.services.project_utils import encrypted_repository_password
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
-from opi.utils.age import ensure_base64_age_sync
+from opi.utils.age import generate_age_key_pair, wrap_project_key_sync
+from opi.utils.yaml_util import load_yaml_safe
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-template.yaml"
 _PLACEHOLDER_RE = re.compile(r"\$\{(\w+)\}")
 
 
-def _resolve_placeholders(value: Any) -> Any:
+def _resolve_placeholders(value: Any) -> Any:  # noqa: ANN401  # a project-file value
     """Recursively resolve ``${SETTING}`` placeholders in strings."""
     if isinstance(value, str):
         return _PLACEHOLDER_RE.sub(lambda m: str(getattr(settings, m.group(1), m.group(0))), value)
@@ -41,14 +41,26 @@ def load_project_template() -> dict[str, Any]:
     file and fails the provisioning task with a ``ConflictError``. Emitting the
     latest version on create avoids the migration entirely.
     """
-    yaml = YAML()
-    with _TEMPLATE_PATH.open() as f:
-        data = yaml.load(f)
+    data = load_yaml_safe(_TEMPLATE_PATH.read_text(encoding="utf-8"))
     resolved = _resolve_placeholders(data or {})
     resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
-    # The placeholder brings the setting as is, and the env may carry it plain.
-    for repo in resolved.get("repositories", []):
-        repo["password"] = ensure_base64_age_sync(
-            repo["password"], settings.SOPS_AGE_PRIVATE_KEY, settings.SOPS_AGE_PUBLIC_KEY
-        )
+    # The placeholder resolves to the raw setting, and a project file may never carry it plain.
+    for repo in resolved.get("repositories") or []:
+        repo["password"] = encrypted_repository_password()
     return resolved
+
+
+def build_new_project_base_data() -> dict[str, Any]:
+    """The template plus what a new project must own before its first step is filled in.
+
+    Its own AGE key pair, because the wizard keeps its state in a file on disk: without a
+    public key from the start the converters have nothing to encrypt the first secret the
+    user types with, and it would sit in that file as plain text until submit.
+    """
+    base_data = load_project_template()
+    private_key, public_key = generate_age_key_pair()
+    base_data["config"] = {
+        "age-public-key": public_key,
+        "age-private-key": wrap_project_key_sync(private_key),
+    }
+    return base_data

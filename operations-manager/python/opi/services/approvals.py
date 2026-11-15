@@ -15,7 +15,7 @@ Two operations, mirroring the spec's ``list_items`` / ``record`` callbacks:
 
 Approval state is owned by the declaring service and stored under its config (for
 publish-on-web: ``services/[publish-on-web]/config/domains``, resolved read-both /
-migrated write-new by connectors/subdomain.py). This module stays state-agnostic -- it
+migrated write-new by services/catalog/publish_on_web/subdomain.py). This module stays state-agnostic -- it
 only routes to the specs.
 """
 
@@ -63,16 +63,11 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
                 item.setdefault("service", service.service_type.value)
                 item.setdefault("type", spec.key)
                 # The spec's own label, so the approver UI can name what it is showing
-                # instead of switching on the two types it happened to know. The notice
-                # side already did this; the item side hardcoded "Domein" for anything
-                # that was not a subdomain, which is wrong the moment a third approvable
-                # arrives (RC-114).
+                # instead of switching on the types it happens to know.
                 item.setdefault("label", spec.label)
-                # WAT er gevraagd wordt, geschreven door de dienst die het weet. Zonder dit
-                # moest de beheerpagina het zelf samenstellen uit de velden die zij toevallig
-                # kende, en dat is precies waarom een dienstaanvraag daar als een LEGE
-                # domeinkolom op het scherm kwam. De terugval dekt een spec die het (nog)
-                # niet zet en een modalsessie van voor dit veld bestond.
+                # WHAT is being asked for, written by the service that knows. The fallback
+                # covers a spec that does not set it yet, and a modal session from before
+                # this field existed.
                 item.setdefault("subject", item.get("domain") or item.get("name") or "")
                 items.append(item)
     return items

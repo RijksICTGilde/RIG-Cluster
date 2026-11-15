@@ -4,18 +4,11 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
+# LOTC_STRICT and ENVIRONMENT are set in the root conftest.py: this one is too late for a
+# run that collects security_tests beside tests, because that directory's conftest imports
+# opi.core.config first.
+
 import os
-
-# Voor elke import van opi: setup_components leest LOTC_STRICT tijdens het importeren van
-# opi.core.templates_lotc, dus na die import zetten doet niets meer. Strict weigert een
-# onbekende attribuutWAARDE in plaats van hem stil te renderen, en staat daarom in de
-# tests en in CI en niet in de productie-image.
-os.environ.setdefault("LOTC_STRICT", "1")
-
-# ENVIRONMENT valt zonder instelling terug op "production", en dan registreert create_app
-# de proef- en testroutes niet. De tests meten die routes, dus hier expliciet "local".
-os.environ.setdefault("ENVIRONMENT", "local")
-
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -37,10 +30,11 @@ from opi.core.db import Base
 # session, so a later test fails or passes depending on which tests ran before it.
 from opi.server import create_app
 from opi.services.user_otp_service import OtpStatus, OtpVerification
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
 from tests.image_pins import REPO_ROOT, pinned_image
+from tests.kubectl_probe import kubectl_arrangement_for
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
@@ -79,7 +73,7 @@ def make_age_keypair() -> Callable[[], tuple[str, str]]:
 
     def make() -> tuple[str, str]:
         """Returns (private_key, public_key)."""
-        return generate_sops_key_pair()
+        return generate_age_key_pair()
 
     return make
 
@@ -93,7 +87,7 @@ def age_keypair(make_age_keypair: Callable[[], tuple[str, str]]) -> tuple[str, s
 @pytest.fixture
 def mock_kubectl_connected() -> Any:
     """Mock KubectlConnector to appear connected without actual cluster."""
-    with patch("opi.connectors.kubectl.KubectlConnector.isConnected", True):
+    with patch("opi.connectors.kubectl.KubectlConnector.is_connected", True):
         yield
 
 
@@ -188,7 +182,7 @@ def mock_project_service() -> Any:
     # Patch in both locations: endpoint_util (for auth) and logs_router (for usage)
     mock_service = MockProjectStore()
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.logs_router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
@@ -202,7 +196,6 @@ def mock_settings() -> Any:
         mock_settings.DEBUG = True
         mock_settings.SECRET_KEY = "test-secret-key-for-testing-only"
         mock_settings.OIDC_DISABLED = True
-        mock_settings.ENABLE_GIT_MONITOR = False
         mock_settings.KEYCLOAK_URL = ""
         mock_settings.PROMETHEUS_EXTERNAL_URL = ""
         mock_settings.PROMETHEUS_URL = ""
@@ -216,7 +209,7 @@ def mock_settings() -> Any:
         # het waar-achtig is, en een kale MagicMock is dat. Starlette weigerde die header
         # met een TypeError, waardoor /health onder deze fixture niet te meten was.
         mock_settings.SECURITY_PROOF_TOKEN = ""
-        # Ook echte ints, om dezelfde reden: opi/api/rate_limiter.py rekent bij import met
+        # Ook echte ints, om dezelfde reden: opi/http/rate_limiter.py rekent bij import met
         # deze waarden om zijn emmers te bouwen, en retry_after_seconds vergelijkt met de
         # max. Een kale MagicMock gaf een TypeError bij de import van de module, en dan
         # viel elke test die create_app() bouwt om op de fixture.
@@ -346,18 +339,18 @@ def stub_platform_repo_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     async def nothing() -> None:
         return None
 
-    monkeypatch.setattr("opi.core.task_handlers_operations.sync_platform_repos", nothing)
+    monkeypatch.setattr("opi.runtime.tasks.task_handlers_operations.sync_platform_repos", nothing)
 
 
 @pytest.fixture(autouse=True)
-def reset_kubectl_singleton() -> Any:
-    """Reset KubectlConnector singleton between tests."""
+def reset_kubectl_singleton(request: pytest.FixtureRequest) -> Any:
+    """Reset the KubectlConnector singleton between tests, and keep its cluster probe out of
+    the layers that have no cluster (see ``tests/kubectl_probe.py``)."""
     from opi.connectors.kubectl import KubectlConnector
 
-    # Reset singleton state
     KubectlConnector._instance = None
-    yield
-    # Clean up after test
+    with kubectl_arrangement_for(request.node):
+        yield
     KubectlConnector._instance = None
 
 
@@ -385,7 +378,7 @@ def elevated_by_default() -> Any:
     ``tests/test_elevated_platform_admin.py`` covers the admin without a step-up. The state
     is only set here for calls that skip the middleware, which sets it on every request.
     """
-    from opi.core.step_up import step_up_fresh
+    from opi.services.step_up import step_up_fresh
 
     token = step_up_fresh.set(True)
     yield
@@ -425,7 +418,7 @@ def reset_rate_limiters() -> Any:
     de mislukte authenticatiepogingen van de vorige mee en krijgt hij een 429 waar hij een
     401 toetst. Het aantal tests dat met een foute sleutel klopt ligt boven de grens.
     """
-    from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
+    from opi.http.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
 
     limiters = (AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY, API_FLOOD_LIMITER)
 
@@ -454,31 +447,38 @@ def reset_rate_limiters() -> Any:
 # hangt onder de Docker-daemon en niet onder pytest. Gemeten op 20 augustus 2026 stonden er
 # elf, de oudste 45 uur.
 #
-# Een container die per definitie blijft staan kan dat niet lekken. Er is er één, hij heet
-# altijd hetzelfde, en opruimen is gewoon werk dat een mens doet:
+# Een container die per definitie blijft staan kan dat niet lekken. Er is er één per
+# sessie, zijn naam volgt uit de sessie, en opruimen is gewoon werk dat een mens doet:
 #
-#     task test-db-stop     # docker rm -f zad-test-postgres
+#     task test-db-stop     # docker rm -f <de container van deze sessie>
 #     task test-db-reset    # weg en opnieuw
 #
 # Het lek verhuist daarmee naar de databases IN die server, en dat is een ruil die de
 # moeite waard is: die kosten niets, zijn onzichtbaar, en de veeg hieronder haalt ze weg
 # zodra hun maker dood is.
 
-#: Vaste naam, want daar draait dit hele ontwerp om: wat een mens kan noemen, kan hij
-#: opruimen.
-ZAD_TEST_PG_CONTAINER = "zad-test-postgres"
+#: A fixed name, because that is what this whole design relies on: what a human can name,
+#: a human can clean up. In a dclaude session it gets the session name appended, because
+#: those sessions share the docker daemon and the host network, and a container belongs to
+#: the session that started it.
+_SESSION_HOST = os.environ.get("HOSTNAME", "")
+ZAD_TEST_PG_CONTAINER = os.environ.get("ZAD_TEST_PG_CONTAINER") or (
+    f"zad-test-postgres-{_SESSION_HOST}" if _SESSION_HOST.startswith("dclaude-") else "zad-test-postgres"
+)
 #: Het manifest dat de PostgreSQL van het platform pint.
 PLATFORM_POSTGRES_CLUSTER = "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
 #: Een ORM-toets meet alleen tegen wat productie draait (ZAD_TEST_PG_IMAGE in de omgeving overschrijft dit).
 ZAD_TEST_PG_IMAGE = os.environ.get("ZAD_TEST_PG_IMAGE") or pinned_image(PLATFORM_POSTGRES_CLUSTER)
 ZAD_TEST_PG_PASSWORD = "zadtest"
-#: De CNPG-image start niet zelf; dit script doet wat de operator doet. Zie daar.
+#: The CNPG image does not start on its own; this script does what the operator does. See
+#: there. The text travels as an argument rather than a mount: a session talks to the
+#: host's daemon, and a path from this worktree does not exist there.
 ZAD_TEST_PG_START = REPO_ROOT / "scripts/postgres-standalone-start.sh"
-ZAD_TEST_PG_START_IN_CONTAINER = "/zad/postgres-standalone-start.sh"
-#: Alleen van belang bij het AANMAKEN. Staat de container er al, dan lezen we zijn
-#: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
-#: poort waar niets luistert.
-ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
+#: Only matters when CREATING. If the container already exists, we read its real port
+#: from Docker; that is authoritative, otherwise a second run talks to a port nothing
+#: listens on. Unset means a free port, so two sessions on the same host network do not
+#: collide.
+ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT")
 #: Prefix van de database per run: ``zadtest_<namespace>_<pid>_<epoch>``. De pid maakt een
 #: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
 #: Bewust niet ``zad_test_``: de veeg van oudere takken leest die naam als ``zad_test_<pid>``,
@@ -550,12 +550,11 @@ def _zorg_voor_container() -> str:
             "-e",
             f"POSTGRES_PASSWORD={ZAD_TEST_PG_PASSWORD}",
             "-p",
-            f"{ZAD_TEST_PG_PORT}:5432",
-            "-v",
-            f"{ZAD_TEST_PG_START}:{ZAD_TEST_PG_START_IN_CONTAINER}:ro",
+            f"127.0.0.1:{ZAD_TEST_PG_PORT}:5432" if ZAD_TEST_PG_PORT else "127.0.0.1::5432",
             ZAD_TEST_PG_IMAGE,
             "bash",
-            ZAD_TEST_PG_START_IN_CONTAINER,
+            "-c",
+            ZAD_TEST_PG_START.read_text(),
             check=False,
             timeout=180,
         )
@@ -566,7 +565,7 @@ def _zorg_voor_container() -> str:
         if gemaakt.returncode != 0 and not _container_staat()[0]:
             raise TestPostgresError(
                 f"'{ZAD_TEST_PG_CONTAINER}' kon niet starten: {gemaakt.stderr.strip()}\n"
-                f"Zit poort {ZAD_TEST_PG_PORT} bezet, zet dan ZAD_TEST_PG_PORT."
+                f"Zit poort {ZAD_TEST_PG_PORT or '(vrij gekozen)'} bezet, zet dan ZAD_TEST_PG_PORT."
             )
 
     _wacht_tot_hij_luistert()
@@ -995,8 +994,8 @@ def platformbeheerder_token() -> Iterator[dict[str, Any]]:
         return claims if token == "beheerder-token" else {**claims, "email": "iemand@example.test"}
 
     with (
-        patch("opi.api.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
-        patch("opi.api.user_token_auth.get_user_service") as get_service,
+        patch("opi.http.auth.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
+        patch("opi.http.auth.user_token_auth.get_user_service") as get_service,
     ):
         get_service.return_value.is_email_allowed.return_value = True
         get_service.return_value.is_platform_admin.side_effect = lambda email: email == PLATFORMBEHEERDER_EMAIL
@@ -1032,7 +1031,7 @@ def verse_otp() -> Iterator[dict[str, Any]]:
         status=AsyncMock(return_value=OtpStatus(registered=True)),
     )
     with (
-        patch("opi.api.otp_step_up.UserOtpService", return_value=service),
+        patch("opi.http.auth.otp_step_up.UserOtpService", return_value=service),
         patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=True)),
     ):
         yield {"headers": {}, "code": OTP_CODE}

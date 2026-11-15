@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.web.lotc_switch import build_lotc_introductie
+from opi.http.render.lotc_switch import build_lotc_introduction
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -92,7 +92,7 @@ def test_de_pagina_opent_zonder_sessie_en_toont_zijn_kop(app_server: str, page: 
 
 def test_elke_dienst_uit_de_catalogus_staat_er_als_gevulde_kaart(app_server: str, page: Page) -> None:
     """Evenveel kaarten als diensten, elk met een titel, tekst en echte afmetingen."""
-    context = build_lotc_introductie(None)
+    context = build_lotc_introduction(None)
     verwacht = [d["label"] for d in context["diensten_zelf"]] + [d["label"] for d in context["diensten_achtergrond"]]
     assert verwacht, "de catalogus levert niets; deze test zou gratis groen zijn"
 

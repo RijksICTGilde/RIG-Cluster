@@ -99,3 +99,19 @@ async def test_credential_check_does_not_read_a_tls_failure_as_invalid_credentia
         await DatabaseManager._test_database_connection(
             username="proj_dep", password="secret", database="proj_dep", schema="proj_dep", host="rig-db-rw"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_closed_cached_connection_is_recreated() -> None:
+    """asyncpg raises InterfaceError, not a PostgresError, on a connection the server closed."""
+    connector = create_postgres_connector("rig-db-rw", "postgres", "secret")
+    closed = AsyncMock()
+    closed.fetchval = AsyncMock(side_effect=asyncpg.InterfaceError("connection is closed"))
+    fresh = AsyncMock()
+
+    with patch("opi.connectors.postgres.asyncpg.connect", new=AsyncMock(side_effect=[closed, fresh])) as connect:
+        await connector._get_or_create_connection("operations_manager")
+        await connector._get_or_create_connection("operations_manager")
+
+    assert connect.await_count == 2
+    assert connector._conn is fresh

@@ -18,12 +18,11 @@ Supports a rich path syntax for get/set operations:
 
 Dict-key filter ``{K}``
     The list is a mix of strings and dicts.  Finds the entry identified by *K*
-    and descends into its body.  Two entry forms carry a body, and both are
-    understood (RC-60): the legacy single-key dict ``{K: {…}}``, whose body is
-    ``dict[K]``, and the uniform record ``{name|reference: K, …}``, which IS its
-    own body.  Matching only the legacy form is how a component whose
-    ``publish-on-web`` entry had already been normalised to a record read back
-    as empty -- the form showed a default where a stored value was.
+    and descends into its body.  Two entry forms carry a body, and both have to be
+    understood: the legacy single-key dict ``{K: {…}}``, whose body is ``dict[K]``,
+    and the uniform record ``{name|reference: K, …}``, which IS its own body. Match
+    only the legacy form and an entry already normalised to a record reads back as
+    empty, so the form shows a default where a stored value is.
     On write, promotes a matching string to ``{K: {}}`` or appends
     a new entry if not found; an existing record is written into as-is.
 
@@ -62,26 +61,17 @@ def _parse_segment(part: str) -> tuple[str, str | None, str | None]:
     return m.group("key"), m.group("idx"), m.group("filter")
 
 
-# ---------------------------------------------------------------------------
-# get_value
-# ---------------------------------------------------------------------------
+def get_value(data: dict[str, Any], yaml_path: str) -> Any:  # noqa: ANN401  # a project-file value
+    """Extract the value at *yaml_path*; missing data gives None rather than an exception.
 
-
-def get_value(data: dict[str, Any], yaml_path: str) -> Any:
-    """Extract value from YAML dict at the given path.
-
-    Supports wildcards ``[*]`` (returns list of all matches) and
-    filter expressions ``{K}`` / ``{F=V}`` for mixed-list navigation.
-
-    Never raises for missing data - returns None instead.
+    A wildcard ``[*]`` returns the list of all matches.
     """
     if yaml_path == "":
         return data
     return _get_recursive(data, yaml_path.split("/"))
 
 
-def _get_recursive(current: Any, parts: list[str]) -> Any:
-    """Recursively traverse data following path parts."""
+def _get_recursive(current: Any, parts: list[str]) -> Any:  # noqa: ANN401  # a project-file value
     for i, part in enumerate(parts):
         key, idx, filt = _parse_segment(part)
 
@@ -94,7 +84,6 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
 
         remaining = parts[i + 1 :]
 
-        # --- wildcard [*] ------------------------------------------------
         if idx == "*":
             if not isinstance(current, list):
                 return None
@@ -102,7 +91,6 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
                 return list(current)
             return [_get_recursive(item, remaining) for item in current]
 
-        # --- concrete index [N] ------------------------------------------
         if idx is not None:
             index = int(idx)
             if not isinstance(current, list) or index >= len(current):
@@ -110,7 +98,6 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
             current = current[index]
             continue
 
-        # --- filter {K} or {F=V} -----------------------------------------
         if filt is not None:
             if not isinstance(current, list):
                 return None
@@ -122,7 +109,7 @@ def _get_recursive(current: Any, parts: list[str]) -> Any:
     return current
 
 
-def _filter_get(items: list[Any], filt: str) -> Any:
+def _filter_get(items: list[Any], filt: str) -> Any:  # noqa: ANN401  # a project-file value
     """Apply a filter expression to a list and return the matched value.
 
     {K}     → find the entry identified by K, return its body
@@ -135,7 +122,7 @@ def _filter_get(items: list[Any], filt: str) -> Any:
                 return item
         return None
 
-    # {K} - identity filter in a mixed list, both entry forms
+    # {K}: an identity filter in a mixed list, in both entry forms.
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -155,20 +142,12 @@ def _is_record_for(item: dict[str, Any], name: str) -> bool:
     return item.get("name") == name or item.get("reference") == name
 
 
-# ---------------------------------------------------------------------------
-# set_value
-# ---------------------------------------------------------------------------
+def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:  # noqa: ANN401  # a project-file value
+    """Set a value at *yaml_path*, mutating *data* in place and returning it.
 
-
-def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any]:
-    """Set a value in a YAML dict at the given path.
-
-    Creates intermediate dicts, extends lists, and promotes/creates
-    entries for filter expressions as needed.
-
-    Does NOT support ``[*]`` wildcards - use ``resolve_path()`` first.
-
-    Returns the modified data dict (mutated in place).
+    Creates intermediate dicts, extends lists, and promotes or creates entries for filter
+    expressions as needed. A ``[*]`` wildcard is not supported: resolve it with
+    ``resolve_path()`` first.
     """
     if yaml_path == "":
         msg = "Cannot set value at empty path"
@@ -193,10 +172,9 @@ def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any
 
 
 def delete_value(data: dict[str, Any], yaml_path: str) -> None:
-    """Remove a key from a YAML dict at the given path.
+    """Remove the key at *yaml_path*; a no-op when it does not exist.
 
-    Navigates to the parent container and removes the terminal key.
-    No-op if the path does not exist.  Does NOT support ``[*]`` wildcards.
+    A ``[*]`` wildcard is not supported.
     """
     if not yaml_path or "[*]" in yaml_path:
         return
@@ -204,7 +182,6 @@ def delete_value(data: dict[str, Any], yaml_path: str) -> None:
     parts = yaml_path.split("/")
     current: Any = data
 
-    # Navigate to the parent of the terminal key
     for part in parts[:-1]:
         key, idx, filt = _parse_segment(part)
         if not isinstance(current, dict):
@@ -218,18 +195,16 @@ def delete_value(data: dict[str, Any], yaml_path: str) -> None:
                 return
             current = current[index]
         elif filt is not None:
-            # A filter segment was silently ignored here, so navigation walked into the
-            # LIST and the next segment found no dict -- every delete through a
-            # ``services{X}/config/...`` path was a no-op. That is what made
-            # ``remove_when_none`` do nothing for service config: clearing a field left
-            # the old value in the file (RC-60).
+            # A filter segment has to be followed here too. Ignore it and navigation walks
+            # into the LIST, the next segment finds no dict, and every delete through a
+            # ``services{X}/config/...`` path is a no-op: ``remove_when_none`` then leaves
+            # the old value in the file.
             if not isinstance(current, list):
                 return
             current = _filter_get(current, filt)
             if current is None:
                 return
 
-    # Remove the terminal key
     last_key, last_idx, _last_filt = _parse_segment(parts[-1])
     if isinstance(current, dict) and last_idx is None:
         current.pop(last_key, None)
@@ -240,7 +215,7 @@ def _set_terminal(
     key: str,
     idx: str | None,
     filt: str | None,
-    value: Any,
+    value: Any,  # noqa: ANN401  # a project-file value
 ) -> None:
     """Set a value at a terminal (last) segment."""
     if filt is not None:
@@ -278,13 +253,12 @@ def _set_intermediate(
             current[key][index] = {}
         return current[key][index]
 
-    # Plain key
     if key not in current or not isinstance(current[key], dict):
         current[key] = {}
     return current[key]
 
 
-def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
+def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:  # noqa: ANN401  # a project-file value
     """Set a value at a filter-matched position (terminal segment)."""
     if "=" in filt:
         field, match_val = filt.split("=", 1)
@@ -292,17 +266,16 @@ def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
             if isinstance(item, dict) and str(item.get(field)) == match_val:
                 lst[i] = value
                 return
-        # Not found - append with the identifying field
+        # Not found, so append it with the identifying field.
         if isinstance(value, dict):
             value.setdefault(field, match_val)
         lst.append(value)
     else:
-        # {K} - set the value at the entry identified by filt
+        # {K}: set the value on the entry identified by filt.
         for i, item in enumerate(lst):
             if isinstance(item, dict) and _is_record_for(item, filt):
-                # A record IS its own body; replacing it would drop its identity, so a
-                # terminal write onto a record means "become this value" only when the
-                # value is a mapping we can merge into it.
+                # A record IS its own body, so replacing it would drop its identity: a
+                # terminal write onto one merges when the value is a mapping.
                 if value is None:
                     lst[i] = filt
                 elif isinstance(value, dict):
@@ -317,7 +290,6 @@ def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
                 return
             if isinstance(item, dict) and filt in item:
                 if value is None:
-                    # Revert dict entry back to plain string
                     lst[i] = filt
                     return
                 item[filt] = value
@@ -341,42 +313,34 @@ def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:
         lst.append(new_item)
         return new_item
 
-    # {K} - identity filter in a mixed list
-    # Zeroth pass: an existing uniform record is its own body, so descend into it
-    # rather than adding a second entry beside it under the name key.
+    # {K}: an identity filter in a mixed list. An existing uniform record is its own body,
+    # so descend into it rather than adding a second entry beside it under the name key.
     for item in lst:
         if isinstance(item, dict) and _is_record_for(item, filt):
             while filt in lst:
                 lst.remove(filt)
             return item
 
-    # First pass: prefer an existing dict entry (avoids duplicates when
-    # the list contains both a plain string and a dict for the same key).
+    # Prefer an existing dict entry: the list can hold both a plain string and a dict for
+    # the same key.
     for item in lst:
         if isinstance(item, dict) and filt in item:
             if not isinstance(item[filt], dict):
                 item[filt] = {}
-            # Remove any leftover plain string duplicate
             while filt in lst:
                 lst.remove(filt)
             return item[filt]
 
-    # Second pass: promote a plain string to a dict
+    # Otherwise promote a plain string to a dict.
     for i, item in enumerate(lst):
         if isinstance(item, str) and item == filt:
             promoted: dict[str, Any] = {filt: {}}
             lst[i] = promoted
             return promoted[filt]
 
-    # Not found - create
     new_entry = {filt: {}}
     lst.append(new_entry)
     return new_entry[filt]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _ensure_list(container: dict[str, Any], key: str, index: int) -> None:
@@ -389,12 +353,10 @@ def _ensure_list(container: dict[str, Any], key: str, index: int) -> None:
 
 
 def resolve_path(yaml_path: str, index: int | None = None) -> str:
-    """Replace the first [*] wildcard with a concrete [index].
+    """Replace the FIRST [*] wildcard with a concrete [index]; None leaves the path alone.
 
     resolve_path("users[*]/email", 2) -> "users[2]/email"
-    resolve_path("a[*]/b[*]/c", 1) -> "a[1]/b[*]/c"  (only first)
-
-    If index is None, returns path unchanged.
+    resolve_path("a[*]/b[*]/c", 1) -> "a[1]/b[*]/c"
     """
     if index is None:
         return yaml_path

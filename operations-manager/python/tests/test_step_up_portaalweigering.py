@@ -16,11 +16,15 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.auth_decorators import requires_step_up
-from opi.core.step_up import STEP_UP_SESSION_KEY, StepUpAction
+from opi.forms.visualizers.flows import get_flow
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 
 OWNER_EMAIL = "eigenaar@example.org"
 TOKEN = "wt-123"
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _productieproject() -> dict[str, Any]:
@@ -57,8 +61,8 @@ def _markeringsrecht():
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = True
     return (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     )
 
 
@@ -90,7 +94,7 @@ async def _modal_edit(
         patch("opi.web.router_detail_edit.render_step_up_dialog", new=dialoog),
         patch("opi.web.router_detail_edit.step_up_dialog_response", side_effect=lambda html: html),
     ):
-        _, response = await _process_and_save_modal_edit(
+        response = await _process_and_save_modal_edit(
             request=_request(verse_step_up=verse_step_up),
             project_manager=manager,
             project_name="demo",
@@ -118,7 +122,7 @@ async def test_modal_edit_zonder_step_up_slaat_niets_op_en_meldt_de_weigering(
     manager = _project_manager(stored)
     dialoog = AsyncMock(return_value="<dialoog/>")
 
-    with caplog.at_level("WARNING", logger="opi.core.step_up"):
+    with caplog.at_level("WARNING", logger="opi.services.step_up"):
         response = await _modal_edit(na_wijziging=verlaagd, verse_step_up=False, manager=manager, dialoog=dialoog)
 
     assert response == "<dialoog/>"
@@ -139,9 +143,9 @@ async def test_modal_edit_laat_de_herhaling_naar_de_confirm_route_wijzen() -> No
 
     dialoog.assert_awaited_once_with(
         ANY,
-        vervolg=f"/projects/demo/modal-wizard/modal-edit-identity/confirm?_wizard_token={TOKEN}",
-        handeling=StepUpAction.MARKING_SET.phrase,
-        vervolg_token=TOKEN,
+        follow_url=f"/projects/demo/modal-wizard/modal-edit-identity/confirm?_wizard_token={TOKEN}",
+        action_text=StepUpAction.MARKING_SET.phrase,
+        follow_token=TOKEN,
     )
 
 
@@ -155,7 +159,7 @@ async def test_modal_edit_met_verse_step_up_slaat_de_verlaging_wel_op() -> None:
 
     response = await _modal_edit(na_wijziging=verlaagd, verse_step_up=True, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -173,7 +177,7 @@ async def test_modal_edit_needs_nothing_for_a_switch_outside_production() -> Non
 
     response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -190,7 +194,7 @@ async def test_modal_edit_zonder_markeringswijziging_vraagt_niets() -> None:
 
     response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
 
-    assert response is None
+    assert not isinstance(response, str), "geen dialoog, dus de opslag ging door"
     dialoog.assert_not_awaited()
     manager.save_and_commit_project.assert_awaited_once()
 
@@ -206,11 +210,11 @@ async def test_modal_edit_zonder_step_up_weigert_ook_een_component_uit_productie
     manager = _project_manager(stored)
     dialoog = AsyncMock(return_value="<dialoog/>")
 
-    with caplog.at_level("WARNING", logger="opi.core.step_up"):
+    with caplog.at_level("WARNING", logger="opi.services.step_up"):
         await _modal_edit(na_wijziging=zonder_component, verse_step_up=False, manager=manager, dialoog=dialoog)
 
     manager.save_and_commit_project.assert_not_awaited()
-    assert dialoog.await_args.kwargs["handeling"] == "het component 'c1' te verwijderen"
+    assert dialoog.await_args.kwargs["action_text"] == "het component 'c1' te verwijderen"
     assert any("te verwijderen" in record.getMessage() for record in caplog.records)
 
 
@@ -249,12 +253,15 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
 
     with (
         patch("opi.web.router_wizard.authorize"),
+        patch("opi.http.auth.request_authority.authorize"),
         _patch_wizard_manager(stored, opslag),
         patch("opi.web.router_wizard.clear_wizard_state"),
-        caplog.at_level("WARNING", logger="opi.core.step_up"),
+        caplog.at_level("WARNING", logger="opi.services.step_up"),
         pytest.raises(HTTPException) as excinfo,
     ):
-        await _save_existing_project(_request(verse_step_up=False), "demo", {"deployments": verlaagd})
+        await _save_existing_project(
+            _request(verse_step_up=False), "demo", {"deployments": verlaagd}, active_sections=EDIT_SECTIONS
+        )
 
     assert excinfo.value.status_code == 403
     assert "verse code uit je 2-factor" in excinfo.value.detail
@@ -269,12 +276,12 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 
     with (
-        caplog.at_level("WARNING", logger="opi.core.step_up"),
+        caplog.at_level("WARNING", logger="opi.services.step_up"),
         pytest.raises(HTTPException),
     ):
         await route(_request(verse_step_up=False), project_name="demo", deployment_name="prod")
@@ -288,11 +295,11 @@ async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptur
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_een_gebruikte_step_up_als_info(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.PROJECT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.PROJECT_DELETE)
     async def route(request: Any, project_name: str) -> str:
         return "uitgevoerd"
 
-    with caplog.at_level("INFO", logger="opi.core.auth_decorators"):
+    with caplog.at_level("INFO", logger="opi.http.auth.auth_decorators"):
         assert await route(_request(verse_step_up=True), project_name="demo") == "uitgevoerd"
 
     meldingen = [record.getMessage() for record in caplog.records]
@@ -311,9 +318,9 @@ def _render_herhaal(vervolg_token: str, velden: dict[str, str] | None = None) ->
     de velden van de handeling gaan langs dezelfde weg mee.
     """
     from jinja2 import Environment, FileSystemLoader
-    from opi.web.step_up_dialog import _vals
+    from opi.http.auth.step_up_dialog import _vals
 
-    # autoescape=True zoals in productie (opi/core/templates_lotc.py:82). select_autoescape
+    # autoescape=True zoals in productie (opi/http/render/templates_lotc.py:82). select_autoescape
     # kijkt naar de extensie en kent .j2 niet, dus dat gaf hier een escape-loze render.
     env = Environment(loader=FileSystemLoader("opi/templates_lotc"), autoescape=True)
     template = env.get_template("bg/_step-up-herhalen.html.j2")

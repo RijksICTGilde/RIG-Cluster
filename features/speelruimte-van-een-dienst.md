@@ -91,7 +91,7 @@ standaard wordt niet aan de grenzen gehouden, want het is geen waarde daarbinnen
 Een hoeveelheid wordt **ontleed en als getal vergeleken**, nooit als tekst: `100m` en `2`
 zijn allebei cpu, `512Mi` en `1Gi` allebei geheugen, en alfabetisch komt `1Gi` voor
 `512Mi` terwijl hij vier keer zo groot is. `kind` kiest de parser, en beide parsers staan
-in `opi/services/resource_analyzer.py` zodat die vraag op een plek wordt beantwoord.
+in `opi/utils/k8s_quantity.py` zodat die vraag op een plek wordt beantwoord.
 
 `grow_only=True` op een hoeveelheid zegt dat het veld alleen omhoog mag. Een PVC kan niet
 krimpen: een grens die alleen "tussen 1Gi en 100Gi" zegt laat een verkleining door die
@@ -115,7 +115,7 @@ meest specifieke laag die iets zegt, anders de standaard van de dienst. Een laag
 dienst niet openzet wordt nooit geraadpleegd, dus een waarde die daar toch belandt kan
 niets uitrichten.
 
-**Valideren bij het inlezen.** Het chokepoint in `opi/manager/project_validation.py` loopt
+**Valideren bij het inlezen.** Het chokepoint in `opi/services/project_validation.py` loopt
 alle vier de lagen langs; per configblok toetst `check_settings` elke gedeclareerde waarde
 aan zijn declaratie. Buiten de speelruimte is een `ProjectIntegrityError` met een leesbare
 zin -- bij het opslaan, niet pas bij het aanmaken van de resource:
@@ -222,9 +222,9 @@ invulde dat mocht.
 
 - `opi/services/catalog/config_settings.py` -- de declaratietypes, de samenvoeging en de toetsen
 - `opi/services/catalog/base.py` -- `Service.config_settings()` en `Service.config_setting(path)`
-- `opi/manager/project_validation.py` -- de toetsing bij het inlezen en bij een wijziging
+- `opi/services/project_validation.py` -- de toetsing bij het inlezen en bij een wijziging
 - `opi/forms/visualizers/config_setting_fields.py` -- het wizardveld uit de declaratie
-- `opi/services/resource_analyzer.py` -- de twee hoeveelheid-parsers en `K8S_QUANTITY_PATTERN`, de vorm die een hoeveelheid moet hebben voor hij wordt geparseerd
+- `opi/utils/k8s_quantity.py` -- de twee hoeveelheid-parsers en `K8S_QUANTITY_PATTERN`, de vorm die een hoeveelheid moet hebben voor hij wordt geparseerd
 - `opi/services/catalog/shared/postgres_settings.py` -- de declaraties van een eigen PostgreSQL-cluster
 - `opi/services/catalog/shared/noncurrent_versions.py` -- de grens op oude versies in een bucket, gedeeld door de twee object-opslagdiensten
 - `tests/test_service_config_settings.py`

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import (
     PreserveAttachmentContentHook,
@@ -27,52 +26,56 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.flows import COMPONENTS_SELECTABLE
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst, zet_verborgen_leden_terug
+from opi.forms.wizard.members import MemberListRefusedError, guard_member_list, restore_hidden_members
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.selection import selectable_names, splice_selection
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
-from opi.handlers.project_file_handler import (
+from opi.services.project_file_handler import (
     ComponentInUseError,
     ProjectFileHandler,
     _parse_resources_block_partial,
     remove_component,
 )
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_utils import apply_literal_scalars
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
-from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
-    from opi.forms.visualizers.flows import FormFlow
+    from opi.forms.visualizers.flows import FlowTarget, FormFlow
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
 
+# Top-level fields no form should ever submit. name=on-disk filename;
+# clusters=not yet editable (see features/futures/cluster-editing.md).
+IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
+
 
 def guard_target_still_points_at_the_same_item(
     existing_data: dict[str, Any],
     state: WizardState,
-    target: Any | None,
+    target: FlowTarget | None,
 ) -> None:
-    """Refuse the save when the flow's INDEX now names a different item (RC-132).
+    """Refuse the save when the flow's INDEX now names a different item.
 
-    An indexed flow writes to ``deployments[3]``: the index is fixed when the dialog
-    opens, and the save merges into the project as it is read from git at that moment.
-    Those are two moments, and between them the list can change -- a project whose
-    deployments are per pull request has items appearing and disappearing without anyone
-    pressing anything. One removal earlier in the list shifts every index behind it, and
-    the write lands on the neighbour: the deployment you were not editing gets your
-    setting, silently.
+    An indexed flow writes to ``deployments[3]``: the index is fixed when the dialog opens,
+    and the save merges into the project as it is read from git at that moment. Those are two
+    moments, and between them the list can change, since a project whose deployments are per
+    pull request has items appearing and disappearing without anyone pressing anything. One
+    removal earlier in the list shifts every index behind it, and the write then lands on the
+    neighbour: the deployment you were not editing gets your setting, silently.
 
     So the name the session showed is checked against the name that now sits at that
     index. A mismatch is a refusal with the reason, not a write; reopening the dialog
     rebuilds the flow on the current list.
 
-    Best effort by design: the check is skipped when the session does not carry the item
-    (an add flow, or a list an editable fully owns, which is therefore not in
-    ``base_data``) and when either side has no name. Not knowing is a reason to stay out
-    of the way, not to guess -- the point is to catch the shift, not to invent one.
+    Best effort by design: the check is skipped when the session does not carry the item (an
+    add flow, or a list an editable fully owns, which is therefore not in ``base_data``) and
+    when either side has no name. Not knowing is a reason to stay out of the way, not to
+    guess: the point is to catch the shift, not to invent one.
     """
     if target is None or target.is_new:
         return
@@ -115,15 +118,14 @@ def apply_list_item_merge(
 ) -> None:
     """Merge a single list item into the existing project data.
 
-    For add: appends the new item to the list.
-    For edit: updates the item at the given index in-place, preserving
-    fields the form didn't touch (e.g. readonly ``name``).
+    An add appends the new item; an edit updates the item at the given index in place, keeping
+    the fields the form did not touch (a readonly ``name``).
 
-    A plain ``dict.update`` cannot express a deleted key, so a field the
-    user cleared (dropped from *item_data*) would otherwise be resurrected
-    from the existing item. ``item_data`` therefore carries ``CLEARED_FIELD``
-    tombstones for such fields (the caller builds *merged_data* with
-    ``strip_cleared=False``); after merging we drop the tombstoned keys.
+    A plain ``dict.update`` cannot express a deleted key, so a field the user cleared, and
+    which is therefore dropped from *item_data*, would be resurrected from the existing item.
+    *item_data* carries a ``CLEARED_FIELD`` tombstone for such a field (the caller builds
+    *merged_data* with ``strip_cleared=False``), and the tombstoned keys are dropped after
+    the merge.
     """
     source_list = merged_data.get(list_key)
     if not isinstance(source_list, list) or idx >= len(source_list):
@@ -164,12 +166,11 @@ def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_nam
     Copies cluster/repository from an existing deployment, falls back to the project's
     own declaration, and defaults the namespace to the project name.
 
-    That fallback is the FIRST deployment of a project. Copying from a sibling works
-    from the second one on, and every project used to be born with one, so the gap did
-    not show. A project created through the API has no deployments at all, and the
-    deployment added to it afterwards then carried neither cluster nor repository -
-    which surfaced much later as "Repository configuration not found: None" when the
-    project was processed, nowhere near the save that caused it.
+    That fallback is for the FIRST deployment of a project: copying from a sibling only works
+    from the second one on, and a project created through the API has no deployments at all.
+    Without it the deployment added to such a project carries neither cluster nor repository,
+    which surfaces much later as "Repository configuration not found: None" when the project
+    is processed, nowhere near the save that caused it.
 
     Only when the project leaves no choice. With several repositories or clusters,
     picking one here would be a guess; validation refuses the file instead, and that
@@ -193,7 +194,7 @@ def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_nam
             new_dep[field_name] = fallback
 
 
-def _only_project_choice(project_data: dict[str, Any], field_name: str) -> Any | None:
+def _only_project_choice(project_data: dict[str, Any], field_name: str) -> Any | None:  # noqa: ANN401  # a project-file value
     """The project's single cluster or repository, or None when it is not a single one.
 
     ``clusters`` is a list of names; ``repositories`` a list of blocks with a ``name``.
@@ -242,11 +243,11 @@ def _hook_editables(all_editables: list[Any]) -> list[EditableVisualizer]:
     ]
 
 
-def _component_resources(existing_data: dict[str, Any], target: Any | None) -> dict[str, str] | None:
+def _component_resources(existing_data: dict[str, Any], target: FlowTarget | None) -> dict[str, str] | None:
     """The stored resource values of the component this flow edits, or None.
 
-    None means "this flow is not a component edit" -- a new component included: it has
-    no stored values to compare against and no override to clear.
+    None means "this flow is not a component edit", a new component included: it has no
+    stored values to compare against and no override to clear.
     """
     if target is None or target.is_new or target.list_key != "components":
         return None
@@ -258,16 +259,16 @@ def _component_resources(existing_data: dict[str, Any], target: Any | None) -> d
 
 def _record_user_resource_intent(
     existing_data: dict[str, Any],
-    target: Any | None,
+    target: FlowTarget | None,
     resources_before: dict[str, str] | None,
 ) -> None:
     """Put a resource change from the component modal through the shared user-intent path.
 
-    The merge above already wrote the new values into the catalog component, which is
-    half the job: manifest generation merges the deployment-level override on top of the
-    catalog, so a value the tuner once wrote there keeps winning and the edit is a silent
-    no-op (RC-141). The shared path clears exactly the edited fields from those overrides
-    and records what the user set, so the tuner leaves those fields alone.
+    The merge above already wrote the new values into the catalog component, which is half the
+    job: manifest generation merges the deployment-level override on top of the catalog, so a
+    value the tuner once wrote there keeps winning and the edit is a silent no-op. The shared
+    path clears exactly the edited fields from those overrides and records what the user set,
+    so the tuner leaves those fields alone.
 
     *resources_before* is what makes the diff possible: the modal posts all four resource
     fields on every save, so without it every component edit would pin all four.
@@ -291,15 +292,15 @@ def _record_user_resource_intent(
 
 
 def _apply_component_removals(existing_data: dict[str, Any], names_before: list[str]) -> None:
-    """Haal de verwijzingen mee weg naar elk component dat deze save uit de lijst haalde.
+    """Also remove the references to every component this save took out of the list.
 
-    De merge haalt alleen de DEFINITIE uit ``components``; een deployment die het
-    component nog noemt maakt het bestand daarmee ongeldig. Dezelfde functie als de
-    API-verwijderroute, zodat er een regel is voor "een component gaat weg".
+    The merge only takes the DEFINITION out of ``components``, and a deployment that still
+    names the component makes the file invalid. The same function as the API delete route, so
+    there is one rule for "a component goes away".
 
-    ``confirm_in_use=True``, net als de verwijderknop in het portaal: het item uit de
-    lijst halen is de bevestiging. Een component waar een webadres omheen gebouwd is
-    wordt ook hier geweigerd, met dezelfde uitleg.
+    ``confirm_in_use=True``, like the delete button in the portal: taking the item out of the
+    list is the confirmation. A component with a web address built around it is refused here
+    too, with the same explanation.
     """
     remaining = set(selectable_names(existing_data, COMPONENTS_SELECTABLE))
     for name in names_before:
@@ -328,15 +329,13 @@ async def apply_modal_edit(
     tombstones are removed here, right before the data is handed back for
     saving.
     """
-    from opi.web.router_wizard import _apply_literal_scalars
-
     # The restore below pairs the two structures key by key, so both sides have to spell a
     # service entry the same way. The editables write the legacy name-as-key shape
     # ({keycloak: {config: ...}}) while the stored project carries the uniform record
-    # ({name: keycloak, config: ...}); walked against each other, nothing under a service
-    # config lines up and every redacted secret there is dropped instead of restored -- the
-    # realm admin password among them. Normalizing here (the same idempotent normalizer that
-    # already runs at the end of this function) puts both sides in one shape first.
+    # ({name: keycloak, config: ...}); walked against each other nothing under a service
+    # config lines up, and every redacted secret there is dropped instead of restored, the
+    # realm admin password among them. The same idempotent normalizer that runs at the end of
+    # this function puts both sides in one shape first.
     normalize_service_entries(merged_data)
 
     # Put back the encrypted values the session was not allowed to carry, from the project
@@ -349,17 +348,17 @@ async def apply_modal_edit(
     # Platform-managed fields are not the form's to set, just like the API rejects them.
     ServiceAdapter.enforce_platform_managed_fields(merged_data, existing_data)
 
-    # Hetzelfde voor de ledenlijst: het teamformulier rendert alleen het adres en de rol
-    # van een mens, maar bezit het pad ``users`` als geheel. Zonder deze stap gooit het
-    # bewerken van het Team-blok elk API-token en elk service account van het project weg.
-    # Wie de ledenlijst niet bezit, schrijft hem niet; wie hem wel bezit houdt zich aan
-    # de rollen en aan de eis dat er een admin overblijft (ontwerp paragraaf 7).
+    # The same for the member list: the team form renders only a person's address and roles
+    # while owning the path ``users`` as a whole. Without this step, editing the Team block
+    # throws away every API token and every service account of the project. A flow that does
+    # not own the member list does not write it; one that does owns the roles too, and the
+    # requirement that an admin is left.
     try:
-        bewaak_ledenlijst(merged_data, existing_data, bezit_users="users" in flow_write_paths(list(flow.sections)))
-    except LedenlijstGeweigerd as exc:
+        guard_member_list(merged_data, existing_data, owns_users="users" in flow_write_paths(list(flow.sections)))
+    except MemberListRefusedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    zet_verborgen_leden_terug(merged_data, existing_data)
+    restore_hidden_members(merged_data, existing_data)
 
     # A new list item has no stored version to protect, so it is appended
     # whole: the empty slot the wizard was seeded with carries fields no form
@@ -367,10 +366,10 @@ async def apply_modal_edit(
     target = flow.target
     guard_target_still_points_at_the_same_item(existing_data, state, target)
 
-    # The resource values of the component being edited, as they are BEFORE this merge.
-    # The merge below writes the new ones straight into the catalog, so this is the only
-    # moment the previous values still exist -- and without them there is no way to tell
-    # which fields the user actually moved (the modal posts all four on every save).
+    # The resource values of the component being edited, as they are BEFORE this merge. The
+    # merge below writes the new ones straight into the catalog, so this is the only moment
+    # the previous values still exist, and without them there is no way to see which fields
+    # the user actually moved: the modal posts all four on every save.
     resources_before = _component_resources(existing_data, target)
 
     if target is not None and target.is_new:
@@ -380,18 +379,15 @@ async def apply_modal_edit(
         if target.list_key == "deployments":
             _system_fields_for_new_deployment(existing_data, project_name)
 
-    # Een modal die op een selectie is geopend droeg alleen die items. Zet ze terug
-    # tussen de items die hij niet toonde, zodat de write hieronder de hele lijst schrijft
-    # en niet alleen het getoonde deel.
+    # A modal opened on a selection carried only those items. They go back between the items
+    # it did not show, so the write below writes the whole list and not just the shown part.
     if flow.selectable is not None and state.selection:
         splice_selection(existing_data, merged_data, flow.selectable, state.selection)
 
     components_before = selectable_names(existing_data, COMPONENTS_SELECTABLE)
 
-    # Everything else: write only what this flow's editables declare. What no
-    # editable names is not written, and therefore does not need saving from
-    # being overwritten either - that is what the template-only strip, and the
-    # four separate leak fixes before it, were working around.
+    # Everything else: write only what this flow's editables declare. What no editable names
+    # is not written, and therefore needs no saving from being overwritten either.
     write_paths = flow_write_paths(list(active_sections))
     guard_immutable_paths(write_paths)
     existing_data = apply_write_paths(existing_data, merged_data, write_paths)
@@ -402,12 +398,10 @@ async def apply_modal_edit(
 
     _apply_component_removals(existing_data, components_before)
 
-    # Run post_merge hooks (e.g. distribute component refs to deployments)
     for section in active_sections:
         if section.post_merge:
             section.post_merge(existing_data, merged_data)
 
-    # Compute derived values (e.g. issuer from base-domain)
     processor = EditableFormProcessor()
     for section in active_sections:
         processor.apply_dependent_generators(section.editables, existing_data)
@@ -437,17 +431,15 @@ async def apply_modal_edit(
 
     # The editables write service config in the legacy name-as-key shape
     # ({cross-domain-access: {config: ...}}), which the schema's component and deployment
-    # service envelopes reject. The create wizard already normalizes at save
-    # (``router_wizard.submit_wizard``); the modal-edit path did not, which is invisible
-    # until a form writes a service block through this route -- the per-deployment
-    # cross-domain patch is the first that does. Same normalizer, one canonical shape.
+    # service envelopes reject. The create wizard normalizes at save
+    # (``router_wizard.submit_wizard``), and this path has to do the same: without it a form
+    # writing a service block through here produces a file the schema refuses.
     normalize_service_entries(existing_data)
 
     # Ensure AGE-encrypted multiline values use literal block scalars
-    _apply_literal_scalars(existing_data)
+    apply_literal_scalars(existing_data)
 
-    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
-    # above (e.g. via the top-level apply_form_data_to_project path) so they
+    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges above, so they
     # never reach the saved project file.
     _strip_cleared_fields(existing_data)
 

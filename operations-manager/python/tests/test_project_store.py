@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 from opi.core.audit_trail import begin_trail, trail
-from opi.core.project_schema import ProjectSchemaError
+from opi.services.project_schema import ProjectSchemaError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import (
     ConcurrencyError,

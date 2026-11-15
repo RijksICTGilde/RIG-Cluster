@@ -19,9 +19,10 @@ from opi.core.cluster_config import (
     is_platform_namespace,
     is_reserved_project_name,
 )
-from opi.core.project_schema import ProjectIntegrityError
-from opi.handlers.sops import SopsHandler
-from opi.manager.project_validation import validate_project_structure
+from opi.services.project_key_secret import ProjectKeySecretHandler
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_project_structure
+from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 PLATFORM_NAMESPACE = "rig-prd-operations"
 
@@ -110,7 +111,7 @@ class TestWeigeringBijDeTaak:
         return progress
 
     async def test_een_nieuw_project_met_een_gereserveerde_naam_faalt(self) -> None:
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = self._progress()
         result = await handle_create_project({"project_name": "operations", "is_new_project": True}, progress)
@@ -126,7 +127,7 @@ class TestWeigeringBijDeTaak:
         Hij struikelt daarna op de ontbrekende YAML, en dat is precies het bewijs dat de
         naamregel hem niet heeft tegengehouden.
         """
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = self._progress()
         with patch("opi.services.project_store.get_project_store", side_effect=RuntimeError("doorgelaten")):
@@ -155,7 +156,7 @@ class TestWeigeringBijEenGitCommit:
     def _manager_met(previous_yaml: dict | None, name: str):
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -212,7 +213,7 @@ class TestDeSleutelLandtNooitInEenPlatformnamespace:
     async def test_schrijven_in_een_platformnamespace_gooit(self) -> None:
         kubectl = MagicMock()
         kubectl.apply_manifest = AsyncMock()
-        handler = SopsHandler(kubectl_connector=kubectl)
+        handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
         with pytest.raises(ValueError, match="platform zelf"):
             await handler.store_project_sops_key_in_namespace(PLATFORM_NAMESPACE, "AGE-SECRET-KEY-1x", "age1x")
@@ -222,7 +223,7 @@ class TestDeSleutelLandtNooitInEenPlatformnamespace:
     async def test_schrijven_in_een_projectnamespace_gaat_door(self) -> None:
         kubectl = MagicMock()
         kubectl.apply_manifest = AsyncMock()
-        handler = SopsHandler(kubectl_connector=kubectl)
+        handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
         assert await handler.store_project_sops_key_in_namespace("rig-prd-demo", "AGE-SECRET-KEY-1x", "age1x") is True
         # Het secret, en daarna de Role die de CMP-sidecar precies dat secret laat lezen.
@@ -243,8 +244,9 @@ class TestEenPlatformnamespaceWordtNooitVerwijderd:
 
     @pytest.fixture
     def connector(self) -> KubectlConnector:
-        with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
-            return KubectlConnector()
+        """The singleton without its cluster probe: ``__init__`` would start a real kubectl."""
+        preinitialize_kubectl_without_probing()
+        return KubectlConnector()
 
     async def test_verwijderen_van_een_platformnamespace_gooit(self, connector: KubectlConnector) -> None:
         with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as run:

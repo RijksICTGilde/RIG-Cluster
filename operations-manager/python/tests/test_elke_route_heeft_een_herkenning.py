@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from opi.api.route_herkenning import WEBSOCKET, RouteHerkenning, route_herkenningen
-from opi.core.auth_decorators import requires_sso
+from opi.api.route_recognition import WEBSOCKET, RouteRecognition, route_recognitions
+from opi.http.auth.auth_decorators import requires_sso
 from opi.server import app
 
 #: Routes die bewust zonder herkenning bereikbaar zijn, met de reden. Deze lijst is het punt
@@ -65,7 +65,7 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/lotc/pagina/{slug:path}"): "proefopstelling van de componentbibliotheek, verzonnen waarden",
     # Blinde doorverwijzingen van oude adressen. Ze zoeken niets op en geven dus niets prijs:
     # het antwoord is voor elke naam hetzelfde, ook voor een project dat niet bestaat. De
-    # pagina achter het nieuwe adres doet de autorisatie. Zie project_tab_oude_vorm.
+    # pagina achter het nieuwe adres doet de autorisatie. Zie project_tab_old_shape.
     ("GET", "/projects/new"): "blinde doorverwijzing naar de wizard, zoekt niets op",
     ("GET", "/projects/details/{project_name}"): "blinde doorverwijzing naar het nieuwe adres",
     ("GET", "/projects/team/{project_name}"): "blinde doorverwijzing naar het nieuwe adres",
@@ -103,7 +103,7 @@ HANDGESCHREVEN_CONTROLES: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ),
     ("GET", "/api/tasks"): (
         "herkenning alleen via de X-API-Key-header, gehandhaafd met de handeling van de route (task_router.py)",
-        ("handhaaf(",),
+        ("enforce(",),
     ),
     ("GET", "/api/tasks/{task_id}"): (
         "herkenning alleen via de X-API-Key-header, gehandhaafd via _validate_task_access (task_router.py)",
@@ -126,7 +126,7 @@ HANDGESCHREVEN_CONTROLES: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
 }
 
 
-def ontbrekende_herkenning(routes: list[RouteHerkenning]) -> list[str]:
+def ontbrekende_herkenning(routes: list[RouteRecognition]) -> list[str]:
     """De routes die geen herkenning noemen en niet als publiek zijn verklaard.
 
     Een eigen functie en niet alleen een test, zodat de tweede test dezelfde controle op een
@@ -135,36 +135,36 @@ def ontbrekende_herkenning(routes: list[RouteHerkenning]) -> list[str]:
     return [
         f"{route}: geen herkenning, en niet in PUBLIEKE_ROUTES"
         for route in routes
-        if not route.herkenningen and route.sleutel not in PUBLIEKE_ROUTES
+        if not route.recognitions and route.key not in PUBLIEKE_ROUTES
     ]
 
 
 @pytest.fixture(scope="module")
-def routes() -> list[RouteHerkenning]:
-    return route_herkenningen(app)
+def routes() -> list[RouteRecognition]:
+    return route_recognitions(app)
 
 
 def _parameters() -> list[Any]:
     """Elke route een eigen geval, zodat de uitslag per route leesbaar is."""
-    return [pytest.param(route, id=f"{route.methode} {route.pad}") for route in route_herkenningen(app)]
+    return [pytest.param(route, id=f"{route.method} {route.path}") for route in route_recognitions(app)]
 
 
 @pytest.mark.parametrize("route", _parameters())
-def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
+def test_de_route_noemt_een_herkenning(route: RouteRecognition) -> None:
     """Precies een herkenning, of een reden om publiek te zijn.
 
     Precies een en niet minstens een: twee herkenningen op dezelfde route betekent dat er
     twee controles achter elkaar lopen, en welke van de twee weigert is dan niet te zeggen.
     """
-    if route.sleutel in PUBLIEKE_ROUTES:
-        assert not route.herkenningen, (
-            f"{route} staat in PUBLIEKE_ROUTES maar eist {list(route.herkenningen)}; haal hem uit die lijst"
+    if route.key in PUBLIEKE_ROUTES:
+        assert not route.recognitions, (
+            f"{route} staat in PUBLIEKE_ROUTES maar eist {list(route.recognitions)}; haal hem uit die lijst"
         )
         return
 
-    if route.sleutel in HANDGESCHREVEN_CONTROLES:
-        assert not route.herkenningen, (
-            f"{route} draagt {list(route.herkenningen)} maar staat in HANDGESCHREVEN_CONTROLES; "
+    if route.key in HANDGESCHREVEN_CONTROLES:
+        assert not route.recognitions, (
+            f"{route} draagt {list(route.recognitions)} maar staat in HANDGESCHREVEN_CONTROLES; "
             f"verhuis de route naar de gewone plicht en haal de regel weg"
         )
         return
@@ -175,12 +175,12 @@ def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
         f"validate_metrics_scrape_token), of zet hem met een reden "
         f"in PUBLIEKE_ROUTES in dit bestand."
     )
-    assert len(route.herkenningen) == 1, f"{route} eist er meer dan een: {list(route.herkenningen)}"
+    assert len(route.recognitions) == 1, f"{route} eist er meer dan een: {list(route.recognitions)}"
 
 
 def _handgeschreven_parameters() -> list[Any]:
     """Elke regel uit HANDGESCHREVEN_CONTROLES een eigen geval, met de route erbij als die bestaat."""
-    per_sleutel = {route.sleutel: route for route in route_herkenningen(app)}
+    per_sleutel = {route.key: route for route in route_recognitions(app)}
     return [
         pytest.param(per_sleutel.get(sleutel), reden, sporen, id=f"{methode} {pad}")
         for sleutel, (reden, sporen) in HANDGESCHREVEN_CONTROLES.items()
@@ -190,7 +190,7 @@ def _handgeschreven_parameters() -> list[Any]:
 
 @pytest.mark.parametrize(("route", "reden", "sporen"), _handgeschreven_parameters())
 def test_de_handgeschreven_controle_staat_er_nog(
-    route: RouteHerkenning | None, reden: str, sporen: tuple[str, ...]
+    route: RouteRecognition | None, reden: str, sporen: tuple[str, ...]
 ) -> None:
     """Zonder deze pin merkt niemand het als de controle uit de handler verdwijnt: de plicht
     hierboven kijkt voor deze routes alleen of er geen markering staat, en wie de controle
@@ -211,14 +211,14 @@ def test_de_handgeschreven_controle_staat_er_nog(
     )
 
 
-def test_geen_api_route_leunt_op_de_sso_markering(routes: list[RouteHerkenning]) -> None:
+def test_geen_api_route_leunt_op_de_sso_markering(routes: list[RouteRecognition]) -> None:
     """Onder ``/api/`` is ``_requires_sso`` een lege belofte.
 
     De middleware geeft elk pad onder ``/api/`` meteen door aan de handler en komt niet toe
     aan het lezen van die markering. Een route die daar toch op leunt is open, en leest in
     de code alsof hij afgeschermd is: het gevaarlijkste van de twee.
     """
-    leunend = [str(route) for route in routes if route.pad.startswith("/api/") and "sso-sessie" in route.herkenningen]
+    leunend = [str(route) for route in routes if route.path.startswith("/api/") and "sso-sessie" in route.recognitions]
 
     assert not leunend, (
         f"deze /api/-routes dragen _requires_sso, maar de middleware leest die daar niet: {leunend}. "
@@ -226,13 +226,13 @@ def test_geen_api_route_leunt_op_de_sso_markering(routes: list[RouteHerkenning])
     )
 
 
-def test_de_lijsten_beschrijven_alleen_bestaande_routes(routes: list[RouteHerkenning]) -> None:
+def test_de_lijsten_beschrijven_alleen_bestaande_routes(routes: list[RouteRecognition]) -> None:
     """Een regel voor een route die niet meer bestaat houdt een uitzondering in leven.
 
     Verdwijnt een route, dan blijft haar regel staan en dekt hij later een nieuwe route met
     hetzelfde pad zonder dat iemand dat opnieuw beoordeeld heeft.
     """
-    bestaand = {route.sleutel for route in routes}
+    bestaand = {route.key for route in routes}
 
     verdwenen = sorted(
         f"{methode} {pad}" for methode, pad in (PUBLIEKE_ROUTES.keys() | HANDGESCHREVEN_CONTROLES.keys()) - bestaand
@@ -256,7 +256,7 @@ def test_de_controle_wordt_rood_van_een_route_zonder_herkenning() -> None:
     async def nieuwe_route() -> dict[str, str]:
         return {}
 
-    klachten = ontbrekende_herkenning(route_herkenningen(eigen_app))
+    klachten = ontbrekende_herkenning(route_recognitions(eigen_app))
 
     assert len(klachten) == 1
     assert "/een-nieuwe-route-zonder-decorator" in klachten[0]
@@ -271,4 +271,4 @@ def test_de_controle_is_tevreden_met_een_herkenning() -> None:
     async def nieuwe_route() -> dict[str, str]:
         return {}
 
-    assert ontbrekende_herkenning(route_herkenningen(eigen_app)) == []
+    assert ontbrekende_herkenning(route_recognitions(eigen_app)) == []

@@ -20,15 +20,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.core.templates_lotc import templates_lotc as templates
-from opi.web.lotc_switch import (
-    DEPLOYMENT_SORTERINGEN,
+from opi.http.render.lotc_switch import (
+    DEPLOYMENT_SORT_ORDERS,
     build_deployment_status_column,
-    deployment_pagina_adres,
+    choose_deployment,
+    deployment_page_address,
     deployment_status_tags,
     filter_lotc_deployments,
-    kies_deployment,
 )
+from opi.http.render.templates_lotc import templates_lotc as templates
 from starlette.datastructures import QueryParams
 
 TABEL = "bg/_deployments-lijst.html.j2"
@@ -48,7 +48,7 @@ class _Verzoek:
 
 
 class _Url:
-    """Het stukje URL dat deployment_pagina_adres leest: het pad en de querystring."""
+    """Het stukje URL dat deployment_page_address leest: het pad en de querystring."""
 
     def __init__(self, path: str, query: str = "") -> None:
         self.path = path
@@ -136,7 +136,7 @@ def test_de_sorteersleutel_van_de_projectenlijst_wordt_niet_geleend() -> None:
 
 def test_elke_sortering_uit_het_menu_werkt() -> None:
     """Een sleutel in het menu die niets sorteert is een dode knop."""
-    for sleutel, _label, _fn in DEPLOYMENT_SORTERINGEN:
+    for sleutel, _label, _fn in DEPLOYMENT_SORT_ORDERS:
         resultaat = _filter(f"dsort={sleutel}", _deployments("b", "a"))
         assert len(resultaat["deployments_zichtbaar"]) == 2, f"sortering {sleutel} verliest rijen"
 
@@ -144,7 +144,7 @@ def test_elke_sortering_uit_het_menu_werkt() -> None:
 # ------------------------------------------------------------ welke deployment open staat
 #
 # Sinds RC-92 staat de naam in het PAD (/projects/<project>/deployments/<naam>) en niet in
-# ``?deployment=``. De keuze wordt daarom door de ROUTE gemaakt, met kies_deployment(), en
+# ``?deployment=``. De keuze wordt daarom door de ROUTE gemaakt, met choose_deployment(), en
 # komt hier binnen; filter_lotc_deployments zoekt er alleen de deployment bij.
 
 
@@ -173,35 +173,35 @@ def test_een_project_zonder_deployments_heeft_niets_open() -> None:
 
 def test_de_eerste_voorkeur_die_bestaat_wint() -> None:
     """Het pad gaat voor de oude ``?deployment=``-vorm; die volgorde geeft de route mee."""
-    assert kies_deployment(["eerste", "tweede"], "tweede", "eerste") == "tweede"
+    assert choose_deployment(["eerste", "tweede"], "tweede", "eerste") == "tweede"
 
 
 def test_een_verwijderde_deployment_valt_terug_op_de_eerste_op_naam() -> None:
     """Een gedeelde link kan een deployment noemen die niet meer bestaat; dan hoort er een
     pagina te staan en geen lege of kapotte."""
-    assert kies_deployment(["tweede", "eerste"], "weg") == "eerste"
+    assert choose_deployment(["tweede", "eerste"], "weg") == "eerste"
 
 
 def test_zonder_voorkeur_opent_de_eerste_op_naam() -> None:
-    assert kies_deployment(["tweede", "eerste"]) == "eerste"
+    assert choose_deployment(["tweede", "eerste"]) == "eerste"
 
 
 def test_zonder_deployments_valt_er_niets_te_openen() -> None:
-    assert kies_deployment([], "weg") == ""
+    assert choose_deployment([], "weg") == ""
 
 
 def test_het_adres_zet_de_naam_in_het_pad() -> None:
     verzoek = _Verzoek("")
     verzoek.url = _Url("/projects/demo/deployments")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede"
+    assert deployment_page_address(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede"
 
 
 def test_het_adres_houdt_het_tabblad_vast() -> None:
     verzoek = _Verzoek("")
     verzoek.url = _Url("/projects/demo/metrics")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/metrics/tweede"
+    assert deployment_page_address(verzoek, "demo", "tweede") == "/projects/demo/metrics/tweede"
 
 
 def test_de_oude_parameter_verdwijnt_uit_het_adres() -> None:
@@ -210,14 +210,14 @@ def test_de_oude_parameter_verdwijnt_uit_het_adres() -> None:
     verzoek = _Verzoek("deployment=tweede&q=pr")
     verzoek.url = _Url("/projects/demo/deployments", "deployment=tweede&q=pr")
 
-    assert deployment_pagina_adres(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede?q=pr"
+    assert deployment_page_address(verzoek, "demo", "tweede") == "/projects/demo/deployments/tweede?q=pr"
 
 
 def test_een_project_zonder_deployments_krijgt_het_kale_adres() -> None:
     verzoek = _Verzoek("")
     verzoek.url = _Url("/projects/demo/deployments/weg")
 
-    assert deployment_pagina_adres(verzoek, "demo", "") == "/projects/demo/deployments"
+    assert deployment_page_address(verzoek, "demo", "") == "/projects/demo/deployments"
 
 
 # --------------------------------------------------------------------- de statuskolom

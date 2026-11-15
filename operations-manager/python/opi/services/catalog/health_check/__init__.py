@@ -12,12 +12,17 @@ HTTP(S) endpoint on a separate port, or to switch probing off with ``scheme: non
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, Service
 from opi.services.catalog.health_check.config_model import HealthCheckConfig
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 class HealthCheckService(Service):
@@ -37,7 +42,7 @@ class HealthCheckService(Service):
     )
     config_model = HealthCheckConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): the probe is configured on the component and there is
+    # May enrol itself: the probe is configured on the component and there is
     # nothing at project level to choose.
     allows_implicit_project_selection = True
     # Runs after the secret services (10-50). This provider only overrides probe_*
@@ -45,7 +50,6 @@ class HealthCheckService(Service):
     manifest_order = 55
     config_component_order = 45
 
-    # --- config field ownership (component-level; hooks into the component form) ----
     # health-check is a component-level service: no standalone wizard step. It hooks
     # its probe fieldset into the per-component form via config_component_layout().
 
@@ -53,7 +57,7 @@ class HealthCheckService(Service):
         # scheme/port/paths live on the component reference's config wrapper.
         return self.config_model_field_names() if layer is ConfigLayer.COMPONENT else []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is not ConfigLayer.COMPONENT:
             return []
         from opi.services.catalog.health_check.editables import (
@@ -70,7 +74,7 @@ class HealthCheckService(Service):
             HEALTH_CHECK_READINESS_PATH_EDITABLE,
         ]
 
-    def config_component_visualizers(self):
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.health_check.visualizers import (
             HEALTH_CHECK_LIVENESS_PATH,
             HEALTH_CHECK_PORT,
@@ -85,7 +89,7 @@ class HealthCheckService(Service):
             HEALTH_CHECK_READINESS_PATH,
         ]
 
-    def config_component_layout(self):
+    def config_component_layout(self) -> list[LayoutChild]:
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value

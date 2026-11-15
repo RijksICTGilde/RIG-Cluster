@@ -20,29 +20,25 @@ class ModelFieldValidator:
     """Validate a form field with the pydantic field that ALREADY defines the rule.
 
     Where a service has a config model, that model is the contract the API writes against and
-    the stored project file is validated against. A hand-written validator next to it is a
-    second definition of the same rule, and the two drift: the cross-domain peer fields
-    restated "DNS-1123 label" as ``KubernetesNameValidator``, which also demands a leading
-    LETTER -- so the form rejected a peer whose name the schema, the API and the project store
-    all accept. Same shape as ``opi/api/validation.py``'s reuse of shared editables, one layer
-    down: point at the definition instead of copying it.
+    the project file is validated against. A hand-written validator next to it is a second
+    definition of the same rule, and the two drift apart, so the form ends up refusing a value
+    the schema, the API and the project store all accept. Point at the definition instead.
 
-    The pydantic message stays out of the UI on purpose -- it is English and speaks about
-    types -- so the caller supplies the human explanation; only the RULE is shared.
+    The pydantic message stays out of the UI: it is English and speaks about types, so the
+    caller supplies the human explanation and only the RULE is shared.
     """
 
     def __init__(self, model: type[BaseModel], field_name: str, message: str) -> None:
         field = model.model_fields[field_name]
-        # A field carries its constraints in ``metadata`` only when they sit directly on
-        # the field. On an OPTIONAL field they sit inside the union member instead
-        # (``SomeConstrainedType | None``), so ``metadata`` is empty and ``Annotated[(X,)]`` --
-        # one argument -- is a TypeError at import time. The annotation alone already
-        # carries the rule in that case, so use it as-is.
+        # A field carries its constraints in ``metadata`` only when they sit directly on it.
+        # On an OPTIONAL field they sit inside the union member, so ``metadata`` is empty, the
+        # annotation alone already carries the rule, and ``Annotated[(X,)]`` would be a
+        # TypeError at import time.
         annotation = Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation
         self._adapter: TypeAdapter[Any] = TypeAdapter(cast("Any", annotation))
         self._message = message
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         # Emptiness is ``required``'s business, not the field rule's.
         if value is None or value == "":
             return []
@@ -54,13 +50,9 @@ class ModelFieldValidator:
 
 
 class SlugValidator:
-    """
-    Validates slug format: starts with letter, only lowercase letters, digits, hyphens.
+    """A slug: a leading letter, then lowercase letters, digits and hyphens."""
 
-    Pattern: ^[a-z][a-z0-9-]*$
-    """
-
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         value_str = str(value)
@@ -69,10 +61,10 @@ class SlugValidator:
         return []
 
 
-#: De vorm van een e-mailadres: lokaal deel, apenstaartje, domein met een punt. Deze
-#: constante is de enige bron; ``$defs/user.email`` in project_v2.json neemt de tekst over
-#: en test_project_schema_validation houdt de twee gelijk. ``\Z`` en niet ``$``, want ``$``
-#: laat in Python een afsluitende newline door.
+#: The shape of an email address: local part, at sign, domain with a dot. This constant is the
+#: only source; ``$defs/user.email`` in project_v2.json copies the text and
+#: test_project_schema_validation holds the two equal. ``\Z`` and not ``$``, because ``$`` lets
+#: a trailing newline through in Python.
 EMAIL_PATTERN: Final[str] = r"^[^@\s]+@[^@\s]+\.[^@\s]+\Z"
 
 
@@ -81,7 +73,7 @@ class EmailValidator:
 
     _PATTERN = re.compile(EMAIL_PATTERN)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         if not self._PATTERN.match(str(value)):
@@ -100,7 +92,7 @@ class MinMaxLengthValidator:
         self.min_length = min_length
         self.max_length = max_length
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # Let RequiredValidator handle emptiness
         value_str = str(value)
@@ -123,7 +115,7 @@ class RangeValidator:
         self.min_value = min_value
         self.max_value = max_value
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         try:
@@ -151,7 +143,7 @@ class ComponentNameValidator:
     also checks uniqueness.
     """
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -181,7 +173,7 @@ class KubernetesNameValidator:
         self._label = label
         self._max_length = max_length
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -205,7 +197,7 @@ class AttachmentIdValidator:
     When called with context containing ``existing_attachment_ids``, also checks uniqueness.
     """
 
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -222,7 +214,7 @@ class AttachmentIdValidator:
 
 
 class SchemaPostfixValidator:
-    """Validates an extra-schema postfix (RC-17): lowercase letters, digits and
+    """Validates an extra-schema postfix: lowercase letters, digits and
     underscores, starting with a letter, and not longer than
     ``SCHEMA_POSTFIX_MAX_LENGTH``.
 
@@ -242,7 +234,7 @@ class SchemaPostfixValidator:
     from the schema name in their database rather than from the response.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return ["Postfix is verplicht"]
         if not re.match(SCHEMA_POSTFIX_PATTERN, str(value)):
@@ -265,7 +257,7 @@ class InviteKeyValidator:
     only a non-empty, malformed key is rejected.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []  # empty is generated at save time
         value_str = str(value)
@@ -292,7 +284,7 @@ class ContainerImageValidator:
     _PATTERN = re.compile(CONTAINER_IMAGE_PATTERN)
     _ALLOWED_CHAR = re.compile(r"[A-Za-z0-9._:/@-]")
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -314,7 +306,7 @@ class ContainerImageValidator:
 class RealmRoleValidator:
     """Validates Keycloak realm role names: alphanumeric, hyphens, underscores, max 255 chars."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         value_str = str(value)
@@ -333,7 +325,7 @@ class EnvNameValidator:
 
     _PATTERN = re.compile(ENV_VAR_NAME_PATTERN)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         if not self._PATTERN.match(str(value)):
@@ -346,7 +338,7 @@ class EnvNameValidator:
 class PathValidator:
     """Validates publication path format: must start with / and contain no spaces."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         v = str(value)
@@ -362,7 +354,7 @@ class SafePathValidator:
     The rule is shared with configmodel so form and API behave identically.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -373,11 +365,11 @@ class SafePathValidator:
 
 
 class LogoutPathValidator:
-    """Het logout-pad, getoetst met dezelfde normalisatie die het configmodel gebruikt.
+    """The logout path, checked with the same normalization the config model uses.
 
-    Niet ``PathValidator``: die weigert een pad zonder leidende slash, en juist dat wordt
-    hier stil rechtgezet. Niet ``ModelFieldValidator``: die toetst de annotatie
-    (``str | None``) en ziet de ``field_validator`` van het model dus niet.
+    Not ``PathValidator``: that refuses a path without a leading slash, and exactly that is
+    quietly corrected here. Not ``ModelFieldValidator``: that checks the annotation
+    (``str | None``) and so never sees the model's ``field_validator``.
     """
 
     MESSAGE = (
@@ -386,7 +378,7 @@ class LogoutPathValidator:
         "deployment ervoor."
     )
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -397,13 +389,13 @@ class LogoutPathValidator:
 
 
 class RedirectUriValidator:
-    """Een redirect URI, getoetst met dezelfde functie die het configmodel gebruikt.
+    """A redirect URI, checked with the same function the config model uses.
 
-    Niet ``UrlValidator``: die keurt ook ``*``, een wildcard-host en http:// naar een
-    publieke host goed, en dat zijn precies de vormen die hier geweigerd worden.
+    Not ``UrlValidator``: that also accepts ``*``, a wildcard host and http:// to a public
+    host, which are exactly the forms refused here.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         try:
@@ -416,7 +408,7 @@ class RedirectUriValidator:
 class UrlValidator:
     """Validates that a value is a valid HTTP(S) URL."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         v = str(value)
@@ -428,7 +420,7 @@ class UrlValidator:
 class RequiredValidator:
     """Validates that a field has a non-empty value."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None:
             return ["Dit veld is verplicht"]
         if isinstance(value, str) and not value.strip():
@@ -438,35 +430,13 @@ class RequiredValidator:
         return []
 
 
-class KeyValueValidator:
-    """Validates that text is parseable as ENV (KEY=value) or YAML key-value pairs.
-
-    Delegates to ``validate_and_parse_env_vars`` which is the same parser
-    used at deploy time, so validation here matches what will actually be
-    accepted.
-    """
-
-    def validate(self, value: Any) -> list[str]:
-        if not value or (isinstance(value, str) and not value.strip()):
-            return []
-        if not isinstance(value, str):
-            return []
-        try:
-            from opi.utils.env_vars import validate_and_parse_env_vars
-
-            validate_and_parse_env_vars(value)
-        except (ValueError, TypeError) as e:
-            return [str(e)]
-        return []
-
-
 class AllowedValuesValidator:
     """Validates that a value is one of the allowed options."""
 
     def __init__(self, allowed: list[str]) -> None:
         self.allowed = allowed
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
         if str(value) not in self.allowed:
@@ -478,14 +448,13 @@ class StorageSizeValidator:
     """Validates the size of one storage mount against the platform ceiling.
 
     The rule itself lives with the storage config model
-    (``catalog/shared/storage.check_storage_size``), which is what types the config
-    API's request bodies. This wrapper puts the SAME rule on the form field, because
-    a dropdown is not a check: the size editable declares a ``values_provider`` and
-    nothing validated the value that came back, so a hand-made POST set any size it
-    liked.
+    (``catalog/shared/storage.check_storage_size``), which is what types the config API's
+    request bodies. This wrapper puts the SAME rule on the form field, because a dropdown is
+    not a check: the size editable declares a ``values_provider``, and without this a
+    hand-made POST sets any size it likes.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
         from opi.services.catalog.shared.storage import check_storage_size
@@ -519,10 +488,10 @@ class MemoryRangeValidator:
 
         return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or (isinstance(value, str) and not value.strip()):
             return []
-        from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+        from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
         try:
             mi = parse_k8s_memory_to_mi(str(value))
@@ -550,10 +519,10 @@ class MemoryRequestRangeValidator(MemoryRangeValidator):
 class SubdomainValidator:
     """Validates subdomain format using the canonical validation from subdomain connector."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
-        from opi.connectors.subdomain import validate_subdomain
+        from opi.services.catalog.publish_on_web.subdomain import validate_subdomain
 
         is_valid, error_msg = validate_subdomain(str(value))
         return [error_msg] if not is_valid and error_msg else []
@@ -562,12 +531,12 @@ class SubdomainValidator:
 class BaseDomainValidator:
     """Validates that a base domain is in the supported domains list."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
         if str(value) == "__custom__":
             return []  # Sentinel; actual domain validated via CustomDomainValidator
-        from opi.connectors.subdomain import validate_base_domain
+        from opi.services.catalog.publish_on_web.subdomain import validate_base_domain
 
         is_valid, error_msg = validate_base_domain(str(value))
         return [error_msg] if not is_valid and error_msg else []
@@ -576,10 +545,10 @@ class BaseDomainValidator:
 class CustomDomainValidator:
     """Validates custom domain format."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
-        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+        from opi.services.catalog.publish_on_web.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
 
         domain = str(value).strip().lower()
         if not DOMAIN_PATTERN.match(domain):
@@ -590,10 +559,10 @@ class CustomDomainValidator:
 class DomainFormatValidator:
     """Validates that domain-format is a known template ID."""
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if not value:
             return []
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+        from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES
 
         if str(value) not in DOMAIN_FORMAT_TEMPLATES:
             return [f"Onbekend URL-formaat: {value}"]
@@ -601,27 +570,28 @@ class DomainFormatValidator:
 
 
 class CommandLineValidator:
-    """Het startcommando van een container, als een regel tekst.
+    """The start command of a container, as one line of text.
 
-    Ruim over de inhoud en streng over de vorm. Een echt commando ziet eruit als
-    ``sh -c "<script>"``, dus spaties, quotes en operatoren horen erin thuis; die weigeren
-    zou juist het geval uitsluiten waarvoor het veld bestaat.
+    Generous about the content and strict about the shape. A real command looks like
+    ``sh -c "<script>"``, so spaces, quotes and operators belong in it; refusing those would
+    rule out the case the field exists for.
 
-    Wat wel geweigerd wordt:
+    What IS refused:
 
-    * een quote die openstaat aan het eind. Dan splitst de regel anders dan de gebruiker
-      bedoelde, en dat is precies het soort fout dat pas in een CrashLoopBackOff opvalt;
-    * stuurtekens, die je niet per ongeluk typt en die ongewijzigd de container bereiken;
-    * een regel die na het splitsen niets oplevert terwijl er wel iets stond.
+    * a quote still open at the end, because the line then splits differently from what the
+      user meant, and that only shows up as a CrashLoopBackOff;
+    * a control character, which nobody types by accident and which reaches the container
+      unchanged;
+    * a line that yields no arguments at all while something was typed.
 
-    Geen verdediging tegen YAML-injectie: de canonieke schrijver zet een meerregelige
-    waarde neer als literal block, dus een geknutseld argument komt terug als een string en
-    niet als extra sleutels. ``tests/test_component_command_field.py`` bewaakt dat.
+    No defence against YAML injection: the canonical writer puts a multi-line value down as a
+    literal block, so a crafted argument comes back as a string and not as extra keys.
+    ``tests/test_component_command_field.py`` guards that.
     """
 
     MAX_LENGTH = 4096
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         if value is None or value == "":
             return []
         text = str(value)
@@ -629,8 +599,8 @@ class CommandLineValidator:
             return []
         if len(text) > self.MAX_LENGTH:
             return [f"Een startcommando mag hoogstens {self.MAX_LENGTH} tekens zijn."]
-        verboden = [c for c in text if ord(c) < 32 and c not in "\n\t"]
-        if verboden:
+        forbidden = [c for c in text if ord(c) < 32 and c not in "\n\t"]
+        if forbidden:
             return ["Dit commando bevat een stuurteken dat er niet in hoort."]
         if command_line_has_unbalanced_quote(text):
             return ['Er staat een dubbele quote open. Sluit hem, of typ "" als je er letterlijk een bedoelt.']
@@ -642,17 +612,15 @@ class CommandLineValidator:
 class ConfigSettingValidator:
     """Put a service's DECLARED room on the form field, from that same declaration.
 
-    The rule lives with the service (``Service.config_settings()``), which is also what
-    the project-file validation reads. This wrapper is the form's view of it, for the
-    same reason ``StorageSizeValidator`` exists: a dropdown or a ``max=`` attribute is
-    not a check, and the screen must not be able to promise something the save then
-    refuses. There is one declaration, so there is one answer.
+    The rule lives with the service (``Service.config_settings()``), which is also what the
+    project-file validation reads. A dropdown or a ``max=`` attribute is not a check, so the
+    screen could otherwise promise something the save then refuses.
     """
 
     def __init__(self, setting: ConfigSetting) -> None:
         self.setting = setting
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any) -> list[str]:  # noqa: ANN401  # a project-file value
         # Emptiness is ``required``'s business; an empty field falls back to the
         # service default, which the declaration already vouched for.
         if value is None or (isinstance(value, str) and not value.strip()):

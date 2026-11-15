@@ -69,7 +69,7 @@ def captured_yaml(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The project YAML the wizard hands to the create task -- the artifact, not the page."""
     captured: list[str] = []
 
-    import opi.core.task_helpers as task_helpers
+    import opi.http.task_helpers as task_helpers
 
     async def _fake_create_async_task(**kwargs: Any) -> dict[str, Any]:
         captured.append(kwargs["payload"]["yaml_content"])

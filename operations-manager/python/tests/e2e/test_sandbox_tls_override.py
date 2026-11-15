@@ -45,8 +45,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from opi.core.project_schema import validate_project_schema
-from opi.handlers.project_file_handler import validate_attachment_references
+from opi.services.project_file_handler import validate_attachment_references
+from opi.services.project_schema import validate_project_schema
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_with_services

@@ -9,7 +9,7 @@ from opi.forms.editables.editable import (
     EditableValidator,
     WidgetType,
 )
-from opi.forms.editables.part import EditablePart  # backward compat
+from opi.forms.editables.part import EditablePart
 from opi.forms.editables.path import get_value, resolve_path, set_value
 
 __all__ = [

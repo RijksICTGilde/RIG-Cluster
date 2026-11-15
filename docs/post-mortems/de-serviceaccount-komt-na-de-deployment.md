@@ -105,7 +105,7 @@ die `RuntimeError`. Na de uitrol van 15 oktober 2026 had de application-controll
 minuut nodig om zijn cluster-cache op te bouwen, en in dat venster bleef elke
 `refresh=normal` hangen tot zijn eigen timeout van 120s en gaf hij niets terug: zes taken
 faalden hard zonder tweede poging, waarvan een al op de login. Beide worden nu herhaald
-binnen `ARGOCD_HERSTEL_BUDGET_SECONDEN` (10 minuten, afgerekend op de wandklok); alleen het
+binnen `ARGOCD_RECOVERY_BUDGET_SECONDS` (10 minuten, afgerekend op de wandklok); alleen het
 verstrijken van dat budget eindigt in de fout, en die noemt het budget. De schade blijft bij dit ene
 project, terwijl de hierboven afgewezen health-override hetzelfde clusterbreed deed. Het
 onderscheid is de blast radius, niet de strengheid.

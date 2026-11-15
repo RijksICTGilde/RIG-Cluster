@@ -31,7 +31,7 @@ curl -X POST "https://zad.sandbox.rijksapp.dev/api/projects/mijn-project/deploym
 ## Wat er gecontroleerd wordt
 
 Alles wat een kloon nodig heeft om te *kunnen*, staat in het projectbestand. De controle is dan ook
-een pure functie daarover (`opi/manager/clone_validation.py`): geen git, geen cluster, geen connectors.
+een pure functie daarover (`opi/services/clone_validation.py`): geen git, geen cluster, geen connectors.
 
 | Controle | Wanneer | Faalt als |
 |---|---|---|
@@ -51,7 +51,7 @@ niet meer bestaat komt pas boven bij het terugzetten, uit `backup_run_items`.
 ## Dezelfde toets in het provisioningpad
 
 Beide doelen (validatie-endpoint en provisioning-managers) gebruiken dezelfde functie,
-`resolve_clone_source_deployment` in `opi/manager/clone_validation.py`. Dit voorkomt dat
+`resolve_clone_source_deployment` in `opi/services/clone_validation.py`. Dit voorkomt dat
 een reference die validatie passeert later toch faalt, en dat een reference op twee
 verschillende manieren wordt opgelost.
 

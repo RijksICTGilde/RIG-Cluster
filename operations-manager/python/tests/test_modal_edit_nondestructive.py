@@ -26,7 +26,7 @@ import yaml
 from opi.forms.editables.editable import WidgetType, apply_virtualize
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.rendered_sequences import RENDERED_SEQUENCES_FIELD
 from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.flows import get_flow
@@ -473,7 +473,7 @@ async def _verwerk(section: FormSection, data: dict[str, Any], pad: str, geteken
     """
     inzending = copy.deepcopy(data)
     smart_delete_value(inzending, pad)
-    inzending[GERENDERDE_REEKSEN_VELD] = getekend
+    inzending[RENDERED_SEQUENCES_FIELD] = getekend
     resultaat, _errors = await EditableFormProcessor().process_json_submission(
         inzending,
         section.editables,

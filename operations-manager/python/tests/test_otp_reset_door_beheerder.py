@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.web.router_user_admin import reset_user_otp
 
 BEHEERDER = "beheerder@rijksoverheid.nl"

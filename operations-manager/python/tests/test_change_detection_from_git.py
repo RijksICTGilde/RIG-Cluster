@@ -18,7 +18,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from opi.connectors.git import GitConnector
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.yaml_util import dump_yaml_to_string
 

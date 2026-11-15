@@ -19,32 +19,32 @@ from __future__ import annotations
 from opi.core.async_task_schema import ASYNC_TASKS_TABLE_SQL
 from opi.web.router import _v2_task_to_template_context
 from opi.web.router_tasks import _normalize_task
-from opi.web.stap_labels import stap_label
+from opi.web.step_labels import step_label
 
 
 class TestDeVertaling:
     def test_queued_is_nederlands(self) -> None:
-        assert stap_label("Queued") == "In wachtrij"
+        assert step_label("Queued") == "In wachtrij"
 
     def test_de_andere_vaste_regels_ook(self) -> None:
-        assert stap_label("Starting...") == "Wordt gestart..."
-        assert stap_label("Done") == "Klaar"
+        assert step_label("Starting...") == "Wordt gestart..."
+        assert step_label("Done") == "Klaar"
 
     def test_een_mislukking_is_nederlands(self) -> None:
         """Sinds RC-282 schrijft ``fail_project`` alleen deze kop weg."""
-        assert stap_label("Failed") == "Mislukt"
+        assert step_label("Failed") == "Mislukt"
 
     def test_een_mislukking_houdt_zijn_fouttekst(self) -> None:
         """Alleen de kop vertaalt; wat erachter staat is de melding zelf."""
-        assert stap_label("Failed: connection refused") == "Mislukt: connection refused"
+        assert step_label("Failed: connection refused") == "Mislukt: connection refused"
 
     def test_een_nederlandse_stap_gaat_ongewijzigd_door(self) -> None:
         """De meeste stapregels worden al in het Nederlands geschreven."""
-        assert stap_label("Realm aanmaken - productie") == "Realm aanmaken - productie"
+        assert step_label("Realm aanmaken - productie") == "Realm aanmaken - productie"
 
     def test_leeg_blijft_leeg(self) -> None:
-        assert stap_label(None) is None
-        assert stap_label("") == ""
+        assert step_label(None) is None
+        assert step_label("") == ""
 
 
 class TestDeTweeSchermen:

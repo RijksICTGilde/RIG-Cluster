@@ -113,10 +113,10 @@ class SleepModeConfig(BaseModel):
         description="Which component the waker answers for; by default the deployment's root component.",
     )
     wake_mode: WakeMode = Field(
-        # 'confirm' en niet 'auto': wakker worden kost een halve minuut, en bij 'auto' gebeurt
-        # dat op elk browserverzoek dat langskomt, ook van een crawler of een monitor. Bij
-        # 'confirm' beslist een mens: de bezoeker ziet een knop en kan zelf starten, zonder
-        # dat hij een beheerder nodig heeft zoals bij 'manual'.
+        # 'confirm' and not 'auto': waking takes half a minute, and with 'auto' that happens
+        # on every browser request that comes past, including from a crawler or a monitor. With
+        # 'confirm' a human decides: the visitor sees a button and can start it themselves,
+        # without needing an administrator as with 'manual'.
         default="confirm",
         alias="wake-mode",
         description=(

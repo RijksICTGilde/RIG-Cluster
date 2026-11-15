@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
+from opi.services.project_key_secret import SOPS_SECRET_NAME
 from opi.utils.argocd_tracking import INSTANCE_LABEL, TrackedResource
 from tests.integration.kubernetes_live import (
     DEPLOYMENT,
@@ -71,7 +73,7 @@ def connector(kubectl: Kubectl) -> Iterator[KubectlConnector]:
     """De connector zoals OPI hem bouwt, tegen de KUBECONFIG van het wegwerpcluster."""
     KubectlConnector._instance = None
     built = create_kubectl_connector()
-    if not built.isConnected:
+    if not built.is_connected:
         pytest.fail("kubectl kan niet bij het cluster; draai task test-cluster-up")
     drop_by_prefix()
     yield built
@@ -323,8 +325,10 @@ async def test_get_sops_secret_from_namespace_decodes_the_age_key(
     sleutel = "AGE-SECRET-KEY-1EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE"
     kubectl.ok("create", "secret", "generic", "sops-age-key", "-n", namespace, f"--from-literal=key={sleutel}")
 
-    assert await connector.get_sops_secret_from_namespace(namespace) == sleutel
-    assert await connector.get_sops_secret_from_namespace(other) is None, "elke namespace heeft zijn eigen sleutel"
+    assert await connector.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME) == sleutel
+    assert await connector.get_sops_secret_from_namespace(other, SOPS_SECRET_NAME) is None, (
+        "elke namespace heeft zijn eigen sleutel"
+    )
 
 
 async def test_resource_exists_tells_present_from_absent(
@@ -447,7 +451,7 @@ async def test_get_deployment_logs_is_empty_for_a_deployment_that_is_not_there(
 
 
 async def test_stream_deployment_logs_keeps_handing_over_new_lines(connector: KubectlConnector, workload: str) -> None:
-    proces = await connector.stream_deployment_logs(workload, NAMESPACE, lines=1)
+    proces = await connector.stream_deployment_logs(workload, NAMESPACE, APPLICATION_CONTAINER_NAME, lines=1)
 
     assert proces is not None
     assert proces.stdout is not None
@@ -462,7 +466,9 @@ async def test_stream_deployment_logs_keeps_handing_over_new_lines(connector: Ku
 async def test_get_application_pods_reports_what_each_pod_is_doing(
     connector: KubectlConnector, kubectl: Kubectl, workload: str
 ) -> None:
-    pods = await connector.get_application_pods(NAMESPACE, DEPLOYMENT)
+    pods = await connector.get_application_pods(
+        NAMESPACE, deployment_pod_selector(DEPLOYMENT), APPLICATION_CONTAINER_NAME
+    )
 
     assert len(pods) == 1, pods
     pod = pods[0]
@@ -476,7 +482,12 @@ async def test_get_application_pods_is_empty_for_a_deployment_without_pods(
     connector: KubectlConnector, namespaces: tuple[str, str]
 ) -> None:
     namespace, _ = namespaces
-    assert await connector.get_application_pods(namespace, f"{PREFIX}-absent") == []
+    assert (
+        await connector.get_application_pods(
+            namespace, deployment_pod_selector(f"{PREFIX}-absent"), APPLICATION_CONTAINER_NAME
+        )
+        == []
+    )
 
 
 async def test_get_pod_container_image_names_the_image_the_pod_runs(

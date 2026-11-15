@@ -332,7 +332,7 @@ class TestChiselTunnelHelper:
     @pytest.mark.asyncio
     async def test_chisel_tunnel_decrypts_password_with_project_key(self, project_data: dict):
         """Test that chisel_tunnel uses project key to decrypt password."""
-        from opi.utils.chisel_helper import chisel_tunnel
+        from opi.manager.chisel_helper import chisel_tunnel
 
         chisel_config = {
             "server-url": "https://chisel.example.com",
@@ -341,9 +341,9 @@ class TestChiselTunnelHelper:
         }
 
         with (
-            patch("opi.utils.chisel_helper.get_decoded_project_private_key", new_callable=AsyncMock) as mock_get_key,
-            patch("opi.utils.chisel_helper.decrypt_password_smart", new_callable=AsyncMock) as mock_decrypt,
-            patch("opi.utils.chisel_helper.ChiselConnector") as mock_connector_class,
+            patch("opi.manager.chisel_helper.get_decoded_project_private_key", new_callable=AsyncMock) as mock_get_key,
+            patch("opi.manager.chisel_helper.decrypt_password_smart", new_callable=AsyncMock) as mock_decrypt,
+            patch("opi.manager.chisel_helper.ChiselConnector") as mock_connector_class,
         ):
             mock_get_key.return_value = "AGE-SECRET-KEY-PROJECT"
             mock_decrypt.return_value = "decrypted_chisel_password"
@@ -375,7 +375,7 @@ class TestChiselTunnelHelper:
     @pytest.mark.asyncio
     async def test_chisel_tunnel_without_project_data(self):
         """Test that chisel_tunnel works without project_data (no decryption)."""
-        from opi.utils.chisel_helper import chisel_tunnel
+        from opi.manager.chisel_helper import chisel_tunnel
 
         chisel_config = {
             "server-url": "https://chisel.example.com",
@@ -384,9 +384,9 @@ class TestChiselTunnelHelper:
         }
 
         with (
-            patch("opi.utils.chisel_helper.get_decoded_project_private_key", new_callable=AsyncMock) as mock_get_key,
-            patch("opi.utils.chisel_helper.decrypt_password_smart", new_callable=AsyncMock) as mock_decrypt,
-            patch("opi.utils.chisel_helper.ChiselConnector") as mock_connector_class,
+            patch("opi.manager.chisel_helper.get_decoded_project_private_key", new_callable=AsyncMock) as mock_get_key,
+            patch("opi.manager.chisel_helper.decrypt_password_smart", new_callable=AsyncMock) as mock_decrypt,
+            patch("opi.manager.chisel_helper.ChiselConnector") as mock_connector_class,
         ):
             mock_decrypt.return_value = "plain_password"  # No encryption, returns as-is
 

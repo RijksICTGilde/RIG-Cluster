@@ -13,12 +13,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.delete_project_manager import DeleteProjectManager, parse_retention_period_hours
+from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.utils.naming import (
     generate_argocd_appproject_prefix,
     generate_gitops_argocd_application_path,
     get_output_filename_from_template,
 )
+from tests.deployment_removal_helper import remove_from_project_file_edit
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,7 +79,7 @@ def _make_project_manager_mock() -> MagicMock:
     mock_pm.get_contents = AsyncMock()
     mock_pm.get_deployment_by_name = AsyncMock()
     mock_pm.get_deployments = AsyncMock()
-    mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
+    mock_pm._keycloak_manager._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
     return mock_pm
 
@@ -171,6 +172,7 @@ class TestCleanupProjectInfrastructure:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
             await manager._cleanup_project_infrastructure("test-project", "local", project_data, deletion_results)
@@ -204,6 +206,7 @@ class TestCleanupProjectInfrastructure:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
             await manager._cleanup_project_infrastructure("test-project", "local", project_data, deletion_results)
@@ -232,6 +235,7 @@ class TestCleanupProjectInfrastructure:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
             await manager._cleanup_project_infrastructure("test-project", "local", project_data, deletion_results)
@@ -257,6 +261,7 @@ class TestCleanupProjectInfrastructure:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
             await manager._cleanup_project_infrastructure("test-project", "local", project_data, deletion_results)
@@ -282,6 +287,7 @@ class TestCleanupProjectInfrastructure:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=True),
             patch("shutil.rmtree") as mock_rmtree,
         ):
@@ -337,6 +343,7 @@ class TestDeleteProjectArgocdFolder:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=True),
             patch("shutil.rmtree") as mock_rmtree,
         ):
@@ -438,6 +445,7 @@ class TestDeleteProjectArgocdFolder:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=AsyncMock()),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=AsyncMock()),
             patch("os.path.exists", side_effect=_exists),
             patch("shutil.rmtree"),
         ):
@@ -471,36 +479,33 @@ class TestDeleteDeploymentSeparation:
     """Verify delete_deployment does NOT perform infrastructure cleanup."""
 
     @pytest.mark.asyncio
-    async def test_argocd_403_precheck_is_not_reported_as_a_failed_deletion(self):
-        """ArgoCD returns 403 for an app that is already gone. The existence pre-check
-        in delete_deployment_from_yaml_change must tolerate that and confirm deletion
-        via the wait, not raise -> log a traceback and record the (successful) deletion
-        as an error. Regression: a deployment whose app WAS deleted (NotFound in the
-        cluster) still showed 'Error waiting for ArgoCD app deletion'."""
+    async def test_argocd_403_is_not_reported_as_a_failed_deletion(self):
+        """ArgoCD returns 403 for an app that is already gone, and for an app whose
+        AppProject was deleted first. Either way the Application is gone or will be garbage
+        collected, so this counts as deleted instead of as an error. Regression: a deployment
+        whose app WAS deleted still showed 'Error waiting for ArgoCD app deletion'."""
         mock_pm = _make_project_manager_mock()
         manager = DeleteProjectManager(mock_pm)
 
         mock_argo = AsyncMock()
         mock_argo.refresh_application = AsyncMock(return_value=True)
-        # 403 on the pre-check, exactly what ArgoCD returns for a gone app.
         mock_argo.application_exists = AsyncMock(side_effect=PermissionError("permission denied"))
-        # The wait confirms it is gone via the Kubernetes API.
-        mock_argo.wait_for_application_deletion = AsyncMock(return_value=True)
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
-            result = await manager.delete_deployment_from_yaml_change(
+            result = await remove_from_project_file_edit(
+                manager,
                 "test-project",
                 _make_deployment("pr-42"),
                 _make_project_data(deployments=[]),
             )
 
-        assert not any("Error waiting for ArgoCD app deletion" in str(e) for e in result["errors"]), result["errors"]
-        mock_argo.wait_for_application_deletion.assert_awaited()
-        wait_ops = [op for op in result["operations"] if op["type"] == "argocd_app_deletion_wait"]
-        assert wait_ops, "the deletion wait must run"
+        assert not any("ArgoCD app deletion" in str(e) for e in result["errors"]), result["errors"]
+        wait_ops = [op for op in result["operations"] if op["type"] == "argocd_app_gitops_deletion"]
+        assert wait_ops, "the deletion must be recorded"
         assert wait_ops[0]["status"] == "success", wait_ops
 
     @pytest.mark.asyncio
@@ -543,10 +548,11 @@ class TestDeleteDeploymentSeparation:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", side_effect=os.path.exists),
         ):
-            result = await manager.delete_deployment_from_yaml_change(
-                "test-project", _make_deployment("pr-42"), _make_project_data(deployments=[])
+            result = await remove_from_project_file_edit(
+                manager, "test-project", _make_deployment("pr-42"), _make_project_data(deployments=[])
             )
 
         assert nog_aanwezig_bij_herbouw == [False], (
@@ -571,7 +577,7 @@ class TestDeleteProjectOrchestration:
         Keycloak, instead of filling its delete report with failed operations.
         """
         mock_pm = _make_project_manager_mock()
-        mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
+        mock_pm._keycloak_manager._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
         deployment = _make_deployment()
         project_data = _make_project_data(deployments=[deployment])
@@ -745,51 +751,6 @@ class TestDeleteProjectOrchestration:
         assert result["success"] is True
 
 
-# ---------------------------------------------------------------------------
-# parse_retention_period_hours tests
-# ---------------------------------------------------------------------------
-
-
-class TestParseRetentionPeriodHours:
-    """Tests for the parse_retention_period_hours utility function."""
-
-    @pytest.mark.parametrize(
-        ("input_value", "expected"),
-        [
-            (None, 0),
-            ("", 0),
-            ("  ", 0),
-            ("0h", 0),
-            ("0d", 0),
-            ("1h", 1),
-            ("24h", 24),
-            ("168h", 168),
-            ("1d", 24),
-            ("7d", 168),
-            ("3d", 72),
-            (" 3h ", 3),
-            (" 2D ", 48),
-        ],
-    )
-    def test_valid_values(self, input_value: str | None, expected: int) -> None:
-        assert parse_retention_period_hours(input_value) == expected
-
-    @pytest.mark.parametrize(
-        "input_value",
-        [
-            "169h",
-            "8d",
-            "-1h",
-            "abc",
-            "10",
-            "10m",
-        ],
-    )
-    def test_invalid_values(self, input_value: str) -> None:
-        with pytest.raises(ValueError):  # noqa: PT011
-            parse_retention_period_hours(input_value)
-
-
 class TestSeaweedfsUitgesteldOpruimen:
     """seaweedfs-storage declareert CleanupStrategy.DEFERRED, dus geen van de drie
     verwijderpaden mag de bucket, de identiteit of de policy direct weghalen zolang er
@@ -831,9 +792,11 @@ class TestSeaweedfsUitgesteldOpruimen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
-            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+            await remove_from_project_file_edit(
+                DeleteProjectManager(mock_pm),
                 "test-project",
                 deployment,
                 _make_project_data(deployments=[]),
@@ -860,9 +823,11 @@ class TestSeaweedfsUitgesteldOpruimen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
-            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+            await remove_from_project_file_edit(
+                DeleteProjectManager(mock_pm),
                 "test-project",
                 deployment,
                 _make_project_data(deployments=[]),
@@ -875,10 +840,11 @@ class TestSeaweedfsUitgesteldOpruimen:
         mock_pm._kubectl_connector.delete_namespace.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delete_deployment_markeert_bij_een_bewaartermijn(self) -> None:
+    async def test_delete_deployment_markeert_altijd(self) -> None:
+        """RC-484, D1: an explicit delete marks first too, so the data stays recoverable
+        for the grace period."""
         mock_pm = self._mock_pm()
         deployment = self._seaweedfs_deployment()
-        deployment["data-retention-period"] = "3d"
         project_data = _make_project_data(services=["seaweedfs-storage"], deployments=[deployment])
         mock_pm.get_contents = AsyncMock(return_value=project_data)
         mock_pm.get_deployment_by_name = AsyncMock(return_value=deployment)
@@ -894,7 +860,9 @@ class TestSeaweedfsUitgesteldOpruimen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_store),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=mock_project_store),
             patch("os.path.exists", return_value=False),
             patch("opi.core.database_pools.get_database_pool", return_value=MagicMock()),
             patch("opi.services.marked_for_deletion_service.MarkedForDeletionService", return_value=AsyncMock()),
@@ -928,7 +896,7 @@ class TestSendEmailOpruimenBijVerwijderen:
             side_effect=lambda _yaml, _naam, soorten: "send-email" in soorten
         )
         mock_pm._mail_manager = AsyncMock()
-        mock_pm._mail_manager.delete_resources_for_deployment = AsyncMock(
+        mock_pm._mail_manager.handle_service_removal = AsyncMock(
             return_value={
                 "operations": [{"type": "mail_account_deleted", "account": "project-test-project-pr-42-abcdef"}],
                 "errors": [],
@@ -946,12 +914,16 @@ class TestSendEmailOpruimenBijVerwijderen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=mock_project_service),
             patch("os.path.exists", return_value=False),
         ):
             result = await DeleteProjectManager(mock_pm).delete_deployment("test-project", "pr-42")
 
-        mock_pm._mail_manager.delete_resources_for_deployment.assert_awaited_once_with(project_data, deployment)
+        aanroep = mock_pm._mail_manager.handle_service_removal.await_args
+        assert aanroep is not None, "de dienst zat op de deployment, dus deze tak moet lopen"
+        assert aanroep.kwargs["deployment_data"] == deployment
         op_types = {op["type"] for op in result["operations"]}
         assert "mail_account_deleted" in op_types, "de mailoperatie moet in de verzamelde uitkomst terechtkomen"
 
@@ -974,9 +946,11 @@ class TestSendEmailOpruimenBijVerwijderen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("os.path.exists", return_value=False),
         ):
-            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+            await remove_from_project_file_edit(
+                DeleteProjectManager(mock_pm),
                 "test-project",
                 deployment,
                 _make_project_data(deployments=[]),
@@ -1007,7 +981,9 @@ class TestSendEmailOpruimenBijVerwijderen:
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=mock_argo),
             patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
+            patch("opi.manager.project.deployment_removal.get_project_store", return_value=mock_project_service),
             patch("os.path.exists", return_value=False),
         ):
             await DeleteProjectManager(mock_pm).delete_deployment("test-project", "pr-42")

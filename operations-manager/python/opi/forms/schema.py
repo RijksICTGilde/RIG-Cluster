@@ -1,8 +1,4 @@
-"""
-Form schema annotations for Pydantic models.
-
-This module provides the FormMeta class that can be used with
-Python's Annotated type hints to attach form metadata to Pydantic fields.
+"""``FormMeta``: form metadata attached to a Pydantic field through ``Annotated``.
 
 Example:
     class ProjectForm(BaseModel):
@@ -14,39 +10,15 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 
 @dataclass
 class FormMeta:
-    """
-    Metadata for form fields, attached via Annotated.
-
-    This class provides all the configuration needed to render a form field,
-    including widget type, labels, validation hints, and dynamic behavior.
-
-    Attributes:
-        widget: Widget type ("text", "select", "textarea", "checkbox", "sequence", etc.)
-        label: Translatable label key (e.g., "project.display_name")
-        description: Help text key (e.g., "project.display_name.help")
-        placeholder: Placeholder text for input fields
-        options_provider: Class name for dynamic options (for select/radio widgets)
-        converter: Class name for value conversion (e.g., AGE encryption)
-        validator: Class name for custom validation beyond Pydantic
-        depends_on: Path to dependent field (for conditional display)
-        show_when: Conditional display rules as {field: value} dict
-        css_class: Additional CSS classes for the field wrapper
-        attributes: Extra HTML attributes as {attr: value} dict
-        order: Display order within a section (lower = first)
-        section: Section identifier for grouping fields
-        readonly: Whether the field should be read-only (always)
-        readonly_on_edit: Whether the field should be read-only when editing (not on create)
-        htmx_trigger: HTMX trigger for dynamic updates (e.g., "change", "keyup")
-        htmx_target: HTMX target selector for updates
-        htmx_swap: HTMX swap strategy (e.g., "innerHTML", "outerHTML")
-        min_items: Minimum number of items for sequence fields (default 0)
-        max_items: Maximum number of items for sequence fields (None = unlimited)
-    """
+    """Everything needed to render one form field: widget, labels, conditions and behaviour."""
 
     widget: str | None = None
     label: str | None = None
@@ -70,21 +42,12 @@ class FormMeta:
     max_items: int | None = None
 
     def __post_init__(self) -> None:
-        """Initialize default attributes dict if None."""
         if self.attributes is None:
             self.attributes = {}
 
 
-def get_form_meta(field_info: Any) -> FormMeta | None:
-    """
-    Extract FormMeta from a Pydantic field's metadata.
-
-    Args:
-        field_info: Pydantic FieldInfo object
-
-    Returns:
-        FormMeta instance if found, None otherwise
-    """
+def get_form_meta(field_info: FieldInfo) -> FormMeta | None:
+    """The ``FormMeta`` in a Pydantic field's metadata, or None when it carries none."""
     if not hasattr(field_info, "metadata"):
         return None
 
@@ -95,32 +58,21 @@ def get_form_meta(field_info: Any) -> FormMeta | None:
 
 
 def infer_widget_type(python_type: type | None, form_meta: FormMeta | None) -> str:
-    """
-    Infer the widget type from Python type and FormMeta.
+    """The widget type for a field: what ``form_meta`` declares, else inferred from the type.
 
-    Args:
-        python_type: The Python type of the field, or None when the model does not
-            declare one (pydantic's ``FieldInfo.annotation`` is optional)
-        form_meta: Optional FormMeta with explicit widget setting
-
-    Returns:
-        Widget type string
+    ``python_type`` is None when the model declares no annotation, which pydantic allows.
     """
-    # If explicitly set, use that
     if form_meta and form_meta.widget:
         return form_meta.widget
 
-    # Type-based inference
     type_name = getattr(python_type, "__name__", str(python_type))
 
-    # Handle generic types (list, dict, etc.)
     origin = getattr(python_type, "__origin__", None)
     if origin is list:
         return "sequence"
     if origin is dict:
         return "mapping"
 
-    # Simple type mapping
     type_widget_map = {
         "str": "text",
         "int": "number",

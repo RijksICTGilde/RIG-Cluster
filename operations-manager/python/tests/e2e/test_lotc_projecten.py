@@ -212,7 +212,7 @@ def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     # Het zijn er TWEE. Hier stonden er vier; "Meeste deployments" en "Meeste teamleden"
     # zijn er in 80da844c uit gehaald omdat niemand ze gebruikte. Die test bleef staan en
     # sloeg daarna aan op een verwijdering die met opzet gedaan was. De lijst hoort mee te
-    # bewegen met PROJECT_SORTERINGEN in opi/web/lotc_switch.py.
+    # bewegen met PROJECT_SORT_ORDERS in opi/http/render/lotc_switch.py.
     for sleutel in ("naam", "naam-af"):
         assert f"/projects?sort={sleutel}" in antwoord, f"sorteeroptie {sleutel} is geen link"
 

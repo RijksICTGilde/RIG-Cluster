@@ -14,14 +14,14 @@ the save-time walk actually reaches it (the half that was missing).
 from __future__ import annotations
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.attachments.catalog_model import (
     MAX_ATTACHMENT_BYTES,
     AttachmentCatalog,
     AttachmentDefinition,
 )
 from opi.services.catalog.base import ConfigLayer
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError

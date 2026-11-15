@@ -9,7 +9,7 @@ measure the properties that a "it ran" check would miss:
 * a second round does nothing and says so;
 * a PAT replacement changes the hash at the password fields and NOT at the project key.
 
-The keys come from ``generate_sops_key_pair`` per test. There is no fixed key in this file.
+The keys come from ``generate_age_key_pair`` per test. There is no fixed key in this file.
 """
 
 from __future__ import annotations
@@ -23,8 +23,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content, generate_age_key_pair
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 from tests.conftest import write_private_file
 from tests.documented_commands import FEATURE_DOC, documented_lines, flags
@@ -203,7 +202,7 @@ async def _write_project(
     armored: bool = False,
 ) -> Path:
     """One project file shaped like the real ones: block-scalar key, repo password per ``armored``."""
-    project_private, project_public = generate_sops_key_pair()
+    project_private, project_public = generate_age_key_pair()
     path = directory / f"{name}.yaml"
     path.write_text(
         PROJECT_TEMPLATE.format(
@@ -236,8 +235,8 @@ def projects_repo(tmp_path: Path) -> Path:
 async def test_a_round_converts_every_file_and_commits_one_per_project(
     projects_repo: Path,
 ) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     for name in ("een", "twee", "drie"):
         await _write_project(directory, name, old_public)
@@ -267,8 +266,8 @@ async def test_a_round_commits_but_pushes_nothing(projects_repo: Path, tmp_path:
     """
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "-q", "--bare", str(origin))
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     for name in ("een", "twee"):
         await _write_project(directory, name, old_public)
@@ -288,8 +287,8 @@ async def test_a_round_commits_but_pushes_nothing(projects_repo: Path, tmp_path:
 @pytest.mark.asyncio
 async def test_a_round_leaves_the_content_alone(projects_repo: Path) -> None:
     """Both platform fields move to the new key, and the old key opens neither."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -307,8 +306,8 @@ async def test_a_round_leaves_the_content_alone(projects_repo: Path) -> None:
 @pytest.mark.asyncio
 async def test_one_unreadable_file_does_not_stop_the_round(projects_repo: Path) -> None:
     """The failure mode this guards: stopping halfway leaves half the projects on each key."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     for name in ("aaa", "bbb", "ccc"):
         await _write_project(directory, name, old_public)
@@ -332,8 +331,8 @@ async def test_one_unreadable_file_does_not_stop_the_round(projects_repo: Path) 
 @pytest.mark.asyncio
 async def test_an_unreadable_file_counts_as_a_real_problem(projects_repo: Path) -> None:
     """A silent skip would read as success; the caller's exit code hangs off this."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "kapot", old_public)
     text = path.read_text()
@@ -347,8 +346,8 @@ async def test_an_unreadable_file_counts_as_a_real_problem(projects_repo: Path) 
 @pytest.mark.asyncio
 async def test_an_already_converted_file_is_not_a_problem(projects_repo: Path) -> None:
     """The other side of the same judgement: a second round must exit clean."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -373,8 +372,8 @@ async def test_a_yaml_without_encrypted_platform_fields_is_no_problem_in_either_
     Judged as a real problem it would make every round exit 1 over a file that has nothing to
     convert, in both the key round and the PAT round.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     (directory / "leeg.yaml").write_text("schema-version: 2\nname: leeg\n")
 
@@ -390,8 +389,8 @@ async def test_a_yaml_without_encrypted_platform_fields_is_no_problem_in_either_
 
 @pytest.mark.asyncio
 async def test_a_dry_run_writes_nothing_and_commits_nothing(projects_repo: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -411,8 +410,8 @@ async def test_a_pat_round_replaces_the_password_and_keeps_the_project_key(
     projects_repo: Path,
 ) -> None:
     """One loop, two entries: the hash differs at the password and matches at the key."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -436,8 +435,8 @@ async def test_a_pat_round_replaces_the_password_and_keeps_the_project_key(
 
 @pytest.mark.asyncio
 async def test_no_commit_still_writes_the_files(projects_repo: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -474,7 +473,7 @@ async def test_the_key_entry_point_refuses_a_directory_that_is_not_one(
 
 @pytest.mark.asyncio
 async def test_the_key_entry_point_refuses_the_same_key_twice(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, private)
     (tmp_path / "projects").mkdir()
@@ -500,8 +499,8 @@ async def test_the_key_entry_point_dry_run_writes_no_fingerprint(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """A dry run must leave nothing behind, the fingerprint file included."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
@@ -530,8 +529,8 @@ async def test_the_key_entry_point_dry_run_writes_no_fingerprint(
 @pytest.mark.asyncio
 async def test_the_key_entry_point_exits_red_on_an_unreadable_file(projects_repo: Path, tmp_path: Path) -> None:
     """A silent skip would read as success to whatever runs this next."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     path = await _write_project(projects_repo / "projects", "kapot", old_public)
@@ -558,8 +557,8 @@ async def test_the_key_entry_point_exits_red_on_an_unreadable_file(projects_repo
 async def test_the_key_entry_point_writes_the_fingerprint_it_will_be_checked_against(
     projects_repo: Path, tmp_path: Path
 ) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
@@ -599,8 +598,8 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
     The second half of this test is there because a count check that is not running at all also
     prints no complaint: with one field taken out of the record, the same command has to go red.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -660,8 +659,8 @@ async def test_a_second_key_round_records_the_same_fields_as_the_first(projects_
 
     This goes through the entry point on purpose: ``run_round`` sits UNDER the layer that saves.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
@@ -731,8 +730,8 @@ async def test_the_pat_round_refuses_a_current_and_a_new_token_that_are_the_same
     exits over a collection it never touched -- which is the answer the old token gets revoked
     on.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -763,8 +762,8 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(
     projects_repo: Path, tmp_path: Path, argo_clone: Path
 ) -> None:
     """End to end over the entry point: the announced difference passes the content check."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -809,8 +808,8 @@ async def test_the_pat_round_still_replaces_after_the_key_round(
     Without the worklist looking at the token, the second round hands back "already converted",
     exit 0 and "revoke the old PAT" -- with the old PAT still in the file.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -854,7 +853,7 @@ async def test_a_pat_round_on_the_same_key_rewrites_only_the_files_holding_the_c
     A file holding the current PAT gets the new one and keeps its project key byte-identical; a
     file holding another value is not touched at all, so the round leaves no churn behind.
     """
-    platform_private, platform_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     carrier = await _write_project(directory, "een", platform_public)
     other = await _write_project(directory, "twee", platform_public, passwords=("ghp_another_token",))
@@ -881,7 +880,7 @@ async def test_a_pat_round_on_the_same_key_rewrites_only_the_files_holding_the_c
 @pytest.mark.asyncio
 async def test_a_plain_password_holding_the_current_pat_leaves_the_file_encrypted(projects_repo: Path) -> None:
     """A project file created with ``plain:<token>`` is a carrier too, and it is never written back plain."""
-    platform_private, platform_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", platform_public)
     data = load_yaml_from_path(str(path))
@@ -910,7 +909,7 @@ async def test_the_pat_entry_point_takes_the_same_key_twice(
     projects_repo: Path, tmp_path: Path, argo_clone: Path
 ) -> None:
     """Unlike the key round: a round over the token alone is the same key on both sides."""
-    platform_private, platform_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
     write_private_file((tmp_path / "key.txt"), platform_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", platform_public)
@@ -946,8 +945,8 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
     Without this the fix for the round above would trade a no-op for a re-encryption on every
     run, and "run it twice, the second time does nothing" is a promise of this tool.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -979,8 +978,8 @@ async def test_a_second_pat_round_records_the_same_fields_as_the_first(
     the hashes have to be the NEW token's, or the record does not describe the files as they
     now are.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -1035,8 +1034,8 @@ async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_
     files were skipped with a real problem" while nothing is wrong -- the same false verdict as
     the one the previous round fixed, with the sign flipped.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -1075,8 +1074,8 @@ async def test_the_pat_dry_run_exits_clean_once_the_round_is_done(
     It judges the preview with the same eyes as the round itself: the skips a finished PAT round
     produces are harmless, so the rerun has to say so instead of reporting a problem.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -1116,8 +1115,8 @@ async def test_every_repository_password_gets_the_new_pat_and_not_just_the_first
     0 -- and shows up as a project that cannot reach that one repository after the old PAT is
     revoked.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public, passwords=("ghp_shared_token", "ghp_shared_token"))
     _git(projects_repo, "add", "-A")
@@ -1149,8 +1148,8 @@ async def test_one_repository_on_an_older_token_keeps_it_while_its_neighbour_is_
     the older one or skip the file and leave the current token in place. Both fields are
     re-encrypted; only the one holding the current PAT has its plaintext replaced.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public, passwords=("ghp_the_current_token", "ghp_an_older_token"))
     _git(projects_repo, "add", "-A")
@@ -1194,8 +1193,8 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     is the same field when the repair round adds it: the comparison against the earlier record
     lets a field come and go on purpose, so the printed line is the only trace of it.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1264,8 +1263,8 @@ async def test_a_changed_plaintext_stops_the_next_round_instead_of_overwriting_t
     The record has to survive the refusal. Overwriting it while reporting the deviation would
     destroy the evidence and make the next run green.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1320,8 +1319,8 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
     PAT round with a new token would go red on its own reason for existing. The project key is
     only ever re-encrypted, so it stays on the strict side of the same check.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1367,8 +1366,8 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
     collection keeps that promise, and gives up no check: the password hash has to have MOVED and
     the project key hash has to have stayed put.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1427,8 +1426,8 @@ async def test_the_combined_quarterly_round_leaves_the_final_check_everything_st
 
     Both rounds are documented without ``--fingerprint``, so this runs on the default as well.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_the_quarterly_token")
@@ -1486,8 +1485,8 @@ async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
     makes the printed line the only trace, exactly as with a field that appears: without it the
     record silently shrinks and the next count is the new truth.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1544,8 +1543,8 @@ async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it
     later run matches, and ``content_drift`` compares the names two records share, so it would
     find none to object to.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1587,7 +1586,7 @@ async def _put_another_project_key_in(path: Path, public_key: str) -> None:
     is shaped exactly like the one the round writes: a block scalar, same indentation. The one
     thing that differs is what the field says, which is the whole question here.
     """
-    other_private, _other_public = generate_sops_key_pair()
+    other_private, _other_public = generate_age_key_pair()
     data = load_yaml_from_path(str(path))
     set_project_field(data, PROJECT_FIELD_PRIVATE_KEY, await encrypt_age_content(other_private, public_key))
     save_yaml_to_path(str(path), data)
@@ -1605,8 +1604,8 @@ async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
     of its own secrets. The key round refuses on that and returns 1; this asserts the PAT round
     does the same, both in its verdict and in leaving the earlier record alone.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1656,8 +1655,8 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
     rotation where nothing is wrong. The round does report it: a file it cannot read, in the
     directory it is converting, is something to look at rather than something to walk past.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1714,8 +1713,8 @@ async def test_the_round_walks_a_project_file_in_a_subdirectory(
     the selection was flat, and two files of the same name in two directories now print as the
     same line twice.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1761,8 +1760,8 @@ async def test_a_flat_selection_is_stopped_by_the_coverage_guard(
     the nested file, it carries real ciphertext, and no worklist names it. The round stops before
     a byte is written.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1804,8 +1803,8 @@ async def test_a_tracked_file_with_ciphertext_outside_the_selection_stops_the_ro
     says the tree holds, so a second extension, a file without one and a directory nobody knew
     about all come out the same way: named, and the round does not start.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1847,8 +1846,8 @@ async def test_the_round_walks_the_work_tree_of_a_clone_and_not_its_git_director
     ``.git``, so a file converted in there would be a field in the count that belongs to no
     project, and a write into the store that holds the way back.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     live = await _write_project(projects_repo / "projects", "een", old_public)
@@ -1891,8 +1890,8 @@ async def test_a_repository_password_in_a_block_scalar_goes_along_and_stays_one(
     stops recognising is converted by nothing and missed by nothing -- 106 fields would become
     87, three times over, and every count would agree with itself.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
@@ -1936,8 +1935,8 @@ async def test_both_entry_points_refuse_a_directory_without_a_project_file(
     whoever runs the step after it. The other half of the same mistake needs no refusal:
     ``<clone>`` instead of ``<clone>/projects`` now finds the files one level down.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_new_token")
@@ -1965,8 +1964,8 @@ async def test_a_second_round_does_not_point_at_head_0(
 
     The closing advice names the commits this round made, and the second round makes none.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
@@ -2167,8 +2166,8 @@ async def test_the_dry_run_counts_replaced_kept_and_unreadable_apart(
     whole question the operator answers before revoking anything. So the dry run says what would
     be replaced, what would be left (and where), and what opens with neither key.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -2220,9 +2219,9 @@ async def test_a_field_that_opens_with_neither_key_is_named_as_a_failure_and_cou
     path, under FAIL, and the dry run ends on exit 1 rather than on a tally that reads as work
     done. Measured: the section naming them could be removed whole with the suite staying green.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    stranger_private, stranger_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    stranger_private, stranger_public = generate_age_key_pair()
     assert stranger_private not in (old_private, new_private)
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
@@ -2269,8 +2268,8 @@ async def test_a_project_whose_password_is_not_the_current_pat_does_not_fail_the
     declined to touch. The operator would then be told the round failed, on a collection where
     everything went as designed. It is named twice instead and the round exits 0.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
     write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
@@ -2338,8 +2337,8 @@ async def test_only_private_key_leaves_the_repository_password_on_the_platform_k
     projects_repo: Path,
 ) -> None:
     """The narrowing the KEK round needs: the password is a field this round may not touch."""
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", platform_public)
     password_before = load_yaml_from_path(str(path))["repositories"][0]["password"]
@@ -2361,8 +2360,8 @@ async def test_the_kek_round_moves_the_project_key_and_leaves_the_password(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """End to end: the project key opens with the KEK, the repository password stays put."""
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"
@@ -2406,8 +2405,8 @@ async def test_the_end_check_names_the_source_key_not_the_platform_key(
     by making ``platform_key_still_opens`` report a leftover, the way it would if a real round
     left one project behind.
     """
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"
@@ -2443,8 +2442,8 @@ async def test_the_kek_round_converts_the_backup_in_the_deployments_clone_too(
     projects_repo: Path, deployments_repo: Path, tmp_path: Path
 ) -> None:
     """Both places a wrapped project key sits move in the same round, step 5 of the plan."""
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"
@@ -2489,8 +2488,8 @@ async def test_an_unreadable_backup_does_not_stop_the_round_and_is_reported(
     deployments_repo: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """``run_backup_round`` on its own: one broken file is named, the rest still converts."""
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, kek_public = generate_age_key_pair()
     good_path = await _write_backup(deployments_repo, "goed", platform_private, platform_public)
     broken_path = deployments_repo / "projects" / "kapot" / "age-key.txt.age"
     broken_path.parent.mkdir(parents=True)
@@ -2512,8 +2511,8 @@ async def test_an_unreadable_backup_does_not_stop_the_round_and_is_reported(
 async def test_a_dry_run_of_the_kek_round_writes_nothing(
     projects_repo: Path, deployments_repo: Path, tmp_path: Path
 ) -> None:
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"
@@ -2551,7 +2550,7 @@ async def test_a_dry_run_of_the_kek_round_writes_nothing(
 async def test_the_kek_round_refuses_when_the_platform_key_and_the_kek_are_the_same(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", private)
     write_private_file(tmp_path / "kek.txt", private)
     (projects_repo / "projects" / "placeholder").mkdir()
@@ -2578,8 +2577,8 @@ async def test_the_kek_round_refuses_when_the_platform_key_and_the_kek_are_the_s
 async def test_without_deployments_the_backup_half_is_named_as_not_walked(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"
@@ -2622,8 +2621,8 @@ def test_backup_files_globs_every_project_under_the_clone(deployments_repo: Path
 @pytest.mark.asyncio
 async def test_a_second_kek_round_does_nothing_and_still_exits_clean(projects_repo: Path, tmp_path: Path) -> None:
     """Rerun safety on the new entry point: every field already on the KEK is a no-op."""
-    platform_private, platform_public = generate_sops_key_pair()
-    kek_private, _kek_public = generate_sops_key_pair()
+    platform_private, platform_public = generate_age_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "platform.txt", platform_private)
     write_private_file(tmp_path / "kek.txt", kek_private)
     directory = projects_repo / "projects"

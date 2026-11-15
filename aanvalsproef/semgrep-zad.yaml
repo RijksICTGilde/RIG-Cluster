@@ -4,13 +4,14 @@
 # zodat de regels ook vanuit operations-manager/python vuren (de werkmap van sast-semgrep).
 rules:
   # Een webroute zonder @requires_sso is open voor iedereen die de URL kent. De bewuste
-  # uitzonderingen in opi/web/ zeggen dat zelf met "BEWUST ZONDER" in hun docstring.
+  # uitzonderingen in opi/web/ zeggen dat zelf met "DELIBERATELY WITHOUT" in hun docstring
+  # ("BEWUST ZONDER" telt ook, voor code die nog Nederlands is).
   - id: zad-webroute-zonder-sso
     languages: [python]
     severity: ERROR
     message: >-
       Webroute zonder @requires_sso. Zet de decorator erop, of leg in de docstring met
-      "BEWUST ZONDER @requires_sso" vast waarom deze route open staat.
+      "DELIBERATELY WITHOUT @requires_sso" vast waarom deze route open staat.
     paths:
       include:
         - "**/opi/web/"
@@ -33,7 +34,7 @@ rules:
           @requires_sso
           def $NAAM(...):
             ...
-      - pattern-not-regex: BEWUST ZONDER
+      - pattern-not-regex: (BEWUST ZONDER|DELIBERATELY WITHOUT)
 
   # De connector-afspraak uit CLAUDE.md: elke aanroep van een extern programma loopt via
   # opi/connectors/, zodat de argumentenlijst op een plek wordt opgebouwd en bewaakt.
@@ -48,12 +49,11 @@ rules:
         - "**/opi/"
       exclude:
         - "**/opi/connectors/"
-        # De vier bestaande crypto- en CLI-helpers: ze roepen sops, age, gpg en openssl aan
-        # met een vaste argumentenlijst en zijn ouder dan de connector-afspraak. De regel is
-        # er voor NIEUWE aanroepsites; deze vier verplaatsen is een eigen wijziging.
+        # De drie bestaande crypto- en CLI-helpers: ze roepen sops, gpg en openssl aan met
+        # een vaste argumentenlijst en zijn ouder dan de connector-afspraak. De regel is er
+        # voor NIEUWE aanroepsites; deze drie verplaatsen is een eigen wijziging.
         - "**/opi/utils/sops.py"
         - "**/opi/utils/git_signing.py"
-        - "**/opi/handlers/sops.py"
         - "**/opi/core/cluster_config.py"
     pattern-either:
       - pattern: subprocess.$F(...)

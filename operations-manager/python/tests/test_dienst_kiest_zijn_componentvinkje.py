@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 from opi.forms.visualizers.providers import FilteredServiceOptionsProvider
-from opi.manager import project_manager
-from opi.manager.project_manager import collect_manifest_contributions
+from opi.manager.project.manifests import contributions
+from opi.manager.project.manifests.contributions import collect_manifest_contributions
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, offers_component_checkbox
 from opi.services.registry import SERVICES
 from opi.services.services import ServiceDefinition
@@ -172,7 +172,7 @@ class TestWaarDeManifestbijdrageZijnSelectieLeest:
     def _bijdragen(self, *, selectable: bool, component: list[str], project: list[str]) -> list:
         nep = self._Nep(selectable=selectable)
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(project_manager, "manifest_services", lambda: [nep])
+            mp.setattr(contributions, "manifest_services", lambda: [nep])
             return collect_manifest_contributions(self._ctx(), component_services=component, project_services=project)
 
     def test_zonder_vinkje_per_component_telt_de_projectlijst(self) -> None:

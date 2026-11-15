@@ -1,0 +1,2 @@
+DB_PASSWORD: helmfile-geheim
+LOG_LEVEL: debug

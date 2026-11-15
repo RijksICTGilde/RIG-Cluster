@@ -105,14 +105,14 @@ schrijf je dus niet zelf.
 
 **Antwoord je zelf, dan komt de handler er niet aan te pas.** Een fragment, een dict die
 verderop een body wordt, een regel in een lijst: daar zet je het kenmerk er zelf achter met
-`met_kenmerk(zin, kenmerk_van(request))`. Heb je geen `request` in handen -- een
-hulpfunctie die een kaart vult -- dan geeft `kenmerk_nu()` het kenmerk van het verzoek dat
+`with_reference(zin, reference_for(request))`. Heb je geen `request` in handen -- een
+hulpfunctie die een kaart vult -- dan geeft `current_reference()` het kenmerk van het verzoek dat
 nu loopt:
 
 ```python
 except Exception:
     logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
-    ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
+    ctx["usage_error"] = with_reference("Probeer het over een minuut opnieuw.", reference_for(request))
 ```
 
 Voor een mislukte render is er `log_render_failure`, die het regelnummer en de bronregel

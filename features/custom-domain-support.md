@@ -92,7 +92,7 @@ Both `ClusterBaseDomainOptionsProvider` and `BaseDomainOptionsProvider` include 
 
 - `BaseDomainValidator` accepts `__custom__` as a valid intermediate value
 - `CustomDomainValidator` checks syntactic domain validity (e.g. `voorbeeld.nl`)
-- `validate_base_domain()` in `connectors/subdomain.py` now accepts any syntactically valid domain, not just the configured list
+- `validate_base_domain()` in `services/catalog/publish_on_web/subdomain.py` now accepts any syntactically valid domain, not just the configured list
 
 ## Examples
 
@@ -134,7 +134,7 @@ To add "select with other" to any field:
 | `editables/processor.py` | Deferral resolution and transient stripping |
 | `editables/converters.py` | `CustomDomainSelectConverter` |
 | `editables/validators.py` | `BaseDomainValidator` (sentinel), `CustomDomainValidator` |
-| `connectors/subdomain.py` | `validate_base_domain()` accepts custom domains |
+| `services/catalog/publish_on_web/subdomain.py` | `validate_base_domain()` accepts custom domains |
 | `visualizers/providers.py` | `__custom__` option in domain providers |
 | `editables/fields/domains.py` | Create wizard editables |
 | `editables/fields/deployments.py` | Edit wizard editables |

@@ -23,7 +23,7 @@ def _progress():
 class TestUpdateComponentForwardsScope:
     @pytest.mark.asyncio
     async def test_de_deployment_names_uit_de_payload_bereiken_de_verwerking(self) -> None:
-        from opi.core.task_handlers_components import handle_update_component
+        from opi.runtime.tasks.task_handlers_components import handle_update_component
 
         pm = AsyncMock()
         pm.update_component = AsyncMock(return_value={"success": True})
@@ -41,7 +41,7 @@ class TestUpdateComponentForwardsScope:
 
     @pytest.mark.asyncio
     async def test_zonder_lijst_blijft_de_verwerking_projectbreed(self) -> None:
-        from opi.core.task_handlers_components import handle_update_component
+        from opi.runtime.tasks.task_handlers_components import handle_update_component
 
         pm = AsyncMock()
         pm.update_component = AsyncMock(return_value={"success": True})
@@ -59,7 +59,7 @@ class TestUpdateComponentForwardsScope:
 class TestAddServiceForwardsScope:
     @pytest.mark.asyncio
     async def test_de_deployment_names_uit_de_payload_bereiken_de_verwerking(self) -> None:
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = AsyncMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": ["keycloak"]})
@@ -80,7 +80,7 @@ class TestAddServiceForwardsScope:
 class TestConfigureServiceForwardsScope:
     @pytest.mark.asyncio
     async def test_de_deployment_names_uit_de_payload_bereiken_de_verwerking(self) -> None:
-        from opi.core.task_handlers_components import handle_configure_service
+        from opi.runtime.tasks.task_handlers_components import handle_configure_service
 
         pm = AsyncMock()
         pm.configure_service = AsyncMock(return_value={"success": True})
@@ -107,7 +107,7 @@ class TestConfigureServiceForwardsScope:
 class TestConfigureServiceValuesForwardsScope:
     @pytest.mark.asyncio
     async def test_de_deployment_names_uit_de_payload_bereiken_de_verwerking(self) -> None:
-        from opi.core.task_handlers_components import handle_configure_service_values
+        from opi.runtime.tasks.task_handlers_components import handle_configure_service_values
 
         pm = AsyncMock()
         pm.set_component_values = AsyncMock(return_value={"success": True, "changed": True})
@@ -121,9 +121,9 @@ class TestConfigureServiceValuesForwardsScope:
                     "project_name": "test-project",
                     "service": "keycloak",
                     "target": "component",
-                    "operation": "set",
+                    "operation": "add",
                     "component": "web",
-                    "values": {"x": 1},
+                    "values": {"X": "1"},
                     "deployment_names": ["productie"],
                 },
                 _progress(),

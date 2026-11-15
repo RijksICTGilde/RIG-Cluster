@@ -60,5 +60,5 @@ def join_target(component: str, deployment: str, path: str | None = None) -> str
     The path is left out where there is none, so a component with a single address stores
     ``component:deployment`` and not a trailing separator that means nothing.
     """
-    basis = f"{component}{SEPARATOR}{deployment}"
-    return f"{basis}{SEPARATOR}{path}" if path else basis
+    base = f"{component}{SEPARATOR}{deployment}"
+    return f"{base}{SEPARATOR}{path}" if path else base

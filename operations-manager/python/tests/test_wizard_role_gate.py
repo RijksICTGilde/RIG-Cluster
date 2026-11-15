@@ -22,15 +22,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
+from opi.forms.visualizers.flows import get_flow
+from opi.http.auth.authz import authorize
 from opi.services.project_service import ProjectService, ProjectUser
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
-from opi.web.authz import authorize
-from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, apply_form_data_to_project
+from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, refuse_immutable_changes
 from opi.web.router_wizard import _save_existing_project
 
 PROJECT_NAME = "takeover-target"
@@ -61,6 +63,9 @@ STORED_DATA: dict[str, Any] = {
     },
     "components": [{"name": "frontend", "image": "nginx:latest"}],
 }
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _patch_project_manager(captured: dict[str, Any]):
@@ -124,7 +129,25 @@ def _request_for(email: str, *, verse_step_up: bool = False) -> Any:
     sessie: dict[str, Any] = {}
     if verse_step_up:
         sessie["step_up_at"] = datetime.now(UTC).isoformat()
-    return SimpleNamespace(state=SimpleNamespace(user={"email": email}), session=sessie)
+    return SimpleNamespace(state=SimpleNamespace(user={"email": email}), session=sessie, app=_task_queue())
+
+
+def _task_queue() -> Any:
+    """A queue that accepts the rollout task a wizard save now starts (RC-483 P1).
+
+    One instance for every fake request, so two requests built the same way still compare
+    equal.
+    """
+    return _TASK_QUEUE
+
+
+def _build_task_queue() -> Any:
+    service = MagicMock()
+    service.create_task = AsyncMock(return_value={"task_id": "rollout-1"})
+    return SimpleNamespace(state=SimpleNamespace(task_service=service))
+
+
+_TASK_QUEUE = _build_task_queue()
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +202,9 @@ async def test_member_rejected_on_save(project_service: ProjectService) -> None:
         patch("opi.web.router_detail_edit.get_current_user", return_value={"email": MEMBER_EMAIL}),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(MEMBER_EMAIL), PROJECT_NAME, malicious_payload)
+        await _save_existing_project(
+            _request_for(MEMBER_EMAIL), PROJECT_NAME, malicious_payload, active_sections=EDIT_SECTIONS
+        )
     assert exc.value.status_code == 403
 
     # Stored project must be untouched.
@@ -201,11 +226,11 @@ async def test_owner_save_rejects_immutable_field_in_payload(project_service: Pr
     }
     captured: dict[str, Any] = {}
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS)
     assert exc.value.status_code == 400
     assert "name" in exc.value.detail
     # The forbidden payload must be rejected before anything is persisted.
@@ -223,11 +248,11 @@ async def test_owner_save_rejects_clusters_in_payload(project_service: ProjectSe
     }
     captured: dict[str, Any] = {}
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS)
     assert exc.value.status_code == 400
     assert "clusters" in exc.value.detail
     # The forbidden payload must be rejected before anything is persisted.
@@ -249,12 +274,14 @@ async def test_developer_kan_zichzelf_geen_admin_maken_via_de_wizard(project_ser
         ],
     }
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
         pytest.raises(HTTPException) as exc,
     ):
-        await _save_existing_project(_request_for(DEVELOPER_EMAIL, verse_step_up=True), PROJECT_NAME, payload)
+        await _save_existing_project(
+            _request_for(DEVELOPER_EMAIL, verse_step_up=True), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert exc.value.status_code == 403
     assert "data" not in captured, "het bestand mag niet veranderen"
@@ -275,11 +302,13 @@ async def test_developer_save_zonder_ledenwijziging_vraagt_geen_member_manage(
     payload = {"display-name": "Nieuwe titel"}
 
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
-        response = await _save_existing_project(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, payload)
+        response = await _save_existing_project(
+            _request_for(DEVELOPER_EMAIL), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert response.status_code == 200
     assert captured["data"]["users"] == STORED_DATA["users"]
@@ -290,7 +319,7 @@ async def test_developer_save_zonder_ledenwijziging_vraagt_geen_member_manage(
 async def test_owner_save_can_update_users_and_config(project_service: ProjectService) -> None:
     """Admin/owner CAN edit users and config via the legitimate flows.
 
-    Role-based access is enforced by ``authorize`` (opi/web/authz.py);
+    Role-based access is enforced by ``authorize`` (opi/http/auth/authz.py);
     once you are admin/owner there is no separate field-level lock on
     these. Field-level RBAC for finer-grained restrictions is tracked
     in ``features/futures/form-field-rbac.md``.
@@ -306,11 +335,13 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
         "config": {"age-public-key": "age1publicpublicpublic"},
     }
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
-        response = await _save_existing_project(_request_for(OWNER_EMAIL, verse_step_up=True), PROJECT_NAME, payload)
+        response = await _save_existing_project(
+            _request_for(OWNER_EMAIL, verse_step_up=True), PROJECT_NAME, payload, active_sections=EDIT_SECTIONS
+        )
 
     assert response.status_code == 200
     saved = captured["data"]
@@ -361,7 +392,7 @@ async def test_wizard_edit_page_leest_het_project_dat_de_poort_al_toeliet(
     Draait de echte handler, niet alleen de poort: een vergeten of verkeerd bedrade
     ``authorized_project`` in de body zou hier een 500 of een verkeerd project geven.
     """
-    from opi.web.authz import enforce_route_action
+    from opi.http.auth.authz import enforce_route_action
     from opi.web.router_wizard import wizard_edit_page
 
     request = _route_request(OWNER_EMAIL, wizard_edit_page)
@@ -379,7 +410,7 @@ async def test_wizard_edit_page_poort_weigert_een_lid(project_service: ProjectSe
     echte router-dependency: een lid komt de route niet meer in, ook al roept
     ``wizard_edit_page`` zelf geen ``authorize`` meer aan.
     """
-    from opi.web.authz import enforce_route_action
+    from opi.http.auth.authz import enforce_route_action
     from opi.web.router_wizard import wizard_edit_page
 
     with pytest.raises(HTTPException) as exc:
@@ -388,21 +419,21 @@ async def test_wizard_edit_page_poort_weigert_een_lid(project_service: ProjectSe
 
 
 # ---------------------------------------------------------------------------
-# Central helper: apply_form_data_to_project
+# Central helper: refuse_immutable_changes
 # ---------------------------------------------------------------------------
 
 
-def test_apply_form_data_raises_on_immutable_field() -> None:
+def test_refuse_immutable_changes_raises_on_a_changed_field() -> None:
     """Submitted data containing a CHANGED immutable field is rejected loudly."""
     existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
     for field in IMMUTABLE_PROJECT_FIELDS:
         with pytest.raises(HTTPException) as exc:
-            apply_form_data_to_project(existing, {field: "anything", "display-name": "X"})
+            refuse_immutable_changes(existing, {field: "anything", "display-name": "X"})
         assert exc.value.status_code == 400
         assert field in exc.value.detail
 
 
-def test_apply_form_data_allows_an_unchanged_immutable_field() -> None:
+def test_refuse_immutable_changes_allows_an_unchanged_field() -> None:
     """Merged wizard data always carries the stored immutable fields; that is not a write.
 
     De bewerkwizard zaaide zijn sessie uit het projectbestand, dus ``clusters`` zit er
@@ -411,48 +442,7 @@ def test_apply_form_data_allows_an_unchanged_immutable_field() -> None:
     sandbox: elke no-op save eindigde in een 400, RC-388).
     """
     existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
-    merged = apply_form_data_to_project(existing, {"name": "real-name", "clusters": ["odcn"], "display-name": "Nieuw"})
-    assert merged["display-name"] == "Nieuw"
-    assert merged["name"] == "real-name"
-    assert merged["clusters"] == ["odcn"]
-
-
-def test_apply_form_data_passes_non_immutable_fields_through() -> None:
-    """Users/config/components/display-name go through; immutable fields stay."""
-    existing = {
-        "name": "real-name",
-        "clusters": ["odcn"],
-        "users": [{"email": "a@x", "roles": ["admin", "ops"]}],
-        "config": {"age-public-key": "age1oud"},
-        "display-name": "Old",
-    }
-    submitted = {
-        "users": [{"email": "a@x", "roles": ["admin", "ops"]}, {"email": "b@x", "roles": ["viewer"]}],
-        "config": {"age-public-key": "age1nieuw"},
-        "display-name": "New",
-        "components": [{"name": "frontend"}],
-    }
-    merged = apply_form_data_to_project(existing, submitted)
-
-    assert merged["users"] == submitted["users"]
-    assert merged["config"] == submitted["config"]
-    assert merged["display-name"] == "New"
-    assert merged["components"] == submitted["components"]
-    # Immutable fields are re-derived from the stored project.
-    assert merged["name"] == "real-name"
-    assert merged["clusters"] == ["odcn"]
-
-
-def test_apply_form_data_returns_new_dict() -> None:
-    """The helper must not mutate either input dict."""
-    existing = {"users": [{"email": "owner@x"}]}
-    submitted = {"users": [{"email": "attacker@x"}], "display-name": "X"}
-    merged = apply_form_data_to_project(existing, submitted)
-
-    assert merged is not existing
-    assert merged is not submitted
-    assert existing == {"users": [{"email": "owner@x"}]}
-    assert submitted == {"users": [{"email": "attacker@x"}], "display-name": "X"}
+    refuse_immutable_changes(existing, {"name": "real-name", "clusters": ["odcn"], "display-name": "Nieuw"})
 
 
 def test_immutable_fields_constant_covers_the_documented_set() -> None:
@@ -499,17 +489,20 @@ async def test_modal_do_submit_invokes_role_gate_for_project_edit(project_servic
 
 @pytest.mark.asyncio
 async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_service: ProjectService) -> None:
-    """Een back-upstroom vraagt backup.create, niet het bredere project.edit."""
+    """Een back-upstroom vraagt backup.create, niet het bredere project.edit.
+
+    Since RC-475 it weighs that on a deployment, so the gate of the flow is
+    ``require_on_any_deployment`` and not the project-wide ``authorize``.
+    """
     from opi.web.router_detail_edit import _modal_do_submit
 
-    def _geen_edit_gate(_request: Any, *, action: Action, project_name: str) -> tuple[Any, str]:
-        assert action is Action.BACKUP_CREATE, "een back-upstroom hoort geen project.edit te vragen"
-        return SimpleNamespace(name=project_name), MEMBER_EMAIL
-
     with (
-        patch("opi.web.router_detail_edit.authorize", side_effect=_geen_edit_gate),
+        patch("opi.web.router_detail_edit.require_on_any_deployment") as gate,
+        patch(
+            "opi.web.router_detail_edit.authorize",
+            side_effect=AssertionError("a backup flow must not ask a project-wide gate"),
+        ),
         # State lookup returns None -> raises 400 before any data mutation.
-        # We only care that the edit-gate was NOT called.
         patch("opi.web.router_detail_edit.load_modal_state_for", return_value=None),
         pytest.raises(HTTPException) as exc,
     ):
@@ -521,6 +514,7 @@ async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_se
         )
     # Confirm the expected pass-through error rather than an AssertionError leaking.
     assert exc.value.status_code == 400
+    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.BACKUP_CREATE, PROJECT_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -709,10 +703,11 @@ async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
 
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
-    # ``require_action`` en niet ``authorize``: het formulier herrenderen is geen
-    # back-up, en de audit hoort er geen rij over te krijgen (RC-398).
+    # ``require_on_any_deployment`` and not ``authorize``: re-rendering the form is not a
+    # backup, so the audit gets no row about it (RC-398). On any deployment, because this
+    # step is where the user picks one (RC-475).
     with (
-        patch("opi.web.router_detail_edit.require_action", side_effect=_TE_SMALLE_ROL) as gate,
+        patch("opi.web.router_detail_edit.require_on_any_deployment", side_effect=_TE_SMALLE_ROL) as gate,
         patch("opi.web.router_detail_edit.authorize", side_effect=AssertionError("geen rij hierover")),
         pytest.raises(HTTPException) as exc,
     ):
@@ -720,6 +715,45 @@ async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
 
     assert exc.value.status_code == 403
     gate.assert_called_once_with(request, Action.BACKUP_CREATE, PROJECT_NAME)
+
+
+@pytest.mark.asyncio
+async def test_backup_select_deployment_weighs_a_single_deployment(
+    project_service: ProjectService,
+) -> None:
+    """A developer who may open the wizard may also switch the deployment.
+
+    This step weighs on any deployment, not on the project's highest marking: otherwise
+    the wizard opens and this step answers 403 (RC-475).
+    """
+    from opi.web.router_detail_edit import backup_select_deployment
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(user={"email": DEVELOPER_EMAIL}),
+        session={},
+        query_params={"deployment_name": "test"},
+    )
+    project = get_project_store().get(PROJECT_NAME)
+    assert project is not None
+    project.data = {
+        "deployments": [
+            {"name": "live", "environment": "productie"},
+            {"name": "test", "environment": "test"},
+        ]
+    }
+
+    # No session state, so the step falls on 400 once it is past the gate.
+    with (
+        patch("opi.web.router_detail_edit.load_modal_state_for", return_value=None),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await backup_select_deployment(request=request, project_name=PROJECT_NAME)
+    assert exc.value.status_code == 400
+
+    project.data = {"deployments": [{"name": "live", "environment": "productie"}]}
+    with pytest.raises(HTTPException) as exc:
+        await backup_select_deployment(request=request, project_name=PROJECT_NAME)
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -765,8 +799,8 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
 
     sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
     with (
-        patch("opi.core.task_helpers.get_task_service", return_value=MagicMock()),
-        patch("opi.web.router_detail_edit.require_action", side_effect=sentinel) as gate,
+        patch("opi.http.task_helpers.get_task_service", return_value=MagicMock()),
+        patch("opi.http.auth.restore_guard.require_action", side_effect=sentinel) as gate,
         pytest.raises(HTTPException) as exc,
     ):
         await _handle_backup_restore_submit(
@@ -782,38 +816,133 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
     gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.RESTORE_RUN, PROJECT_NAME, deployment="")
 
 
+def _backup_submit_state(resource_types: list[str] | None = None):
+    from unittest.mock import MagicMock
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {
+        "deployment_name": "dep1",
+        "resource_types": resource_types if resource_types is not None else ["database"],
+    }
+    return state
+
+
 @pytest.mark.asyncio
-async def test_handle_backup_restore_submit_skips_gate_for_backup() -> None:
-    """A backup makes no change that needs the operate-role guard; member-level
-    access (already checked at init/step time) is enough.
+async def test_handle_backup_restore_submit_weighs_the_chosen_deployment() -> None:
+    """The backup weighs on the deployment it names (RC-475, decision B7).
+
+    It used to weigh against the project's highest marking, and not at all on the submit:
+    a developer who could not open the wizard in a project with production could back up a
+    non-production deployment through the API all the same.
     """
     from unittest.mock import AsyncMock, MagicMock
 
     from opi.web.router_detail_edit import _handle_backup_restore_submit
 
-    state = MagicMock()
-    state.get_merged_data.return_value = {"deployment_name": "dep1", "resource_types": ["postgres"]}
+    task_service = MagicMock()
+    task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
+
+    with (
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.web.router_detail_edit.authorize") as gate,
+        patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
+        patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+    ):
+        response = await _handle_backup_restore_submit(
+            request=_request_for(DEVELOPER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-backup",
+            action="trigger_backup",
+            state=_backup_submit_state(),
+        )
+
+    assert response.status_code == 200
+    task_service.create_task.assert_called_once()
+    assert gate.call_args.kwargs["action"] is Action.BACKUP_CREATE
+    assert gate.call_args.kwargs["deployment"] == "dep1"
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_refuses_an_unknown_resource_type() -> None:
+    """An unknown resource_type out of the session answers 422 (RC-475, decision B6).
+
+    It used to be passed through raw and ignored by the run, so the backup that was asked
+    for did not happen and nobody got to see that.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
 
     task_service = MagicMock()
     task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
 
     with (
-        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
-        patch(
-            "opi.web.router_detail_edit.authorize",
-            side_effect=AssertionError("operate-gate must not run for a backup"),
-        ),
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.web.router_detail_edit.authorize"),
         patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
         patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+        pytest.raises(HTTPException) as exc,
     ):
-        response = await _handle_backup_restore_submit(
-            request=_request_for(MEMBER_EMAIL),
+        await _handle_backup_restore_submit(
+            request=_request_for(DEVELOPER_EMAIL),
             wizard_token="tok",
             project_name=PROJECT_NAME,
             flow_id="modal-backup",
             action="trigger_backup",
+            state=_backup_submit_state(["geen-type"]),
+        )
+
+    assert exc.value.status_code == 422
+    task_service.create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_reads_the_source_from_the_run_and_omits_its_items() -> None:
+    """RC-482, decision R11: the submit still derives the SOURCE deployment from the chosen
+    run (needed for the authorization weighing above), but no longer carries the run's
+    items along -- the task reads them fresh from the backup store when it starts."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
+
+    task_service = MagicMock()
+    task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {
+        "backup_run_id": "20261103020000",
+        "restore_mode": "existing",
+        "target_deployment": "staging",
+    }
+    state.base_data = {
+        "_backup_runs": [
+            {
+                "backup_run_id": "20261103020000",
+                "deployment_name": "productie",
+                "items": [{"resource_type": "pvc", "snapshot_id": "snap-1"}],
+            }
+        ]
+    }
+
+    with (
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.web.router_detail_edit._authorize_restore", AsyncMock(return_value=None)),
+        patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
+        patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+    ):
+        response = await _handle_backup_restore_submit(
+            request=_request_for(DEVELOPER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-restore",
+            action="trigger_restore",
             state=state,
         )
 
     assert response.status_code == 200
-    task_service.create_task.assert_called_once()
+    payload = task_service.create_task.call_args.kwargs["payload"]
+    assert payload["source_deployment"] == "productie"
+    assert payload["target_deployment"] == "staging"
+    assert payload["backup_run_id"] == "20261103020000"
+    assert "backup_items" not in payload

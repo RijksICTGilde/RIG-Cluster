@@ -2,13 +2,12 @@
 
 The ``issuer`` field in a deployment's publish-on-web config is a stored OVERRIDE, not the
 only source of truth. The portal writes it (``IssuerGenerator`` derives it from the chosen
-base domain at submit time), but the API and task write paths do not: ``configure_service``
-runs no editable generators, and no service fills this field in. A deployment configured
-through zad-cli or the deploy action therefore arrived with a base domain and no issuer,
-which left its ingress without a cert-manager annotation AND without a ``secretName``, so
-the platform issued nothing and the router served its own wildcard certificate instead.
-Nothing failed anywhere: the manifests were valid, ArgoCD was green, and only the browser
-knew. Measured on mzs-3ik/site-admin (moza-site.rijks.app, 2026-09-20).
+base domain at submit time); the API and task write paths do not, because
+``configure_service`` runs no editable generators and no service fills this field in. A
+deployment with a base domain and no issuer gets an ingress without a cert-manager
+annotation AND without a ``secretName``, so the platform issues nothing and the router
+serves its own wildcard certificate instead. Nothing fails anywhere: the manifests are
+valid, ArgoCD is green, and only the browser knows.
 
 So the manifest generation derives the issuer itself when the field is absent
 (:func:`effective_issuer`) rather than trusting whoever wrote the file, and every write path
@@ -16,20 +15,20 @@ gets a certificate on the same terms. A stored value still wins, which is how a 
 points at an issuer of its own.
 
 This lives next to -- not inside -- ``domain_config`` because the derivation needs
-``connectors/subdomain``, and that module imports ``domain_config``.
+``services/catalog/publish_on_web/subdomain``, and that module imports ``domain_config``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from opi.connectors.subdomain import (
+from opi.core.cluster_config import get_domain_issuer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import (
     get_project_allowed_domain_config,
     get_supported_base_domains,
     is_deployment_domain_approved,
 )
-from opi.core.cluster_config import get_domain_issuer
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 
 def derive_issuer(project_data: dict[str, Any], deployment: dict[str, Any], cluster: str) -> str | None:

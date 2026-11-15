@@ -1,14 +1,12 @@
-"""Eén beheerde git-repo per remote: lezen uit objecten, schrijven zonder werkboom.
+"""One managed git repo per remote: reading from objects, writing without a worktree.
 
-De deployments- en de argo-repo werden per taak gekloond en met een ``add -A`` gecommit.
-Dat kostte per ronde drie klonen van een repo met tienduizenden commits, en het liet twee
-taken op dezelfde werkboom werken. :class:`GitRepo` doet het zoals de ProjectStore het voor
-``zad-projects`` doet: één bare blobless kopie per (remote, branch) die blijft staan, lezen
-per revisie, en schrijven door een commit uit git-objecten te bouwen en die te pushen. De
-remote weigert dan zelf een push die niet op de laatste stand is gebouwd, en dat is de
-compare-and-swap waar de hele gelijktijdigheid op rust.
+:class:`GitRepo` works the way the ProjectStore does for ``zad-projects``: one bare blobless
+copy per (remote, branch) that stays around, reads per revision, and writes by building a
+commit out of git objects and pushing that. The remote then refuses a push that was not built
+on the latest state by itself, and that is the compare-and-swap the whole concurrency rests
+on.
 
-Zie ``features/git-repo.md``.
+See ``features/git-repo.md``.
 """
 
 import asyncio
@@ -49,27 +47,26 @@ from opi.connectors.git import (
     strip_url_credentials,
 )
 from opi.core.config import settings
+from opi.core.connect_retry import retry_on_connect_error
 from opi.core.metrics import PHASE_GIT_PREPARE, PHASE_GIT_PUSH, rollout_phase
-from opi.generation.manifests import CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import generate_argocd_project_folder_path, generate_infrastructure_argocd_folder_path
-from opi.utils.sops import TO_SOPS_SUFFIX
+from opi.utils.sops import CMP_ENV_PLAINTEXT_FILENAME, TO_SOPS_SUFFIX
 
 if TYPE_CHECKING:
     from opi.core.actor import Actor
 
 logger = logging.getLogger(__name__)
 
-#: Waar de bare kopieen staan. Een map per (remote zonder credentials, branch).
+#: Where the bare copies live. One directory per (remote without credentials, branch).
 GIT_REPOS_DIR = os.path.join(settings.TEMP_DIR, "git-repos")
 
-#: Grens op schijfruimte, niet aantal: kopieen verschillen een orde in omvang.
-#: TEMP_DIR is een emptyDir van 8Gi op productie; vol = OPI stil.
+#: A limit on disk space, not on count: copies differ by an order of magnitude in size.
+#: TEMP_DIR is an 8Gi emptyDir on production, and a full one leaves OPI silent.
 GIT_REPOS_MAX_BYTES = 1024 * 1024 * 1024
 
-#: Hoe vaak een write opnieuw op de laatste stand wordt toegepast na een afgewezen push.
-#: Dezelfde grens als ``MAX_MUTATION_ATTEMPTS`` van de ProjectStore.
+#: How often a write is re-applied to the latest state after a rejected push. The same limit
+#: as the ProjectStore's ``MAX_MUTATION_ATTEMPTS``.
 MAX_WRITE_ATTEMPTS = 5
 
 #: The environment for every git command that must stay off the network. The copy is
@@ -78,30 +75,29 @@ MAX_WRITE_ATTEMPTS = 5
 #: With this set, a missing blob is an error at once instead of an unauthenticated request.
 OFFLINE_ENV = {"GIT_NO_LAZY_FETCH": "1"}
 
-#: Serialiseert het bijwerken van één kopie, en houdt hem tegen de opruiming vast.
+#: Serialises the update of one copy, and holds it against the prune.
 _repo_locks: dict[str, asyncio.Lock] = {}
 
-#: Hoeveel taken er op dit moment uit een kopie lezen of erin schrijven. Houdt hem tegen
-#: de opruiming vast, ook buiten :meth:`GitRepo.tip` en :meth:`GitRepo.fetch`, waar de
-#: lock niet vastzit.
+#: How many tasks are reading from or writing to a copy right now. Holds it against the
+#: prune, also outside :meth:`GitRepo.tip` and :meth:`GitRepo.fetch`, where the lock is not
+#: held.
 _repo_users: dict[str, int] = {}
 
-#: De kopieen van dit proces, per (remote, branch).
+#: This process's copies, per (remote, branch).
 _repos: dict[str, GitRepo] = {}
 
 
 class GitRepoConflictError(RuntimeError):
-    """De remote heeft een pad binnen de scope anders gewijzigd dan wij het schrijven.
+    """The remote changed a path inside the scope other than the way we are writing it.
 
-    De aanroeper moet zijn stap opnieuw doen op de nieuwe stand: materialiseren,
-    genereren, schrijven. Een blinde text-merge zou een stand publiceren die niemand
-    gevalideerd heeft.
+    The caller has to redo its step on the new state: materialize, generate, write. A blind
+    text merge would publish a state nobody validated.
     """
 
 
 @dataclass(frozen=True)
 class GitCredentials:
-    """De toegang van de AANROEPER tot een remote. Nooit bij de repo bewaard."""
+    """The CALLER's access to a remote. Never kept on the repo."""
 
     username: str | None = None
     password: str | None = None
@@ -112,7 +108,7 @@ class GitCredentials:
 
 @dataclass(frozen=True)
 class WriteResult:
-    """Wat er geland is: de commit, of er iets te committen was, en welke paden."""
+    """What landed: the commit, whether there was anything to commit, and which paths."""
 
     ref: str
     committed: bool
@@ -128,10 +124,10 @@ def _repo_lock(key: str) -> asyncio.Lock:
 
 
 def get_git_repo(url: str, branch: str = "main") -> GitRepo:
-    """De beheerde kopie van deze (remote, branch), procesbreed en lui aangemaakt.
+    """The managed copy of this (remote, branch), process-wide and created lazily.
 
-    De sleutel is de URL ZONDER credentials: alle projecten op dezelfde remote delen één
-    kopie. Dat mag omdat er maar één partij toegang heeft tot deze repo's; zie
+    The key is the URL WITHOUT credentials, so every project on the same remote shares one
+    copy. That is allowed because only one party has access to these repos; see
     :meth:`GitRepo.resolve`.
     """
     key = _repo_key(url, branch)
@@ -143,7 +139,7 @@ def get_git_repo(url: str, branch: str = "main") -> GitRepo:
 
 
 def reset_git_repos() -> None:
-    """Vergeet de kopieen van dit proces. Voor tests."""
+    """Forget this process's copies. For tests."""
     _repos.clear()
     _repo_locks.clear()
     _repo_users.clear()
@@ -161,11 +157,11 @@ def _directory_size(path: str) -> int:
 
 
 def _prune_repos(keep: str) -> None:
-    """Ruim de minst recent gebruikte kopieen op tot het geheel onder de grens past.
+    """Remove the least recently used copies until the whole fits under the limit.
 
-    Een kopie die in gebruik is blijft staan: daar leest of schrijft een taak uit, en die
-    mag niet onder een lopende ``git archive`` of commit wegvallen.
-    ``keep`` is de kopie die de aanroeper zelf gaat gebruiken.
+    A copy that is in use stays: a task reads from or writes to it, and it must not vanish
+    from under a running ``git archive`` or commit. ``keep`` is the copy the caller is about
+    to use itself.
     """
     busy = (
         {_repo_path_for(key) for key, lock in _repo_locks.items() if lock.locked()}
@@ -193,7 +189,7 @@ def _prune_repos(keep: str) -> None:
 
 
 def _repo_path_for(key: str) -> str:
-    """Het pad van een kopie. Gehasht, want een repo-URL is geen mapnaam."""
+    """The path of a copy. Hashed, because a repo URL is not a directory name."""
     return os.path.join(GIT_REPOS_DIR, hashlib.sha256(key.encode()).hexdigest()[:16])
 
 
@@ -204,7 +200,7 @@ def _mode_of(path: str) -> str:
 
 
 def _read_as_blob(path: str) -> FileChange:
-    """De inhoud van een bestand zoals git hem opslaat: een symlink is zijn doelpad."""
+    """The content of a file the way git stores it: a symlink is its target path."""
     if os.path.islink(path):
         return FileChange(os.readlink(path).encode("utf-8"), SYMLINK_MODE)
     with open(path, "rb") as handle:
@@ -212,7 +208,7 @@ def _read_as_blob(path: str) -> FileChange:
 
 
 def _scan_directory(source_dir: str, scope_paths: list[str]) -> dict[str, FileChange]:
-    """Alles wat er onder de scope in ``source_dir`` staat, als paden in de repo."""
+    """Everything under the scope in ``source_dir``, keyed by its path in the repo."""
     found: dict[str, FileChange] = {}
     for scope in scope_paths:
         root = os.path.join(source_dir, scope)
@@ -221,7 +217,7 @@ def _scan_directory(source_dir: str, scope_paths: list[str]) -> dict[str, FileCh
                 found[scope] = _read_as_blob(root)
             continue
         for current, dirs, files in os.walk(root):
-            # Symlinks naar directories: als files, niet directories.
+            # A symlink to a directory counts as a file, not as a directory.
             for name in list(dirs):
                 link = os.path.join(current, name)
                 if os.path.islink(link):
@@ -234,11 +230,11 @@ def _scan_directory(source_dir: str, scope_paths: list[str]) -> dict[str, FileCh
 
 
 def _guard_changes(changes: dict[str, FileChange | None], repo_url: str) -> None:
-    """Weiger een bestandsset met secrets in platte tekst.
+    """Refuse a file set that holds secrets in plain text.
 
-    Op de SET en niet op een walk of een ``git status``: zo geldt de controle voor elke
-    aanroeper van :meth:`GitRepo.commit`, en kan een onaangeroerd bestand van een ander
-    project deze commit niet ophouden. Een verwijdering mag juist wel.
+    On the SET and not on a walk or a ``git status``: the check then holds for every caller
+    of :meth:`GitRepo.commit`, and an untouched file of another project cannot hold this
+    commit up. A deletion is allowed.
     """
     plaintext = sorted(path for path, change in changes.items() if change is not None and path.endswith(TO_SOPS_SUFFIX))
     if plaintext:
@@ -263,7 +259,7 @@ def _guard_changes(changes: dict[str, FileChange | None], repo_url: str) -> None
 
 
 class RepoAt:
-    """Een lezer op één revisie, zoals een ``build_changes`` hem krijgt."""
+    """A reader on one revision, the way a ``build_changes`` receives it."""
 
     def __init__(self, repo: GitRepo, ref: str, credentials: GitCredentials) -> None:
         self.repo = repo
@@ -325,10 +321,10 @@ def is_git_auth_failure(stderr: str) -> bool:
 
 
 class GitRepo:
-    """De beheerde kopie van één (remote, branch). Bewaart nooit credentials."""
+    """The managed copy of one (remote, branch). Never keeps credentials."""
 
     def __init__(self, url: str, branch: str = "main") -> None:
-        #: Zonder credentials: de kopie op schijf mag er geen bevatten.
+        #: Without credentials: the copy on disk may not hold any.
         self.url = strip_url_credentials(url)
         self.branch = branch
         self._key = _repo_key(url, branch)
@@ -337,21 +333,16 @@ class GitRepo:
     def __repr__(self) -> str:
         return f"GitRepo({self.url}#{self.branch})"
 
-    # ------------------------------------------------------------------
-    # de kopie op schijf
-    # ------------------------------------------------------------------
-
     async def resolve(self, credentials: GitCredentials) -> str | None:
         """The SHA of our branch on the remote (``ls-remote``), only for :meth:`sync`.
 
-        Not an access check per caller, as it was until RC-423: only one party has access
-        to these repos. Every URL that reaches this comes from the OPI settings. The argo
-        repo uses the platform token, and a project file's ``repositories[].url`` is
-        written from ``PROJECT_REPO_URL`` on creation and is ``readonly_on_edit`` after
-        that, which ``process_json_submission`` enforces server-side. The password such a
-        file carries is a copy of that same platform token. This call checked the same
-        credentials every time and could not stop anything. Should per-project credentials
-        ever arrive, the copy must be keyed per credential identity, not per remote.
+        Not an access check per caller: only one party has access to these repos. Every URL
+        that reaches this comes from the OPI settings. The argo repo uses the platform token,
+        and a project file's ``repositories[].url`` is written from ``PROJECT_REPO_URL`` on
+        creation and is ``readonly_on_edit`` after that, which ``process_json_submission``
+        enforces server-side. The password such a file carries is a copy of that same platform
+        token. Should per-project credentials ever arrive, the copy must be keyed per
+        credential identity, not per remote.
         """
 
         async def ls_remote() -> str:
@@ -519,7 +510,7 @@ class GitRepo:
 
     @asynccontextmanager
     async def _in_use(self) -> AsyncIterator[None]:
-        """Houd de kopie vast zolang deze operatie eruit leest of erin schrijft."""
+        """Hold the copy for as long as this operation reads from or writes to it."""
         _repo_users[self._key] = _repo_users.get(self._key, 0) + 1
         try:
             yield
@@ -562,16 +553,16 @@ class GitRepo:
         """Retry a network step to our remote for as long as it is unreachable.
 
         Comply or explain: ``retry_on_connect_error`` only retries failures where the
-        connection never came up. For git it may be wider, and why is stated at each call
-        next to the operation itself. A timeout is NOT retried (RC-421) and a collision
-        runs through the loop in :meth:`commit`, not through here.
+        connection never came up. For git it may be wider, and why is stated at each call next
+        to the operation itself. A timeout is NOT retried, and a collision runs through the
+        loop in :meth:`commit`, not through here.
         """
         try:
             return await retry_on_connect_error(
                 operation,
                 budget_seconds=GIT_RETRY_BUDGET_SECONDS,
                 description=f"{description} {self.url}#{self.branch}",
-                connect_errors=(GitRemoteUnavailableError,),
+                retry_on=(GitRemoteUnavailableError,),
             )
         except GitRemoteUnavailableError as error:
             raise GitRemoteUnavailableError(
@@ -580,10 +571,6 @@ class GitRepo:
                 f"probeer het later opnieuw. Detail: {error.detail}",
                 error.detail,
             ) from error
-
-    # ------------------------------------------------------------------
-    # lezen
-    # ------------------------------------------------------------------
 
     async def read_file(self, path: str, ref: str, credentials: GitCredentials | None = None) -> bytes | None:
         """The content of one path on ``ref``, or None when it is not there.
@@ -607,7 +594,7 @@ class GitRepo:
         return stdout
 
     async def list_tree(self, prefix: str = "", ref: str = "HEAD") -> list[str]:
-        """Alle bestandspaden onder ``prefix`` op ``ref``. Geen blobs nodig."""
+        """Every file path under ``prefix`` on ``ref``. Needs no blobs."""
         args = ["ls-tree", "-r", "--name-only", "-z", ref]
         if prefix:
             args += ["--", prefix]
@@ -618,7 +605,7 @@ class GitRepo:
         return _split_nul(stdout)
 
     async def entries(self, prefix: str = "", ref: str = "HEAD") -> dict[str, tuple[str, str]]:
-        """Pad -> (modus, blob-sha) onder ``prefix`` op ``ref``."""
+        """Path -> (mode, blob sha) under ``prefix`` on ``ref``."""
         args = ["ls-tree", "-r", "-z", ref]
         if prefix:
             args += ["--", prefix]
@@ -637,13 +624,12 @@ class GitRepo:
         return found
 
     async def changed_paths(self, old_ref: str, new_ref: str, prefix: str = "") -> list[str]:
-        """De paden die tussen twee revisies wijzigden, eventueel beperkt tot ``prefix``.
+        """The paths that changed between two revisions, optionally limited to ``prefix``.
 
-        ``--no-renames`` om twee redenen. Een hernoeming met inhoudswijziging laat het
-        OUDE pad anders uit de uitkomst verdwijnen, en dat pad is wel gewijzigd: de
-        conflictgrendel van :meth:`write_dir` zou het missen. En inexacte
-        rename-detectie heeft de blob-inhoud nodig, die op een blobless kopie via de
-        promisor-remote gehaald moet worden.
+        ``--no-renames`` for two reasons. A rename with a content change otherwise drops the
+        OLD path from the outcome while that path did change, and the conflict guard of
+        :meth:`write_dir` would miss it. And inexact rename detection needs the blob content,
+        which on a blobless copy has to come from the promisor remote.
         """
         args = ["diff", "--no-renames", "--name-only", "-z", old_ref, new_ref]
         if prefix:
@@ -655,14 +641,14 @@ class GitRepo:
         return _split_nul(stdout)
 
     async def path_unchanged_since(self, revision: str, path: str, ref: str) -> bool:
-        """Of ``path`` op ``revision`` byte-voor-byte gelijk is aan wat er op ``ref`` staat.
+        """Whether ``path`` on ``revision`` is byte for byte what it is on ``ref``.
 
-        Zo is te bewijzen dat een ander (ArgoCD) precies deze bestanden al heeft toegepast,
-        ook als zijn revisie ouder is dan de onze: op een repo die meerdere projecten delen
-        loopt de tip altijd voor op de laatste vergelijking van EEN applicatie.
+        This proves that someone else (ArgoCD) already applied exactly these files, even when
+        their revision is older than ours: on a repo several projects share, the tip always
+        runs ahead of the last comparison of ONE application.
 
-        Een revisie die we niet hebben, of wat er ook mis gaat, geeft False: dan is er
-        niets bewezen en doet de aanroeper zijn volle werk.
+        A revision we do not have, and anything else that goes wrong, gives False: nothing is
+        proven then and the caller does its full work.
         """
         if not revision or not path:
             return False
@@ -677,14 +663,13 @@ class GitRepo:
     async def materialize(
         self, paths: list[str], ref: str, target_dir: str, credentials: GitCredentials | None = None
     ) -> list[str]:
-        """Zet ``paths`` op ``ref`` in ``target_dir`` neer, met modus en symlinks intact.
+        """Put ``paths`` on ``ref`` into ``target_dir``, with modes and symlinks intact.
 
-        Via ``git archive``: dat kent de modi (uitvoerbaar, symlink) en haalt de ontbrekende
-        blobs van een blobless kopie bij de promisor-remote. Lezen is zo veilig naast een
-        andere lezer: er wordt niets in de kopie gewijzigd.
+        Through ``git archive``, which knows the modes (executable, symlink) and fetches the
+        blobs a blobless copy misses from the promisor remote. Reading is therefore safe
+        alongside another reader: nothing in the copy changes.
 
-        Returns:
-            De paden die er daadwerkelijk stonden.
+        Returns the paths that were actually there.
         """
         async with self._in_use():
             env = (credentials or GitCredentials()).env(self.url)
@@ -728,10 +713,6 @@ class GitRepo:
         )
         return stdout.strip() if code == 0 else None
 
-    # ------------------------------------------------------------------
-    # schrijven
-    # ------------------------------------------------------------------
-
     async def commit(
         self,
         build_changes: BuildChanges,
@@ -740,18 +721,16 @@ class GitRepo:
         actor: Actor | None,
         credentials: GitCredentials,
     ) -> WriteResult:
-        """Bouw een commit op de laatste stand en publiceer hem.
+        """Build a commit on the latest state and publish it.
 
-        ``build_changes`` krijgt een lezer op de actuele tip en geeft de paden terug die
-        moeten veranderen. Weigert de remote de push (non-fast-forward), dan wordt
-        ``build_changes`` OPNIEUW aangeroepen op de nieuwe tip: opnieuw lezen, opnieuw
-        toepassen, begrensd door :data:`MAX_WRITE_ATTEMPTS`. Dezelfde lus als
-        ``GitProjectStore.mutate``, en hier generiek. Er wordt alleen gefetcht als de
-        nieuwe tip niet van een write van dit proces zelf komt.
+        ``build_changes`` gets a reader on the current tip and returns the paths that have to
+        change. When the remote refuses the push (non-fast-forward), ``build_changes`` is
+        called AGAIN on the new tip: read again, apply again, bounded by
+        :data:`MAX_WRITE_ATTEMPTS`. A fetch only happens when the new tip does not come from a
+        write of this process itself.
 
-        De commit wordt als los object gepusht naar ``refs/heads/<branch>``, dus de remote
-        doet zelf de compare-and-swap en er is geen lokale ref om na een mislukte push
-        terug te zetten.
+        The commit is pushed as a loose object to ``refs/heads/<branch>``, so the remote does
+        the compare-and-swap itself and there is no local ref to roll back after a failed push.
         """
         async with self._in_use():
             started = time.monotonic()
@@ -807,12 +786,10 @@ class GitRepo:
     async def _push(self, commit: str, credentials: GitCredentials) -> None:
         """Push one commit object to our branch, serialized per (repo, branch)."""
         async with push_lock_for(self.url, self.branch):
-            # Retrying inside the lock keeps it at most as long as the retry budget.
-            # One commit without force lands exactly once, re-runs say "up-to-date", a moved ref says non-fast-forward.
+            # One commit without force lands exactly once: a re-run says "up-to-date".
             await self._with_retry(lambda: self._push_once(commit, credentials), "push naar")
 
-            # Move our own ref along, so the next reader finds this commit without a
-            # fetch. It is the remote tip by definition now.
+            # Move our own ref along; it is the remote tip by definition now.
             await run_git(["update-ref", f"refs/heads/{self.branch}", commit], cwd=self.path, env=OFFLINE_ENV)
 
     async def _push_once(self, commit: str, credentials: GitCredentials) -> None:
@@ -853,15 +830,14 @@ class GitRepo:
         actor: Actor | None,
         credentials: GitCredentials,
     ) -> WriteResult:
-        """Maak de repo onder ``scope_paths`` gelijk aan wat er in ``source_dir`` staat.
+        """Make the repo under ``scope_paths`` equal to what is in ``source_dir``.
 
-        Toegevoegd, gewijzigd en verwijderd ten opzichte van ``base_ref``, en per
-        constructie niets buiten de scope: de commit kan geen pad bevatten dat niet onder
-        een scope-pad valt.
+        Added, changed and deleted relative to ``base_ref``, and by construction nothing
+        outside the scope: the commit cannot hold a path that does not fall under a scope path.
 
-        Heeft de tip een pad in de scope sinds ``base_ref`` ANDERS gewijzigd dan wij het
-        schrijven, dan is dat een :class:`GitRepoConflictError`: de aanroeper doet zijn
-        stap opnieuw. Dezelfde inhoud is geen conflict.
+        When the tip changed a path in the scope since ``base_ref`` OTHER than the way we are
+        writing it, that is a :class:`GitRepoConflictError` and the caller redoes its step.
+        The same content is not a conflict.
         """
         scope = _normalize_scope(scope_paths)
         desired = await asyncio.to_thread(_scan_directory, source_dir, scope)
@@ -897,10 +873,10 @@ class GitRepo:
 
 
 def _split_nul(stdout: str) -> list[str]:
-    """Paden uit de -z-vorm van ls-tree en diff.
+    """The paths out of the -z form of ls-tree and diff.
 
-    Zonder -z C-quote git elk pad met niet-ASCII bytes (core.quotePath staat standaard
-    aan), en dan is de sleutel een andere tekenreeks dan die van het bestand op schijf.
+    Without -z git C-quotes every path with non-ASCII bytes (core.quotePath is on by
+    default), and the key is then a different string from the one of the file on disk.
     """
     return [entry for entry in stdout.split("\0") if entry]
 
@@ -911,13 +887,13 @@ def _extract_tar(archive: str, target_dir: str) -> None:
 
 
 def _blob_sha(content: bytes) -> str:
-    """De git-blob-sha van deze inhoud, zonder hem te schrijven."""
+    """The git blob sha of this content, without writing it."""
     header = f"blob {len(content)}\0".encode()
     return hashlib.sha1(header + content, usedforsecurity=False).hexdigest()
 
 
 def _normalize_scope(scope_paths: list[str]) -> list[str]:
-    """Scope-paden als nette, repo-relatieve mappaden zonder dubbele of lege waarden."""
+    """Scope paths as clean, repo-relative directory paths without duplicates or blanks."""
     normalized: list[str] = []
     for raw in scope_paths:
         path = os.path.normpath(raw.strip()).strip("/")
@@ -933,13 +909,12 @@ def _within_scope(path: str, scope: list[str]) -> bool:
 
 
 class GitRepoWorkspace:
-    """De wegwerpmap van één taak op één repo, en de write terug.
+    """The throwaway directory of one task on one repo, and the write back.
 
-    De generatie schrijft, globt en verwijdert gewoon in een map op schijf, precies zoals
-    ze in een werkboom deed: de SOPS-skip, de prunes en de kustomization hebben de vorige
-    stand op schijf nodig. Het verschil is dat die map alleen de SCOPE van deze taak bevat
-    en dat niemand hem deelt, en dat de write erna één commit is die per constructie geen
-    pad buiten die scope kan raken.
+    Generation writes, globs and deletes in a plain directory on disk, because the SOPS skip,
+    the prunes and the kustomization need the previous state on disk. That directory holds
+    only the SCOPE of this task and nobody shares it, and the write afterwards is one commit
+    that by construction cannot touch a path outside that scope.
     """
 
     def __init__(
@@ -958,25 +933,25 @@ class GitRepoWorkspace:
         self.name = name
         self._working_dir = ""
         self._base_ref = ""
-        #: Resultaat van de laatste write; ``mutate_and_push`` wist hem zodat het altijd bij die stap hoort.
+        #: The last write's result; ``mutate_and_push`` clears it so it always belongs to that step.
         self.last_write: WriteResult | None = None
 
     def __repr__(self) -> str:
         return f"GitRepoWorkspace({self.name or self.project_name}, {self.repo}, {self.scope_paths})"
 
     async def get_working_dir(self) -> str:
-        """De map met de scope van deze ronde erin, gematerialiseerd bij eerste gebruik."""
+        """The directory holding this round's scope, materialized on first use."""
         if not self._base_ref:
             await self.refresh()
         return self._working_dir
 
     @property
     def base_ref(self) -> str:
-        """De revisie waarvan de werkmap gemaakt is, of leeg als hij nog niet bestaat."""
+        """The revision the working directory was made from, or empty while there is none."""
         return self._base_ref
 
     async def refresh(self) -> str:
-        """Vul de werkmap (opnieuw) met de scope op de laatste stand van de kopie."""
+        """Fill the working directory (again) with the scope at the copy's latest state."""
         if not self._working_dir:
             self._working_dir = tempfile.mkdtemp(prefix="git-scope-", dir=settings.TEMP_DIR)
         else:
@@ -990,7 +965,7 @@ class GitRepoWorkspace:
         return self._base_ref
 
     async def commit_and_push(self, message: str) -> WriteResult:
-        """Schrijf de stand van de werkmap terug als één commit op de scope."""
+        """Write the working directory's state back as one commit on the scope."""
         working_dir = await self.get_working_dir()
         result = await self.repo.write_dir(
             base_ref=self._base_ref,
@@ -1012,29 +987,29 @@ class GitRepoWorkspace:
         on_prepare: Callable[[], AbstractContextManager[None]] | None = None,
         on_push: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> T:
-        """Pas een stap toe op de laatste stand en publiceer hem, geserialiseerd per project.
+        """Apply a step to the latest state and publish it, serialised per project.
 
-        Per poging: de werkmap opnieuw vullen uit de kopie, ``mutate`` laten schrijven, en
-        schrijven. Botst de write met een wijziging binnen dezelfde scope, dan gaat de hele
-        stap opnieuw op de nieuwe stand, want alleen de aanroeper weet wat hij genereerde.
+        Per attempt: fill the working directory from the copy again, let ``mutate`` write, and
+        write back. When the write collides with a change inside the same scope, the whole
+        step runs again on the new state, because only the caller knows what it generated.
 
         ``on_prepare`` wraps filling the working copy (a clone when there is no copy yet) and
         ``on_push`` only the write, so a caller that reports progress can show those two
-        network phases as their own step instead of as part of ``mutate``. Every new
-        attempt opens them again.
+        network phases as their own step instead of as part of ``mutate``. Every new attempt
+        opens them again.
 
-        De lock per (repo, project) blijft: de kustomization van het project is het bestand
-        waar taken van hetzelfde project om strijden (RC-265).
+        The lock per (repo, project) stays: the project's kustomization is the file tasks of
+        the same project fight over.
         """
         self.last_write = None
         async with project_write_lock(self.repo.url, self.project_name):
             started = time.monotonic()
             last_error: Exception | None = None
             for attempt in range(MAX_WRITE_ATTEMPTS):
-                # De eerste poging neemt de werkmap zoals hij is. Een eerdere stap van
-                # dezelfde taak kan er al iets in hebben gezet dat nog niet gecommit is,
-                # zoals de PVC-hernoeming van ``handle_service_removal``, en die hoort in
-                # DEZE write mee. Pas een echte botsing gooit de map weg en begint opnieuw.
+                # The first attempt takes the working directory as it is. An earlier step of
+                # the same task may have put something in it that is not committed yet, such
+                # as the PVC rename of ``handle_service_removal``, and that belongs in THIS
+                # write. Only a real collision throws the directory away and starts over.
                 if attempt > 0 or not self._base_ref:
                     with on_prepare() if on_prepare else nullcontext():
                         await self.refresh()
@@ -1070,10 +1045,10 @@ class GitRepoWorkspace:
             )
 
     async def remove_and_push(self, relative_path: str, message: str) -> bool:
-        """Haal een pad binnen de scope weg en publiceer dat. False als het er niet stond.
+        """Remove a path inside the scope and publish that. False when it was not there.
 
-        De BESLISSING valt binnen de lock, op de stand die de werkmap dan heeft: een
-        andere taak kan deze map intussen herschreven of al verwijderd hebben.
+        The DECISION falls inside the lock, on the state the working directory has by then:
+        another task may have rewritten or already removed this directory meanwhile.
         """
         if not _within_scope(os.path.normpath(relative_path).strip("/"), self.scope_paths):
             raise ValueError(f"Pad '{relative_path}' valt buiten de scope {self.scope_paths}")
@@ -1091,17 +1066,17 @@ class GitRepoWorkspace:
         return await self.mutate_and_push(message, _remove)
 
     async def path_unchanged_since(self, revision: str, path: str) -> bool:
-        """Of ``path`` op ``revision`` gelijk is aan wat er nu in de repo staat.
+        """Whether ``path`` on ``revision`` equals what is in the repo now.
 
-        Zie :meth:`GitRepo.path_unchanged_since`; hier tegen de stand waar deze werkmap op
-        staat, dus na een write de commit die net landde.
+        See :meth:`GitRepo.path_unchanged_since`; here against the state this working
+        directory sits on, so after a write the commit that just landed.
         """
         if not self._base_ref:
             return False
         return await self.repo.path_unchanged_since(revision, path, self._base_ref)
 
     async def close(self) -> None:
-        """Gooi de werkmap weg. De beheerde kopie blijft staan."""
+        """Throw the working directory away. The managed copy stays."""
         if self._working_dir:
             shutil.rmtree(self._working_dir, ignore_errors=True)
             self._working_dir = ""
@@ -1109,10 +1084,9 @@ class GitRepoWorkspace:
 
 
 def credentials_from_repo_config(repo_config: dict[str, Any]) -> GitCredentials:
-    """De toegang uit een repo-config, met het wachtwoord uitgepakt.
+    """The access out of a repo config, with the password decrypted.
 
-    Hetzelfde uitpakken als :class:`~opi.connectors.git.GitConnector` deed, want een
-    projectbestand bewaart het wachtwoord AGE-versleuteld.
+    A project file keeps the password AGE-encrypted.
     """
     password = repo_config.get("password")
     decrypted = decrypt_password_smart_auto_sync(password) if password else None
@@ -1124,7 +1098,7 @@ def credentials_from_repo_config(repo_config: dict[str, Any]) -> GitCredentials:
 def workspace_from_repo_config(
     repo_config: dict[str, Any], scope_paths: list[str], *, project_name: str | None = None
 ) -> GitRepoWorkspace:
-    """De werkmap van een taak op de repo uit deze config, beperkt tot ``scope_paths``."""
+    """A task's working directory on the repo in this config, limited to ``scope_paths``."""
     return GitRepoWorkspace(
         get_git_repo(repo_config["url"], repo_config.get("branch") or "main"),
         credentials_from_repo_config(repo_config),
@@ -1135,7 +1109,7 @@ def workspace_from_repo_config(
 
 
 def argo_repo_config() -> dict[str, Any]:
-    """De repo-config van de argo-applications repo, uit de instellingen."""
+    """The repo config of the argo-applications repo, from the settings."""
     return {
         "url": settings.GIT_ARGO_APPLICATIONS_URL,
         "branch": settings.GIT_ARGO_APPLICATIONS_BRANCH,
@@ -1184,9 +1158,9 @@ async def warm_platform_repos() -> None:
 
 
 def argo_workspace(project_name: str, cluster: str) -> GitRepoWorkspace:
-    """De werkmap op de argo-applications repo voor één project.
+    """The working directory on the argo-applications repo for one project.
 
-    Twee mappen: die van het project en die van zijn infrastructuur ernaast.
+    Two directories: the project's own and its infrastructure's next to it.
     """
     return workspace_from_repo_config(
         argo_repo_config(),

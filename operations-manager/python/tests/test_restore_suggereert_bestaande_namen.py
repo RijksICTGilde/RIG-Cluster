@@ -23,7 +23,7 @@ Deze test legt de regel van de SCHRIJVER vast als de regel die beide kanten volg
 
 from __future__ import annotations
 
-from opi.api.restore_router import _fallback_reference_names
+from opi.manager.backup.restore_targets import fallback_reference_names
 
 DATABASE_DIENSTEN = ["postgresql-database", "namespace-postgresql-database"]
 BUCKET_DIENSTEN = ["minio-storage"]
@@ -31,7 +31,7 @@ BUCKET_DIENSTEN = ["minio-storage"]
 
 def test_een_database_heet_naar_zijn_dienst_en_niet_database() -> None:
     """De naam die de backup werkelijk draagt, en die backup list ook toont."""
-    namen = _fallback_reference_names("productie", DATABASE_DIENSTEN, "database")
+    namen = fallback_reference_names("productie", DATABASE_DIENSTEN, "database")
 
     assert "productie-postgresql" in namen
     assert "productie-namespace" in namen
@@ -43,18 +43,18 @@ def test_de_oude_naam_blijft_werken() -> None:
     Vandaar dat het vaste achtervoegsel erbij blijft staan in plaats van vervangen te
     worden: een reparatie die bestaande backups onbereikbaar maakt is geen reparatie.
     """
-    assert "productie-database" in _fallback_reference_names("productie", DATABASE_DIENSTEN, "database")
+    assert "productie-database" in fallback_reference_names("productie", DATABASE_DIENSTEN, "database")
 
 
 def test_bij_buckets_verandert_er_niets() -> None:
     """Daar vielen de twee conventies al samen; dat mag niet ineens twee namen worden."""
-    namen = _fallback_reference_names("productie", BUCKET_DIENSTEN, "minio")
+    namen = fallback_reference_names("productie", BUCKET_DIENSTEN, "minio")
 
     assert namen == ["productie-minio"]
 
 
 def test_geen_dubbele_namen() -> None:
     """Dezelfde naam twee keer in een 404 leest als twee mogelijkheden."""
-    namen = _fallback_reference_names("productie", DATABASE_DIENSTEN, "postgresql")
+    namen = fallback_reference_names("productie", DATABASE_DIENSTEN, "postgresql")
 
     assert len(namen) == len(set(namen))

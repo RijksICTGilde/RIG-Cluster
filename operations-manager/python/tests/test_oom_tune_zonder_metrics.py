@@ -23,7 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.resource_tuning_service import apply_resource_tuning
 
@@ -59,7 +59,7 @@ async def _draai_tuner(project: dict[str, Any], *, oom_components: list[str] | N
     connector = AsyncMock()
     # max_over_time, avg_over_time en de OOMKilled-query: alle drie leeg. Dit is wat
     # Grafana teruggaf voor een pod die geen scrape-interval haalde.
-    connector.custom_query.return_value = []
+    connector.query.return_value = []
     kubectl = MagicMock(
         get_deployment_conditions=AsyncMock(return_value=None),
         get_vpa_recommendation=AsyncMock(return_value=None),

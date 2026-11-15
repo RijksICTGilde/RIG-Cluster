@@ -195,7 +195,7 @@ gat: in de gate gemeten, niet bedraad. Ze zijn nu bedraad. Wat open blijft:
 Back-up en restore lopen via het bestaande bucket-pad: beide object-storage-diensten dragen
 het `backup_label` **`minio`**, want dat label groepeert diensten met hetzelfde soort
 back-up, en dat is hier dezelfde bucket achter dezelfde S3-API. Eén resolver
-(`get_object_storage_secret` in `opi/utils/secrets.py`) leest het secret van welke van de
+(`get_object_storage_secret` in `opi/services/secrets.py`) leest het secret van welke van de
 twee een deployment ook gebruikt; de back-uptaak, de back-up-API en de restore-route noemen
 de lijst `OBJECT_STORAGE_SERVICE_TYPES`.
 

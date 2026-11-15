@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import KeycloakConnector
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 
 BLUEPRINT_DIR = Path(__file__).parent.parent / "opi" / "configs" / "keycloak"
 
@@ -165,7 +165,7 @@ def _handler_with_fake_connector(realm: dict | None = None) -> tuple[KeycloakYam
     return KeycloakYamlHandler(keycloak), keycloak
 
 
-@pytest.mark.parametrize("template", ["sso-only", "sso-support"])
+@pytest.mark.parametrize("template", ["sso-only", "sso-support", "local-only"])
 async def test_project_blueprints_close_both_knobs(template: str) -> None:
     handler, keycloak = _handler_with_fake_connector()
 
@@ -316,7 +316,7 @@ async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
     Gemeten op de sandbox met een kale ``!=``: twee verwerkingen achter elkaar leverden twee
     keer ``Updated realm ...: ['supportedLocales']``. Elke verwerking van elk project zou dus
     een wijziging schrijven die niets wijzigt, in het admin-event-logboek van elke realm.
-    Deze toets is de grendel daarop, en hij is de reden dat ``_veld_is_gelijk`` bestaat.
+    Deze toets is de grendel daarop, en hij is de reden dat ``_field_matches`` bestaat.
     """
     handler, keycloak = _handler_with_fake_connector(
         realm={
@@ -341,7 +341,7 @@ async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
 
 @pytest.mark.usefixtures("_met_relay")
 async def test_een_echt_andere_talenlijst_wordt_wel_geschreven() -> None:
-    """De tegenproef: ``_veld_is_gelijk`` mag alleen de VOLGORDE wegstrepen, niet de inhoud.
+    """De tegenproef: ``_field_matches`` mag alleen de VOLGORDE wegstrepen, niet de inhoud.
     Zonder deze toets zou een grendel die altijd ``True`` teruggeeft er net zo uitzien."""
     handler, keycloak = _handler_with_fake_connector(realm={"supportedLocales": ["en"]})
 
@@ -391,7 +391,7 @@ def test_elk_blueprint_noemt_elk_gelezen_realmveld() -> None:
     toenmalige vier velden van ``sso-support`` en kreeg zo stil ``verifyEmail: true`` op de
     realm van ZAD zelf; sinds die blauwdruk ze zelf noemt, doet hij hier gewoon mee.
     """
-    from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
+    from opi.manager.bootstrap.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
     from ruamel.yaml import YAML
 
     # master-realm.yaml doet niet mee: die realm maakt Keycloak zelf, hij komt nooit langs
@@ -492,7 +492,7 @@ async def test_de_smtpserver_noemt_geen_enkele_bestemming() -> None:
     "Please provide a valid address" en een SEND_VERIFY_EMAIL_ERROR. Komt hier ooit een host
     bij, dan is dat stil weg.
     """
-    from opi.handlers.keycloak_yaml_handler import _SMTP_CONNECTION_KEYS
+    from opi.manager.bootstrap.keycloak_yaml_handler import _SMTP_CONNECTION_KEYS
 
     geschreven = KeycloakYamlHandler._smtp_server_settings()
 

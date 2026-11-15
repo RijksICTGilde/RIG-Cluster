@@ -82,8 +82,9 @@ tegenkomt, en komen er niet in:
   falen, dus het meet niets.
 
 Een module die dekking verliest doordat er een toets weg is, is een teken dat die toets wél
-iets mat: kijk dan opnieuw. De drempels in `.github/workflows/ci.yml` (71, en 86 voor de
-beveiligingskritische modules) gaan niet omlaag.
+iets mat: kijk dan opnieuw. De drempels gaan niet omlaag: 71 over alles (`fail_under` in
+`pyproject.toml`, de enige plek) en 86 voor de beveiligingskritische modules (de tweede
+coverage-stap in `.github/workflows/ci.yml`).
 
 ## De inventaris
 
@@ -115,6 +116,46 @@ noemt elke stap van het opstarten en elk `TaskType`, met per afhankelijkheid `me
 de toets), `planned` (met de fase) of `exempt` (met de reden).
 `tests/test_actions_map.py` faalt zodra er een stap of taak bij komt die er niet op staat.
 Vul naar waarheid: wat alleen met mocks gemeten wordt, is `planned`.
+
+## De golden toetsen op de manifestbouw
+
+Twee lagen, en ze meten iets anders.
+
+**`tests/test_golden_manifests.py`** rendert **losse** sjablonen tegen een variabelen-dict die de
+toets zelf opbouwt. Dat bewaakt de sjablonen.
+
+**`tests/test_golden_pipeline_manifests.py`** draait de echte methodes die die dict **opbouwen**:
+`create_application_manifests` voor de componenten, en `_process_helm_chart_deployment` en
+`_process_helmfile_deployment` voor het helmpad. Een scenario is een map onder
+`tests/golden/pipeline/` (of `pipeline-helm/`) met een `project.yaml`, soms een `secrets.yaml`
+of een `chart/`, plus de vastgelegde uitvoerboom in `expected/`. De vergelijking is byte voor
+byte, inclusief de teruggegeven bestandslijst in `created-files.txt`, want de prune werkt
+daarop.
+
+Een scenario toevoegen: maak de map met een `project.yaml`, draai `task golden-pipeline-baseline`
+en lees de uitvoer die eruit komt na. Hetzelfde commando legt na een BEDOELDE wijziging de
+nieuwe uitvoer vast; lees die diff regel voor regel, want een onverwachte verandering daarin is
+precies waarvoor de harnas er is.
+
+De scenarios bestaan in platte tekst, `.to-sops.yaml` inbegrepen (niet `.sops.yaml`): het is
+wat `create_application_manifests` bytegerecht schrijft, met testwaarden erin. Daarom zijn die
+bestanden in `.gitignore` uitgezonderd (`.gitignore` zou ze normaal negeren, maar in de fixtures
+staan ze expres). Dat wil zeggen: een wijziging daarvan is deel van het gouden bestand en staat
+op de PR.
+
+Drie dingen die de meting stil onwaar maken, en die de harnas daarom zelf regelt:
+
+- **De beheerde cluster.** `CLUSTER_MANAGER` staat per deployment op de cluster die hij noemt.
+  Staat hij ergens anders op, dan filtert `get_deployment_by_name` de deployment weg, komt de
+  values-context **leeg** terug en blijft elke `$ALIAS` letterlijk staan, zonder dat iets faalt.
+- **Wat een stap hoger gebeurt.** De aliassen worden verzameld zoals
+  `_process_deployment_manifests` dat doet, en de secrets-map wordt gevuld zoals de
+  sub-managers dat doen. Zonder dat is elke alias in een fixture een no-op.
+- **Alles wat per run verschilt.** De klok staat stil, het oauth2-cookiesecret is gepind, de
+  AGE-sleutels worden per run gemunt en `ENCRYPT:<waarde>` in een scenario wordt met die
+  sleutel versleuteld, zodat er geen sleutel en geen ciphertext in de boom staat. Elke patch
+  die niet te vermijden is (de subdomeinregistratie, de clone, de SOPS-stap) toetst dat hij
+  geraakt werd, anders meet een verouderde patch niets.
 
 ## Een nieuwe actie, en waar zijn toets komt
 

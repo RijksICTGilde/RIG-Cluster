@@ -89,8 +89,8 @@ invites:
 | Field | Description |
 |-------|-------------|
 | `enabled` | Must be `true` to enable access restriction |
-| `realm-role` | Realm role name for access check (takes precedence over `role`) |
-| `role` | Client role name (used if `realm-role` not specified) |
+| `realm-role` | Realm role name for access check (used if `role` is not set) |
+| `role` | Client role name; when set it replaces `realm-role`, which is then ignored |
 | `error_message` | Theme message key for access denied |
 
 ### Invite Configuration

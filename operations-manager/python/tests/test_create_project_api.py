@@ -16,15 +16,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from authlib.jose import JsonWebKey, jwt
-from opi.api.user_token_auth import get_metadata_cache
 from opi.api.v2 import router as v2_router
 from opi.api.v2.models import CreateProjectRequest
 from opi.core.config import settings
-from opi.core.project_schema import validate_project_schema
-from opi.manager.project_validation import validate_project_structure
-from opi.services.project_leden import hash_van
-from opi.utils import age, api_keys, project_utils
-from opi.utils.sops import generate_sops_key_pair
+from opi.http.auth.user_token_auth import get_metadata_cache
+from opi.services import project_utils
+from opi.services.project_members import hash_of
+from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import validate_project_structure
+from opi.utils import age, api_keys
+from opi.utils.age import generate_age_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -42,7 +43,7 @@ def sops_keys(monkeypatch: Any) -> Any:
     Each module keeps its own reference to ``settings``, and the shared test client
     replaces that object, so the values are set per module rather than once.
     """
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     values = {
         "SOPS_AGE_PUBLIC_KEY": public_key,
         "SOPS_AGE_PRIVATE_KEY": private_key,
@@ -85,10 +86,10 @@ def bearer_token() -> Any:
 
     metadata = {"issuer": ISSUER, "jwks_uri": f"{ISSUER}/protocol/openid-connect/certs"}
     with (
-        patch("opi.api.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)),
-        patch("opi.api.user_token_auth.fetch_jwks", AsyncMock(return_value={"keys": [public]})),
-        patch("opi.api.user_token_auth.settings") as mock_settings,
-        patch("opi.api.user_token_auth.get_user_service") as get_service,
+        patch("opi.http.auth.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)),
+        patch("opi.http.auth.user_token_auth.fetch_jwks", AsyncMock(return_value={"keys": [public]})),
+        patch("opi.http.auth.user_token_auth.settings") as mock_settings,
+        patch("opi.http.auth.user_token_auth.get_user_service") as get_service,
     ):
         mock_settings.OIDC_DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"
         mock_settings.CLI_TOKEN_AUDIENCE = AUDIENCE
@@ -223,7 +224,7 @@ class TestCreateProject:
         account = next(lid for lid in created["project"]["users"] if lid.get("name") == "project-api")
         assert account["type"] == "service-account"
         assert account["roles"] == ["admin", "ops"]
-        assert account["tokens"][0]["hash"] == hash_van(created["response"]["api_key"])
+        assert account["tokens"][0]["hash"] == hash_of(created["response"]["api_key"])
 
     def test_het_eerste_token_verloopt_langs_het_platformplafond(self, created: Any) -> None:
         """Een token dat bij de aanmaak wordt uitgegeven is geen uitzondering op het plafond.

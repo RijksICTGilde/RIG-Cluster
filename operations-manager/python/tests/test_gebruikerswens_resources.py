@@ -36,10 +36,11 @@ from opi.api.validation import (
     validate_api_payload,
 )
 from opi.connectors.vpa import VpaContainerRecommendation, parse_k8s_cpu_to_m
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_file_handler import ProjectFileHandler
+from opi.services.project_utils import build_component_config
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.resource_tuning_service import apply_resource_tuning
-from opi.utils.project_utils import build_component_config
+from tests import project_manager_sources
 
 OPI_DIR = Path(__file__).resolve().parent.parent / "opi"
 
@@ -163,8 +164,7 @@ def test_de_merge_van_manifestgeneratie_ziet_er_nog_zo_uit() -> None:
     Verdwijnt de ``update`` uit ``project_manager``, dan meet ``_effectieve_resources``
     iets dat de productiecode niet meer doet en bewijst de test hierboven niets.
     """
-    bron = (OPI_DIR / "manager" / "project_manager.py").read_text(encoding="utf-8")
-    assert "component_resources.update(deployment_resources)" in bron
+    assert "component_resources.update(deployment_resources)" in project_manager_sources.source_text()
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +702,7 @@ async def _draai_tuner(
     """Draai de tuner over een project met gemodelleerde meetdata."""
     connector = AsyncMock()
     meting = [{"value": [0, str(int(max_mb * 1024 * 1024))]}]
-    connector.custom_query.side_effect = [meting, meting, [{"value": [0, "1"]}] if oom else []]
+    connector.query.side_effect = [meting, meting, [{"value": [0, "1"]}] if oom else []]
     vpa = (
         VpaContainerRecommendation(
             container_name="app",

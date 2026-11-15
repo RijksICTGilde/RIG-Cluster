@@ -1,25 +1,13 @@
-# TODO: check all except, and remove if None is returned, we allways raise exceptions
+"""The sops CLI, and the file names a secret carries through it. AGE itself is age.py."""
 
-"""
-SOPS encryption/decryption utilities.
-
-This module handles SOPS-specific operations including key generation and encryption.
-For pure Age encryption, use the age.py module.
-"""
-
-import contextlib
 import glob
 import logging
 import os
 import subprocess
-import tempfile
-import uuid
 from typing import NamedTuple
 
-import yaml
-from opi.core.config import settings
-from opi.utils.age import wrap_project_key
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
+from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +16,16 @@ logger = logging.getLogger(__name__)
 #: committed. The values are fixed by the GitOps contract (features/sops-bestandsnamen.md).
 SOPS_SUFFIX = ".sops.yaml"
 TO_SOPS_SUFFIX = ".to-sops.yaml"
+
+
+#: A helmfile deployment's env vars go to git encrypted: OPI writes
+#: ``cmp-env.to-sops.yaml``, SOPS turns that into ``cmp-env.sops.yaml`` and the plugin
+#: decrypts it after fetching the project key.
+CMP_ENV_NAME = "cmp-env"
+
+#: The plaintext file from before the encrypted form. OPI cleans it up where it is still
+#: there, and the git guard refuses a new or changed copy.
+CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
 
 
 class SopsFilenames(NamedTuple):
@@ -39,10 +37,6 @@ def sops_filenames(name: str) -> SopsFilenames:
     """Both names belonging to ``name``, bare or already carrying either suffix."""
     stem = name.removesuffix(TO_SOPS_SUFFIX).removesuffix(SOPS_SUFFIX)
     return SopsFilenames(f"{stem}{TO_SOPS_SUFFIX}", f"{stem}{SOPS_SUFFIX}")
-
-
-class SOPSKeyEncryptionError(Exception):
-    """Raised when SOPS key encryption fails."""
 
 
 class SOPSKeyNotAvailableError(Exception):
@@ -59,74 +53,6 @@ class SOPSEncryptionError(Exception):
     """
 
 
-def get_sops_private_key() -> str | None:
-    """
-    Get the SOPS private key from settings.
-
-    Returns:
-        The SOPS AGE private key, or None if not available
-    """
-    return settings.SOPS_AGE_PRIVATE_KEY
-
-
-def decrypt_sops_file(file_path: str) -> str | None:
-    """
-    Decrypt a SOPS-encrypted file.
-
-    Args:
-        file_path: Path to the SOPS-encrypted file
-
-    Returns:
-        Decrypted content as string, or None if decryption failed
-    """
-    cmd = ["sops", "--decrypt", file_path]
-    logger.debug(f"Running SOPS decryption command: {' '.join(cmd)}")
-
-    # De platformsleutel gaat expliciet mee: child_env weert SOPS_AGE_KEY_FILE, en zonder
-    # sleutel kan sops een platformbestand niet ontsleutelen.
-    process = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=child_env({"SOPS_AGE_KEY": settings.SOPS_AGE_PRIVATE_KEY} if settings.SOPS_AGE_PRIVATE_KEY else None),
-    )
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"SOPS decryption failed: {error_msg}")
-        return None
-
-    decrypted_content = process.stdout
-    logger.debug("Successfully decrypted SOPS file")
-    return decrypted_content
-
-
-def encrypt_sops_file(file_path: str) -> bool:
-    """
-    Encrypt a file using SOPS.
-
-    Args:
-        file_path: Path to the file to encrypt
-
-    Returns:
-        True if encryption was successful, False otherwise
-    """
-    cmd = ["sops", "--encrypt", "--in-place", file_path]
-    logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
-
-    # Versleutelen haalt de recipients uit .sops.yaml, niet uit een sleutel in de omgeving.
-    process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"SOPS encryption failed: {error_msg}")
-        return False
-
-    logger.debug("Successfully encrypted file with SOPS")
-    return True
-
-
 def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_key: str) -> bool:
     """Return True when an existing SOPS file decrypts to the same content.
 
@@ -137,9 +63,10 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
     encryption can be skipped and the existing ciphertext kept verbatim.
 
     Compares parsed YAML (not raw bytes) so key-order or formatting differences
-    never count as a change. Returns False on any doubt — no existing file, a
-    decrypt failure (e.g. after key rotation), or an unparseable side — so the
-    caller re-encrypts.
+    never count as a change. Both sides go through the same loader: a reader that resolves
+    scalars differently from the writer turns an unchanged value into a change, or the
+    other way round. Returns False on any doubt (no existing file, a decrypt failure after
+    a key rotation, or an unparseable side), so the caller re-encrypts.
     """
     if not os.path.exists(encrypted_path):
         return False
@@ -150,17 +77,17 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
 
     try:
         with open(plaintext_path) as f:
-            new_doc = yaml.safe_load(f)
-        old_doc = yaml.safe_load(decrypted)
-    except yaml.YAMLError:
+            new_doc = load_yaml_safe(f.read())
+        old_doc = load_yaml_safe(decrypted)
+    except YAMLError:
         return False
     return new_doc == old_doc
 
 
 def decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
     """Decrypt a SOPS file with an explicit AGE private key. None on failure."""
-    process = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-        ["sops", "--decrypt", file_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+    process = subprocess.run(  # noqa: S603  # no shell; the variable parts are separate argv elements
+        ["sops", "--decrypt", file_path],  # noqa: S607  # a tool from the image's PATH, not a fixed path
         capture_output=True,
         text=True,
         check=False,
@@ -173,35 +100,23 @@ def decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
 
 
 def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | None = None) -> bool:
-    """
-    Encrypt all .to-sops.yaml files in a directory using SOPS, renaming them to .sops.yaml.
+    """Encrypt every .to-sops.yaml file in a directory with SOPS, renaming it to .sops.yaml.
 
-    Every file is attempted even if an earlier one fails: we never early-return
-    leaving not-yet-processed files in plain text. A .to-sops.yaml file is only
-    removed once its encrypted .sops.yaml counterpart has been written
-    successfully. Any remaining .to-sops.yaml after this call still holds the
-    secret in plain text.
+    Every file is attempted even if an earlier one fails: we never early-return leaving
+    not-yet-processed files in plain text. A .to-sops.yaml file is only removed once its
+    encrypted .sops.yaml counterpart has been written successfully. Any remaining
+    .to-sops.yaml after this call still holds the secret in plain text.
 
-    When ``private_key`` is provided, an existing ``.sops.yaml`` is decrypted and
-    compared first: if the plaintext is unchanged the existing ciphertext is kept
-    verbatim and re-encryption is skipped. This avoids rewriting every secret on
-    every deployment (SOPS is non-deterministic), which keeps the git diff — and
-    the number of committed files — minimal. Without a key the file is always
-    re-encrypted (the previous behaviour).
-
-    Args:
-        directory: Directory containing .to-sops.yaml files
-        public_key: The AGE public key for encryption
-        private_key: Optional AGE private key matching ``public_key``, enabling
-            the skip-if-unchanged comparison against the existing ciphertext.
-
-    Returns:
-        True if all files were encrypted successfully
+    With ``private_key`` an existing ``.sops.yaml`` is decrypted and compared first: when the
+    plaintext is unchanged the existing ciphertext is kept verbatim and re-encryption is
+    skipped. That avoids rewriting every secret on every deployment (SOPS is
+    non-deterministic), which keeps the git diff and the number of committed files minimal.
+    Without a key the file is always re-encrypted.
 
     Raises:
-        SOPSEncryptionError: If one or more files could not be encrypted. This
-            is security-critical and callers MUST abort before any git
-            commit/push, because the failed files remain in plain text.
+        SOPSEncryptionError: when one or more files could not be encrypted. This is
+            security-critical and callers MUST abort before any git commit or push, because
+            the failed files remain in plain text.
     """
 
     pattern = os.path.join(directory, f"*{TO_SOPS_SUFFIX}")
@@ -236,7 +151,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
             cmd = ["sops", "--encrypt", "--age", public_key, file_path]
             logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
 
-            process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+            process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # no shell; the variable parts are separate argv elements
 
             if process.returncode != 0:
                 error_msg = process.stderr.strip()
@@ -319,82 +234,3 @@ def encrypt_to_sops_files_or_fail(
             f".to-sops.yaml bestand(en) over: {', '.join(remaining)}. "
             "Dit zou secrets in platte tekst naar git committen; deployment afgebroken."
         )
-
-
-def generate_sops_key_pair() -> tuple[str, str]:
-    """
-    Generate a new SOPS AGE key pair.
-
-    Returns:
-        Tuple of (private_key, public_key)
-
-    Raises:
-        SOPSKeyEncryptionError: When key generation fails
-    """
-    try:
-        # Create a unique temporary file that doesn't exist yet
-        temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"age_key_{uuid.uuid4().hex}")
-
-        try:
-            # Generate age key pair
-            result = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-                ["age-keygen", "-o", temp_file_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
-                capture_output=True,
-                text=True,
-                check=True,
-                env=child_env(),
-            )
-
-            # Read the generated private key
-            with open(temp_file_path) as f:
-                private_key_content = f.read().strip()
-
-            # Extract public key from stderr (age-keygen outputs it there)
-            public_key = None
-            for line in result.stderr.splitlines():
-                if line.startswith("Public key: "):
-                    public_key = line.replace("Public key: ", "").strip()
-                    break
-
-            if not public_key:
-                raise SOPSKeyEncryptionError("Failed to extract public key from age-keygen output")
-
-            # Extract private key (should be the AGE-SECRET-KEY line)
-            private_key = None
-            for line in private_key_content.splitlines():
-                if line.startswith("AGE-SECRET-KEY-"):
-                    private_key = line.strip()
-                    break
-
-            if not private_key:
-                raise SOPSKeyEncryptionError("Failed to extract private key from generated content")
-
-            logger.debug("Successfully generated SOPS AGE key pair")
-            return private_key, public_key
-
-        finally:
-            # Clean up temp file
-            with contextlib.suppress(OSError):
-                os.unlink(temp_file_path)
-
-    except subprocess.CalledProcessError as e:
-        raise SOPSKeyEncryptionError(f"age-keygen command failed: {e.stderr}") from e
-    except Exception as e:
-        raise SOPSKeyEncryptionError(f"Failed to generate SOPS key pair: {e}") from e
-
-
-async def generate_and_encrypt_sops_key_pair() -> tuple[str, str, str]:
-    """
-    Generate a SOPS AGE key pair and encrypt the private key using the global AGE key.
-    Returns:
-        Tuple of (plain_private_key, encrypted_private_key, public_key)
-    Raises:
-        SOPSKeyEncryptionError: When key generation or encryption fails
-    """
-    try:
-        private_key, public_key = generate_sops_key_pair()
-        encrypted_private_key = await wrap_project_key(private_key)
-        return private_key, encrypted_private_key, public_key
-    except Exception as e:
-        raise SOPSKeyEncryptionError(f"Failed to generate encrypted SOPS key pair: {e}") from e

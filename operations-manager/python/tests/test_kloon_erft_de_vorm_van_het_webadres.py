@@ -16,9 +16,25 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.project_file_handler import ProjectFileHandler
+
+
+@pytest.fixture(autouse=True)
+def _accept_component_references():
+    """The project fixtures here name components the project itself does not define.
+
+    The stub used to sit on the manager instance; since RC-443 the validator lives on
+    DeploymentMutations, one object further, so an instance stub would silently stop
+    reaching it.
+    """
+    with patch.object(
+        DeploymentMutations, "_validate_component_references", return_value={"success": True, "error": None}
+    ):
+        yield
+
 
 CLUSTER = "local"
 PROJECT = "asses-k2n"
@@ -27,7 +43,7 @@ PROJECT = "asses-k2n"
 def _make_manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -92,10 +108,9 @@ async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857", **req
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value=PROJECT)
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
-    pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
     pm.save_and_commit_project = AsyncMock()
 
-    with patch("opi.manager.project_manager.ensure_domain_requests"):
+    with patch("opi.manager.project.deployment_mutations.ensure_approval_requests"):
         result = await pm.upsert_deployment(
             deployment_name=clone_name,
             components=[

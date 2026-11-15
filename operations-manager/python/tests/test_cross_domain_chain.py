@@ -202,7 +202,7 @@ class TestWizardToNetworkPolicy:
 
     @pytest.mark.asyncio
     async def test_the_saved_rule_passes_the_projects_own_validation(self) -> None:
-        from opi.manager.project_validation import validate_service_configs
+        from opi.services.project_validation import validate_service_configs
 
         project = await _submit(
             _service().config_form_section(ConfigLayer.PROJECT), _project_submission("prod"), _own_project()
@@ -228,7 +228,7 @@ class TestDeploymentPatchChangesOnlyThePeerDeployment:
     async def test_the_patch_lands_in_the_schemas_service_envelope(self) -> None:
         # The editables write the legacy name-as-key shape; the deployment-service envelope
         # in project_v2.json rejects it, so the save path must normalize it.
-        from opi.core.project_schema import validate_project_schema
+        from opi.services.project_schema import validate_project_schema
 
         project = await self._patched()
         entry = project["deployments"][0]["services"][0]
@@ -314,7 +314,7 @@ class TestFormContextNeverReachesTheProjectFile:
     """
 
     def test_the_schema_would_reject_it(self) -> None:
-        from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+        from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 
         project = {k: v for k, v in _own_project().items() if k != "_cross_domain_projects"}
         validate_project_schema({**project, "schema-version": 2})

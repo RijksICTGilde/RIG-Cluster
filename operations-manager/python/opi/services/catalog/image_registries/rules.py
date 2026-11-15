@@ -1,8 +1,8 @@
-"""Eén regelvorm voor het oplossen van een image, gevoed door twee bronnen.
+"""One rule shape for resolving an image, fed by two sources.
 
-De clustertabel en een private registry doen dezelfde bewerking, alleen met een kortere
-of langere ``match``. "Wie wint" is daarmee een eerste-match op één lijst, met de
-projectregels vooraan.
+The cluster table and a private registry perform the same operation, only with a shorter or
+longer ``match``. "Who wins" is therefore a first match on one list, with the project rules up
+front.
 """
 
 from __future__ import annotations
@@ -19,28 +19,28 @@ DEFAULT_NAMESPACE = "library"
 
 @dataclass(frozen=True)
 class RegistryRule:
-    """Eén regel: welke upstream-prefix gaat waarheen, en met welk pull-secret."""
+    """One rule: which upstream prefix goes where, and with which pull secret."""
 
-    #: Upstream-prefix, met of zonder namespace-segment.
+    #: Upstream prefix, with or without a namespace segment.
     match: str
-    #: Bestemming: host plus organisatie.
+    #: Destination: host plus organization.
     to: str
     secret: str
 
 
 @dataclass(frozen=True)
 class ResolvedImage:
-    """Wat er van een image geworden is, en welk secret erbij hoort."""
+    """What became of an image, and which secret belongs to it."""
 
     image: str
     secret: str | None
 
 
 def normalize_image(image: str) -> str:
-    """Vul de impliciete Docker Hub-delen aan: ``nginx:alpine`` -> ``docker.io/library/nginx:alpine``.
+    """Fill in the implicit Docker Hub parts: ``nginx:alpine`` -> ``docker.io/library/nginx:alpine``.
 
-    De admission-webhook van ODCN behandelt zo'n korte naam ook zo; zonder dezelfde
-    normalisatie mist de image hier zijn secret.
+    The ODCN admission webhook treats such a short name the same way; without the same
+    normalisation the image misses its secret here.
     """
     if not image:
         return image
@@ -56,10 +56,10 @@ def normalize_image(image: str) -> str:
 
 
 def normalize_prefix(prefix: str) -> str:
-    """Hetzelfde voor een upstream-PREFIX: alleen de registry ervoor, geen ``library``.
+    """The same for an upstream PREFIX: only the registry in front, no ``library``.
 
-    Een prefix is een pad en geen repositorynaam, dus het aanvullen dat
-    ``normalize_image`` doet zou van ``ghcr.io`` een pad maken dat nooit matcht.
+    A prefix is a path and not a repository name, so the filling in ``normalize_image`` does
+    would turn ``ghcr.io`` into a path that never matches.
     """
     if not prefix:
         return prefix
@@ -71,21 +71,21 @@ def normalize_prefix(prefix: str) -> str:
 
 
 def _looks_like_host(segment: str) -> bool:
-    """Of een eerste padsegment een registry-host is in plaats van een pad-segment."""
+    """Whether a first path segment is a registry host rather than a path segment."""
     return "." in segment or ":" in segment or segment == "localhost"
 
 
 def _has_prefix(image: str, prefix: str) -> bool:
-    """Of ``image`` onder ``prefix`` valt, op segmentgrens en niet op tekens."""
+    """Whether ``image`` falls under ``prefix``, on a segment boundary and not on characters."""
     return image == prefix or image.startswith(prefix + "/")
 
 
 def resolve_image(image: str, rules: Sequence[RegistryRule]) -> ResolvedImage:
-    """Los een image op tegen de regellijst: eerste match wint.
+    """Resolve an image against the rule list: first match wins.
 
-    Een image die al op de bestemming staat wordt niet herschreven maar krijgt wel het
-    secret van die regel. Zonder match komt de ONGENORMALISEERDE verwijzing terug, zodat
-    een cluster zonder tabel niets aan een manifest verandert.
+    An image already at the destination is not rewritten but does get that rule's secret.
+    Without a match the UNNORMALISED reference comes back, so a cluster without a table
+    changes nothing in a manifest.
     """
     if not image:
         return ResolvedImage(image, None)
@@ -101,7 +101,7 @@ def resolve_image(image: str, rules: Sequence[RegistryRule]) -> ResolvedImage:
 
 
 def original_image(image: str, rules: Sequence[RegistryRule]) -> str:
-    """De omgekeerde weg, voor de weergavekant: van bestemming terug naar upstream."""
+    """The way back, for the display side: from destination to upstream."""
     for rule in rules:
         if _has_prefix(image, rule.to):
             return rule.match + image[len(rule.to) :]

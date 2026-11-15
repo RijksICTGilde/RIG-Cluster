@@ -19,26 +19,26 @@ eis uit de route zelf te lezen is in plaats van uit een lijst met paden.
 
 | Decorator | Markering | Credential |
 |---|---|---|
-| `requires_sso` (`opi/core/auth_decorators.py`) | `_requires_sso` | SSO-sessiecookie |
-| `validate_api_token` (`opi/api/endpoint_util.py`) | `REQUIRES_PROJECT_NAME` | `X-API-Key` van het project |
-| `validate_user_token` (`opi/api/user_token_auth.py`) | `REQUIRES_USER_TOKEN` | `Authorization: Bearer` (SSO) |
-| `validate_platform_admin_token` (`opi/api/user_token_auth.py`) | `REQUIRES_PLATFORM_ADMIN_TOKEN` | `Authorization: Bearer` (SSO) van een platformbeheerder |
+| `requires_sso` (`opi/http/auth/auth_decorators.py`) | `_requires_sso` | SSO-sessiecookie |
+| `validate_api_token` (`opi/http/auth/endpoint_util.py`) | `REQUIRES_PROJECT_NAME` | `X-API-Key` van het project |
+| `validate_user_token` (`opi/http/auth/user_token_auth.py`) | `REQUIRES_USER_TOKEN` | `Authorization: Bearer` (SSO) |
+| `validate_platform_admin_token` (`opi/http/auth/user_token_auth.py`) | `REQUIRES_PLATFORM_ADMIN_TOKEN` | `Authorization: Bearer` (SSO) van een platformbeheerder |
 | `validate_metrics_scrape_token` | `REQUIRES_METRICS_SCRAPE_TOKEN` | `Authorization: Bearer` = `PROMETHEUS_METRICS_AUTH_TOKEN` |
 
 ## Gebruik
 
-De helper staat in `opi/api/route_herkenning.py`:
+De helper staat in `opi/api/route_recognition.py`:
 
 ```python
-from opi.api.route_herkenning import route_herkenningen
+from opi.api.route_recognition import route_recognitions
 from opi.server import app
 
-for route in route_herkenningen(app):
-    print(route.methode, route.pad, route.herkenningen)
+for route in route_recognitions(app):
+    print(route.method, route.path, route.recognitions)
 ```
 
-`route_herkenningen(app)` geeft per route een `RouteHerkenning` met `methode`, `pad`,
-`module`, `herkenningen` en `endpoint` (de handler zelf, zodat een bewaker diens bron kan
+`route_recognitions(app)` geeft per route een `RouteRecognition` met `method`, `path`,
+`module`, `recognitions` en `endpoint` (de handler zelf, zodat een bewaker diens bron kan
 lezen). Websocketroutes krijgen `WEBSOCKET` als methode.
 
 Het staat in `opi/` en niet in de test, omdat meer dan een vraagsteller dezelfde

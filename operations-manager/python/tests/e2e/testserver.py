@@ -14,6 +14,8 @@ Usage:
     Used automatically by tests/e2e/conftest.py
 """
 
+import copy
+import inspect
 import logging
 import os
 import secrets
@@ -25,11 +27,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
-from opi.core.step_up import has_fresh_step_up
 from opi.services.otp_herlogin_service import Herlogin
-from opi.utils.age import encrypt_age_content_sync
-from opi.utils.sops import generate_sops_key_pair
+from opi.services.step_up import has_fresh_step_up
+from opi.utils.age import encrypt_age_content_sync, generate_age_key_pair
 from tests.inmemory_session_store import InMemorySessionStore
+from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,9 +53,9 @@ def test_age_keypair() -> tuple[str, str]:
     the wizard encrypts a project's key with the public half and reads it back with the private
     one within the same server.
 
-    Requires ``age-keygen``, which the E2E suite needs for the real ``age`` calls anyway.
+    In process, so the E2E suite needs no ``age-keygen`` for this.
     """
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 TEST_USER_EMAIL = "test@example.com"
@@ -506,15 +508,15 @@ def _fake_metrics_connector():
     """
     from unittest.mock import AsyncMock
 
-    from opi.services.gedeelde_diensten import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _OPSLAG_QUERIES
+    from opi.services.shared_services import _DATABASE_QUERIES, _KEYCLOAK_QUERIES, _STORAGE_QUERIES
 
-    op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
+    op_query = {query: naam for naam, query in {**_STORAGE_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
 
-    async def custom_query(query: str) -> list[dict]:
+    async def answer(query: str) -> list[dict]:
         return _DIENSTEN_METRIEKEN.get(op_query.get(query, ""), [])
 
     connector = MagicMock()
-    connector.custom_query = AsyncMock(side_effect=custom_query)
+    connector.query = AsyncMock(side_effect=answer)
     return connector
 
 
@@ -567,6 +569,38 @@ async def _fake_store_save(
     return MutationResult(before=None, after=data, ref="e2e-testserver")
 
 
+async def _fake_store_mutate(
+    self,
+    name: str,
+    change,
+    *,
+    message,
+    actor,
+    enforce_validation: bool = True,
+    filename: str | None = None,
+):
+    """In-memory stand-in for GitProjectStore.mutate, next to :func:`_fake_store_save`.
+
+    The read-modify-write primitive every values and service write goes through. Same
+    contract: the change function sees the current state and may return None for an
+    idempotent no-op, which commits nothing.
+    """
+    from opi.services.project_store import MutationResult, ProjectNotFoundError
+
+    project = self.get(name)
+    current = (project.data if project else None) or None
+    if current is None:
+        raise ProjectNotFoundError(f"Project '{name}' does not exist")
+
+    changed = change(copy.deepcopy(current))
+    mutated = await changed if inspect.isawaitable(changed) else changed
+    if mutated is None:
+        return MutationResult(before=current, after=current, ref="e2e-testserver", committed=False)
+
+    self._refresh_cache(name, mutated, os.path.basename(filename or f"{name}.yaml"))
+    return MutationResult(before=current, after=mutated, ref="e2e-testserver")
+
+
 def _munt_projectsleutelpaar(data: dict) -> None:
     """Geef dit fixtureproject een AGE-sleutelpaar dat bij DEZE run past.
 
@@ -579,7 +613,7 @@ def _munt_projectsleutelpaar(data: dict) -> None:
     config = data.get("config")
     if not isinstance(config, dict) or not config.get("age-private-key"):
         return
-    project_private, project_public = generate_sops_key_pair()
+    project_private, project_public = generate_age_key_pair()
     config["age-public-key"] = project_public
     config["age-private-key"] = encrypt_age_content_sync(project_private, test_age_keypair()[1])
 
@@ -630,39 +664,6 @@ def _seed_projects(projects: list[dict]) -> None:
     logger.info("Seeded %d fixture projects", len(projects))
 
 
-def _preinitialize_kubectl_without_probing() -> None:
-    """Mark the kubectl singleton as initialised so nothing ever probes a cluster.
-
-    ``KubectlConnector.__init__`` runs a BLOCKING
-    ``subprocess.run(["kubectl", "auth", "whoami"], timeout=10)`` on whatever thread
-    first constructs it -- here the uvicorn event loop that serves every request. There
-    is no cluster in a local E2E run, so on a machine that HAS a kubectl binary (a dev
-    box with kind, and the shared dev server) the probe does not fail fast: it hangs for
-    the full 10 seconds, and every request in flight waits behind it.
-
-    That is what makes this suite look order-dependent when it is not. The connector is
-    a process-wide singleton, so the stall happens exactly once per run, on whichever
-    test happens to touch a page that constructs it -- a different test in every shuffle,
-    and the neighbouring test's own 10s wait expires with it. Measured: run with seed 404
-    lost ``test_saves_description_change`` (its step POST timed out at exactly 10s, with
-    ``Error testing kubectl connection ... timed out after 10 seconds`` alongside it) and
-    then ``test_detail_page_renders``, which reads the project that test no longer got to
-    restore. Three other seeds, where the probe never ran, were green.
-
-    Pre-building the singleton here skips the probe and the retry task it schedules.
-    ``isConnected`` stays False, which is what the probe concluded anyway -- so no route
-    behaves differently, there is just no 10-second hole in the event loop.
-    """
-    from opi.connectors.kubectl import KubectlConnector
-
-    connector = KubectlConnector.__new__(KubectlConnector)
-    connector.env = os.environ.copy()
-    connector._initialized = True
-    KubectlConnector._instance = connector
-    KubectlConnector.isConnected = False
-    KubectlConnector._retry_task = None
-
-
 def create_test_app():
     """Create the FastAPI app with mocked externals and seeded test data.
 
@@ -675,7 +676,7 @@ def create_test_app():
     def patched_app():
         with (
             # Patch where het GEBRUIKT wordt (opi.server) en niet waar het gedefinieerd
-            # is. ``opi/server.py`` doet ``from opi.core.startup import run_startup_tasks``
+            # is. ``opi/server.py`` doet ``from opi.runtime.startup.startup import run_startup_tasks``
             # en roept die eigen naam aan; het definitiepad patchen raakt die binding
             # alleen als opi.server hieronder voor het EERST geimporteerd wordt.
             #
@@ -691,7 +692,6 @@ def create_test_app():
             # timeout van 10 s, en die is er hier niet of praat met geen cluster.
             patch("opi.server.warm_connector_singletons", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
-            patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
                 "opi.services.persistence.subdomain_registry.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,
@@ -713,8 +713,8 @@ def create_test_app():
                 "opi.connectors.argo.create_argo_connector",
                 return_value=MagicMock(ensure_authenticated=AsyncMock(return_value=False)),
             ),
-            patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
+            patch("opi.services.project_store.GitProjectStore.mutate", _fake_store_mutate),
             # version_of() clones the real repo, hier niet beschikbaar. Stand-in: een vaste
             # geldige blob-SHA (40 hex per _BLOB_SHA_RE); de nagemaakte save negeert hem.
             patch(
@@ -732,7 +732,7 @@ def create_test_app():
             ),
             # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
             patch(
-                "opi.services.gedeelde_diensten.get_metrics_connector",
+                "opi.services.shared_services.get_metrics_connector",
                 new_callable=AsyncMock,
                 return_value=_fake_metrics_connector(),
             ),
@@ -749,7 +749,7 @@ def create_test_app():
                 ),
             ),
         ):
-            _preinitialize_kubectl_without_probing()
+            preinitialize_kubectl_without_probing()
 
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module

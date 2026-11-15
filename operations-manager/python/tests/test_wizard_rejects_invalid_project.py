@@ -10,7 +10,8 @@ back to their input.
 These tests pin the three things that fixes it:
 
 - the finished file is schema-checked while the wizard still exists, on BOTH
-  paths (create and edit), before anything is handed to storage;
+  paths: the create path checks it before the task is handed the YAML, the edit path
+  gets the refusal back from the store inside the same request;
 - the create flow keeps its wizard session until the work is accepted;
 - a schema violation is placed on the step and field it came from, with a
   step-level fallback when it cannot be placed.
@@ -21,11 +22,11 @@ from __future__ import annotations
 import copy
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError
 from opi.forms.visualizers.flows import get_flow
+from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.web.router_wizard import (
     _locate_schema_error,
     _save_existing_project,
@@ -37,6 +38,9 @@ from opi.web.router_wizard import (
 AGE_BLOB = "-----BEGIN AGE ENCRYPTED FILE-----\nfake\n-----END AGE ENCRYPTED FILE-----"
 
 OWNER_EMAIL = "owner@example.com"
+
+#: The sections of the flow these saves run: their editables name the writable paths.
+EDIT_SECTIONS = list(get_flow("edit-project").sections)
 
 
 def _valid_project(name: str = "nep-wfo") -> dict[str, Any]:
@@ -64,7 +68,25 @@ def _project_with_empty_command(name: str = "nep-wfo") -> dict[str, Any]:
 
 def _request_for(email: str) -> Any:
     """Minimal fake request whose state.user yields the given email."""
-    return SimpleNamespace(state=SimpleNamespace(user={"email": email}))
+    return SimpleNamespace(state=SimpleNamespace(user={"email": email}), app=_task_queue())
+
+
+def _task_queue() -> Any:
+    """A queue that accepts the rollout task a wizard save now starts (RC-483 P1).
+
+    One instance for every fake request, so two requests built the same way still compare
+    equal.
+    """
+    return _TASK_QUEUE
+
+
+def _build_task_queue() -> Any:
+    service = MagicMock()
+    service.create_task = AsyncMock(return_value={"task_id": "rollout-1"})
+    return SimpleNamespace(state=SimpleNamespace(task_service=service))
+
+
+_TASK_QUEUE = _build_task_queue()
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +128,7 @@ async def test_create_rejects_invalid_project_before_any_task_is_created() -> No
 
     try:
         with (
-            patch("opi.core.task_helpers.create_async_task", create_task),
+            patch("opi.http.task_helpers.create_async_task", create_task),
             pytest.raises(ProjectSchemaError) as exc,
         ):
             await _start_project_creation(_request_for(OWNER_EMAIL), _project_with_empty_command())
@@ -129,7 +151,7 @@ async def test_create_clears_the_session_only_after_the_task_exists() -> None:
         return {"task_id": "task-1"}
 
     with (
-        patch("opi.core.task_helpers.create_async_task", _create),
+        patch("opi.http.task_helpers.create_async_task", _create),
         patch("opi.web.router_wizard.clear_wizard_state", lambda _request: calls.append("clear_wizard_state")),
     ):
         response = await _start_project_creation(_request_for(OWNER_EMAIL), _valid_project())
@@ -147,7 +169,7 @@ async def test_create_keeps_the_session_when_the_task_cannot_be_created() -> Non
         raise RuntimeError("task service unavailable")
 
     try:
-        with patch("opi.core.task_helpers.create_async_task", _boom), pytest.raises(RuntimeError):
+        with patch("opi.http.task_helpers.create_async_task", _boom), pytest.raises(RuntimeError):
             await _start_project_creation(_request_for(OWNER_EMAIL), _valid_project())
     finally:
         patch.stopall()
@@ -161,6 +183,13 @@ async def test_create_keeps_the_session_when_the_task_cannot_be_created() -> Non
 
 
 def _patch_project_manager(stored: dict[str, Any], captured: dict[str, Any]):
+    """A store that validates before it writes, as ``ProjectStore.save`` does.
+
+    The edit path has no check of its own: it hands the merged file to the store, and the
+    schema violation comes back from there while the wizard is still up. A fake that
+    skipped the validation would make this test pass on a file the real store refuses.
+    """
+
     class _FakeProjectManager:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
@@ -169,6 +198,7 @@ def _patch_project_manager(stored: dict[str, Any], captured: dict[str, Any]):
             return copy.deepcopy(stored)
 
         async def save_and_commit_project(self, project_data: dict[str, Any], _message: str, **_kwargs: Any) -> None:
+            validate_project_schema(project_data)
             captured["data"] = project_data
 
         async def close(self) -> None:
@@ -179,7 +209,7 @@ def _patch_project_manager(stored: dict[str, Any], captured: dict[str, Any]):
 
 @pytest.mark.asyncio
 async def test_edit_rejects_invalid_project_before_saving() -> None:
-    """The edit path validates the MERGED file: the form alone is only a subset."""
+    """The edit path hands the MERGED file to the store: the form alone is only a subset."""
     captured: dict[str, Any] = {}
     stored = _valid_project()
 
@@ -193,6 +223,7 @@ async def test_edit_rejects_invalid_project_before_saving() -> None:
             _request_for(OWNER_EMAIL),
             stored["name"],
             {"components": [{"name": "frontend", "image": "nginx:latest", "command": []}]},
+            active_sections=EDIT_SECTIONS,
         )
 
     assert exc.value.field_path == "components/0/command"
@@ -210,7 +241,9 @@ async def test_edit_saves_a_valid_project() -> None:
         _patch_project_manager(stored, captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), stored["name"], {"display-name": "Andere naam"})
+        await _save_existing_project(
+            _request_for(OWNER_EMAIL), stored["name"], {"display-name": "Andere naam"}, active_sections=EDIT_SECTIONS
+        )
 
     assert captured["data"]["display-name"] == "Andere naam"
 
@@ -304,16 +337,20 @@ def _project_with_a_payload_in_an_image(payload: str) -> dict[str, Any]:
     return data
 
 
-def test_the_reason_never_repeats_the_rejected_value() -> None:
-    """jsonschema quotes the instance; the reason must be built from the schema only."""
+def test_neither_the_reason_nor_the_message_repeats_the_rejected_value() -> None:
+    """jsonschema quotes the instance; both are built from the schema only.
+
+    The reason was the value-free half from the start; since RC-463 the message itself is
+    built from the field path and that reason, so no caller can leak the value by logging
+    or showing ``str(exc)``.
+    """
     with pytest.raises(ProjectSchemaError) as exc:
         _validate_finished_project(_project_with_a_payload_in_an_image("geheim abc"), project_name="nep-wfo")
 
     assert exc.value.field_path == "deployments/0/components/0/image"
     assert exc.value.reason is not None
     assert "geheim abc" not in exc.value.reason
-    # The raw message still quotes it -- which is exactly why callers use the reason.
-    assert "geheim abc" in str(exc.value)
+    assert "geheim abc" not in str(exc.value)
 
 
 def test_the_logged_warning_does_not_leak_the_value(caplog: pytest.LogCaptureFixture) -> None:
@@ -347,8 +384,8 @@ def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> No
     special characters -- and several validators quote the rejected value in their
     message, so a value typed into the form would otherwise be executed server-side.
     """
-    from opi.core.templates_lotc import templates_lotc
     from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router_wizard import _render_step_html
 
     html = _render_step_html(
@@ -374,8 +411,8 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
     """
     from unittest.mock import MagicMock
 
-    from opi.core.templates_lotc import templates_lotc
     from opi.forms.editables.processor import EditableFormProcessor
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router_wizard import SCHEMA_FIELD_MARKER, _do_submit
 
     payload = "geheim-{{ 7*7 }}"

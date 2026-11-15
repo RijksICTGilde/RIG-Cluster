@@ -1,10 +1,10 @@
-"""De lopende sync-operation van een ArgoCD-Application: lezen, beoordelen, beëindigen.
+"""The running sync operation of an ArgoCD Application: read it, judge it, end it.
 
-`.operation` is wat de controller BLOKKEERT, want `autoSync` begint met
-`if app.Operation != nil`. `.status.operationState` is wat de LAATSTE operation deed. Ze
-lopen uiteen zodra iemand `.operation` weghaalt terwijl de phase nog `Running` is: niets
-ruimt die losgekoppelde stand op, dus hij blijft `Running` tot een volgende sync hem
-overschrijft, terwijl auto-sync al vrij is.
+`.operation` is what BLOCKS the controller, because `autoSync` starts with
+`if app.Operation != nil`. `.status.operationState` is what the LAST operation did. The two
+part ways the moment someone removes `.operation` while the phase is still `Running`:
+nothing cleans up that detached state, so it stays `Running` until a next sync overwrites
+it, while auto-sync is already free.
 """
 
 from __future__ import annotations
@@ -21,31 +21,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: `Terminating` hoort erbij: de controller-grens zet die phase en de operation staat er dan nog.
+#: `Terminating` belongs here: the controller sets that phase while the operation still stands.
 ONGOING_PHASES = frozenset({"Running", "Terminating"})
 
-#: Gelijk aan OPI's eigen wacht van 300s: wat langer loopt dan waar OPI zelf op wacht, wacht
-#: op iets wat niet meer komt. Lager zou een uitrol kunnen afbreken die nog gewoon bezig is.
+#: Equal to OPI's own 300s wait: anything running longer than OPI itself waits for is waiting
+#: on something that is not coming. Lower could break off a rollout that is simply still busy.
 #:
-#: Dat geldt voor wie naar een uitrol van IEMAND ANDERS kijkt: de ronde voor een gewone push
-#: en het rapport. Waar "nog gewoon bezig" geen mogelijkheid meer is wordt 0 meegegeven: op
-#: OPI's eigen time-out-tak (``ProjectManager._terminate_operation_we_waited_on``) en op het
-#: refresh-pad, waar iemand op reset drukt (``reset_running_sync``).
+#: That is for whoever looks at SOMEONE ELSE's rollout: the round for an ordinary push, and
+#: the report. Where "still busy" is no longer a possibility, 0 is passed in: on OPI's own
+#: time-out branch (``ProjectManager._terminate_operation_we_waited_on``) and on the refresh
+#: path, where someone presses reset (``reset_running_sync``).
 STUCK_OPERATION_THRESHOLD_SECONDS = 300
 
 
 @dataclass(frozen=True)
 class SyncOperation:
-    """Wat een Application over zijn laatste of lopende sync zegt."""
+    """What an Application says about its last or running sync."""
 
     phase: str | None
     started_at: str | None
     finished_at: str | None
-    #: `syncResult.revision`: de revisie die werkelijk is UITGEROLD. Niet te verwarren met
-    #: `status.sync.revision`, de revisie waartegen vergeleken is.
+    #: `syncResult.revision`: the revision that was actually ROLLED OUT. Not to be confused
+    #: with `status.sync.revision`, the revision compared against.
     revision: str | None
     message: str | None
-    #: Of `.operation` nog aan de Application hangt.
+    #: Whether `.operation` is still attached to the Application.
     attached: bool
 
     @property
@@ -58,12 +58,11 @@ class SyncOperation:
 
 
 def read_sync_operation(application: dict[str, Any] | None) -> SyncOperation:
-    """Lees de operation uit een Application-payload.
+    """Read the operation out of an Application payload.
 
-    Dezelfde lezer voor `kubectl get application -o json` en voor
-    `GET /api/v1/applications/{naam}`: de swagger van argocd-server geeft
-    `v1alpha1Application` dezelfde velden als de CR, dus `.operation` staat in beide payloads
-    op dezelfde plek.
+    The same reader for `kubectl get application -o json` and for
+    `GET /api/v1/applications/{name}`: argocd-server's swagger gives `v1alpha1Application` the
+    same fields as the CR, so `.operation` sits in the same place in both payloads.
     """
     application = application or {}
     state = (application.get("status") or {}).get("operationState") or {}
@@ -79,11 +78,9 @@ def read_sync_operation(application: dict[str, Any] | None) -> SyncOperation:
 
 
 def describe_sync_waiting(application: dict[str, Any], *, fresh: bool) -> str | None:
-    """Waarop ArgoCD zelf nog bezig is, in gewone taal, of ``None`` als de sync rond is.
+    """What ArgoCD itself is still busy with, in plain words, or ``None`` once the sync is done.
 
-    ``None`` betekent: de manifests staan erop, wat nog ontbreekt zit in de pods. De
-    voortgangsregel liet alleen dat laatste zien, dus een sync die op een hook of een
-    lopende operation hing las als "redis: readiness slaagt nog niet".
+    ``None`` means the manifests are on the cluster and whatever is missing sits in the pods.
     """
     if not fresh:
         return "ArgoCD heeft de wijziging nog niet verwerkt"
@@ -99,7 +96,7 @@ def describe_sync_waiting(application: dict[str, Any], *, fresh: bool) -> str | 
 
 
 def seconds_since(timestamp: str | None, *, now: datetime | None = None) -> int | None:
-    """Seconden sinds een ArgoCD-tijdstip, of ``None`` als het ontbreekt of onleesbaar is."""
+    """Seconds since an ArgoCD timestamp, or ``None`` when it is absent or unreadable."""
     if not timestamp:
         return None
     try:
@@ -113,22 +110,21 @@ def seconds_since(timestamp: str | None, *, now: datetime | None = None) -> int 
 
 
 def operation_age_seconds(operation: SyncOperation, *, now: datetime | None = None) -> int | None:
-    """Hoe lang de operation al loopt, of ``None`` als `startedAt` ontbreekt of onleesbaar is."""
+    """How long the operation has been running, or ``None`` without a readable `startedAt`."""
     return seconds_since(operation.started_at, now=now)
 
 
 def is_stuck(operation: SyncOperation, *, threshold_seconds: int, now: datetime | None = None) -> bool:
-    """Blokkeert deze operation een volgende sync en loopt hij al zo lang als de drempel?
+    """Whether this operation blocks a next sync and has run at least as long as the threshold.
 
-    Een ontbrekende of onleesbare `startedAt` telt als vastgelopen zodra hij blokkeert: een
-    aangehechte operation zonder begin is precies de losgekoppelde stand waar niets meer aan
-    verandert.
+    An absent or unreadable `startedAt` counts as stuck the moment it blocks: an attached
+    operation without a start is exactly the detached state that nothing changes any more.
 
-    Een negatieve leeftijd leest als 0, om dezelfde reden als in ``format_duration``: bij
-    klokverschil tussen ArgoCD (UTC) en OPI (CEST) ligt `startedAt` in de toekomst. Zonder die
-    klem is een drempel van 0 geen "altijd zolang hij blokkeert" meer, en blijft juist op de
-    time-out-tak de blokkade staan die daar opgeruimd moet worden. Op de drempel van 300
-    verandert de klem niets.
+    A negative age reads as 0, for the same reason as in ``format_duration``: with a clock
+    difference between ArgoCD (UTC) and OPI (CEST), `startedAt` lies in the future. Without
+    that clamp a threshold of 0 is no longer "always while it blocks", and the blockade that
+    has to go would stay on exactly the time-out branch. At a threshold of 300 the clamp
+    changes nothing.
     """
     if not operation.blocks_next_sync:
         return False
@@ -143,24 +139,24 @@ async def terminate_stuck_operation(
     *,
     threshold_seconds: int = STUCK_OPERATION_THRESHOLD_SECONDS,
 ) -> bool:
-    """Beëindig de lopende sync-operation van ``app_name`` als die een volgende sync blokkeert.
+    """End the running sync operation of ``app_name`` when it blocks a next sync.
 
-    Returns True als er werkelijk een operation is weggehaald. False betekent dat er niets te
-    beëindigen was (geen operation, al klaar, of nog jong genoeg om gewoon bezig te zijn), dat
-    de patch mislukte (dat logt ``terminate_argocd_application_operation`` zelf), of dat
-    kubectl niet bereikbaar was.
+    True when an operation was really removed. False means there was nothing to end (no
+    operation, already finished, or still young enough to be simply busy), that the patch
+    failed (``terminate_argocd_application_operation`` logs that itself), or that kubectl was
+    unreachable.
 
-    Die laatste hoort hier en niet bij de aanroeper: dit is een best-effort opruiming, en
-    beide aanroepers staan op een pad dat niet mag stranden. Voor de push is de volgorde juist
-    commit, opruimen, push, dus een omgevallen kubectl zou de manifests gecommit en ongepusht
-    achterlaten; op de time-out-tak zou hij van een nette time-out een ``KubectlConnectionError``
-    maken. En die tak is niet zeldzaam: ``_run_kubectl_command`` gooit zodra
-    ``KubectlConnector.isConnected`` False is, en die vlag gaat procesbreed om bij een enkele
-    "connection refused", met een achtergrondretry van 30s.
+    That last case is swallowed HERE and not by the caller: this is a best-effort cleanup and
+    both callers sit on a path that must not strand. For the push the order is commit, clean
+    up, push, so a kubectl that fell over would leave the manifests committed and unpushed; on
+    the time-out branch it would turn a clean time-out into a ``KubectlConnectionError``. That
+    branch is not rare: ``_run_kubectl_command`` raises as soon as
+    ``KubectlConnector.is_connected`` is False, and that flag flips process-wide on a single
+    "connection refused", with a background retry of 30s.
     """
     try:
-        # Geen eigen grendel op een Application die niet bestaat: die levert `None`, en daarop
-        # blijft `attached` False, dus de grendel zou nooit aan de beurt komen.
+        # No guard of its own for an Application that does not exist: that yields `None`, on
+        # which `attached` stays False, so the guard would never get its turn.
         operation = read_sync_operation(await kubectl.get_argocd_application(app_name, namespace))
         if not operation.blocks_next_sync:
             return False
@@ -197,13 +193,12 @@ async def terminate_stuck_operation(
 
 
 def format_duration(seconds: int | None) -> str:
-    """Een looptijd als '45 seconden', '19 minuten', '2 uur', of 'onbekend lang'.
+    """A runtime as '45 seconden', '19 minuten', '2 uur', or 'onbekend lang'.
 
-    Naar BENEDEN afgerond, zoals ``relatieve_tijd`` in ``opi/web/lotc_switch.py``: 119 minuten
-    leest als '1 uur' en niet als '2 uur'. Een duur en geen klok, want ArgoCD rapporteert in
-    UTC en OPI's eigen regels in CEST. Een negatieve duur komt daar ook vandaan, bij
-    klokverschil tussen de twee, en leest als '0 seconden' in plaats van als een onmogelijk
-    getal; ``relatieve_tijd`` vangt hem om dezelfde reden af.
+    Rounded DOWN, like ``relative_time`` in ``opi/http/render/lotc_switch.py``: 119 minutes
+    reads as '1 uur' and not as '2 uur'. A duration and not a clock, because ArgoCD reports in
+    UTC and OPI's own lines in CEST. A negative duration comes from that same difference and
+    reads as '0 seconden' instead of an impossible number.
     """
     if seconds is None:
         return "onbekend lang"

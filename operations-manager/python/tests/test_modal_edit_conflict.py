@@ -13,11 +13,12 @@ validatiefout - de review met ``global_errors`` - en niet als een onbehandelde u
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
+from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_store import ConflictError
 from opi.web.router_detail_edit import _process_and_save_modal_edit
 
@@ -46,7 +47,7 @@ async def _save_met(fout: Exception) -> tuple[Any, list[str]]:
         patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
         patch("opi.web.router_detail_edit._render_modal_review", side_effect=_review),
     ):
-        _, antwoord = await _process_and_save_modal_edit(
+        antwoord = await _process_and_save_modal_edit(
             request=MagicMock(),
             project_manager=_project_manager(fout),
             project_name="demo",
@@ -85,3 +86,56 @@ async def test_een_onbekende_fout_wordt_nog_steeds_niet_ingeslikt() -> None:
     """
     with pytest.raises(RuntimeError):
         await _save_met(RuntimeError("iets heel anders"))
+
+
+@pytest.mark.asyncio
+async def test_the_wizard_rerenders_a_conflict_instead_of_500() -> None:
+    """RC-483 P4: the edit wizard gave a bare 500 where the modal gave a message.
+
+    ``ConflictError`` fell through the ``except Exception: raise`` of ``_do_submit``, so the
+    user got an error page and lost their input. They belong back on their step with the
+    store's explanation, as in the modal.
+    """
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.web.router_wizard import _do_submit
+
+    message = "Dit project is ondertussen door iemand anders gewijzigd."
+
+    state = MagicMock()
+    state.flow_id = "edit-project"
+    state.project_name = "demo"
+    state.current_step = "identity"
+    state.step_data = {}
+    state.staged_attachments = {}
+    state.is_edit = True
+    state.get_merged_data.return_value = {"name": "demo", "display-name": "Demo"}
+
+    seen: dict[str, Any] = {}
+
+    def _render(_request: Any, *, template: str, context: dict[str, Any]) -> Any:
+        seen.update(context)
+        return SimpleNamespace(template_name=template)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(user={"email": "owner@example.com"}, csrf_token="t"),
+        query_params={},
+        cookies={},
+    )
+
+    with (
+        patch("opi.web.router_wizard.get_wizard_state", return_value=state),
+        patch("opi.web.router_wizard.save_wizard_state"),
+        patch.object(
+            EditableFormProcessor,
+            "process_json_submission",
+            new=AsyncMock(return_value=({"name": "demo", "display-name": "Demo"}, {})),
+        ),
+        patch.object(EditableFormProcessor, "enforce_sections", new=AsyncMock(return_value=[])),
+        patch("opi.forms.editables.lifecycle.run_hooks", new=AsyncMock()),
+        patch("opi.web.router_wizard._save_existing_project", side_effect=ConflictError(message)),
+        patch("opi.web.router_wizard.render", side_effect=_render),
+    ):
+        await _do_submit(request, "edit-project")
+
+    assert seen["global_errors"] == [message]
+    assert seen["errors"] == {}

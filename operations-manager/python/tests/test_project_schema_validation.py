@@ -12,13 +12,13 @@ import copy
 from pathlib import Path
 
 import pytest
-from opi.core.project_schema import (
+from opi.services.catalog.shared.storage import StorageEntry
+from opi.services.project_schema import (
     ProjectSchemaError,
     validate_declared_project_schema,
     validate_project_schema,
 )
-from opi.manager.project_validation import validate_service_configs
-from opi.services.catalog.shared.storage import StorageEntry
+from opi.services.project_validation import validate_service_configs
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -441,20 +441,24 @@ def test_repository_url_normal_values_are_accepted() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: Since schema version 2.18 a secret field in a project file only takes an encrypted form.
+ENCRYPTED_SECRET = "base64+age:Y2lwaGVydGV4dA=="
+
+
 def _remote_source(**overrides: object) -> dict:
     source: dict = {
         "name": "odcn-production",
         "chisel": {
             "server-url": "https://chisel-server.prd.example.com",
             "username": "admin",
-            "password": "plain:secret",
+            "password": ENCRYPTED_SECRET,
         },
         "services": {
             "postgresql-database": {
                 "host": "amt-cluster-db-r",
                 "port": 5432,
                 "username": "tad",
-                "password": "plain:secret",
+                "password": ENCRYPTED_SECRET,
                 "database": "tad",
                 "schema": "public",
             }
@@ -737,7 +741,7 @@ class TestBareDomainComponentIsDeclared:
         # declaration the additionalProperties gate rejects it and nothing else notices.
         import json
 
-        from opi.core.project_schema import LEGACY_PATCH_DIR
+        from opi.services.project_schema import LEGACY_PATCH_DIR
 
         patch = json.loads((LEGACY_PATCH_DIR / "v2.6.json").read_text(encoding="utf-8"))
         assert "expose-component-on-bare-domain" in patch["$defs"]["deployment"]["properties"]
@@ -841,12 +845,12 @@ class TestHetSchemaEnDeConstantesZeggenHetzelfde:
 
     @staticmethod
     def _defs() -> dict:
-        from opi.core.project_schema import _load_latest_schema
+        from opi.services.project_schema import _load_latest_schema
 
         return _load_latest_schema()["$defs"]
 
     def test_de_hoeveelheid(self) -> None:
-        from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN
+        from opi.utils.k8s_quantity import K8S_QUANTITY_PATTERN
 
         assert self._defs()["k8s-quantity"]["pattern"] == K8S_QUANTITY_PATTERN
 
@@ -859,6 +863,12 @@ class TestHetSchemaEnDeConstantesZeggenHetzelfde:
         from opi.forms.editables.validators import EMAIL_PATTERN
 
         assert self._defs()["user"]["properties"]["email"]["pattern"] == EMAIL_PATTERN
+
+    def test_the_project_name(self) -> None:
+        from opi.services.project_schema import _load_latest_schema
+        from opi.utils.patterns import PROJECT_NAME
+
+        assert _load_latest_schema()["properties"]["name"]["pattern"] == PROJECT_NAME
 
     def test_de_image(self) -> None:
         from opi.utils.naming import CONTAINER_IMAGE_PATTERN

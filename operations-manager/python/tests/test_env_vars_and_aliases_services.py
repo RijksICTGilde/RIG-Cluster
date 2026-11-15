@@ -12,16 +12,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.wizard.secrets import REDACTED
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.editables import AliasMapValidator
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from opi.services.registry import SERVICES, property_owning_services
 from opi.services.services_enums import ServiceKind, ServiceType
 from pydantic import ValidationError
+from tests import project_manager_sources
 
 ENV_VARS = SERVICES[ServiceType.USER_ENV_VARS]
 ALIASES = SERVICES[ServiceType.ALIASES]
@@ -291,11 +292,12 @@ class TestTheConverterNeverLogsAValue:
             KeyValueConverter(fmt="env").read({"API_KEY": "s3cr3t-value"})
         assert "s3cr3t-value" not in caplog.text
 
-    def test_write_logs_neither_input_nor_result(self, caplog) -> None:
+    def test_write_logs_neither_input_nor_result(self, caplog, age_keypair: tuple[str, str]) -> None:
         from opi.forms.editables.converters import KeyValueConverter
 
+        project = {"config": {"age-public-key": age_keypair[1]}}
         with caplog.at_level("DEBUG", logger="opi.forms.editables.converters"):
-            KeyValueConverter(fmt="env", write_as="string").write("API_KEY=s3cr3t-value")
+            KeyValueConverter(fmt="env", write_as="string").write("API_KEY=s3cr3t-value", context_data=project)
         assert "s3cr3t-value" not in caplog.text
 
 
@@ -315,9 +317,8 @@ class TestNoUserEnvVarNamesInLogs:
         assert "app.example.nl" not in caplog.text
 
     def test_the_unresolved_warning_does_not_carry_a_var_name(self) -> None:
-        # project_manager passes `where` without the variable name, so the warning that
-        # quotes it cannot leak one.
-        source = (_OPI / "manager" / "project_manager.py").read_text(encoding="utf-8")
+        # Through project_manager_sources: a guard on one file goes quiet when the call moves.
+        source = project_manager_sources.source_text()
         assert 'where=f"a user-env-var of component {component_name}"' in source
 
     def test_the_router_logs_a_count_not_the_keys(self) -> None:
@@ -325,8 +326,3 @@ class TestNoUserEnvVarNamesInLogs:
         assert "parsed_env_vars.keys()" not in source, (
             "web/router.py logs user-env-var key names again; log how many, not which"
         )
-
-    def test_the_config_handler_logs_neither_key_nor_value(self) -> None:
-        source = (_OPI / "handlers" / "configuration_handler.py").read_text(encoding="utf-8")
-        assert "key='{key}', value='{value}'" not in source
-        assert "add_env_var called for component" in source

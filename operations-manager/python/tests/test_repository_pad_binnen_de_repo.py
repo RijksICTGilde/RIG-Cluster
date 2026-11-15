@@ -7,16 +7,17 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.project_schema import (
+from opi.forms.models.project_file import REPOSITORY_PATH_PATTERN, RepositoryModel
+from opi.manager.argo_manager import ArgoManager
+from opi.manager.project.manifests.repository import RepositoryManifests
+from opi.manager.project_manager import ProjectManager
+from opi.manager.pvc_manager import PVCManager
+from opi.services.project_schema import (
     SCHEMA_PATH,
     ProjectSchemaError,
     validate_declared_project_schema,
     validate_project_schema,
 )
-from opi.forms.models.project_file import REPOSITORY_PATH_PATTERN, RepositoryModel
-from opi.manager.argo_manager import ArgoManager
-from opi.manager.project_manager import ProjectManager
-from opi.manager.pvc_manager import PVCManager
 from opi.utils.naming import (
     RepositoryPathError,
     generate_deployment_manifest_path,
@@ -67,13 +68,21 @@ class TestHetSchemaWeigertBijDePoort:
         assert "Veld 'repositories/0/path'" in str(exc.value)
         assert "zonder '..'" in str(exc.value)
 
-    def test_een_patroonveld_zonder_beschrijving_houdt_de_kale_melding(self) -> None:
+    def test_een_patroonveld_zonder_beschrijving_houdt_de_generieke_reden(self) -> None:
+        """Without a field description the generic reason is what is left, never the pattern.
+
+        This used to be jsonschema's own message, which quotes the pattern AND the rejected
+        value. That message is logged and shown in a browser, so since RC-463
+        ``validate_project_schema`` builds it from the path and the schema keyword.
+        """
         project = _project(".")
         project["name"] = "Demo"
         with pytest.raises(ProjectSchemaError) as exc:
             validate_project_schema(project)
         pattern = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))["properties"]["name"]["pattern"]
-        assert str(exc.value).endswith(f"does not match {pattern!r}")
+        assert "Veld 'name'" in str(exc.value)
+        assert "de waarde heeft niet de vorm die het schema voorschrijft" in str(exc.value)
+        assert pattern not in str(exc.value)
 
     @pytest.mark.parametrize("path", TOEGESTAAN)
     def test_laat_door(self, path: str) -> None:
@@ -149,12 +158,16 @@ class TestDeSchrijversGaanLangsHetAnker:
         manager = ProjectManager.__new__(ProjectManager)
         manager.get_contents = AsyncMock(return_value={})
         manager.get_name = AsyncMock(return_value="demo")
-        manager.get_repository_path = AsyncMock(return_value="../../../../tmp/uit-de-repo")
         git_connector = MagicMock()
         git_connector.get_working_dir = AsyncMock(return_value=str(lege_werkmap))
         deployment = {"name": "deployment-1", "cluster": "odcn-production", "namespace": "demo", "repository": "r"}
 
-        with pytest.raises(RepositoryPathError):
+        with (
+            patch.object(
+                RepositoryManifests, "get_repository_path", AsyncMock(return_value="../../../../tmp/uit-de-repo")
+            ),
+            pytest.raises(RepositoryPathError),
+        ):
             await manager._process_deployment_manifests(deployment, git_connector)
 
     @pytest.mark.asyncio
@@ -186,9 +199,12 @@ class TestDeSchrijversGaanLangsHetAnker:
         }
 
         with (
-            patch("opi.core.cluster_config.get_infrastructure_namespace", return_value="rig-prd-demo-infra"),
-            patch("opi.core.cluster_config.get_storage_class_name", return_value="standard"),
-            patch("opi.generation.manifests.render_template", return_value="kind: Secret\n"),
+            patch(
+                "opi.manager.project.infrastructure.get_infrastructure_namespace",
+                return_value="rig-prd-demo-infra",
+            ),
+            patch("opi.manager.project.infrastructure.get_storage_class_name", return_value="standard"),
+            patch("opi.manager.project.infrastructure.render_template", return_value="kind: Secret\n"),
             pytest.raises(RuntimeError) as exc,
         ):
             await manager._create_infrastructure_resources(project_data, "odcn-production")

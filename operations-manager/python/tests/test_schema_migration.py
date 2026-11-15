@@ -4,15 +4,16 @@ import copy
 import logging
 
 import pytest
-from opi.connectors.subdomain import get_domains_config
-from opi.core.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
-from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.subdomain import get_domains_config
+from opi.services.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
+from opi.services.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,
     component_description,
     detect_schema_version,
+    encrypt_plain_secrets,
     migrate_to_latest,
     normalize_domains_location,
     normalize_service_entries,
@@ -1139,7 +1140,7 @@ def _project_with_top_level_invites(version: float = 2.5) -> dict:
 
 
 def test_relocate_invites_moves_the_block_and_validates():
-    from opi.core.project_schema import validate_project_schema
+    from opi.services.project_schema import validate_project_schema
 
     out, was_migrated = migrate_to_latest(_project_with_top_level_invites())
     assert was_migrated is True
@@ -1884,3 +1885,103 @@ class TestSourceCodeLinksMigration:
         assert was_migrated is True
         assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp
+
+
+class TestEncryptPlainSecretsMigration:
+    """v2.17 -> v2.18: the five fields that could carry ``plain:`` are encrypted.
+
+    Each with the key its reader opens it with: the repository password with the platform
+    key, the remote-source credentials with the project key. Five production project files
+    carried the deployments-repo password as ``plain:``; after this step none can.
+    """
+
+    @pytest.fixture
+    def keys(self, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+        """A platform pair and a project pair, so the test can tell them apart."""
+        from opi.core.config import settings
+        from opi.utils.age import generate_age_key_pair
+
+        platform_private, platform_public = generate_age_key_pair()
+        monkeypatch.setattr(settings, "SOPS_AGE_PUBLIC_KEY", platform_public)
+        project_private, project_public = generate_age_key_pair()
+        self.project_public = project_public
+        return platform_private, project_private
+
+    def _project(self) -> dict:
+        return {
+            "name": "p",
+            "schema-version": "2.17",
+            "config": {"age-public-key": self.project_public},
+            "repositories": [{"name": "main-repo", "password": "plain:repo-pat"}],
+            "remote-sources": [
+                {
+                    "name": "bron",
+                    "chisel": {"server-url": "https://c.example.com", "password": "plain:tunnel"},
+                    "services": {
+                        "postgresql-database": {"host": "db", "password": "plain:db-pw"},
+                        "minio-storage": {
+                            "host": "s3",
+                            "access-key": "plain:ak",
+                            "secret-key": "plain:sk",
+                        },
+                    },
+                }
+            ],
+        }
+
+    def test_each_field_is_encrypted_with_the_key_of_its_reader(self, keys: tuple[str, str]) -> None:
+        from opi.utils.age import decrypt_password_smart_sync
+
+        platform_private, project_private = keys
+        data = self._project()
+
+        assert encrypt_plain_secrets(data) is True
+
+        repository_password = data["repositories"][0]["password"]
+        assert decrypt_password_smart_sync(repository_password, platform_private) == "repo-pat"
+
+        source = data["remote-sources"][0]
+        assert decrypt_password_smart_sync(source["chisel"]["password"], project_private) == "tunnel"
+        services = source["services"]
+        assert decrypt_password_smart_sync(services["postgresql-database"]["password"], project_private) == "db-pw"
+        assert decrypt_password_smart_sync(services["minio-storage"]["access-key"], project_private) == "ak"
+        assert decrypt_password_smart_sync(services["minio-storage"]["secret-key"], project_private) == "sk"
+
+    def test_the_migrated_file_passes_the_latest_schema_guard(self, keys: tuple[str, str]) -> None:
+        from opi.services.project_schema import find_plaintext_secret_violations
+
+        data = self._project()
+        encrypt_plain_secrets(data)
+
+        assert find_plaintext_secret_violations(data) == []
+
+    def test_an_already_encrypted_value_is_left_alone(self, keys: tuple[str, str]) -> None:
+        data = {"name": "p", "repositories": [{"name": "main-repo", "password": "base64+age:YWJj"}]}
+
+        assert encrypt_plain_secrets(data) is False
+        assert data["repositories"][0]["password"] == "base64+age:YWJj"
+
+    def test_without_a_key_the_value_stays_and_is_logged(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Fail closed: the schema gate then refuses the file by name, which beats a guess."""
+        from opi.core.config import settings
+
+        monkeypatch.setattr(settings, "SOPS_AGE_PUBLIC_KEY", "")
+        data = {"name": "p", "repositories": [{"name": "main-repo", "password": "plain:repo-pat"}]}
+
+        with caplog.at_level(logging.WARNING):
+            assert encrypt_plain_secrets(data) is False
+
+        assert data["repositories"][0]["password"] == "plain:repo-pat"
+        assert "repositories/0/password" in caplog.text
+        assert "repo-pat" not in caplog.text
+
+    def test_a_2_17_file_reaches_the_latest_version(self, keys: tuple[str, str]) -> None:
+        data = self._project()
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert not result["repositories"][0]["password"].startswith("plain:")

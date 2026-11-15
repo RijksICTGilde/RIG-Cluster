@@ -7,11 +7,11 @@ Het model toetst alleen de VORM; of een domein ondersteund of goedgekeurd is, bl
 from __future__ import annotations
 
 import pytest
-from opi.connectors.subdomain import validate_subdomain_for_domain
 from opi.core import config as opi_config
-from opi.core.project_schema import validate_project_schema
-from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebDeploymentConfig
+from opi.services.catalog.publish_on_web.subdomain import validate_subdomain_for_domain
+from opi.services.project_schema import validate_project_schema
+from opi.services.project_validation import ProjectIntegrityError, validate_project_structure
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 

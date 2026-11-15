@@ -25,11 +25,11 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 import pytest_asyncio
-from opi.core.async_task_service import TaskType
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.services.catalog.base import ConfigLayer, config_endpoint_path
 from opi.services.project_store import reset_project_store
+from opi.services.tasks.async_task_service import TaskType
 from tests.e2e.helpers import sandbox_api
 from tests.integration import forgejo_live, kubernetes_live, minio_live, postgres_live, startup_live, tasks_live
 from tests.integration.tasks_live import (
@@ -88,6 +88,11 @@ SCHEMA_POSTFIX = "rapportage"
 #: De env-var waarmee de values-taak gemeten wordt.
 ENV_NAME = "METING_SLEUTEL"
 ENV_VALUE = "metingwaarde"
+
+#: The env-var the rollout task is measured with. The window sends the WHOLE set, so the
+#: line of the values task travels along: without it this measurement would wipe that one.
+ROLLOUT_ENV_NAME = "METING_UITROL"
+ROLLOUT_ENV_VALUE = "uitrolwaarde"
 
 #: De inhoud van de bijlage. Een constante, want het bijlage-scenario zet hem neer en het
 #: opzeg-scenario eist dat precies deze tekst weg is.
@@ -477,6 +482,27 @@ async def test_configure_service_values_reaches_the_namespace(wereld: Wereld, ku
     assert await tasks_live.wait_until(
         lambda: tasks_live.secret_holds(kubectl, namespace, ENV_NAME, ENV_VALUE), timeout=CLUSTER_TIMEOUT
     ), f"geen Secret in {namespace} draagt {ENV_NAME}"
+
+
+async def test_rollout_project_reaches_the_namespace(wereld: Wereld, kubectl: kubernetes_live.Kubectl) -> None:
+    """ROLLOUT_PROJECT: the env-vars window writes in the request, this task rolls it out.
+
+    The only task that changes nothing in the project file itself: it processes the
+    deployments the saved change touched. Through the real entrance, because that is what
+    resolves the task's scope.
+    """
+    answer = await _web(
+        wereld,
+        f"/projects/{PROJECT}/componenten/{COMPONENT}/env-vars",
+        {"vars": f"{ENV_NAME}={ENV_VALUE}\n{ROLLOUT_ENV_NAME}={ROLLOUT_ENV_VALUE}"},
+    )
+    await _await_task(wereld, _task_id_from_fragment(answer))
+
+    namespace = next(iter(tasks_live.project_namespaces(kubectl)))
+    assert await tasks_live.wait_until(
+        lambda: tasks_live.secret_holds(kubectl, namespace, ROLLOUT_ENV_NAME, ROLLOUT_ENV_VALUE),
+        timeout=CLUSTER_TIMEOUT,
+    ), f"no Secret in {namespace} carries {ROLLOUT_ENV_NAME}"
 
 
 async def test_manage_database_schemas_adds_and_removes_one(wereld: Wereld, forgejo: forgejo_live.ForgejoApi) -> None:
@@ -923,8 +949,12 @@ async def test_delete_deployment_leaves_nothing_of_it(
     assert await tasks_live.wait_until(
         lambda: not tasks_live.argo_names_for(kubectl, "application", SECOND_DEPLOYMENT), timeout=CLUSTER_TIMEOUT
     ), "de ArgoCD-Application van de verwijderde deployment staat er nog"
-    assert await tasks_live.databases_of(SECOND_DEPLOYMENT) == set(), "de database van de deployment staat er nog"
-    assert tasks_live.buckets_of(SECOND_DEPLOYMENT) == set(), "de bucket van de deployment staat er nog"
+
+    # Since RC-484 (D1) every removal marks the persistent data first, with a grace period
+    # of seven days, and the purge takes it after that. "Gone" is the mark, not a database
+    # that disappears at once.
+    marked = {kind for kind, _ in await tasks_live.marks_of(SECOND_DEPLOYMENT)}
+    assert {"postgresql_database", "minio_bucket"} <= marked, f"de data is niet gemarkeerd: {marked}"
 
     # De scheiding tussen de twee niveaus: een deployment weghalen raakt niets van het
     # PROJECT. Het realm en de database van de buur horen te blijven staan.
@@ -951,8 +981,9 @@ async def test_delete_project_leaves_nothing_anywhere(
         lambda: not tasks_live.argo_names(kubectl, "application"), timeout=CLUSTER_TIMEOUT
     ), "er staat nog een ArgoCD-Application van dit project"
     assert not tasks_live.argo_names(kubectl, "appproject"), "er staat nog een AppProject van dit project"
-    assert await tasks_live.databases_with_prefix() == set(), "er staat nog een database van dit project"
-    assert await tasks_live.roles_with_prefix() == set(), "er staat nog een rol van dit project"
-    assert tasks_live.buckets_with_prefix() == set(), "er staat nog een bucket van dit project"
-    assert tasks_live.minio_users_with_prefix() == set(), "er staat nog een MinIO-gebruiker van dit project"
+    # The data of the deployments is marked and not wiped (RC-484, D1): deleting a project
+    # is reversible within the grace period, and the purge takes it after that. The database,
+    # the bucket, the MinIO user and the policy all belong to it.
+    marked = {kind for kind, _ in await tasks_live.marks_of(DEPLOYMENT)}
+    assert {"postgresql_database", "postgresql_user", "minio_bucket", "minio_user"} <= marked, marked
     assert not tasks_live.realm_exists(), "het realm van dit project staat er nog"

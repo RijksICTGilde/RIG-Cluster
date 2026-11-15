@@ -6,106 +6,10 @@ Pure logic module with no I/O - all data is passed in as arguments.
 
 import logging
 import math
-import re
-from dataclasses import dataclass
-from typing import Final
+
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 logger = logging.getLogger(__name__)
-
-#: De vorm van een Kubernetes-hoeveelheid in een projectbestand: precies de achtervoegsels
-#: die de twee parsers hieronder aankunnen, geen enkel teken meer. Staat hier omdat dit de
-#: module is die een hoeveelheid in een getal omzet; ``$defs/k8s-quantity`` in
-#: project_v2.json neemt deze tekst over en test_project_schema_validation houdt de twee
-#: gelijk. Grenzen horen hier niet: die liggen per cluster (cluster_config) of per dienst
-#: (``QuantitySetting``).
-K8S_QUANTITY_PATTERN: Final[str] = r"^[0-9]+(\.[0-9]+)?([munk]|Ki|[MGTP]i?)?\Z"
-
-
-@dataclass
-class ResourceRecommendation:
-    """A recommendation for adjusting a component's resource limits."""
-
-    component: str
-    current_limits_memory: str
-    recommended_limits_memory: str
-    current_requests_memory: str
-    recommended_requests_memory: str
-    max_observed_memory_mb: float
-    has_oom_kills: bool
-    reason: str
-
-
-def parse_k8s_memory_to_mi(value: str) -> float:
-    """Convert a Kubernetes memory string to MiB (mebibytes).
-
-    Supports the full set of Kubernetes quantity suffixes: binary (Ki, Mi, Gi,
-    Ti, Pi), decimal (k, M, G, T, P - note lowercase k for kilo), and plain
-    bytes. The VPA recommender in particular emits decimal forms like "262144k".
-
-    Args:
-        value: Kubernetes memory string (e.g., "512Mi", "1Gi", "262144k", "536870912")
-
-    Returns:
-        Value in MiB
-
-    Raises:
-        ValueError: If the value cannot be parsed or uses an unknown unit.
-    """
-    value = value.strip()
-    match = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$", value)
-    if not match:
-        raise ValueError(f"Cannot parse memory value: {value}")
-
-    num = float(match.group(1))
-    unit = match.group(2)
-
-    mib = 1024 * 1024
-    multipliers: dict[str, float] = {
-        "": 1 / mib,  # plain bytes
-        # Binary (power-of-two) suffixes
-        "Ki": 1 / 1024,
-        "Mi": 1.0,
-        "Gi": 1024.0,
-        "Ti": 1024.0 * 1024,
-        "Pi": 1024.0 * 1024 * 1024,
-        # Decimal (power-of-ten) suffixes - VPA emits these (e.g. "262144k")
-        "k": 1e3 / mib,
-        "M": 1e6 / mib,
-        "G": 1e9 / mib,
-        "T": 1e12 / mib,
-        "P": 1e15 / mib,
-    }
-
-    if unit not in multipliers:
-        raise ValueError(f"Unknown memory unit: {unit}")
-
-    return num * multipliers[unit]
-
-
-def parse_k8s_cpu_to_m(value: str) -> float:
-    """Convert a Kubernetes CPU quantity to millicores.
-
-    Supports millicores (`78m`), whole/fractional cores (`1`, `0.5`),
-    nanocores (`n`) and microcores (`u`) as emitted by the VPA recommender.
-
-    Sits next to :func:`parse_k8s_memory_to_mi` rather than in the VPA connector it
-    was written for: a Kubernetes quantity is turned into a number in one module, so
-    "is 2 more than 100m" has a single answer. `opi.connectors.vpa` re-exports it, so
-    every existing import keeps working.
-
-    Raises:
-        ValueError: If the value cannot be parsed.
-    """
-    value = value.strip()
-    if not value:
-        raise ValueError("Empty CPU value")
-    if value.endswith("m"):
-        return float(value[:-1])
-    if value.endswith("n"):
-        return float(value[:-1]) / 1_000_000
-    if value.endswith("u"):
-        return float(value[:-1]) / 1000
-    return float(value) * 1000
 
 
 def _k8s_memory_to_mb(value: str) -> float:

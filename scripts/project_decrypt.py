@@ -77,7 +77,7 @@ def read_key(argument: str) -> str:
 async def decode_attachments(data: object, private_key: str) -> None:
     """Maak bijlagen leesbaar: die dragen een extra base64-laag onder de AGE-laag.
 
-    ``encrypt_file_to_age_block`` base64't de bytes voordat het versleutelt, zodat een
+    ``encrypt_file_to_age_block_sync`` base64't de bytes voordat het versleutelt, zodat een
     binair bestand de string-gebaseerde helpers overleeft. De gewone boomwandeling haalt
     er dus base64 uit in plaats van de inhoud. Herkenning gaat op vorm (een dict met
     ``filename`` en ``content``) in plaats van op een vast pad, want een projectbestand

@@ -1,8 +1,8 @@
-"""De dienst ``image-registries``: welke image waar vandaan komt, en met welk secret.
+"""The ``image-registries`` service: where an image comes from, and with which secret.
 
-De clustertabel en de registries van het project vormen samen één regellijst
-(``resolution.py``). Alleen het provisioneren kent activatie, en dat is door data
-gedreven: geen registries in de config betekent geen enkel manifest.
+The cluster table and the project's registries together form one rule list
+(``resolution.py``). Only the provisioning has activation, and that is data driven: no
+registries in the config means no manifest at all.
 """
 
 from __future__ import annotations
@@ -52,14 +52,16 @@ from opi.services.services_enums import ServiceType, UIEvent
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.layout import LayoutChild
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.approval import ApprovalSpec
 
 logger = logging.getLogger(__name__)
 
 
-#: Shown up front where the cluster builds a proxy per registry: measured on staging on
-#: 3 November 2026, the first pull only worked after three and a half minutes.
+#: Shown up front where the cluster builds a proxy per registry: on staging the first pull
+#: took three and a half minutes to work.
 _PROXY_SETUP_NOTICE = (
     "Op dit platform maakt ODCN voor elke registry een eigen proxy aan. Dat duurt na het "
     "opslaan een paar minuten, en zolang kan een component zijn image nog niet ophalen. "
@@ -89,21 +91,21 @@ class ImageRegistriesService(Service):
     config_schema_version = "1.0"
     config_section_id = "image-registries-config"
     modal_flow_id = "modal-edit-image-registries-config"
-    # De registries staan op projectniveau, dus een component dat een registry kiest mag
-    # zichzelf daar bijschrijven.
+    # The registries live at project level, so a component that picks a registry may enrol
+    # itself there.
     allows_implicit_project_selection = True
     config_component_order = 8
-    # De gekozen registry IS de selectie; zie features/image-registries.md.
+    # The chosen registry IS the selection; see features/image-registries.md.
     component_selection_follows_config = True
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
-        # De registries op het project, de verwijzing bij naam op (deployment-)component.
+        # The registries on the project, the reference by name on a (deployment) component.
         if layer in (ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT):
             return ComponentRegistryConfig
         return self.config_model
 
-    def config_roles(self, layer: ConfigLayer):
-        # Het project gebruikt zijn eigen registries; een component bindt er een aan zijn image.
+    def config_roles(self, layer: ConfigLayer) -> tuple[ConfigRole, ...]:
+        # The project uses its own registries; a component binds one to its image.
         if layer is ConfigLayer.PROJECT:
             return (ConfigRole.USE,)
         return (ConfigRole.USE, ConfigRole.BIND)
@@ -115,7 +117,7 @@ class ImageRegistriesService(Service):
             return ["registry"]
         return []
 
-    def config_editables(self, layer: ConfigLayer):
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         if layer is ConfigLayer.PROJECT:
             return [REGISTRIES_SEQUENCE_EDITABLE]
         if layer is ConfigLayer.COMPONENT:
@@ -130,15 +132,13 @@ class ImageRegistriesService(Service):
     def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
         QUOTA_APPROVAL.ensure_requested(project_data)
 
-    # --- component- en deployment-componentniveau -------------------------------------
-
     def config_component_visualizers(self) -> list[EditableVisualizer]:
         return [COMPONENT_REGISTRY]
 
-    def config_component_layout(self) -> list[Any]:
+    def config_component_layout(self) -> list[LayoutChild]:
         svc = self.service_type.value
-        # Geen ``depends_on`` op de dienstenlijst: de keuze IS de selectie, dus het veld
-        # zou wachten op wat het zelf zet.
+        # No ``depends_on`` on the services list: the choice IS the selection, so the field
+        # would wait on what it sets itself.
         return [
             Div(
                 slot=COMPONENT_IMAGE_SLOT,
@@ -149,11 +149,11 @@ class ImageRegistriesService(Service):
     def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
         return [DEPLOYMENT_COMPONENT_REGISTRY]
 
-    def config_deployment_component_layout(self) -> list[Any]:
+    def config_deployment_component_layout(self) -> list[LayoutChild]:
         svc = self.service_type.value
-        # ``services`` is hier een dict keyed op dienstnaam, dus een gewoon padsegment. Het
-        # fieldset staat er onvoorwaardelijk, want de dienstenlijst van het component is
-        # geen veld van dit formulier.
+        # ``services`` is a dict keyed on service name here, so a plain path segment. The
+        # fieldset is unconditional, because the component's services list is not a field of
+        # this form.
         return [
             Fieldset(
                 legend="Eigen registry (alleen voor deze deployment)",
@@ -165,53 +165,49 @@ class ImageRegistriesService(Service):
             )
         ]
 
-    # --- het vrije label en de slug die eruit volgt -----------------------------------
-
     def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
-        """Geef elke registry zonder ``name`` er een, afgeleid van zijn label.
+        """Give every registry without a ``name`` one, derived from its label.
 
-        Hier en niet in een converter van de editable, want allebei de schrijfwegen komen
-        hier langs: de portal via ``post_merge`` van de sectie en de API via
-        ``registry.generate_missing_values``. Een bestaande naam blijft staan, ook als het
-        label verandert.
+        Here and not in a converter of the editable, because both write paths come past here:
+        the portal through the section's ``post_merge`` and the API through
+        ``registry.generate_missing_values``. An existing name stays, also when the label
+        changes.
         """
-        # Lazy: ``opi.services.project`` leest ``opi.forms``, en dat leest via de providers
-        # deze module.
+        # Lazy: ``opi.services.project`` reads ``opi.forms``, which reads this module through
+        # the providers.
         from opi.services.project import Project
 
         base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")
         registries = Project(project_data).get(base) or []
         if not isinstance(registries, list):
             return {}
-        bezet = {entry["name"] for entry in registries if isinstance(entry, dict) and entry.get("name")}
-        gegenereerd: dict[str, str] = {}
+        used = {entry["name"] for entry in registries if isinstance(entry, dict) and entry.get("name")}
+        generated: dict[str, str] = {}
         for index, entry in enumerate(registries):
             if not isinstance(entry, dict) or entry.get("name") or not entry.get("display-name"):
                 continue
-            slug = registry_slug(str(entry["display-name"]), bezet)
+            slug = registry_slug(str(entry["display-name"]), used)
             entry["name"] = slug
-            bezet.add(slug)
-            gegenereerd[f"{base}[{index}]/name"] = slug
-        if gegenereerd:
+            used.add(slug)
+            generated[f"{base}[{index}]/name"] = slug
+        if generated:
             logger.info(
-                f"Registrynaam afgeleid voor {len(gegenereerd)} registry(s) van project "
+                f"Registrynaam afgeleid voor {len(generated)} registry(s) van project "
                 f"'{project_data.get('name', 'unknown')}'"
             )
-        return gegenereerd
+        return generated
 
     def _generate_missing_names(self, project_data: dict[str, Any], _form_data: dict[str, Any]) -> None:
-        """De ``post_merge``-vorm van :meth:`generate_missing_values`: de portal geeft twee
-        dicts en wil niets terug, en een implementatie bedient allebei de wegen."""
+        """The ``post_merge`` shape of :meth:`generate_missing_values`: the portal hands two
+        dicts and wants nothing back, and one implementation serves both paths."""
         self.generate_missing_values(project_data)
-
-    # --- projectniveau: de wizardsectie ----------------------------------------------
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         return self.service_type.value in [
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def config_form_section(self, layer: ConfigLayer):
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
@@ -231,22 +227,20 @@ class ImageRegistriesService(Service):
             self._config_section_cache = cached
         return cached
 
-    # --- de projectpagina ---------------------------------------------------------
-
     @on(UIEvent.PROJECT_SECTIONS)
     def registries_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
-        """Wat dit project aan eigen registries heeft.
+        """What this project has in private registries.
 
-        De toestand van de proxy staat in het cluster en wordt lazy opgehaald (``web.py``).
+        The proxy's state lives in the cluster and is fetched lazily (``web.py``).
         """
         registries = project_registries(ctx.project_data)
         if not registries:
             return []
-        # Alleen wat het sjabloon toont. ``ctx.project_data`` is ONTSLEUTELD, dus de entry
-        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext. Van het
-        # token gaat daarom alleen de VRAAG mee of het er is: sinds de gebruikersnaam optioneel
-        # is (RC-187) is dat het enige waaraan het blok een entry met inloggegevens herkent.
-        getoond = [
+        # Only what the template shows. ``ctx.project_data`` is DECRYPTED, so the entry itself
+        # carries the token in plain text; that does not belong in a render context. Of the
+        # token only the QUESTION whether it is there travels along: with the username
+        # optional, that is the only way the block recognises an entry with credentials.
+        shown = [
             {
                 **{key: registry.get(key) for key in ("name", "upstream", "username", "secretName")},
                 "has_token": bool(registry.get("password")),
@@ -256,27 +250,25 @@ class ImageRegistriesService(Service):
         return [
             DetailPageSection(
                 template="image_registries/section-detail.html.j2",
-                context={"registries": getoond, "project_name": ctx.project_data.get("name", "")},
+                context={"registries": shown, "project_name": ctx.project_data.get("name", "")},
             )
         ]
 
     def web_routers(self) -> list[Any]:
-        # Lazy: de router leest de projectstore, en die leest via ``project_validation`` en
-        # ``opi.forms`` deze module.
+        # Lazy: the router reads the project store, which reads this module through
+        # ``project_validation`` and ``opi.forms``.
         from opi.services.catalog.image_registries.web import image_registries_router
 
         return [*super().web_routers(), image_registries_router]
 
-    # --- regels over het hele project --------------------------------------------------
-
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``), plus
-        de weg terug (``references.py``).
+        """The three ownership rules around the proxy organizations (see ``ownership.py``),
+        plus the way back (``references.py``).
 
-        De eerste drie kijken naar de andere projecten op het cluster en niet naar een
-        configblok, dus ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit
-        project de dienst aanvinkt: het gaat om waar een image NAAR wijst. De vierde legt
-        componenten naast de registrylijst en hoort om dezelfde reden hier.
+        The first three look at the other projects on the cluster and not at a config block,
+        so they cannot live in ``validate_config``. They also run when this project does not
+        tick the service: what matters is what an image points AT. The fourth lays components
+        next to the registry list and belongs here for the same reason.
         """
         return [
             *validate_proxy_organization_ownership(project_data),
@@ -285,10 +277,8 @@ class ImageRegistriesService(Service):
             *validate_registry_references(project_data),
         ]
 
-    # --- projectbrede manifesten ------------------------------------------------------
-
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
-        """Wat deze dienst op het PROJECTniveau van de deployments-repo neerzet."""
+        """What this service puts at the PROJECT level of the deployments repo."""
         registries = project_registries(ctx.project_data)
         if not registries:
             return []
@@ -298,8 +288,8 @@ class ImageRegistriesService(Service):
         for registry in registries:
             for spec in backend.manifests(ctx, registry):
                 if spec.filename in seen:
-                    # Twee registries op dezelfde bestandsnaam: de eerste wint, net als in
-                    # de regellijst.
+                    # Two registries on the same filename: the first wins, as in the rule
+                    # list.
                     logger.warning(
                         f"Registry '{registry.get('name')}' van project '{ctx.project_name}' levert dezelfde "
                         f"projectmanifest '{spec.filename}' als een eerdere registry; de eerste blijft staan"

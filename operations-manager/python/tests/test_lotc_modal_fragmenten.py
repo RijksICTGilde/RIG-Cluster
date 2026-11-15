@@ -33,8 +33,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
-from opi.web.navigation_lotc import to_nldd_icon
+from opi.http.render.templates_lotc import templates_lotc
+from opi.utils.nldd_iconen import to_nldd_icon
 from tests.oppervlak import als_lijsten, meet, ontbreekt
 
 SNAPSHOT = Path(__file__).resolve().parent / "oppervlak_snapshot_fragmenten.json"

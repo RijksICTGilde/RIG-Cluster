@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
-from opi.utils.naming import get_component_ingress_map
 
 CLUSTER = "local"
 PROJECT = "webadres"
@@ -131,7 +131,7 @@ class TestDezelfdeHostnamenUitElkeOpslagvorm:
     def test_de_publieke_urls_zijn_gelijk(self, shape: str) -> None:
         # De tweede plek waar dezelfde velden een adres opbouwen: de dienst-eigen
         # URL-opbouw achter de detailpagina en de API.
-        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
         project = _project(shape)

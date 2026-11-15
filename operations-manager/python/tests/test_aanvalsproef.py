@@ -16,19 +16,19 @@ from typing import Any
 import pytest
 import yaml
 from opi.tools.aanvalsproef import (
-    LEZERS,
-    UITZONDERINGEN,
-    Bevinding,
-    Grendelfout,
-    boven_drempel,
+    EXCEPTIONS_FILE,
+    READERS,
+    Finding,
+    GuardError,
+    above_threshold,
     gate,
-    geldige_uitzonderingen,
-    grendel,
-    lees_checkov,
-    lees_kube_linter,
-    lees_nuclei,
-    lees_semgrep,
+    guard_target,
     main,
+    read_checkov,
+    read_kube_linter,
+    read_nuclei,
+    read_semgrep,
+    valid_exceptions,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -53,7 +53,7 @@ MAX_GELDIGHEID = timedelta(days=365)
     ],
 )
 def test_de_grendel_laat_een_eigen_doelwit_door(doelwit: str) -> None:
-    grendel(doelwit)
+    guard_target(doelwit)
 
 
 @pytest.mark.parametrize(
@@ -68,18 +68,18 @@ def test_de_grendel_laat_een_eigen_doelwit_door(doelwit: str) -> None:
     ],
 )
 def test_de_grendel_weigert_alles_wat_geen_loopback_is(doelwit: str) -> None:
-    with pytest.raises(Grendelfout):
-        grendel(doelwit)
+    with pytest.raises(GuardError):
+        guard_target(doelwit)
 
 
 def test_de_lezers_dekken_elke_sectie_van_de_uitzonderingslijst() -> None:
     """Een sectie zonder lezer is een lijst die niets stil zet."""
-    secties = set(yaml.safe_load(UITZONDERINGEN.read_text(encoding="utf-8")) or {})
-    assert secties <= set(LEZERS), f"secties zonder lezer: {secties - set(LEZERS)}"
+    secties = set(yaml.safe_load(EXCEPTIONS_FILE.read_text(encoding="utf-8")) or {})
+    assert secties <= set(READERS), f"secties zonder lezer: {secties - set(READERS)}"
 
 
 def _uitzonderingen() -> list[tuple[str, dict[str, Any]]]:
-    inhoud = yaml.safe_load(UITZONDERINGEN.read_text(encoding="utf-8")) or {}
+    inhoud = yaml.safe_load(EXCEPTIONS_FILE.read_text(encoding="utf-8")) or {}
     return [(soort, regel) for soort, regels in inhoud.items() for regel in (regels or [])]
 
 
@@ -112,7 +112,7 @@ def test_een_verlopen_uitzondering_zwijgt_niet_meer(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert geldige_uitzonderingen("nuclei", date(2026, 1, 1), pad) == {"nog-geldig"}
+    assert valid_exceptions("nuclei", date(2026, 1, 1), pad) == {"nog-geldig"}
 
 
 def _reden_en_vervaldatum(blok: str, naam: str, vandaag: date) -> list[str]:
@@ -231,17 +231,17 @@ def test_de_renovate_regel_vindt_elke_scannerversie_in_de_workflows() -> None:
 
 def test_de_drempel_laat_lagere_ernst_liggen_en_onbekende_ernst_niet() -> None:
     bevindingen = [
-        Bevinding(id="laag", plek="a", ernst="low"),
-        Bevinding(id="midden", plek="b", ernst="medium"),
-        Bevinding(id="onbekend", plek="c", ernst="rood"),
+        Finding(id="laag", location="a", severity="low"),
+        Finding(id="midden", location="b", severity="medium"),
+        Finding(id="onbekend", location="c", severity="rood"),
     ]
-    assert {b.id for b in boven_drempel(bevindingen, "medium")} == {"midden", "onbekend"}
+    assert {b.id for b in above_threshold(bevindingen, "medium")} == {"midden", "onbekend"}
 
 
 def test_de_gate_houdt_over_wat_niet_is_uitgezonderd() -> None:
     bevindingen = [
-        Bevinding(id="bekend", plek="a", ernst="high"),
-        Bevinding(id="nieuw", plek="b", ernst="high"),
+        Finding(id="bekend", location="a", severity="high"),
+        Finding(id="nieuw", location="b", severity="high"),
     ]
     assert [b.id for b in gate(bevindingen, {"bekend"}, "medium")] == ["nieuw"]
 
@@ -252,7 +252,7 @@ def test_de_nuclei_lezer_leest_jsonl(tmp_path: Path) -> None:
         json.dumps({"template-id": "iets", "info": {"severity": "HIGH"}, "matched-at": "http://127.0.0.1/x"}) + "\n\n",
         encoding="utf-8",
     )
-    assert lees_nuclei(rapport) == [Bevinding(id="iets", plek="http://127.0.0.1/x", ernst="high")]
+    assert read_nuclei(rapport) == [Finding(id="iets", location="http://127.0.0.1/x", severity="high")]
 
 
 def test_de_kube_linter_lezer_noemt_het_object_en_het_bestand(tmp_path: Path) -> None:
@@ -273,8 +273,8 @@ def test_de_kube_linter_lezer_noemt_het_object_en_het_bestand(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    assert lees_kube_linter(rapport) == [
-        Bevinding(id="latest-tag", plek="Deployment/web in manifests/deployment.yaml", ernst="high")
+    assert read_kube_linter(rapport) == [
+        Finding(id="latest-tag", location="Deployment/web in manifests/deployment.yaml", severity="high")
     ]
 
 
@@ -284,9 +284,9 @@ def test_de_checkov_lezer_leest_een_lijst_en_een_object(tmp_path: Path) -> None:
     als_object.write_text(json.dumps(resultaat), encoding="utf-8")
     als_lijst = tmp_path / "lijst.json"
     als_lijst.write_text(json.dumps([resultaat]), encoding="utf-8")
-    verwacht = [Bevinding(id="CKV_K8S_14", plek="Pod.web in /p", ernst="high")]
-    assert lees_checkov(als_object) == verwacht
-    assert lees_checkov(als_lijst) == verwacht
+    verwacht = [Finding(id="CKV_K8S_14", location="Pod.web in /p", severity="high")]
+    assert read_checkov(als_object) == verwacht
+    assert read_checkov(als_lijst) == verwacht
 
 
 def test_de_semgrep_lezer_legt_de_ernst_op_de_schaal(tmp_path: Path) -> None:
@@ -312,9 +312,9 @@ def test_de_semgrep_lezer_legt_de_ernst_op_de_schaal(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert lees_semgrep(rapport) == [
-        Bevinding(id="regel.een", plek="opi/web/x.py:7", ernst="medium"),
-        Bevinding(id="regel.twee", plek="opi/web/y.py:9", ernst="low"),
+    assert read_semgrep(rapport) == [
+        Finding(id="regel.een", location="opi/web/x.py:7", severity="medium"),
+        Finding(id="regel.twee", location="opi/web/y.py:9", severity="low"),
     ]
 
 
@@ -385,4 +385,4 @@ def test_elke_gate_in_de_workflows_gebruikt_een_lezer_die_bestaat() -> None:
                         soort = regel.split("opi.tools.aanvalsproef", 1)[1].split()[0]
                         gebruikt.add(soort)
     assert gebruikt, "geen enkele gate roept opi.tools.aanvalsproef aan"
-    assert gebruikt <= {"grendel", *LEZERS}, f"onbekende subcommando's: {gebruikt - {'grendel', *LEZERS}}"
+    assert gebruikt <= {"grendel", *READERS}, f"onbekende subcommando's: {gebruikt - {'grendel', *READERS}}"

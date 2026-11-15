@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import uvicorn
 import yaml
 from itsdangerous import TimestampSigner
-from opi.utils.logging_redact import redact_invite_key_in_path
+from opi.core.logging_redact import redact_invite_key_in_path
 from tests.e2e.testserver import SECRET_KEY, _munt_projectsleutelpaar, create_test_app, get_in_memory_session_store
 
 from security_tests import sandboxlog

@@ -6,11 +6,12 @@ het echte cluster meet: twee schrijvers raken hetzelfde projectbestand en beide
 wijzigingen moeten blijven staan.
 
 Het verschil met `test_concurrent_save_conflict.py` en `test_task_save_base_version.py`
-is de VORM van de UI-schrijver. Een modal-bewerking is geen enkele save:
-`_process_and_save_modal_edit` slaat op, en daarna start `_start_deployment` een
+is de VORM van de UI-schrijver. Een modal-bewerking was geen enkele save:
+`_process_and_save_modal_edit` sloeg op, en daarna startte de uitrol een
 create_project-taak die hetzelfde bestand nog een keer schreef. Die tweede save droeg
 het formulierresultaat van VOOR de eerste save, op de basisversie van het moment dat het
-formulier werd geladen.
+formulier werd geladen. Sinds RC-483 is die tweede save er niet meer: de uitrol is de
+taak `rollout_project`, die alleen verwerkt.
 
 `test_task_save_base_version.py` pinde die dubbele save voor een gewijzigd SCALAIR veld,
 waar de driewegsmerge er netjes doorheen komt. Deze tests doen het met een component dat
@@ -94,7 +95,7 @@ def store_and_remote(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
 
     monkeypatch.setattr(ProjectManager, "process_project_from_git", _processed)
     monkeypatch.setattr(ProjectManager, "close", _closed)
-    monkeypatch.setattr("opi.core.simple_background._monitor_argocd_and_deployment", _monitored)
+    monkeypatch.setattr("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", _monitored)
     monkeypatch.setattr("opi.core.config.settings.OOM_WATCHER_ENABLED", False)
 
     return store, remote
@@ -145,7 +146,7 @@ def _make_progress() -> MagicMock:
 
 
 async def _run_task(payload: dict[str, Any]) -> tuple[dict[str, Any], MagicMock]:
-    from opi.core.task_handlers_project import handle_create_project
+    from opi.runtime.tasks.task_handlers_project import handle_create_project
 
     progress = _make_progress()
     return await handle_create_project(payload, progress), progress

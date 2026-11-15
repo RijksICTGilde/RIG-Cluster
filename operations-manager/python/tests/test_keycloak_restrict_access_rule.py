@@ -26,10 +26,10 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.keycloak_manager import KeycloakManager
-from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.keycloak.config_model import RestrictAccessConfig
+from opi.services.project_schema import ProjectIntegrityError
+from opi.services.project_validation import validate_service_configs
 from pydantic import ValidationError
 
 FRAGMENT = Path(__file__).parent.parent / "opi" / "services" / "catalog" / "keycloak" / "keycloak.v1.0.json"

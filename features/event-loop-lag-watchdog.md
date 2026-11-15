@@ -54,7 +54,7 @@ Boven de drempel komt er EEN WARNING per stilstand, met de stack van de hoofdthr
 De event loop staat 14.2s stil. Stack van de hoofdthread:
   File "/app/opi/manager/delete_project_manager.py", line 2806, in cleanup_removed_services_from_yaml_change
     was_used = file_handler.deployment_uses_service(previous_yaml, dep_name, svc_values)
-  File "/app/opi/handlers/project_file_handler.py", line 878, in extract_value_by_path
+  File "/app/opi/services/project_file_handler.py", line 878, in extract_value_by_path
     jsonpath_expr = compiled_jsonpath(path)
   ...
 ```

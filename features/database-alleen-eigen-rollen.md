@@ -39,7 +39,7 @@ Vier aanroepers:
   voor de doeldatabase en voor de `_vN`-database die `force_clone` aanmaakt. De handmatige
   kloon-API komt daar langs buiten een verwerking om, dus zonder deze aanroep zou die
   database open blijven tot de volgende verwerking.
-* **De platformdatabases**: `opi/core/platform_database_access.py` loopt bij de start van OPI
+* **De platformdatabases**: `opi/runtime/startup/platform_database_access.py` loopt bij de start van OPI
   langs `keycloak`, `forgejo`, `mailrelay` en de eigen database van OPI. Die laatste krijgt
   `DATABASE_APP_USER` expliciet in zijn rollenlijst: OPI opent haar sinds RC-410 met een
   eigen rol en niet meer als superuser (`features/opi-op-een-eigen-databaserol.md`), en

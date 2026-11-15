@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from opi.core.persistent_task_progress import PersistentTaskProgressManager
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
+from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 from opi.web.router import _progress_page_context, _v2_task_to_template_context
 from opi.web.router_tasks import _normalize_task
 
@@ -136,7 +136,7 @@ class TestDeSchrijfkant:
         doelgegevens van een restore, en hoort dus alleen in de werkgegevens.
         """
         with patch(
-            "opi.core.persistent_task_progress.asyncio.get_running_loop",
+            "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
             side_effect=RuntimeError,
         ):
             progress = PersistentTaskProgressManager(task_id="abc-123", project_name="va-48w", task_service=MagicMock())

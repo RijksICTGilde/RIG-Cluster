@@ -1,14 +1,11 @@
-"""De beheerpagina met de toestand van de gedeelde diensten (/admin/diensten).
+"""The admin page with the state of the shared services.
 
-De pagina zelf doet GEEN metingen: hij zet de kaders neer en haalt de twee blokken
-daarna lui op, elk met een eigen verzoek. Zo staat de pagina er meteen, houdt een trage
-of onbereikbare metriekbron hem niet op, en kost een kapot blok alleen dat blok. Dezelfde
-aanpak als het dashboard en de projectdetailpagina.
+The page itself measures NOTHING: it puts the frames down and fetches each block lazily, in a
+request of its own, so a slow or unreachable metrics source costs only its own block.
 
-Wie hier mag komen: alleen een platformbeheerder. Deze pagina toont gegevens over ALLE
-projecten heen, dus ``require_platform_admin`` staat op de pagina en op allebei de
-fragmenten - een fragment is een gewone URL, en een grendel op alleen de pagina laat de
-gegevens er via het fragment nog steeds uit.
+``require_platform_admin`` sits on the page AND on every fragment: a fragment is a plain URL,
+and a guard on the page alone still lets the data out through the fragment. The page shows data
+across ALL projects.
 """
 
 from __future__ import annotations
@@ -19,18 +16,18 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
-from opi.services.gedeelde_diensten import (
-    DREMPELS,
-    ONGEMETEN_DIENSTEN,
-    haal_databases,
-    haal_keycloak,
-    haal_opslag,
-    haal_resources,
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.lotc_switch import build_lotc_admin, render
+from opi.http.render.menu import get_menu_items
+from opi.services.shared_services import (
+    THRESHOLDS,
+    UNMEASURED_SERVICES,
+    fetch_databases,
+    fetch_keycloak,
+    fetch_resources,
+    fetch_storage,
 )
-from opi.web.lotc_switch import build_lotc_admin, render
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ shared_services_router = APIRouter(prefix="/admin/diensten", tags=["gedeelde-die
 @action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_overzicht(request: Request) -> Response:
-    """Het overzicht: de kaders, de drempels en wat er niet gemeten wordt."""
+    """The overview: the frames, the thresholds and what is not measured."""
     user = require_platform_admin(request)
 
     return render(
@@ -50,8 +47,8 @@ async def gedeelde_diensten_overzicht(request: Request) -> Response:
         context={
             "request": request,
             "menu_items": get_menu_items(user),
-            "drempels": list(DREMPELS.values()),
-            "ongemeten": ONGEMETEN_DIENSTEN,
+            "drempels": list(THRESHOLDS.values()),
+            "ongemeten": UNMEASURED_SERVICES,
             **build_lotc_admin(user=user, current_path="/admin/diensten"),
         },
     )
@@ -61,14 +58,14 @@ async def gedeelde_diensten_overzicht(request: Request) -> Response:
 @action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_resources(request: Request) -> Response:
-    """Het resourceblok, apart opgehaald."""
+    """The resources block, fetched on its own."""
     require_platform_admin(request)
 
-    blok = await haal_resources()
+    block = await fetch_resources()
     return render(
         request,
         template="bg/_gedeelde-diensten-resources.html.j2",
-        context={"request": request, "blok": blok},
+        context={"request": request, "blok": block},
     )
 
 
@@ -76,14 +73,14 @@ async def gedeelde_diensten_resources(request: Request) -> Response:
 @action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_opslag(request: Request) -> Response:
-    """Het opslagblok, apart opgehaald."""
+    """The storage block, fetched on its own."""
     require_platform_admin(request)
 
-    blok = await haal_opslag()
+    block = await fetch_storage()
     return render(
         request,
         template="bg/_gedeelde-diensten-opslag.html.j2",
-        context={"request": request, "blok": blok},
+        context={"request": request, "blok": block},
     )
 
 
@@ -91,14 +88,14 @@ async def gedeelde_diensten_opslag(request: Request) -> Response:
 @action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_databases(request: Request) -> Response:
-    """Het databaseblok, apart opgehaald."""
+    """The database block, fetched on its own."""
     require_platform_admin(request)
 
-    blok = await haal_databases()
+    block = await fetch_databases()
     return render(
         request,
         template="bg/_gedeelde-diensten-databases.html.j2",
-        context={"request": request, "blok": blok},
+        context={"request": request, "blok": block},
     )
 
 
@@ -106,12 +103,12 @@ async def gedeelde_diensten_databases(request: Request) -> Response:
 @action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_keycloak(request: Request) -> Response:
-    """Het Keycloak-blok, apart opgehaald."""
+    """The Keycloak block, fetched on its own."""
     require_platform_admin(request)
 
-    blok = await haal_keycloak()
+    block = await fetch_keycloak()
     return render(
         request,
         template="bg/_gedeelde-diensten-keycloak.html.j2",
-        context={"request": request, "blok": blok},
+        context={"request": request, "blok": block},
     )

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from key_rotation import (  # type: ignore[reportMissingImports]
     PROJECT_FIELD_REPO_PASSWORD,
-    ConversionFailed,
+    ConversionError,
     FinalCheck,
     check_token,
     decrypt_field,
@@ -308,7 +308,7 @@ async def plan_argo_round(
     file was invisible in exactly the run that was supposed to show it.
     """
     if (current_pat is None) != (new_pat is None):
-        raise ConversionFailed("a PAT round here needs both the current and the new PAT, or neither")
+        raise ConversionError("a PAT round here needs both the current and the new PAT, or neither")
     secrets, unreadable = read_repository_secrets(clone, *private_keys)
     pairing = pair_up(secrets, project_repositories(projects))
     pairing.unreadable = unreadable
@@ -361,9 +361,9 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
     other.
     """
     if not secret.path.name.endswith(SOPS_SUFFIX):
-        raise ConversionFailed(f"not a SOPS file name, so its plaintext counterpart is unknown: {secret.path}")
+        raise ConversionError(f"not a SOPS file name, so its plaintext counterpart is unknown: {secret.path}")
     if len(secret.recipients) != 1:
-        raise ConversionFailed(
+        raise ConversionError(
             f"{secret.path} has {len(secret.recipients)} AGE recipients; this round writes back to exactly one"
         )
     secret.string_data[PASSWORD_FIELD] = password
@@ -393,7 +393,7 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
         raise
     if source.exists():
         source.unlink()
-        raise ConversionFailed(f"SOPS left {source} in plain text; the secret was not written")
+        raise ConversionError(f"SOPS left {source} in plain text; the secret was not written")
 
 
 async def check_repository_secrets(

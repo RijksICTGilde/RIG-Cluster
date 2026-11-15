@@ -15,10 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action, action_of
-from opi.core.leden import LidSoort
+from opi.http.auth.authz import enforce_route_action
+from opi.http.render.lotc_switch import PROJECT_TABS, project_tab_url, tab_from_path
+from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import enforce_route_action
-from opi.web.lotc_switch import PROJECT_TABS, project_tab_url, tab_from_path
 from opi.web.router import project_details, project_map_json
 
 MEMBER = "lid@rijksoverheid.nl"
@@ -33,7 +33,7 @@ def _project(name: str = "demo") -> ProjectSummary:
         name=name,
         filename=f"{name}.yaml",
         data={"name": name},
-        users=[ProjectUser(email=MEMBER, roles=["admin"], type=LidSoort.PERSOON)],
+        users=[ProjectUser(email=MEMBER, roles=["admin"], type=MemberKind.PERSON)],
     )
 
 
@@ -56,8 +56,8 @@ async def _gate(email: str, project_name: str, path: str, endpoint: Any, existin
     users = MagicMock()
     users.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=users),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=users),
     ):
         await enforce_route_action(_request(email, project_name, path, endpoint))
 

@@ -1,9 +1,4 @@
-"""
-Skopeo connector for pushing container images to remote registries.
-
-This module provides functionality to push Docker image tarballs to container
-registries using the skopeo CLI, following the same singleton pattern as minio_mc.py.
-"""
+"""Push container images to a registry, and check registry credentials, through the skopeo CLI."""
 
 import asyncio
 import contextlib
@@ -16,11 +11,11 @@ import threading
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
-from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.core.subprocess_env import child_env
+from opi.utils.age import AgeEncryptionError, decrypt_password_smart_auto_sync
+from opi.utils.dockerconfig import dockerconfigjson
 from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
-from opi.utils.secrets import RegistrySecret
-from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,42 +24,39 @@ logger = logging.getLogger(__name__)
 
 
 class SkopeoConnectionError(Exception):
-    """Exception raised when skopeo CLI is not available."""
+    """The skopeo CLI is not available."""
 
 
 class SkopeoExecutionError(Exception):
-    """Exception raised when skopeo command execution fails."""
+    """A skopeo command exited non-zero."""
 
 
 class SkopeoValidationError(Exception):
-    """Exception raised when input validation fails."""
+    """An image name, tag or project name does not fit what a registry tag allows."""
 
 
-# Regex for validating image names and tags
 _IMAGE_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$")
 _TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
-#: Eén melding voor elke geweigerde bestemming, anders is de weigering zelf een orakel.
+#: One message for every refused destination, otherwise the refusal itself is an oracle.
 REFUSED_DESTINATION_REASON = "het platform mag deze registry niet benaderen"
 
-#: Eén melding voor elke mislukte toets: skopeo volgt redirects en token-realms, dus stderr is een orakel.
+#: One message for every failed check: skopeo follows redirects and token realms, so stderr is an oracle.
 UNREADABLE_REASON = "de registry weigerde of was niet bereikbaar"
 
 
 @contextlib.contextmanager
 def _authfile(registry: str, username: str, password: str) -> Iterator[str]:
-    """Zodat het wachtwoord niet in de argv staat."""
+    """An authfile keeps the password out of the argv."""
     with tempfile.TemporaryDirectory(prefix="skopeo-auth-") as directory:
         path = os.path.join(directory, "auth.json")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
-            handle.write(
-                RegistrySecret(registry_url=registry, username=username, password=password).to_dockerconfigjson()
-            )
+            handle.write(dockerconfigjson(registry, username, password))
         yield path
 
 
 def _is_sandbox_registry(authority: str) -> bool:
-    """De platformregistry in de sandbox: die resolvet in de pod naar de ingress, een privaat adres."""
+    """The platform registry on the sandbox, which resolves in the pod to the ingress, a private address."""
     return (
         settings.CLUSTER_MANAGER == "sandboxed-local"
         and bool(settings.REGISTRY_URL)
@@ -73,7 +65,7 @@ def _is_sandbox_registry(authority: str) -> bool:
 
 
 async def _destination_refused(repository: str) -> bool:
-    """Valt de host van ``repository`` in private of bijzondere adresruimte, of resolvet hij niet?"""
+    """Does the host of ``repository`` sit in private or special address space, or not resolve at all?"""
     authority = upstream_host(repository)
     if _is_sandbox_registry(authority):
         return False
@@ -81,14 +73,11 @@ async def _destination_refused(repository: str) -> bool:
 
 
 class SkopeoConnector:
-    """Connector for pushing container images using skopeo CLI."""
-
     _instance = None
     _lock = threading.Lock()
     is_skopeo_available = False
 
     def __new__(cls) -> SkopeoConnector:
-        """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -97,32 +86,28 @@ class SkopeoConnector:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the skopeo connector."""
         if self._initialized:
             return
 
         logger.debug("Initializing SkopeoConnector")
 
-        # Check if skopeo CLI is available
         self._check_skopeo_availability()
 
-        # Decrypt registry password once at init
         self._registry_password: str | None = None
         if settings.REGISTRY_PASSWORD:
             try:
                 self._registry_password = decrypt_password_smart_auto_sync(settings.REGISTRY_PASSWORD)
                 logger.info("Registry password decrypted successfully")
-            except Exception as e:
+            except (AgeEncryptionError, OSError, ValueError) as e:
                 logger.error(f"Failed to decrypt registry password: {e}")
 
         self._initialized = True
         logger.info(f"SkopeoConnector initialized (available: {self.is_skopeo_available})")
 
     def _check_skopeo_availability(self) -> None:
-        """Check if skopeo CLI is available on the system."""
         try:
             result = subprocess.run(
-                ["skopeo", "--version"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                ["skopeo", "--version"],  # noqa: S607  # a tool from the image's PATH, not a fixed path
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -137,13 +122,12 @@ class SkopeoConnector:
         except FileNotFoundError:
             self.is_skopeo_available = False
             logger.warning("Skopeo CLI not found on system")
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             self.is_skopeo_available = False
             logger.error(f"Error checking skopeo availability: {e}")
 
     @staticmethod
     def _validate_image_name(image_name: str) -> None:
-        """Validate container image name."""
         if not image_name:
             raise SkopeoValidationError("Image name cannot be empty")
         if not _IMAGE_NAME_RE.match(image_name):
@@ -153,7 +137,6 @@ class SkopeoConnector:
 
     @staticmethod
     def _validate_tag(tag: str) -> None:
-        """Validate container image tag."""
         if not tag:
             raise SkopeoValidationError("Tag cannot be empty")
         if not _TAG_RE.match(tag):
@@ -163,11 +146,9 @@ class SkopeoConnector:
 
     @staticmethod
     def _validate_project_name(project_name: str) -> None:
-        """Validate the owning project name.
+        """The project name becomes the owner prefix of the registry tag.
 
-        The project name becomes the owner prefix of the registry tag, and that
-        prefix is only unambiguous because a project name cannot contain the
-        separator. Rejecting anything else here keeps that guarantee local.
+        That prefix is only unambiguous because a project name cannot hold the separator.
         """
         if not project_name:
             raise SkopeoValidationError("Project name cannot be empty")
@@ -197,18 +178,15 @@ class SkopeoConnector:
         return combined_tag
 
     def _build_destination(self, project_name: str, image_name: str, tag: str) -> str:
-        """Build the full destination registry URL.
+        """Owner, image name and tag all go into the tag (e.g. mink_app-latest).
 
-        Owner, image name and tag are all encoded into the tag (e.g. mink_app-latest)
-        because Quay does not support nested repos under a single robot-account-scoped
-        repository. The owning project comes first, so one project can never write to
-        the tag of another.
+        Quay does not support nested repos under a single robot-account-scoped repository. The
+        owning project comes first, so one project can never write to the tag of another.
         """
         combined_tag = build_registry_tag(project_name, image_name, tag)
         return f"docker://{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
 
     def _build_command(self, tarball_path: str, destination: str, authfile: str | None) -> list[str]:
-        """Build the skopeo copy command."""
         cmd = ["skopeo", "copy"]
 
         if authfile:
@@ -300,27 +278,15 @@ class SkopeoConnector:
         return re.sub(r"//[^/\s]*:[^/\s]*@", "//***@", text)
 
     async def push_image(self, tarball_path: str, project_name: str, image_name: str, tag: str) -> str:
-        """
-        Push a Docker image tarball to the configured registry.
+        """Push a tarball from ``docker save`` and return the reference it landed on.
 
-        Owner, image name and tag are encoded into the registry tag (e.g.
-        rig/zad:mink_app-latest) because Quay does not support nested repos under a
-        single robot-account-scoped repository. The owning project is the first part,
-        which makes the destination of one project unreachable for another.
-
-        Args:
-            tarball_path: Path to the Docker image tarball (from docker save)
-            project_name: Project that owns the image (the API key's project)
-            image_name: Name of the image
-            tag: Image tag
-
-        Returns:
-            The full image reference that was pushed (e.g. rcr.rijksapps.nl/rig/zad:mink_app-latest)
+        ``project_name`` is the API key's project, and :meth:`_build_destination` says how it
+        shapes the tag.
 
         Raises:
-            SkopeoConnectionError: If skopeo is not available
-            SkopeoValidationError: If input validation fails
-            SkopeoExecutionError: If the push command fails
+            SkopeoConnectionError: when skopeo is not available.
+            SkopeoValidationError: when a name, the tag or REGISTRY_URL does not hold up.
+            SkopeoExecutionError: when the push itself fails.
         """
         if not self.is_skopeo_available:
             raise SkopeoConnectionError("Skopeo CLI is not available")

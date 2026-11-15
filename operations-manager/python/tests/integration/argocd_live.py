@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
-from opi.handlers.sops import SopsHandler
+from opi.services.project_key_secret import ProjectKeySecretHandler
 from tests.integration.live import ARGOCD
 
 if TYPE_CHECKING:
@@ -149,7 +149,7 @@ class DeployedApp:
 async def prepare_destination_namespace(namespace: str, kubectl: Kubectl) -> None:
     """De namespace waar ArgoCD in uitrolt, met wat de CMP-sidecar nodig heeft.
 
-    Langs de productieweg: de labels komen uit ``namespace_labels``, ``SopsHandler`` zet het
+    Langs de productieweg: de labels komen uit ``namespace_labels``, ``ProjectKeySecretHandler`` zet het
     sleutel-Secret en de Role waarmee de sidecar precies dat Secret mag lezen. Zonder die
     drie faalt de sync op iets anders dan de manifesten: zonder het sleutel-Secret weigert
     ``render.sh`` te renderen, en zonder ``argocd.argoproj.io/managed-by`` weigert ArgoCD de
@@ -158,7 +158,7 @@ async def prepare_destination_namespace(namespace: str, kubectl: Kubectl) -> Non
     labels = namespace_labels(settings.CLUSTER_MANAGER)
     regels = "\n".join(f"    {sleutel}: {waarde}" for sleutel, waarde in labels.items())
     kubectl.apply(f"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {namespace}\n  labels:\n{regels}\n")
-    handler = SopsHandler(create_kubectl_connector())
+    handler = ProjectKeySecretHandler(create_kubectl_connector())
     stored = await handler.store_project_sops_key_in_namespace(namespace, THROWAWAY_AGE_KEY, THROWAWAY_AGE_PUBLIC_KEY)
     assert stored is True, f"sops-age-key kwam niet in namespace {namespace}"
     await handler.ensure_cmp_key_reader(namespace)

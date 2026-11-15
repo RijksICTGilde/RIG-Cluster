@@ -34,7 +34,7 @@ The Pydantic models are the canonical typed view:
 
 In addition to the schema-modeled fields, project files contain OPI-managed sections that are not user-editable through forms:
 - `config` - project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
-- `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/core/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
+- `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/services/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
 
 ### Key Sections
 
@@ -258,7 +258,7 @@ A Python 3.14 FastAPI app with a web UI (Jinja2 + the NLDD Designsysteem; Lord o
 ### Rules
 - **Only run tests for changed files** - `task test-changed` picks them, or name them yourself; never run the whole suite blindly
 - **The suite has layers** and `docs/development/toetsen.md` says when each one runs: `task test` is the fast layer, `task test-wide` the broad one (a real database, real binaries), the live groups measure the real dependencies, `task test-e2e*` the browser
-- **90% coverage minimum** is enforced (`fail_under = 90` in `pyproject.toml`)
+- **71% coverage minimum** is enforced (`fail_under` in `pyproject.toml`, the only place; CI's coverage step passes no threshold of its own). The security-critical modules have their own 86% step in `.github/workflows/ci.yml`
 - Default pytest config excludes `requires_infra`, `e2e` and `wide` markers automatically (`addopts = "... -m 'not requires_infra and not e2e and not wide'"`)
 - Post-dev validation is mandatory: `ruff check . --fix`, `ruff format .`, `pyright`
 

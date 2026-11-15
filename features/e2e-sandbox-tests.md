@@ -325,7 +325,7 @@ implement the real-login fixture mentioned above.
 
 - **Component-add requires current OPI code on the sandbox.** Older builds wrote `components[].path`
   as the string `"/"`, which the v2 schema rejects (`path` must be an array). Fix is in
-  `opi/utils/project_utils.py` (`build_component_config` emits `[{"match": path}]`). A stale pod
+  `opi/services/project_utils.py` (`build_component_config` emits `[{"match": path}]`). A stale pod
   fails `test_add_component_via_api` with "components/N/path: '/' is not of type 'array'". Check
   `curl <sandbox>/version` to confirm the running build.
 - **UI delete of an unhealthy project is slow.** The web delete is synchronous and force-less; it

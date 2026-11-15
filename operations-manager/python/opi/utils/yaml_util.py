@@ -1,7 +1,12 @@
-"""
-Generic YAML utility module for loading, finding, and updating YAML files using JSONPath.
+"""Loading, querying and updating YAML files, with JSONPath for the queries.
 
-This module provides centralized utilities for YAML file operations using JSONPath expressions.
+The only place in ``opi`` that builds a YAML parser or emitter. Each profile below is a
+pair of functions, and a caller picks the pair that matches its file:
+
+- project files: round-trip, quotes preserved, a multi-line value as a | block
+- a file that is read and written back: ``load_yaml_round_trip`` plus one of the
+  ``dump_yaml_for_go`` writers, which Helm, kustomize and kubectl read
+- read-only parsing: ``load_yaml_safe`` and ``load_yaml_documents_safe``
 """
 
 import functools
@@ -11,6 +16,7 @@ import tempfile
 from io import StringIO
 from typing import TYPE_CHECKING, Any
 
+from jsonpath_ng.exceptions import JSONPathError
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -22,17 +28,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Wide enough that the emitter never breaks a scalar across lines.
+_NO_FOLDING_WIDTH = 10**9
+
 
 @functools.lru_cache(maxsize=4096)
 def compiled_jsonpath(path: str) -> JSONPath:
-    """Een gecompileerde jsonpath-expressie, gedeeld over alle aanroepers.
+    """A compiled jsonpath expression, shared across all callers.
 
-    ``jsonpath_ng.ext.parse`` bouwt per aanroep de ply-parser opnieuw op (7,4 ms tegen
-    0,026 ms voor de ``find()`` erna), en het refreshpad parst er tientallen per
-    deployment. Alleen de EXPRESSIE komt in de cache, nooit data of resultaten: de
-    sleutel is uitsluitend de padstring en de nodes van jsonpath_ng zetten hun
-    attributen enkel in ``__init__``, dus delen tussen projecten en taken is veilig.
-    Geef de expressie niet door aan code die er attributen op zet.
+    ``jsonpath_ng.ext.parse`` rebuilds the ply parser on every call (7.4 ms against 0.026 ms
+    for the ``find()`` after it), and the refresh path parses dozens of them per deployment.
+    Only the EXPRESSION is cached, never data or results: the key is the path string alone
+    and the nodes of jsonpath_ng set their attributes in ``__init__`` only, so sharing them
+    between projects and tasks is safe. Do not hand the expression to code that sets
+    attributes on it.
     """
     return jsonpath_parse(path)
 
@@ -47,7 +56,7 @@ def _fits_literal_block(data: str) -> bool:
     return "\n" in data and "\r" not in data
 
 
-def _represent_multiline_str(representer: Any, data: str) -> Any:
+def _represent_multiline_str(representer: Any, data: str) -> Any:  # noqa: ANN401  # a ruamel representer
     """Emit a multi-line string as a literal block (``|``), not a quoted one-liner.
 
     AGE-encrypted values (realm passwords, api keys, user-env-vars, attachments)
@@ -67,7 +76,7 @@ _QUOTED_REPRESENTERS = {
 }
 
 
-def _represent_quoted_scalarstring(representer: Any, data: str) -> Any:
+def _represent_quoted_scalarstring(representer: Any, data: str) -> Any:  # noqa: ANN401  # a ruamel representer
     """Same rule for a scalar the loader read back as quoted.
 
     ``preserve_quotes`` keeps the quoting of values that were already quoted, which is
@@ -96,24 +105,40 @@ def _create_yaml_writer() -> YAML:
     return yaml
 
 
+def _create_yaml_loader() -> YAML:
+    """Create the round-trip loader that matches the project-file writer."""
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    return yaml
+
+
+def _create_plain_yaml() -> YAML:
+    """Create ruamel's unconfigured round-trip parser and emitter.
+
+    Round-trip, so a scalar keeps the source form it was written in: the safe loader
+    resolves ``0755`` to 755, and go-yaml then reads a different value than the file had.
+
+    Helm, kustomize and kubectl parse YAML 1.1, where ``on`` and ``0755`` are a bool and
+    an octal int; ruamel emits 1.2, where they are strings and stay unquoted. A value that
+    reads differently on the two sides is a known gap, not something this profile fixes.
+    """
+    return YAML()
+
+
+def _create_safe_loader() -> YAML:
+    """Create the loader for read-only parsing: no custom tags, no round-trip types."""
+    return YAML(typ="safe")
+
+
 def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
-    """
-    Load YAML content from a file path.
-
-    Args:
-        file_path: Path to the YAML file
-
-    Returns:
-        Parsed YAML data as dictionary, or None if loading failed
-    """
+    """The parsed YAML, or None when the file is missing or does not parse."""
     try:
         if not os.path.exists(file_path):
             logger.error(f"YAML file not found: {file_path}")
             return None
 
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
+        yaml = _create_yaml_loader()
 
         with open(file_path, encoding="utf-8") as f:
             data = yaml.load(f)
@@ -126,8 +151,7 @@ def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
 
 
 def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
-    """
-    Save YAML data to a file path, atomically.
+    """Save YAML data to a file path, atomically.
 
     The dump goes to a temporary file in the same directory and is then moved into place
     with os.replace, which is atomic on a single filesystem. A reader therefore sees either
@@ -137,13 +161,6 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
     truncates first: a dump that raised partway (an unrepresentable value reaching the
     dumper) left a truncated or empty file behind, which a subsequent commit would then
     happily publish. Callers also ignored the False return, so that damage was silent.
-
-    Args:
-        file_path: Path where to save the YAML file
-        data: Dictionary containing YAML data
-
-    Returns:
-        True if the save succeeded.
 
     Raises:
         OSError, ValueError: propagated from the dump or the move. Deliberately raised
@@ -175,18 +192,8 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
     return True
 
 
-def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:
-    """
-    Find a value in YAML data using JSONPath expression.
-
-    Args:
-        data: YAML data as dictionary
-        json_path: JSONPath expression to query the data
-        default: Default value to return if path not found
-
-    Returns:
-        The value found at the JSONPath, or default if not found
-    """
+def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """The value at ``json_path``, or ``default`` when the path matches nothing."""
     try:
         if not data:
             return default
@@ -196,25 +203,15 @@ def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = 
 
         return matches[0].value if matches else default
 
-    except Exception as e:
+    except (JSONPathError, ValueError, TypeError, KeyError) as e:
         logger.error(f"Error querying JSONPath '{json_path}': {e}")
         return default
 
 
 def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
-    """
-    Load YAML content from a string.
-
-    Args:
-        yaml_string: YAML content as string
-
-    Returns:
-        Parsed YAML data as dictionary, or None if parsing failed
-    """
+    """The parsed YAML, or None when the text does not parse."""
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
+        yaml = _create_yaml_loader()
 
         data = yaml.load(StringIO(yaml_string))
 
@@ -226,19 +223,11 @@ def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
 
 
 def dump_yaml_to_string(data: dict[str, Any]) -> str:
-    """
-    Dump YAML data to a string.
-
-    Args:
-        data: Dictionary containing YAML data
-
-    Returns:
-        YAML content as string
+    """Dump YAML data to a string through the canonical writer.
 
     Raises:
-        Propagates any dumper error. It previously returned "" on failure, which is a
-        dangerous sentinel now that ProjectStore commits this string straight into git:
-        an empty string would silently publish an empty project file.
+        Propagates any dumper error: ProjectStore commits this string straight into git,
+        where an empty string would publish an empty project file.
     """
     yaml = _create_yaml_writer()
 
@@ -259,9 +248,7 @@ def load_yaml_documents_from_string(yaml_string: str) -> list[Any] | None:
     Returns:
         Every document in order, or None when the text does not parse.
     """
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.width = 4096
+    yaml = _create_yaml_loader()
 
     try:
         return list(yaml.load_all(StringIO(yaml_string)))
@@ -291,18 +278,8 @@ def dump_yaml_documents_to_string(documents: list[Any]) -> str:
     return output.getvalue()
 
 
-def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:
-    """
-    Update a value in YAML data using JSONPath expression.
-
-    Args:
-        data: YAML data as dictionary (will be modified in-place)
-        json_path: JSONPath expression to the field to update
-        new_value: New value to set
-
-    Returns:
-        True if update was successful, False otherwise
-    """
+def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """Set the value at ``json_path`` in ``data`` in place. False when the path matches nothing."""
     try:
         if not data:
             logger.error("Cannot update value in empty data")
@@ -315,7 +292,6 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
             logger.error(f"JSONPath '{json_path}' not found in data")
             return False
 
-        # Update the first match (there should typically be only one)
         matches[0].full_path.update(data, new_value)
 
         logger.debug(f"Successfully updated JSONPath '{json_path}' to: {new_value}")
@@ -324,3 +300,68 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
     except Exception as e:
         logger.exception(f"Error updating JSONPath '{json_path}': {e}")
         return False
+
+
+def load_yaml_safe(yaml_string: str) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """Parse YAML for reading only: a mapping of plain dicts, lists and scalars.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return _create_safe_loader().load(StringIO(yaml_string))
+
+
+def load_yaml_documents_safe(yaml_string: str) -> list[Any]:
+    """Parse every document of a possibly multi-document YAML string, for reading only.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return list(_create_safe_loader().load_all(StringIO(yaml_string)))
+
+
+def load_yaml_round_trip(yaml_string: str) -> Any:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """Parse YAML whose result is emitted again, by one of the ``dump_yaml_for_go`` writers.
+
+    A rewrite keeps the comments and the source form of every scalar, so a file in which
+    nothing changed comes out byte-identical.
+
+    Raises:
+        YAMLError: when the text does not parse.
+    """
+    return _create_plain_yaml().load(StringIO(yaml_string))
+
+
+def dump_yaml_for_go(data: Any) -> str:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """Dump a file that a Go consumer reads.
+
+    Folds a scalar past the emitter's default width, which collapses runs of whitespace in
+    it. Use ``dump_yaml_for_go_unfolded`` for a file whose values must survive verbatim.
+    """
+    output = StringIO()
+    _create_plain_yaml().dump(data, output)
+    return output.getvalue()
+
+
+def dump_yaml_for_go_unfolded(data: Any) -> str:  # noqa: ANN401  # a YAML tree, any scalar or mapping
+    """Dump a file that a Go consumer reads, keeping every scalar on one line."""
+    yaml = _create_plain_yaml()
+    yaml.width = _NO_FOLDING_WIDTH
+    output = StringIO()
+    yaml.dump(data, output)
+    return output.getvalue()
+
+
+def dump_yaml_double_quoted_scalar(value: str) -> str:
+    """Dump a single string as a double-quoted YAML scalar, without a trailing newline.
+
+    Escapes exactly what YAML requires and nothing else, so the value survives a
+    round-trip through a manifest.
+    """
+    emitter = YAML(typ="safe", pure=True)
+    emitter.default_style = '"'
+    emitter.allow_unicode = True
+    emitter.width = _NO_FOLDING_WIDTH
+    output = StringIO()
+    emitter.dump(value, output)
+    return output.getvalue().rstrip("\n")

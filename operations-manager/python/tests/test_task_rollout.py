@@ -13,7 +13,7 @@ Three things have to hold, and each is measured rather than assumed:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_rollout import (
+from opi.services.tasks.task_rollout import (
     DEFERRABLE_TASK_TYPES,
     NON_DEFERRABLE_REASONS,
     SKIPPED_REASON,
@@ -57,7 +57,7 @@ class TestRolloutFlag:
         assert processing["reason"] == SKIPPED_REASON
 
     def test_every_task_type_is_classified_exactly_once(self):
-        """Each of the eighteen v2 task types either may defer or says why it may not.
+        """Each of the nineteen v2 task types either may defer or says why it may not.
 
         A new task type that is neither is a task type whose ``rollout=false`` would be
         silently ignored, which is the thing this feature must not do.
@@ -66,6 +66,7 @@ class TestRolloutFlag:
             "create_project",
             "upsert_deployment",
             "refresh_project",
+            "rollout_project",
             "delete_deployment",
             "delete_component",
             "update_image",
@@ -114,7 +115,7 @@ class TestAddComponentRollout:
 
     @pytest.mark.asyncio
     async def test_default_still_processes(self, payload):
-        from opi.core.task_handlers_components import handle_add_component
+        from opi.runtime.tasks.task_handlers_components import handle_add_component
 
         pm = self._pm()
         progress = _make_progress()
@@ -127,7 +128,7 @@ class TestAddComponentRollout:
 
     @pytest.mark.asyncio
     async def test_rollout_false_skips_processing(self, payload):
-        from opi.core.task_handlers_components import handle_add_component
+        from opi.runtime.tasks.task_handlers_components import handle_add_component
 
         pm = self._pm()
         progress = _make_progress()
@@ -144,7 +145,7 @@ class TestAddComponentRollout:
 
     @pytest.mark.asyncio
     async def test_description_is_forwarded(self, payload):
-        from opi.core.task_handlers_components import handle_add_component
+        from opi.runtime.tasks.task_handlers_components import handle_add_component
 
         pm = self._pm()
         progress = _make_progress()
@@ -155,7 +156,7 @@ class TestAddComponentRollout:
 
     @pytest.mark.asyncio
     async def test_rollout_false_replaces_the_processing_step(self, payload):
-        from opi.core.task_handlers_components import handle_add_component
+        from opi.runtime.tasks.task_handlers_components import handle_add_component
 
         pm = self._pm()
         progress = _make_progress()
@@ -175,7 +176,7 @@ class TestAddComponentRollout:
 class TestComponentHandlersRollout:
     @pytest.mark.asyncio
     async def test_update_component_defers(self):
-        from opi.core.task_handlers_components import handle_update_component
+        from opi.runtime.tasks.task_handlers_components import handle_update_component
 
         pm = AsyncMock()
         pm.update_component = AsyncMock(return_value={"success": True})
@@ -195,7 +196,7 @@ class TestComponentHandlersRollout:
 
     @pytest.mark.asyncio
     async def test_update_component_forwards_add_and_remove_services(self):
-        from opi.core.task_handlers_components import handle_update_component
+        from opi.runtime.tasks.task_handlers_components import handle_update_component
 
         pm = AsyncMock()
         pm.update_component = AsyncMock(return_value={"success": True})
@@ -224,7 +225,7 @@ class TestComponentHandlersRollout:
 
     @pytest.mark.asyncio
     async def test_update_component_forwards_description(self):
-        from opi.core.task_handlers_components import handle_update_component
+        from opi.runtime.tasks.task_handlers_components import handle_update_component
 
         pm = AsyncMock()
         pm.update_component = AsyncMock(return_value={"success": True})
@@ -249,7 +250,7 @@ class TestComponentHandlersRollout:
 
     @pytest.mark.asyncio
     async def test_add_component_to_deployment_defers(self):
-        from opi.core.task_handlers_components import handle_add_component_to_deployment
+        from opi.runtime.tasks.task_handlers_components import handle_add_component_to_deployment
 
         pm = AsyncMock()
         pm.add_component_to_deployment = AsyncMock(return_value={"success": True})
@@ -286,7 +287,7 @@ class TestComponentHandlersRollout:
 class TestServiceHandlersRollout:
     @pytest.mark.asyncio
     async def test_add_service_defers(self):
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = AsyncMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": ["keycloak"]})
@@ -307,7 +308,7 @@ class TestServiceHandlersRollout:
     @pytest.mark.asyncio
     async def test_nothing_added_stays_a_plain_skip(self):
         """'Nothing to do' must remain distinguishable from 'you deferred it'."""
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = AsyncMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": []})
@@ -325,7 +326,7 @@ class TestServiceHandlersRollout:
 
     @pytest.mark.asyncio
     async def test_configure_service_defers(self):
-        from opi.core.task_handlers_components import handle_configure_service
+        from opi.runtime.tasks.task_handlers_components import handle_configure_service
 
         pm = AsyncMock()
         pm.configure_service = AsyncMock(return_value={"success": True})
@@ -355,7 +356,7 @@ class TestServiceHandlersRollout:
 
     @pytest.mark.asyncio
     async def test_configure_service_patch_forwards_add_and_remove_and_reports_counts(self):
-        from opi.core.task_handlers_components import handle_configure_service
+        from opi.runtime.tasks.task_handlers_components import handle_configure_service
 
         pm = AsyncMock()
         pm.patch_service_config_list = AsyncMock(return_value={"success": True, "added": 1, "updated": 0, "removed": 2})
@@ -400,7 +401,7 @@ class TestServiceHandlersRollout:
 class TestUpsertDeploymentRollout:
     @pytest.mark.asyncio
     async def test_defers(self):
-        from opi.core.task_handlers_project import handle_upsert_deployment
+        from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
 
         pm = AsyncMock()
         pm.upsert_deployment = AsyncMock(return_value={"success": True, "created": True})
@@ -446,7 +447,7 @@ class TestUpsertDeploymentRollout:
 class TestUpdateImageRollout:
     @pytest.mark.asyncio
     async def test_passes_the_flag_to_the_manager(self):
-        from opi.core.task_handlers_deployment import handle_update_image
+        from opi.runtime.tasks.task_handlers_deployment import handle_update_image
 
         pm = AsyncMock()
         pm.update_image_and_regenerate = AsyncMock(return_value={"status": "success"})
@@ -471,7 +472,7 @@ class TestUpdateImageRollout:
 
     @pytest.mark.asyncio
     async def test_default_rolls_out_and_reports_no_processing_block(self):
-        from opi.core.task_handlers_deployment import handle_update_image
+        from opi.runtime.tasks.task_handlers_deployment import handle_update_image
 
         pm = AsyncMock()
         pm.update_image_and_regenerate = AsyncMock(return_value={"status": "success"})

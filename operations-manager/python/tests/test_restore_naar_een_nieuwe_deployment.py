@@ -21,14 +21,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.manager.clone_validation import (
+from opi.http.auth.authz import require_clone_source_access
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.clone_validation import (
     build_restore_target_deployment,
     derive_deployment_from_source,
     new_or_changed_clone_sources,
 )
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import require_clone_source_access
 from opi.web.router_detail_edit import _authorize_restore, _process_and_save_modal_edit
 
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----"
@@ -286,8 +286,10 @@ class TestRequireCloneSourceAccess:
     def test_developer_wordt_geweigerd_bij_een_productiebron(self) -> None:
         project = self._project()
         with (
-            patch("opi.web.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
-            patch("opi.web.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
+            patch(
+                "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
+            ),
             pytest.raises(HTTPException) as exc,
         ):
             require_clone_source_access(
@@ -301,8 +303,10 @@ class TestRequireCloneSourceAccess:
     def test_developer_mag_klonen_van_niet_productie(self) -> None:
         project = self._project()
         with (
-            patch("opi.web.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
-            patch("opi.web.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
+            patch(
+                "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
+            ),
         ):
             require_clone_source_access(
                 _rights_request(DEVELOPER_EMAIL),
@@ -314,8 +318,10 @@ class TestRequireCloneSourceAccess:
     def test_ops_mag_klonen_van_productie(self) -> None:
         project = self._project()
         with (
-            patch("opi.web.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
-            patch("opi.web.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
+            patch(
+                "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
+            ),
         ):
             require_clone_source_access(
                 _rights_request(OPS_EMAIL),
@@ -329,7 +335,7 @@ class TestRequireCloneSourceAccess:
         project = self._project()
         after = self._after_with_clone_from("productie")
         with patch(
-            "opi.web.authz.get_project_store",
+            "opi.http.auth.authz.get_project_store",
             side_effect=AssertionError("mag niet gelezen worden zonder iets om te wegen"),
         ):
             require_clone_source_access(_rights_request(DEVELOPER_EMAIL), PROJECT_NAME, after, after)
@@ -352,8 +358,10 @@ class TestAuthorizeRestore:
         project = _rights_project(deployments)
         with (
             patch("opi.web.router_detail_edit.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
-            patch("opi.web.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
-            patch("opi.web.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=SimpleNamespace(get=lambda _n: project)),
+            patch(
+                "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
+            ),
             patch("opi.web.router_detail_edit.render_step_up_dialog", new=AsyncMock(return_value="<dialoog>")),
         ):
             return await _authorize_restore(
@@ -569,10 +577,12 @@ class TestDeploymentToevoegenMetCloneFromViaDeModalOpslag:
         store = SimpleNamespace(get=lambda _n: project)
         flow = SimpleNamespace(flow_id="modal-edit-deployment", sections=[])
         with (
-            patch("opi.web.authz.get_project_store", return_value=store),
-            patch("opi.web.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=store),
+            patch(
+                "opi.http.auth.authz.get_user_service", return_value=SimpleNamespace(is_platform_admin=lambda _e: False)
+            ),
             patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(na))),
-            patch("opi.web.router_detail_edit.ensure_approval_requests"),
+            patch("opi.manager.project.update.ensure_approval_requests"),
         ):
             await _process_and_save_modal_edit(_rights_request(email), manager, PROJECT_NAME, flow, None, {}, [], None)
         return manager

@@ -17,7 +17,7 @@ DE REGEL DIE HIERONDER BEWAAKT WORDT
 
 ``sm`` voor een knop in een dichte, herhaalde context (tabelrij, kaart in een lijst);
 verder niets opschrijven, want ``md`` is de standaard van het component. De reden per
-maat staat in ``features/knopmaten.md``, het vocabulaire in ``opi/core/buttons.py``.
+maat staat in ``features/knopmaten.md``, het vocabulaire in ``opi/forms/buttons.py``.
 
 WAAROM EEN SJABLOONTEST EN NIET EEN SCHERMTEST
 
@@ -35,9 +35,9 @@ import pytest
 from jinja2 import Environment
 from lord_of_the_components import setup_components
 from lord_of_the_components.extension import ComponentError
-from opi.core.buttons import BUTTON_SIZES, BUTTON_VARIANTS, check_button_variant
-from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
-from opi.core.templates_lotc import DESIGN_SYSTEMS, templates_lotc
+from opi.forms.buttons import BUTTON_SIZES, BUTTON_VARIANTS, check_button_variant
+from opi.http.render.template_helpers import CATALOG_DIR, TEMPLATES_DIR
+from opi.http.render.templates_lotc import DESIGN_SYSTEMS, templates_lotc
 from opi.services.services import DeploymentAction
 from opi.web.project_actions import ProjectAction
 

@@ -74,14 +74,6 @@ startup:
       forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
       kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
       mail: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-  - step: start_git_monitoring
-    where: lifespan
-    dependencies:
-      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-      forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-  - step: start_periodic_cleanup
-    where: lifespan
-    dependencies: {}
   - step: start_reconcile_poll
     where: lifespan
     dependencies:
@@ -111,6 +103,9 @@ startup:
         note: >-
           de echte worker pakt elke taak van de groep tasks_live uit de rij en voert hem uit;
           een worker die niet draait laat elk scenario op zijn wachtpunt vallen
+  - step: task_handlers
+    where: lifespan
+    dependencies: {}
   - step: FederationService
     where: lifespan
     dependencies:
@@ -192,13 +187,7 @@ startup:
   - step: begin_drain
     where: lifespan
     dependencies: {}
-  - step: stop_git_monitoring
-    where: lifespan
-    dependencies: {}
   - step: stop_reconcile_poll
-    where: lifespan
-    dependencies: {}
-  - step: stop_periodic_cleanup
     where: lifespan
     dependencies: {}
   - step: stop_loop_watchdog
@@ -241,9 +230,6 @@ startup:
       git:
         status: exempt
         reason: leest de gpg-sleutel uit de omgeving; wat de ondertekening met Forgejo doet staat op de commit-regels
-  - step: controleer_handelingen
-    where: run_startup_tasks
-    dependencies: {}
   - step: check_register
     where: run_startup_tasks
     dependencies: {}
@@ -328,7 +314,7 @@ startup:
         status: exempt
         reason: >-
           de keycloak-tak van de lus komt pas aan de beurt als Keycloak zelf wegvalt, en
-          wait_for_keycloak_availability doet daar tien tenacity-pogingen (zes minuten) over
+          wait_for_keycloak_availability doet daar zes minuten aan pogingen over
           voordat de lus ook maar begint; de storingsmeting gaat daarom over PostgreSQL en de
           mailrelay, dezelfde lus met dezelfde takstructuur
 
@@ -448,6 +434,11 @@ tasks:
     dependencies:
       git: {status: measured, test: test_refresh_project_syncs_everything}
       argocd: {status: measured, test: test_refresh_project_syncs_everything}
+  - task: ROLLOUT_PROJECT
+    dependencies:
+      git: {status: measured, test: test_rollout_project_reaches_the_namespace}
+      argocd: {status: measured, test: test_rollout_project_reaches_the_namespace}
+      kubernetes: {status: measured, test: test_rollout_project_reaches_the_namespace}
   - task: ROTATE_PROJECT_KEY
     dependencies:
       git: {status: measured, test: test_rotate_project_key_replaces_the_keypair}

@@ -1,13 +1,15 @@
 """Temporary staging store for uploaded files.
 
-Used by the create-wizard flow, where a file can be uploaded before the project
-(and therefore its AGE key) exists. The raw bytes are parked in a tmp directory
-under a random token; the file is encrypted into the project only at submit-time
-(see the attachments combine generator). Entries older than the TTL are swept
+Used by the wizard flows, where a file is uploaded before the project file that will carry
+it is saved. The upload is parked in a tmp directory under a random token and read back at
+submit-time (see the attachments combine generator). Entries older than the TTL are swept
 opportunistically on each new upload, so no background scheduler is required.
 
-Files here are short-lived but sensitive (they may be unencrypted private keys),
-so the directory and files use restrictive permissions.
+The bytes are AGE-encrypted here, with the public key of the wizard session's own key pair
+(RC-463 gives the wizard one from its first step). What is staged may be an unencrypted
+private key, and the mode bits alone leave it readable to anything that reaches the
+filesystem: a backup of TEMP_DIR, a second process in the pod, a container escape. The
+directory and files keep their restrictive permissions on top of that.
 """
 
 import contextlib
@@ -20,6 +22,7 @@ import uuid
 
 from opi.core.config import settings
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_KB
+from opi.utils.age import decrypt_age_block_to_bytes_sync, encrypt_file_to_age_block_sync
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +67,27 @@ def sweep(ttl_seconds: int = STAGING_TTL_SECONDS) -> int:
     return removed
 
 
-def stage_file(content: bytes, filename: str) -> str:
-    """Store raw bytes under a fresh token and return that token.
+def stage_file(content: bytes, filename: str, public_key: str | None) -> str:
+    """Store ``content`` encrypted to ``public_key`` under a fresh token and return that token.
 
-    Sweeps expired entries first. Raises ValueError on empty/oversized content.
+    Sweeps expired entries first. The size limit is judged on the plain content, before
+    encryption grows it.
+
+    Raises:
+        ValueError: empty or oversized content, or a missing/refused public key.
     """
     if not content:
         raise ValueError("Leeg bestand geupload")
     if len(content) > MAX_ATTACHMENT_BYTES:
         raise ValueError(f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)")
 
+    block = encrypt_file_to_age_block_sync(content, public_key)
     sweep()
     _ensure_dir()
     token = uuid.uuid4().hex
     data_path, meta_path = _paths(token)
-    with open(data_path, "wb") as handle:
-        handle.write(content)
+    with open(data_path, "w", encoding="utf-8") as handle:
+        handle.write(block)
     os.chmod(data_path, 0o600)
     with open(meta_path, "w", encoding="utf-8") as handle:
         json.dump({"filename": filename, "staged_at": int(time.time())}, handle)
@@ -87,15 +95,21 @@ def stage_file(content: bytes, filename: str) -> str:
     return token
 
 
-def read_staged(token: str) -> tuple[bytes, str] | None:
-    """Return (content_bytes, original_filename) for a token, or None if absent/invalid."""
+def read_staged(token: str, private_key: str) -> tuple[bytes, str] | None:
+    """Return (content_bytes, original_filename) for a token, or None if absent/invalid.
+
+    Raises:
+        ValueError: when ``private_key`` does not open the staged block. That is a wrong
+            key or a damaged file, never an ordinary outcome, so it is not swallowed into
+            the None that means "nothing staged here".
+    """
     if not _TOKEN_RE.match(token or ""):
         return None
     data_path, meta_path = _paths(token)
     if not os.path.isfile(data_path):
         return None
-    with open(data_path, "rb") as handle:
-        content = handle.read()
+    with open(data_path, encoding="utf-8") as handle:
+        content = decrypt_age_block_to_bytes_sync(handle.read(), private_key)
     filename = token
     if os.path.isfile(meta_path):
         try:

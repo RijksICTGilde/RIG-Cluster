@@ -98,6 +98,19 @@ def test_custom_port_is_honoured(project: dict) -> None:
     assert project["deployments"][0]["components"][0]["image"] == "my/probe:tag"
 
 
+def test_health_check_paths_point_at_the_probe(project: dict) -> None:
+    """The probe answers /healthz only; a project's own /readyz would never turn ready."""
+    health = {"reference": "health-check", "config": {"liveness-path": "/healthz", "readiness-path": "/readyz"}}
+    project["components"][0]["services"] = ["publish-on-web", health]
+    project["deployments"][0]["components"][0]["services"] = {"health-check": {"config": {"readiness-path": "/ready"}}}
+
+    apply_probe_workload(project, DEFAULT_PROBE_IMAGE, DEFAULT_PROBE_PORT)
+
+    assert health["config"] == {"liveness-path": "/healthz", "readiness-path": "/healthz"}
+    deployment_config = project["deployments"][0]["components"][0]["services"]["health-check"]["config"]
+    assert deployment_config == {"readiness-path": "/healthz"}
+
+
 def test_component_without_ports_gets_inbound(project: dict) -> None:
     project["components"].append({"name": "worker", "services": []})
     apply_probe_workload(project, DEFAULT_PROBE_IMAGE, DEFAULT_PROBE_PORT)

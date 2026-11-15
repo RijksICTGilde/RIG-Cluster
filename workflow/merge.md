@@ -35,7 +35,7 @@ task test-changed
 task test
 ```
 
-This is the one place the whole fast layer runs, and it is why it is kept to a few minutes (`docs/development/toetsen.md`). What is **not** required here: the broad layer (`task test-wide`) and the live groups are the plan owner's hand step before the merge, because the database half of the broad layer and every live group need Docker, which a dispatched session does not have; the cluster-dependent integration and e2e tests need a live sandbox. If the merge introduces risk the fast gates cannot see (a changed lifecycle path, a project-file write), run the relevant sandbox test as `review.md` describes.
+This is the one place the whole fast layer runs, and it is why it is kept to a few minutes (`docs/development/toetsen.md`). What is **not** required here: the broad layer (`task test-wide`) already ran in the test phase (`test.md`), and the live groups are the plan owner's hand step before the merge; the cluster-dependent integration and e2e tests need a live sandbox. If the merge introduces risk the fast gates cannot see (a changed lifecycle path, a project-file write), run the relevant sandbox test as `review.md` describes.
 
 ## When the gate is red
 

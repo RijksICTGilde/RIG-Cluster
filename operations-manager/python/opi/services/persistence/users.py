@@ -1,4 +1,4 @@
-"""ORM model for the ``users`` table (platform user admin, RC-5 persistence).
+"""ORM model for the ``users`` table (platform user admin).
 
 Schema-as-code mirror of ``USERS_TABLE_SQL`` (opi/core/user_schema.py, still used by the
 Alembic baseline). Alembic autogenerate targets this model (see migrations/env.py). The
@@ -27,8 +27,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
-    # De tweede factor van deze persoon (RC-329). Alleen UserOtpService leest of schrijft
-    # deze zes kolommen; ``otp_secret`` is AGE-versleuteld, nooit plat.
+    # This person's second factor. Only UserOtpService reads or writes these six columns;
+    # ``otp_secret`` is AGE-encrypted, never plain.
     otp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     otp_key_version: Mapped[int] = mapped_column(Integer, server_default=text("1"), nullable=False)
     otp_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

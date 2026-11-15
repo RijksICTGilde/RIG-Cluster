@@ -2,7 +2,7 @@
 
 Vroeger: project hield zijn key, private helft opnieuw versleuteld voor sandbox. Risico:
 waarden die later in productie bijkomen openen ook op sandbox. Nu: conversie maakt eigen
-sleutelpaar. Sleutels per test via generate_sops_key_pair.
+sleutelpaar. Sleutels per test via generate_age_key_pair.
 """
 
 from __future__ import annotations
@@ -13,18 +13,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.core.project_schema import find_plaintext_secret_violations, validate_project_schema
-from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
-from opi.services.project_leden import hash_van
+from opi.services.project_members import hash_of
+from opi.services.project_schema import find_plaintext_secret_violations, validate_project_schema
+from opi.services.project_validation import find_plaintext_service_config_violations, validate_project_structure
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.age import (
     decrypt_age_block_to_bytes_sync,
     decrypt_age_content_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    generate_age_key_pair,
     is_age_encrypted,
 )
-from opi.utils.sops import generate_sops_key_pair
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -46,9 +46,9 @@ class Keys:
     """De drie sleutelparen die in dit verhaal meedoen."""
 
     def __init__(self) -> None:
-        self.prod_private, self.prod_public = generate_sops_key_pair()
-        self.sandbox_private, self.sandbox_public = generate_sops_key_pair()
-        self.project_private, self.project_public = generate_sops_key_pair()
+        self.prod_private, self.prod_public = generate_age_key_pair()
+        self.sandbox_private, self.sandbox_public = generate_age_key_pair()
+        self.project_private, self.project_public = generate_age_key_pair()
 
 
 @pytest.fixture
@@ -203,7 +203,7 @@ class TestEverythingOnTheNewKey:
         account = next(lid for lid in migrated["users"] if lid.get("name") == "project-api")
         hash_hex = account["tokens"][0]["hash"]
         assert len(hash_hex) == 64
-        assert hash_hex != hash_van("0123456789abcdef0123456789abcdef")
+        assert hash_hex != hash_of("0123456789abcdef0123456789abcdef")
 
     def test_een_bestaand_token_wordt_opnieuw_gemunt(self, production_project: dict, keys: Keys) -> None:
         production_project["users"] = [
@@ -257,6 +257,18 @@ class TestEverythingOnTheNewKey:
 
         assert decrypt_age_content_sync(registries[0]["password"], new_private) == SANDBOX_PLACEHOLDER
 
+    def test_the_repository_password_is_not_flagged_as_unreadable(
+        self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Step 7 already replaces this field on the cluster key (``AGE_FIELD_HANDLING``), so
+        the safety net in ``replace_remaining_secrets`` must not flag it as unreadable too.
+        Once the password itself became an AGE value (RC-463) it fell into the generic scan,
+        with a "check this value" that had nothing to check."""
+        with caplog.at_level("WARNING"):
+            migrate_project(production_project, keys.prod_private, keys.sandbox_public)
+
+        assert "repositories" not in caplog.text
+
 
 class TestRekeyAliasesUnreadable:
     """Een alias die met geen van beide projectsleutels opent: blijft staan, wordt gemeld."""
@@ -264,7 +276,7 @@ class TestRekeyAliasesUnreadable:
     def test_a_string_alias_block_is_left_alone_and_reported(
         self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
     ) -> None:
-        _, other_public = generate_sops_key_pair()
+        _, other_public = generate_age_key_pair()
         unreadable = encrypt_age_content_sync(ALIASES, other_public)
         production_project["components"][0]["aliases"] = unreadable
 
@@ -277,7 +289,7 @@ class TestRekeyAliasesUnreadable:
     def test_a_legacy_mapping_value_is_left_alone_and_reported(
         self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
     ) -> None:
-        _, other_public = generate_sops_key_pair()
+        _, other_public = generate_age_key_pair()
         unreadable = encrypt_age_content_sync("$DATABASE_SERVER_HOST", other_public)
         production_project["components"][0]["aliases"] = {"POSTGRES_HOST": unreadable}
 

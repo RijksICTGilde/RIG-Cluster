@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -301,3 +302,39 @@ def test_the_detector_matches_the_schema_definition() -> None:
     for value in ("gewone tekst", "plain:zichtbaar", ""):
         assert not pattern.search(value)
         assert not carries_encrypted_value(value)
+
+
+class TestTheStateFileIsForItsOwnerOnly:
+    """The file holds a copy of a project file, so nothing else on the pod may read it."""
+
+    def test_the_file_is_0600_and_its_directory_0700(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opi.forms.wizard.state import WizardState
+
+        monkeypatch.setattr(session.settings, "TEMP_DIR", str(tmp_path))
+        monkeypatch.setattr(session, "_STORE_DIR", None)
+        request = SimpleNamespace(session={})
+
+        session.save_wizard_state(request, WizardState(flow_id="create-project", current_step="identity"))
+
+        store = tmp_path / "wizard-sessions"
+        (written,) = list(store.glob("*.json"))
+        assert oct(written.stat().st_mode & 0o777) == "0o600"
+        assert oct(store.stat().st_mode & 0o777) == "0o700"
+
+    def test_the_modal_state_file_is_0600_too(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opi.forms.wizard.state import WizardState
+
+        monkeypatch.setattr(session.settings, "TEMP_DIR", str(tmp_path))
+        monkeypatch.setattr(session, "_STORE_DIR", None)
+        token, _ = session.init_modal_state_tokenized(
+            flow_id="edit-project",
+            first_step="identity",
+            active_sections=["identity"],
+            project_name="tas-yz7",
+            owner_email="dev@example.com",
+        )
+
+        session.save_modal_state_by_token(token, WizardState(flow_id="edit-project", current_step="identity"))
+
+        written = tmp_path / "wizard-sessions" / f"{token}.json"
+        assert oct(written.stat().st_mode & 0o777) == "0o600"

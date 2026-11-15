@@ -1,21 +1,14 @@
 import logging
 import time
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import (
-    default_marking,
-    deployment_in_body,
-    eis_doelwitten_uit_de_upsertbody,
-    eis_handeling,
-    image_only_upsert,
-    marking_in_body,
-    validate_api_token,
-)
-from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
+from prometheus_client.core import GaugeMetricFamily, Metric
+from pydantic import BaseModel, Field, model_validator
+
 from opi.api.params import DeploymentNamePath, ProjectNamePath
-from opi.api.rate_limiter import IPRateLimiter
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -25,73 +18,86 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
-from opi.connectors.subdomain import (
-    BaseDomainValidationError,
-    SubdomainNotAvailableError,
-    SubdomainValidationError,
-)
-from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
-from opi.core.project_environment import Omgeving
-from opi.core.step_up import StepUpAction
-from opi.core.task_handlers_operations import terminated_sync_fields
-from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
-from opi.manager.clone_validation import validate_clone_readiness
+from opi.core.logging_redact import sanitize_for_log
+from opi.core.metrics import register_metric_source
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.http.auth.endpoint_util import (
+    default_marking,
+    deployment_in_body,
+    image_only_upsert,
+    marking_in_body,
+    require_api_action,
+    require_upsert_body_targets,
+    validate_api_token,
+)
+from opi.http.auth.step_up_conditions import deployment_environment_change
+from opi.http.rate_limiter import IPRateLimiter
+from opi.http.task_helpers import (
+    build_accepted_response,
+    create_async_task,
+    require_removable_deployment,
+    task_actor,
+    wait_for_task_answer,
+)
+from opi.manager.clone import CLONE_SOURCE_INCOMPLETE
+from opi.manager.project.deployment_upsert import (
+    INVALID_PROJECT_NAME,
+    invalid_deployment_name,
+)
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
+from opi.services.catalog.base import CHOICES_PROVIDER_KEY
 from opi.services.catalog.image_registries.config_model import (
     REGISTRY_NAME_PATTERN,
     SECRET_NAME_PATTERN,
     UPSTREAM_PATTERN,
 )
-from opi.services.persistence.subdomain_registry import create_subdomain_connector
-from opi.services.project_store import get_project_store
-from opi.services.step_up_conditions import deployment_environment_change
-from opi.utils.age import encrypt_age_content
-from opi.utils.egress_guard import clone_source_refusal
-from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
-from opi.utils.project_utils import (
-    RESERVED_PROJECT_NAME_MESSAGE,
-    generate_self_service_project_yaml,
-    normalize_container_image,
-    validate_project_name,
+from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
+from opi.services.catalog.publish_on_web.subdomain import (
+    BaseDomainValidationError,
+    SubdomainNotAvailableError,
+    SubdomainValidationError,
 )
-from pydantic import BaseModel, Field, model_validator
+from opi.services.clone_validation import validate_clone_readiness
+from opi.services.persistence.subdomain_registry import create_subdomain_connector
+from opi.services.project_environment import Omgeving
+from opi.services.project_store import get_project_store
+from opi.services.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
+from opi.services.project_validation import validate_component_references
+from opi.services.step_up import StepUpAction
+from opi.utils.age import encrypt_age_content
+from opi.utils.egress_guard import clone_source_refusal, has_direct_clone_source
+from opi.utils.naming import sanitize_kubernetes_name
+from opi.utils.project_names import validate_project_name
+from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
-
-def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
-    """Sanitize a value for safe inclusion in log messages.
-
-    Prevents log injection attacks by:
-    - Truncating to max_length
-    - Removing newlines and carriage returns
-    - Removing other control characters
-
-    Args:
-        value: The value to sanitize
-        max_length: Maximum length of the sanitized value (default: 64)
-
-    Returns:
-        Sanitized string safe for logging
-    """
-    if not value:
-        return ""
-    # Truncate, remove newlines/carriage returns, and strip control characters
-    sanitized = value[:max_length].replace("\n", "").replace("\r", "")
-    # Remove other ASCII control characters (0x00-0x1F except tab, 0x7F)
-    sanitized = "".join(c for c in sanitized if ord(c) >= 32 or c == "\t")
-    return sanitized
+#: The clone is still running when a synchronous call gives up waiting for it. Nothing was
+#: lost; the task keeps going and ``GET /api/tasks/{id}`` shows how it ended.
+CLONE_STILL_RUNNING = (
+    "Het klonen loopt nog en duurt langer dan deze aanvraag kan wachten. "
+    "Het gaat door op de achtergrond; vraag de taakstatus op voor het resultaat."
+)
 
 
-# Global rate limiter instance for subdomain checks (30 requests/minute per IP)
 subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
 
 
-class ProjectProcessRequest(BaseModel):
-    project_file_path: str
+def rate_limiter_metrics() -> list[Metric]:
+    """The clients the subdomain-check limiter tracks, for the Prometheus scrape."""
+    clients = GaugeMetricFamily(
+        "opi_rate_limiter_tracked_clients",
+        "Number of clients tracked by the rate limiter",
+    )
+    clients.add_metric([], len(subdomain_check_rate_limiter._tokens))
+    return [clients]
+
+
+register_metric_source(rate_limiter_metrics)
 
 
 class ProjectRepository(BaseModel):
@@ -114,43 +120,16 @@ class ProjectDeployment(BaseModel):
     image: str
 
 
-class ProjectCreateRequest(BaseModel):
-    projectName: str
-    cluster: str
-    repository: ProjectRepository
-    component: ProjectComponent
-    deployment: ProjectDeployment
-
-
-class BasicProjectCreateRequest(BaseModel):
-    projectName: str
-    description: str | None = None
-    cluster: str
-    imageUrl: str
-    appPort: int | None = None
-    userEnvVars: str | None = Field(
-        None,
-        description="User env vars in KEY=value format, newline-separated (will be encrypted). "
-        "Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
-    )
-    exposeWeb: bool = False
-    ssoRijk: bool = False
-    persistentStorage: bool = False
-    ephemeralStorage: bool = False
-    sharedRigDatabase: bool = False
-
-
 class ComponentReference(BaseModel):
     reference: str = Field(..., max_length=63, description="Component reference name", examples=["frontend"])
     image: str = Field(..., max_length=512, description="Image URL for this component", examples=["nginx:1.21"])
 
 
-# The two domain fields say the same thing in three request models, and the choices behind
-# them live on the publish-on-web config model instead -- so a caller reading the schema of
-# the request they are about to send finds no list and no pointer to one. These say once
-# where the list is. The value set itself is NOT restated here: base-domain is open by
-# design (a domain of your own is a legitimate value), and domain-format keeps its enum
-# from ``DomainFormatId``, which is where the closed set belongs.
+# The two domain fields recur in three request models, and the choices behind them live on
+# the publish-on-web config model, so these descriptions say once where that list is. The
+# value set itself is NOT restated here: base-domain is open by design (a domain of your own
+# is a legitimate value), and domain-format keeps its enum from ``DomainFormatId``, which is
+# where the closed set belongs.
 BASE_DOMAIN_DESCRIPTION = (
     "Base domain for URL generation (e.g. 'rijksapp.nl'). Not a closed set: read the domains this "
     "cluster offers from GET /api/v2/projects/{project_name}/clusters ('base-domains'), or write a "
@@ -199,8 +178,8 @@ class UpsertDeploymentRequest(BaseModel):
         None,
         description=DOMAIN_FORMAT_DESCRIPTION,
         examples=["component-deployment-subdomain"],
-        # Dezelfde keuzebron als op de publish-on-web-config: het is hetzelfde veld, dus een
-        # client hoort er hetzelfde over te lezen (zad-cli, punt 23).
+        # The same source of choices as on the publish-on-web config: the same field, so a
+        # client reads the same thing about it.
         json_schema_extra={CHOICES_PROVIDER_KEY: "DomainFormatOptionsProvider"},
     )
     subdomain: str | None = Field(
@@ -238,11 +217,54 @@ class UpsertDeploymentRequest(BaseModel):
     }
 
 
+async def validate_upsert_deployment_request(
+    request: Request,
+    project_name: str,
+    deployment_data: UpsertDeploymentRequest,
+) -> None:
+    """The checks both upsert entrances run before the work is handed over.
+
+    Raises HTTPException 400 on a malformed name, a malformed payload or a component
+    reference the project does not hold, and lets the authz guards raise their own refusal.
+    """
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail=INVALID_PROJECT_NAME)
+
+    refusal = invalid_deployment_name(deployment_data.deploymentName)
+    if refusal is not None:
+        raise HTTPException(status_code=400, detail=refusal)
+
+    await validate_api_payload(
+        deployment_data.model_dump(),
+        UPSERT_DEPLOYMENT_VALIDATORS,
+    )
+    for comp in deployment_data.components:
+        await validate_api_payload(
+            {"newImageUrl": comp.image},
+            UPDATE_IMAGE_VALIDATORS,
+        )
+
+    # A reference to a component the catalogue does not hold is the caller's mistake and not
+    # a failure, so it answers 400 here instead of a task that fails afterwards. The same
+    # function the use case runs again when the task starts, so no second wording can appear.
+    # When the store does not hold the project the use case does the check, and nothing is
+    # invented here.
+    project = get_project_store().get(project_name)
+    if project is not None and project.data is not None:
+        reference_result = validate_component_references(project.data, deployment_data.components, "deployment")
+        if not reference_result["success"]:
+            raise HTTPException(status_code=400, detail=reference_result["error"])
+
+    # Setting the marking is a right of its own: ops with a step-up. It stands in the BODY and
+    # not in the path, so the route gate cannot weigh it.
+    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
+        require_api_action(request, project_name, Action.ENVIRONMENT_SET)
+
+    require_upsert_body_targets(request, project_name, deployment_data)
+
+
 class StorageAction(BaseModel):
     action: str = Field(..., description="Action to perform on the storage (recreate, keep)", examples=["recreate"])
-
-
-# Response Models
 
 
 class DeploymentUrls(BaseModel):
@@ -434,22 +456,17 @@ class ProjectDeleteRequest(BaseModel):
     model_config = {"json_schema_extra": {"example": {"confirmDeletion": True, "force": False}}}
 
 
-#: Hostnaam of IP-adres, zonder protocol, poort of pad.
+#: A hostname or IP address, without protocol, port or path.
 CLONE_HOST_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$"
 
 
 async def _encrypt_for_task(secret: str) -> str:
-    """Een geheim uit het verzoek staat versleuteld in ``async_tasks.payload``."""
+    """A secret from the request stands encrypted in ``async_tasks.payload``."""
     return await encrypt_age_content(secret, settings.SOPS_AGE_PUBLIC_KEY)
 
 
 class ChiselTunnelConfig(BaseModel):
-    """
-    Chisel tunnel configuration for accessing remote services.
-
-    If provided, a Chisel tunnel will be established to access the remote service,
-    allowing cloning from sources that are not directly accessible.
-    """
+    """Chisel tunnel configuration, for cloning from a source that is not directly reachable."""
 
     serverUrl: str = Field(
         ...,
@@ -466,7 +483,7 @@ class ChiselTunnelConfig(BaseModel):
     remotePort: int = Field(..., ge=1, le=65535, description="Remote service port in source cluster", examples=[5432])
 
     async def to_task_payload(self) -> dict[str, Any]:
-        """De tunnel in de vorm die de taakhandlers lezen, met het wachtwoord versleuteld."""
+        """The tunnel in the shape the task handlers read, with the password encrypted."""
         return {
             "server_url": self.serverUrl,
             "username": self.username,
@@ -503,7 +520,7 @@ class CloneDatabaseFromExternalRequest(BaseModel):
     )
 
     async def to_task_payload(self) -> dict[str, Any]:
-        """De payload in de vorm die ``handle_clone_database`` leest, met de geheimen versleuteld."""
+        """The payload in the shape ``handle_clone_database`` reads, with the secrets encrypted."""
         payload: dict[str, Any] = {
             "source_host": self.sourceHost,
             "source_port": self.sourcePort,
@@ -573,7 +590,7 @@ class CloneBucketFromExternalRequest(BaseModel):
     )
 
     async def to_task_payload(self) -> dict[str, Any]:
-        """De payload in de vorm die ``handle_clone_bucket`` leest, met de geheimen versleuteld."""
+        """The payload in the shape ``handle_clone_bucket`` reads, with the secrets encrypted."""
         payload: dict[str, Any] = {
             "source_host": self.sourceHost,
             "source_port": self.sourcePort,
@@ -825,14 +842,12 @@ class AddServiceRequest(BaseModel):
 
 
 class SelfServiceProjectRequest(BaseModel):
-    # Project Details (from form fields)
     project_name: str = Field(..., max_length=63)  # Generated technical name (short, compliant)
     display_name: str = Field(..., max_length=128)  # User-friendly name from form (maps to name="display-name")
     project_description: str | None = Field(None, max_length=1024)  # Maps to name="project-description"
     cluster: str = Field(..., max_length=63)  # Maps to name="cluster"
     deployment_name: str = Field("main", max_length=63)  # Name for the deployment (defaults to "main")
 
-    # Web Address Configuration
     domain_format: DomainFormatId | None = Field(
         None,
         description=DOMAIN_FORMAT_DESCRIPTION,
@@ -849,7 +864,6 @@ class SelfServiceProjectRequest(BaseModel):
         examples=["myapp"],
     )
 
-    # External Domain Configuration (for public domains with Let's Encrypt)
     base_domain: str | None = Field(
         None,
         max_length=255,
@@ -869,14 +883,11 @@ class SelfServiceProjectRequest(BaseModel):
         examples=["team@example.com"],
     )
 
-    # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
     user_roles: list[str] | None = None  # Maps to name="user-role[]"
 
-    # Services (checkboxes)
     services: list[str] | None = None  # Maps to name="services[]"
 
-    # Components array
     components: list[SelfServiceComponent] | None = None
 
 
@@ -900,22 +911,17 @@ api_router: APIRouter = APIRouter(
 @marking_if_absent(marking_in_body)
 @weighed_action_from(image_only_upsert)
 @validate_api_token
-@requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
+@requires_step_up(deployment_environment_change, action=StepUpAction.MARKING_SET)
 async def upsert_deployment(
     request: Request,
     project_name: str,
     deployment_data: UpsertDeploymentRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Create or update a deployment in an existing project.
+    """Create or update a deployment in an existing project.
 
-    If the deployment doesn't exist, it will be created. If it exists, the component
-    images will be updated. The cloneFrom parameter is only used when creating a new
-    deployment, or when updating with forceClone set to true.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    A deployment that does not exist is created; one that does gets its component images
+    updated. ``cloneFrom`` only takes effect on a create, or on an update with ``forceClone``.
 
     Example:
     ```bash
@@ -934,162 +940,123 @@ async def upsert_deployment(
     """
     logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
 
-    # Validate project name format
-    if not validate_project_name(project_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-        )
+    await validate_upsert_deployment_request(request, project_name, deployment_data)
 
-    # Validate deployment name using naming utilities
-    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-    if sanitized_name != deployment_data.deploymentName.lower():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-        )
-
-    # Validate fields using editable validators
-    await validate_api_payload(
-        deployment_data.model_dump(),
-        UPSERT_DEPLOYMENT_VALIDATORS,
+    task = await create_async_task(
+        request=request,
+        task_type="upsert_deployment",
+        project_name=project_name,
+        deployment_name=deployment_data.deploymentName,
+        payload=upsert_task_payload(request, project_name, deployment_data),
     )
+    task_id = str(task["task_id"])
 
-    # Validate component images
-    for comp in deployment_data.components:
-        await validate_api_payload(
-            {"newImageUrl": comp.image},
-            UPDATE_IMAGE_VALIDATORS,
-        )
-
-    # De markering zetten is een eigen recht: ops met step-up (ontwerp paragraaf 7). Hij
-    # staat in de BODY en niet in het pad, dus de routepoort kan hem niet wegen.
-    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
-        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
-
-    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
-
-    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="upsert_deployment",
-            project_name=project_name,
-            deployment_name=deployment_data.deploymentName,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_data.deploymentName,
-                "components": [c.model_dump() for c in deployment_data.components],
-                "cloneFrom": deployment_data.cloneFrom,
-                "forceClone": deployment_data.forceClone,
-                "domain_format": deployment_data.domain_format,
-                "subdomain": deployment_data.subdomain,
-                "base_domain": deployment_data.base_domain,
-                "environment": deployment_data.environment,
-                "actor": task_actor(request),
-            },
-        )
-        task_id = str(task["task_id"])
+        # Deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
         return JSONResponse(
             content=build_accepted_response(task_id, "upsert_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
+    return await _finished_upsert_response(request, task_id, project_name, deployment_data)
 
-    # Sync path (backward compatibility)
-    project_manager = None
+
+def upsert_task_payload(
+    request: Request, project_name: str, deployment_data: UpsertDeploymentRequest, *, rollout: bool = True
+) -> dict[str, Any]:
+    """The task payload both upsert entrances build, so neither can leave a field out."""
+    return {
+        "project_name": project_name,
+        "deployment_name": deployment_data.deploymentName,
+        "components": [c.model_dump() for c in deployment_data.components],
+        "cloneFrom": deployment_data.cloneFrom,
+        "forceClone": deployment_data.forceClone,
+        "domain_format": deployment_data.domain_format,
+        "subdomain": deployment_data.subdomain,
+        "base_domain": deployment_data.base_domain,
+        "environment": deployment_data.environment,
+        "actor": task_actor(request),
+        "rollout": rollout,
+    }
+
+
+#: What the blocking upsert answers when the failure is not attributable. The sentence this
+#: route has always given for an unexpected failure, so it stays as it stands.
+UPSERT_NOT_ATTRIBUTABLE = "De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+
+#: What the blocking upsert answers when the task outlives the request.
+UPSERT_STILL_RUNNING = (
+    "De deployment wordt nog bijgewerkt. Volg /api/tasks/{task_id} voor het resultaat, "
+    "of gebruik /api/v2/projects/{project_name}/:upsert-deployment."
+)
+
+
+async def _finished_upsert_response(
+    request: Request, task_id: str, project_name: str, deployment_data: UpsertDeploymentRequest
+) -> JSONResponse:
+    """The finished upsert task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-483), so the upsert queues behind another round on the
+    same deployment instead of running next to it, and the drain guard, the federation
+    routing and the task dedup apply to it as well.
+    """
+    # ``status`` and not ``deployment``: a refused upsert carries no deployment, and waiting
+    # for a key only the successful answer has would add the whole grace window to it.
     try:
-        # Create project manager instance
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-
-        # Upsert the deployment in the project YAML
-        result = await project_manager.upsert_deployment(
-            deployment_name=deployment_data.deploymentName,
-            components=deployment_data.components,
-            clone_from=deployment_data.cloneFrom,
-            force_clone=deployment_data.forceClone,
-            domain_format=deployment_data.domain_format,
-            subdomain=deployment_data.subdomain,
-            base_domain=deployment_data.base_domain,
-            environment=deployment_data.environment,
-            actor=task_actor(request),
-        )
-
-        if result["success"]:
-            # Process the deployment
-            processing_result = await project_manager.process_project_from_git(
-                f"projects/{project_name}.yaml",
-                deployment_name=deployment_data.deploymentName,
-                force_clone=deployment_data.forceClone,
-            )
-
-            # Determine status code based on whether it was created or updated
-            status_code = 201 if result.get("created") else 200
-            action = "created" if result.get("created") else "updated"
-
-            # Get URLs from deployment results collected during processing
-            urls: dict[str, dict[str, Any]] = {}
-            deployment_results = project_manager.get_deployment_results(deployment_data.deploymentName)
-            for dep_name, dep_result in deployment_results.items():
-                urls[dep_name] = {
-                    "cluster": dep_result.cluster,
-                    "urls": dep_result.urls,
-                }
-
-            content: dict[str, Any] = {
-                "status": "success",
-                "message": f"Deployment '{deployment_data.deploymentName}' {action} successfully",
-                "deployment": {
-                    "name": deployment_data.deploymentName,
-                    "project": project_name,
-                    "components": [
-                        {"reference": c.reference, "image": normalize_container_image(c.image)[0]}
-                        for c in deployment_data.components
-                    ],
-                    "forceClone": deployment_data.forceClone,
-                    "created": result.get("created", False),
-                },
-                "urls": urls,
-                "processing": {
-                    "status": "completed" if processing_result else "failed",
-                    **(
-                        {"error": project_manager.get_processing_error()}
-                        if not processing_result and project_manager.get_processing_error()
-                        else {}
-                    ),
-                },
-            }
-            if result.get("warnings"):
-                content["warnings"] = result["warnings"]
-            return JSONResponse(content=content, status_code=status_code)
-        else:
-            # Determine appropriate HTTP status code based on error type
-            error_status_codes = {
-                "invalid_component_references": 400,  # Bad Request
-                "ambiguous_repository": 400,  # Bad Request
-                "no_repositories": 422,  # Unprocessable Entity
-                "internal_error": 500,  # Internal Server Error
-            }
-            status_code = error_status_codes.get(result.get("error_type", ""), 400)
-
-            content = {
-                "status": "failed",
-                "message": f"Failed to upsert deployment '{deployment_data.deploymentName}'",
-                "error": result["error"],
-                "error_type": result["error_type"],
-            }
-            return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Bijwerken van de deployment mislukt")
+        finished = await wait_for_task_answer(request, task_id, answer_key="status")
+    except TimeoutError as e:
         raise HTTPException(
-            status_code=500, detail="De deployment kon niet worden bijgewerkt. Probeer het over een minuut opnieuw."
+            status_code=504,
+            detail=UPSERT_STILL_RUNNING.format(task_id=task_id, project_name=project_name),
         ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+
+    answer = finished.get("result") or {}
+    if answer.get("status") == "superseded":
+        # The project file is committed and only the rollout moved to a wider task, so this
+        # is in flight and not a failure. Not the success shape either: a hand-over carries
+        # no deployment and no urls, and 200 with both empty asserts a state nobody verified.
+        content = build_accepted_response(task_id, "upsert_deployment")
+        content["message"] = answer.get("message", "")
+        content["superseded_by"] = answer.get("superseded_by")
+        return JSONResponse(content=content, status_code=202, headers={"Location": f"/api/tasks/{task_id}"})
+
+    if answer.get("status") == "success":
+        content = {
+            "status": "success",
+            "message": answer.get("message", ""),
+            "deployment": answer.get("deployment", {}),
+            "urls": answer.get("urls", {}),
+            "approvals": answer.get("approvals", []),
+            "processing": answer.get("processing", {}),
+        }
+        if answer.get("warnings"):
+            content["warnings"] = answer["warnings"]
+        return JSONResponse(content=content, status_code=201 if answer.get("deployment", {}).get("created") else 200)
+
+    error_type = str(answer.get("error_type") or finished.get("error_type") or "internal_error")
+    content = {
+        "status": "failed",
+        "message": f"Failed to upsert deployment '{deployment_data.deploymentName}'",
+        "error": answer.get("error") or finished.get("error_message") or UPSERT_NOT_ATTRIBUTABLE,
+        "error_type": error_type,
+    }
+    if answer.get("processing"):
+        content["processing"] = answer["processing"]
+    return JSONResponse(content=content, status_code=UPSERT_ERROR_STATUS.get(error_type, 400))
+
+
+#: What an upsert refusal means on the wire. Every type the use case can raise is in here, so
+#: a refusal never lands as a bare 400 that says nothing about which side made the mistake.
+UPSERT_ERROR_STATUS: dict[str, int] = {
+    "invalid_component_references": 400,
+    "validation_error": 400,
+    "ambiguous_repository": 400,
+    "domain_validation": 400,
+    "conflict": 409,
+    "no_repositories": 422,
+    "processing_failed": 500,
+    "internal_error": 500,
+}
 
 
 class UpdateComponentRequest(BaseModel):
@@ -1192,15 +1159,11 @@ async def add_component(
     component_data: AddComponentRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Add a new component definition to an existing project.
+    """Add a new component definition to an existing project.
 
     The component is added to the project's components array and referenced in
     the specified deployments. Each component declares its own services list,
     which determines what secrets/env vars it receives.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
@@ -1220,14 +1183,12 @@ async def add_component(
         f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
     )
 
-    # Validate project name format
     if not validate_project_name(project_name):
         raise HTTPException(
             status_code=400,
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate component name
     sanitized_name = sanitize_kubernetes_name(component_data.name)
     if sanitized_name != component_data.name.lower():
         raise HTTPException(
@@ -1235,7 +1196,6 @@ async def add_component(
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_VALIDATORS,
@@ -1276,10 +1236,8 @@ async def add_component(
     # Sync path (backward compatibility)
     project_manager = None
     try:
-        # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Add the component
         result = await project_manager.add_component(
             name=component_data.name,
             description=component_data.description,
@@ -1299,14 +1257,12 @@ async def add_component(
         )
 
         if result["success"]:
-            # Process the project to create K8s resources for all cluster deployments
             processing_success = await project_manager.process_project_from_git(
                 f"projects/{project_name}.yaml",
             )
             if not processing_success:
                 logger.error(f"Project processing failed for project '{sanitize_for_log(project_name)}'")
 
-            # Collect URLs from deployment results
             urls: dict[str, dict[str, Any]] = {}
             for dep_name in result.get("deployments_updated", []):
                 deployment_results = project_manager.get_deployment_results(dep_name)
@@ -1377,8 +1333,7 @@ async def update_component(
     component_data: UpdateComponentRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Update fields of an existing component (partial update).
+    """Update fields of an existing component (partial update).
 
     Only the fields present in the body are changed; the rest are left as-is. The change
     goes through the same validated save path as the UI (schema + structural validation,
@@ -1393,7 +1348,6 @@ async def update_component(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         UPDATE_COMPONENT_VALIDATORS,
@@ -1511,14 +1465,10 @@ async def add_component_to_deployment(
     component_data: AddComponentToDeploymentRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Add an existing component to a deployment that doesn't yet include it.
+    """Add an existing component to a deployment that doesn't yet include it.
 
     The component must already be defined in the project's components array.
     This endpoint adds a reference to it in the specified deployment.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
@@ -1537,14 +1487,12 @@ async def add_component_to_deployment(
         f"in project: {sanitize_for_log(project_name)}"
     )
 
-    # Validate project name format
     if not validate_project_name(project_name):
         raise HTTPException(
             status_code=400,
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate component name
     sanitized_name = sanitize_kubernetes_name(component_data.component_name)
     if sanitized_name != component_data.component_name.lower():
         raise HTTPException(
@@ -1552,7 +1500,6 @@ async def add_component_to_deployment(
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Validate fields using editable validators
     await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -1582,10 +1529,8 @@ async def add_component_to_deployment(
     # Sync path (backward compatibility)
     project_manager = None
     try:
-        # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Add the component to the deployment
         result = await project_manager.add_component_to_deployment(
             deployment_name=deployment_name,
             component_name=component_data.component_name,
@@ -1593,13 +1538,11 @@ async def add_component_to_deployment(
         )
 
         if result["success"]:
-            # Process the project to create K8s resources for the affected deployment
             processing_success = await project_manager.process_project_from_git(
                 f"projects/{project_name}.yaml",
                 deployment_name=deployment_name,
             )
 
-            # Collect URLs from deployment results
             urls: dict[str, dict[str, Any]] = {}
             deployment_results = project_manager.get_deployment_results(deployment_name)
             for name, dep_result in deployment_results.items():
@@ -1671,8 +1614,7 @@ async def add_service(
     service_data: AddServiceRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Add a service to an existing project.
+    """Add a service to an existing project.
 
     The service (and any auto-resolved dependencies) is added at the
     project level.  If ``components`` is provided, the service is appended to those
@@ -1683,9 +1625,6 @@ async def add_service(
     are still bound to it. ``components_updated`` lists only the components whose
     ``services`` list actually changed, so a component that already had the service is
     absent from it.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
@@ -1702,14 +1641,12 @@ async def add_service(
         f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
     )
 
-    # Validate project name format
     if not validate_project_name(project_name):
         raise HTTPException(
             status_code=400,
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate service name is non-empty and well-formed
     service_name = service_data.service.strip()
     if not service_name:
         raise HTTPException(
@@ -1723,7 +1660,6 @@ async def add_service(
             detail=f"Ongeldige servicenaam. Gebruik alleen kleine letters, cijfers en koppeltekens. Voorgesteld: {sanitized_service}",
         )
 
-    # Validate component names are non-empty strings
     if service_data.components:
         for component_name in service_data.components:
             if not component_name.strip():
@@ -1754,10 +1690,8 @@ async def add_service(
     # Sync path (backward compatibility)
     project_manager = None
     try:
-        # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Add the service
         result = await project_manager.add_service(
             service_name=service_data.service,
             component_names=service_data.components,
@@ -1824,11 +1758,7 @@ async def update_deployment_image(
     image_data: UpdateImageRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Update the container image for a specific component in a deployment.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
+    """Update the container image for a specific component in a deployment.
 
     Examples:
 
@@ -1875,15 +1805,12 @@ async def update_deployment_image(
       }'
     ```
     """
-    # Validate fields using editable validators
     await validate_api_payload(
         image_data.model_dump(),
         UPDATE_IMAGE_VALIDATORS,
     )
 
-    # Async path (default)
     if not sync:
-        # Serialize service actions for payload
         service_actions = None
         if image_data.services:
             service_actions = {
@@ -1916,11 +1843,8 @@ async def update_deployment_image(
     try:
         logger.info(f"Updating image for component '{image_data.componentName}' in {project_name}/{deployment_name}")
 
-        # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Extract service actions if provided (e.g., persistent-storage recreate actions)
-        # Convert Pydantic models to dicts for project_manager compatibility
         service_actions = None
         if image_data.services:
             service_actions = {
@@ -1928,9 +1852,8 @@ async def update_deployment_image(
             }
             logger.info(f"Service actions requested: {service_actions}")
 
-        # Handle the update-image action with optional service actions
-        # TODO: this method exist because we do not 'diff' yet between project files
-        #  in the future, a diff would show what has changed and we could determine what actions to take
+        # This route exists because nothing diffs two project files yet: the caller has to
+        # name the actions, since the change itself does not say what they are.
         result = await project_manager.update_image_and_regenerate(
             deployment_name=deployment_name,
             component_name=image_data.componentName,
@@ -1960,36 +1883,6 @@ async def update_deployment_image(
             await project_manager.close()
 
 
-# @api_router.post("/projects")
-# async def create_project(
-#     request: Request, project_data: SelfServiceProjectRequest = Body(...)
-# ) -> JSONResponse:
-#     """
-#     Create a new project from the self-service portal form.
-#
-#     Example:
-#     ```bash
-#     curl -X POST "http://localhost:9595/api/projects" \
-#       -H "Content-Type: application/json" \
-#       -d '{
-#         "project_name": "my-project",
-#         "display_name": "My Awesome Project",
-#         "project_description": "Test project",
-#         "cluster": "local",
-#         "user_email": ["user@example.com"],
-#         "user_roles": ["Developer"],
-#         "services": ["service-web", "service-sso"],
-#         "components": [{
-#           "type": "deployment",
-#           "port": 8080,
-#           "image": "nginx:latest"
-#         }]
-#       }'
-#     ```
-#     """
-#     return await create_self_service_project(request, project_data)
-
-
 @api_router.get(
     "/projects/{project_name}/:refresh",
     responses={
@@ -1999,8 +1892,7 @@ async def update_deployment_image(
 @action(Action.PROJECT_REFRESH)
 @validate_api_token
 async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
-    """
-    Refresh/retry a project deployment by reprocessing the project from its YAML file.
+    """Refresh/retry a project deployment by reprocessing the project from its YAML file.
 
     Query Parameters:
         force_clone: Force clone even if target resources exist (default: False)
@@ -2014,26 +1906,21 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
     try:
         logger.info(f"Project refresh request for: {project_name} (force_clone={force_clone})")
 
-        # Validate project name format
         if not validate_project_name(project_name):
             raise HTTPException(
                 status_code=400,
                 detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
             )
 
-        # Get project information from project service
         project = get_project_store().get(project_name)
 
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project registry")
 
-        # Create project manager instance
         project_manager = create_project_manager()
 
-        # Use the actual filename from project service
         project_file_path = f"projects/{project.filename}"
 
-        # Process the project file from Git (this will handle all the steps)
         processing_result = await project_manager.process_project_from_git(
             project_file_path, force_clone=force_clone, reset_running_sync=True
         )
@@ -2041,7 +1928,6 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         if processing_result:
             logger.info(f"Project refresh completed successfully: {project_name}")
 
-            # Get URLs from deployment results collected during processing
             urls: dict[str, dict[str, Any]] = {}
             deployment_results = project_manager.get_deployment_results()
             for dep_name, dep_result in deployment_results.items():
@@ -2059,8 +1945,8 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
                     "status": "completed",
                     "message": "All project resources processed successfully",
                     "result": processing_result,
-                    # Deze tak draait inline en heeft dus geen taakvoortgang: het antwoord is
-                    # het enige kanaal waarin staat wiens uitrol deze reset afbrak.
+                    # This branch runs inline and therefore has no task progress: the answer
+                    # is the only channel that says whose rollout this reset broke off.
                     **terminated_sync_fields(project_manager),
                 },
             }
@@ -2106,8 +1992,7 @@ async def refresh_deployment(
     force_clone: bool = False,
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Refresh a single deployment by reprocessing it from the project YAML file.
+    """Refresh a single deployment by reprocessing it from the project YAML file.
 
     This re-runs the provisioning steps for the specified deployment only,
     without affecting other deployments in the project.
@@ -2219,12 +2104,11 @@ async def refresh_deployment(
 @api_router.delete("/projects/{project_name}")
 @action(Action.PROJECT_DELETE)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
+@requires_step_up(action=StepUpAction.PROJECT_DELETE)
 async def delete_project(
     request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
-    """
-    Delete a project and all its associated resources.
+    """Delete a project and all its associated resources.
 
     This endpoint performs a complete cleanup of:
     1. Project YAML file from Git projects repository
@@ -2232,9 +2116,6 @@ async def delete_project(
     3. Kubernetes namespaces for all deployments
 
     WARNING: This operation is irreversible and will permanently delete all project resources.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example curl command:
     ```
@@ -2252,36 +2133,23 @@ async def delete_project(
     - Removes ArgoCD application finalizers if apps are stuck
     - Skips database cleanup if secrets are inaccessible
     - Use when a previous deletion failed partially
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project to delete (from URL path)
-        delete_data: Deletion confirmation data
-
-    Returns:
-        JSON response with detailed deletion results
     """
     project_manager = None
     try:
         force_mode = delete_data.force
         logger.info(f"Project deletion request for: {project_name} (force={force_mode})")
 
-        # Safety check: require explicit confirmation
         if not delete_data.confirmDeletion:
             raise HTTPException(status_code=400, detail="Project deletion requires confirmDeletion to be set to true")
 
-        # Get the project API key from headers
         project_api_key = request.headers.get("X-API-Key")
         if not project_api_key:
             raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
-        # Create project manager instance to handle the deletion and validation
         project_manager = create_project_manager()
 
-        # Perform the deletion
         deletion_results = await project_manager.delete_project(project_name, force=force_mode)
 
-        # Determine response status code based on results
         if deletion_results["success"]:
             status_code = 200
             message = f"Project '{project_name}' deleted successfully"
@@ -2316,21 +2184,17 @@ async def delete_project(
 @action(Action.DEPLOYMENT_DELETE)
 @marking_if_absent(default_marking)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
+@requires_step_up(action=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_project_deployment(
     request: Request,
     project_name: ProjectNamePath,
     deployment_name: DeploymentNamePath,
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Delete a specific deployment within a project.
+    """Delete a specific deployment within a project.
 
     This endpoint deletes a deployment and its associated resources using project-specific API keys.
     The API key is validated against the in-memory mapping of project IDs to API keys.
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example curl command:
     ```
@@ -2338,79 +2202,89 @@ async def delete_project_deployment(
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-project-api-key-here"
     ```
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project (from URL path)
-        deployment_name: Name of the deployment to delete (from URL path)
-        project_id: Project ID extracted from API key validation (injected by decorator)
-
-    Returns:
-        JSON response with detailed deletion results
     """
+    require_removable_deployment(project_name, deployment_name)
+    task = await create_async_task(
+        request=request,
+        task_type="delete_deployment",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={"project_name": project_name, "deployment_name": deployment_name},
+    )
+    task_id = str(task["task_id"])
+
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/{deployment_name}
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="delete_deployment",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "delete_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
+    return await _finished_delete_deployment_response(request, task_id, project_name, deployment_name)
+
+
+#: What the blocking delete answers when the task outlives the request.
+DELETE_DEPLOYMENT_STILL_RUNNING = (
+    "De deployment wordt nog verwijderd. Volg /api/tasks/{task_id} voor het resultaat, "
+    "of gebruik /api/v2/projects/{project_name}/{deployment_name}."
+)
+
+
+async def _finished_delete_deployment_response(
+    request: Request, task_id: str, project_name: str, deployment_name: str
+) -> JSONResponse:
+    """The finished delete task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-484), so the delete queues behind another round on the
+    same deployment instead of running next to it, and the rollout guard that looks for open
+    delete tasks sees this one too.
+    """
     try:
-        logger.info(f"Deployment deletion request for: {project_name}/{deployment_name} (project_id: {project_name})")
-
-        # Create project manager instance to handle the deletion
-        project_manager = create_project_manager()
-
-        # Perform the deployment deletion
-        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
-
-        # Determine response status code based on results
-        if deletion_results.get("success", False):
-            status_code = 200
-            message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
-        else:
-            status_code = 207  # Multi-Status - partial success
-            message = f"Deployment '{deployment_name}' deletion completed with some errors"
-
-        content = {
-            "status": "completed" if deletion_results.get("success", False) else "partial",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "deletion_results": deletion_results,
-            "warning": "This deletion is permanent and cannot be undone",
-        }
-
-        logger.info(
-            f"Deployment deletion completed for: {project_name}/{deployment_name} (success: {deletion_results.get('success', False)})"
-        )
-        return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Verwijderen van de deployment mislukt")
+        finished = await wait_for_task_answer(request, task_id, answer_key="status")
+    except TimeoutError as e:
         raise HTTPException(
-            status_code=500, detail="De deployment kon niet worden verwijderd. Probeer het over een minuut opnieuw."
+            status_code=504,
+            detail=DELETE_DEPLOYMENT_STILL_RUNNING.format(
+                task_id=task_id, project_name=project_name, deployment_name=deployment_name
+            ),
         ) from e
-    finally:
-        # TODO: maybe the project manager should close itself when done..
-        if project_manager:
-            await project_manager.close()
+
+    answer = finished.get("result") or {}
+    deletion_results = answer.get("deletion_results") or {}
+    succeeded = finished.get("status") == "completed"
+    if succeeded:
+        message = answer.get("message") or f"Deployment '{deployment_name}' in project '{project_name}' deleted"
+    else:
+        # 207 Multi-Status: the removal ran and left something behind, which is not the same
+        # answer as a request that could not run at all. A task that failed on an exception
+        # wrote no answer, so its error sentence is what this caller gets to see.
+        message = f"Deployment '{deployment_name}' deletion completed with some errors"
+        if not deletion_results.get("errors") and finished.get("error_message"):
+            deletion_results = {**deletion_results, "errors": [finished["error_message"]]}
+
+    content = {
+        "status": "completed" if succeeded else "partial",
+        "message": message,
+        "project": project_name,
+        "deployment": deployment_name,
+        "deletion_results": deletion_results,
+        "warning": "This deletion is permanent and cannot be undone",
+    }
+    logger.info("Deployment deletion completed for: %s/%s (success: %s)", project_name, deployment_name, succeeded)
+    return JSONResponse(content=content, status_code=200 if succeeded else 207)
+
+
+def validate_clone_source_reachable(
+    clone_data: CloneDatabaseFromExternalRequest | CloneBucketFromExternalRequest,
+) -> None:
+    """Refuse a direct clone source that names no host or no port, before anything runs.
+
+    Raises:
+        HTTPException: 400, naming the two fields that belong together.
+    """
+    if clone_data.tunnel is None and not has_direct_clone_source(clone_data.sourceHost, clone_data.sourcePort):
+        raise HTTPException(status_code=400, detail=CLONE_SOURCE_INCOMPLETE)
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
@@ -2423,8 +2297,7 @@ async def clone_database_from_external(
     clone_data: CloneDatabaseFromExternalRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Clone a database from an external source (e.g., another cluster via port-forward) into a deployment.
+    """Clone a database from an external source (e.g., another cluster via port-forward) into a deployment.
 
     This endpoint enables migrating database data from external sources such as:
     - Port-forwarded databases from other clusters (e.g., digilab to local/ODCN)
@@ -2433,12 +2306,10 @@ async def clone_database_from_external(
 
     The operation validates connectivity to both source and target before cloning.
 
-    Headers:
-        X-API-Key: The API key for the project (required)
-
-    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
-    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
-    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
+    The source has to stand on a public address: when sourceHost (or, with a tunnel, the host
+    of tunnel.serverUrl) resolves to a private or cluster-internal address, or does not
+    resolve at all, the answer is 422. A source in private address space goes through a
+    chisel tunnel.
 
     Example curl command:
     ```bash
@@ -2455,135 +2326,89 @@ async def clone_database_from_external(
         "forceClone": true
       }'
     ```
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the target project
-        deployment_name: Name of the target deployment
-        clone_data: External database clone configuration
-
-    Returns:
-        JSON response with detailed clone operation results
     """
     refusal = await clone_source_refusal(
         clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
-    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
+    task = await create_async_task(
+        request=request,
+        task_type="clone_database",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            **await clone_data.to_task_payload(),
+        },
+    )
+    task_id = str(task["task_id"])
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="clone_database",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-                **await clone_data.to_task_payload(),
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "clone_database"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
+    return await _finished_clone_response(
+        request,
+        task_id,
+        _CloneOutcome(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source=f"{clone_data.sourceHost}:{clone_data.sourcePort}",
+            subject="Database",
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _CloneOutcome:
+    """What the synchronous clone answer says about the clone it waited for."""
+
+    project_name: str
+    deployment_name: str
+    source: str
+    subject: str
+
+
+async def _finished_clone_response(request: Request, task_id: str, outcome: _CloneOutcome) -> JSONResponse:
+    """The finished clone task as the synchronous answer this route has always given.
+
+    Synchronous through the queue (RC-482), so the clone queues behind a deploy or another
+    clone of the same deployment instead of running next to it.
+    """
     try:
-        # TODO: we need a method to create a project manager from a given project_name
-        #  like: init(projectname)
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        finished = await wait_for_task_answer(request, task_id, answer_key="source")
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=CLONE_STILL_RUNNING) from e
 
-        # Determine if we're using Chisel tunnel or direct connection
-        if clone_data.tunnel:
-            # Using Chisel tunnel
-            logger.info(
-                f"External database clone request via Chisel tunnel: {project_name}/{deployment_name} "
-                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceDatabase} "
-                f"(via {clone_data.tunnel.serverUrl})"
-            )
-
-            # Execute clone via ProjectManager
-            clone_result = await project_manager.clone_database_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_database=clone_data.sourceDatabase,
-                source_schema=clone_data.sourceSchema,
-                source_username=clone_data.sourceUsername,
-                source_password=clone_data.sourcePassword,
-                tunnel_server_url=clone_data.tunnel.serverUrl,
-                tunnel_username=clone_data.tunnel.username,
-                tunnel_password=clone_data.tunnel.password,
-                tunnel_remote_host=clone_data.tunnel.remoteHost,
-                tunnel_remote_port=clone_data.tunnel.remotePort,
-                force_clone=clone_data.forceClone,
-            )
-        else:
-            # Direct connection (no tunnel)
-            if not clone_data.sourceHost or not clone_data.sourcePort:
-                raise HTTPException(
-                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
-                )
-
-            logger.info(
-                f"External database clone request (direct): {project_name}/{deployment_name} "
-                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceDatabase}"
-            )
-
-            # Execute clone via ProjectManager
-            clone_result = await project_manager.clone_database_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=clone_data.sourceHost,
-                source_port=clone_data.sourcePort,
-                source_database=clone_data.sourceDatabase,
-                source_schema=clone_data.sourceSchema,
-                source_username=clone_data.sourceUsername,
-                source_password=clone_data.sourcePassword,
-                force_clone=clone_data.forceClone,
-            )
-
-        # Determine response status
-        if clone_result["success"]:
-            status_code = 200
-            message = (
-                f"Database cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
-                f"to {project_name}/{deployment_name}"
-            )
-        else:
-            status_code = 500
-            message = f"Database clone failed: {', '.join(clone_result.get('errors', []))}"
-
-        content = {
-            "status": "success" if clone_result["success"] else "failed",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-            "operations": clone_result["operations"],
-            "errors": clone_result.get("errors", []),
-        }
-
-        logger.info(
-            f"External database clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
+    answer = finished.get("result") or {}
+    succeeded = "source" in answer
+    if succeeded:
+        message = (
+            f"{outcome.subject} cloned successfully from {outcome.source} "
+            f"to {outcome.project_name}/{outcome.deployment_name}"
         )
-        return JSONResponse(content=content, status_code=status_code)
+    else:
+        message = f"{outcome.subject} clone failed: {finished.get('error_message') or 'onbekende fout'}"
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Klonen van de externe database mislukt")
-        raise HTTPException(
-            status_code=500, detail="De database kon niet worden gekloond. Probeer het over een minuut opnieuw."
-        ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+    return JSONResponse(
+        content={
+            "status": "success" if succeeded else "failed",
+            "message": message,
+            "project": outcome.project_name,
+            "deployment": outcome.deployment_name,
+            "source": answer.get("source", {}),
+            "target": answer.get("target", {}),
+            "operations": answer.get("operations", []),
+            "errors": answer.get("errors", []),
+        },
+        status_code=200 if succeeded else 500,
+    )
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
@@ -2596,8 +2421,7 @@ async def clone_bucket_from_external(
     clone_data: CloneBucketFromExternalRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
-    """
-    Clone a MinIO bucket from an external source (e.g., another cluster via port-forward) into a deployment.
+    """Clone a MinIO bucket from an external source (e.g., another cluster via port-forward) into a deployment.
 
     This endpoint enables migrating object storage data from external sources such as:
     - Port-forwarded MinIO instances from other clusters (e.g., digilab to local/ODCN)
@@ -2606,12 +2430,10 @@ async def clone_bucket_from_external(
 
     The operation validates connectivity to both source and target before cloning.
 
-    Headers:
-        X-API-Key: The API key for the project (required)
-
-    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
-    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
-    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
+    The source has to stand on a public address: when sourceHost (or, with a tunnel, the host
+    of tunnel.serverUrl) resolves to a private or cluster-internal address, or does not
+    resolve at all, the answer is 422. A source in private address space goes through a
+    chisel tunnel.
 
     Example curl command:
     ```bash
@@ -2628,134 +2450,43 @@ async def clone_bucket_from_external(
         "forceClone": true
       }'
     ```
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the target project
-        deployment_name: Name of the target deployment
-        clone_data: External bucket clone configuration
-
-    Returns:
-        JSON response with detailed clone operation results
     """
     refusal = await clone_source_refusal(
         clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
     )
     if refusal:
         raise HTTPException(status_code=422, detail=refusal)
+    validate_clone_source_reachable(clone_data)
 
-    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
+    task = await create_async_task(
+        request=request,
+        task_type="clone_bucket",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            **await clone_data.to_task_payload(),
+        },
+    )
+    task_id = str(task["task_id"])
     if not sync:
-        task = await create_async_task(
-            request=request,
-            task_type="clone_bucket",
-            project_name=project_name,
-            deployment_name=deployment_name,
-            payload={
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-                **await clone_data.to_task_payload(),
-            },
-        )
-        task_id = str(task["task_id"])
         return JSONResponse(
             content=build_accepted_response(task_id, "clone_bucket"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
 
-    # Sync path (backward compatibility)
-    project_manager = None
-    try:
-        # Create project manager for the target project
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-
-        # Determine if we're using Chisel tunnel or direct connection
-        if clone_data.tunnel:
-            # Using Chisel tunnel
-            logger.info(
-                f"External bucket clone request via Chisel tunnel: {project_name}/{deployment_name} "
-                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceBucket} "
-                f"(via {clone_data.tunnel.serverUrl})"
-            )
-
-            # Execute clone via ProjectManager
-            clone_result = await project_manager.clone_minio_bucket_from_external_with_tunnel(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_bucket=clone_data.sourceBucket,
-                source_access_key=clone_data.sourceAccessKey,
-                source_secret_key=clone_data.sourceSecretKey,
-                tunnel_server_url=clone_data.tunnel.serverUrl,
-                tunnel_username=clone_data.tunnel.username,
-                tunnel_password=clone_data.tunnel.password,
-                tunnel_remote_host=clone_data.tunnel.remoteHost,
-                tunnel_remote_port=clone_data.tunnel.remotePort,
-                source_secure=clone_data.sourceSecure,
-                force_clone=clone_data.forceClone,
-            )
-        else:
-            # Direct connection (no tunnel)
-            if not clone_data.sourceHost or not clone_data.sourcePort:
-                raise HTTPException(
-                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
-                )
-
-            logger.info(
-                f"External bucket clone request (direct): {project_name}/{deployment_name} "
-                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceBucket}"
-            )
-
-            # Execute clone via ProjectManager
-            clone_result = await project_manager.clone_minio_bucket_from_external_direct(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=clone_data.sourceHost,
-                source_port=clone_data.sourcePort,
-                source_bucket=clone_data.sourceBucket,
-                source_access_key=clone_data.sourceAccessKey,
-                source_secret_key=clone_data.sourceSecretKey,
-                source_secure=clone_data.sourceSecure,
-                force_clone=clone_data.forceClone,
-            )
-
-        # Determine response status
-        if clone_result["success"]:
-            status_code = 200
-            message = (
-                f"Bucket cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
-                f"to {project_name}/{deployment_name}"
-            )
-        else:
-            status_code = 500
-            message = f"Bucket clone failed: {', '.join(clone_result.get('errors', []))}"
-
-        content = {
-            "status": "success" if clone_result["success"] else "failed",
-            "message": message,
-            "project": project_name,
-            "deployment": deployment_name,
-            "source": clone_result["source"],
-            "target": clone_result.get("target", {}),
-            "operations": clone_result["operations"],
-            "errors": clone_result.get("errors", []),
-        }
-
-        logger.info(
-            f"External bucket clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
-        )
-        return JSONResponse(content=content, status_code=status_code)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Klonen van de externe bucket mislukt")
-        raise HTTPException(
-            status_code=500, detail="De bucket kon niet worden gekloond. Probeer het over een minuut opnieuw."
-        ) from e
-    finally:
-        if project_manager:
-            await project_manager.close()
+    return await _finished_clone_response(
+        request,
+        task_id,
+        _CloneOutcome(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source=f"{clone_data.sourceHost}:{clone_data.sourcePort}",
+            subject="Bucket",
+        ),
+    )
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
@@ -2764,8 +2495,7 @@ async def clone_bucket_from_external(
 async def validate_clone_configuration(
     request: Request, project_name: ProjectNamePath, deployment_name: str
 ) -> JSONResponse:
-    """
-    Validate clone configuration without executing the clone.
+    """Validate clone configuration without executing the clone.
 
     Performs pre-flight checks:
     - Clone configuration validity
@@ -2774,38 +2504,23 @@ async def validate_clone_configuration(
     - Credentials verification
     - Resource existence checks
 
-    Headers:
-        X-API-Key: The API key for the project (required)
-
     Example:
     ```bash
     curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:validate-clone" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key"
     ```
-
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project
-        deployment_name: Name of the deployment to validate
-
-    Returns:
-        JSON response with detailed validation results
     """
     project_manager = None
     try:
         logger.info(f"Clone validation request for: {project_name}/{deployment_name}")
 
-        # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Read project data
         project_data = await project_manager.get_contents()
 
-        # Execute validation (no actual cloning)
         validation_result = validate_clone_readiness(project_data=project_data, deployment_name=deployment_name)
 
-        # Determine status code based on validation result
         if validation_result.get("validation", {}).get("passed"):
             status_code = 200
             message = f"Clone configuration for {deployment_name} is valid and ready"
@@ -2843,8 +2558,7 @@ async def validate_clone_configuration(
 async def create_self_service_project(
     request: Request, project_data: SelfServiceProjectRequest = Body(...)
 ) -> JSONResponse:
-    """
-    Create a new project from the self-service portal form.
+    """Create a new project from the self-service portal form.
 
     This endpoint processes the comprehensive self-service form that includes:
     - Project details
@@ -2870,13 +2584,6 @@ async def create_self_service_project(
         }]
       }'
     ```
-
-    Args:
-        request: The FastAPI request object
-        project_data: The self-service project creation request data
-
-    Returns:
-        JSON response with project creation and processing status
     """
     start_time = time.time()
     project_manager = None
@@ -2885,7 +2592,6 @@ async def create_self_service_project(
     try:
         logger.info(f"Creating self-service project: {project_data.project_name}")
 
-        # Validate project name
         if not validate_project_name(project_data.project_name):
             raise HTTPException(
                 status_code=400,
@@ -2897,7 +2603,6 @@ async def create_self_service_project(
                 detail=RESERVED_PROJECT_NAME_MESSAGE.format(name=project_data.project_name),
             )
 
-        # Validate domain fields using editable validators
         if project_data.domain_format:
             await validate_api_payload(
                 {
@@ -2909,7 +2614,6 @@ async def create_self_service_project(
                 CREATE_PROJECT_DOMAIN_VALIDATORS,
             )
 
-        # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)
 
         # Overwrite guard through the store, which owns the projects repo. reconcile()
@@ -2927,7 +2631,6 @@ async def create_self_service_project(
         # Persist through the single validated save path so the self-service API
         # uses the same chokepoint as the UI and the other API endpoints: schema +
         # structural validation before the commit, canonical dumper, cache refresh.
-        from opi.utils.yaml_util import load_yaml_from_string
 
         # No connector injected: ProjectManager then reads through the store's warm
         # copy, which has the commit this handler is about to make. An injected
@@ -2945,7 +2648,6 @@ async def create_self_service_project(
 
         logger.info(f"Self-service project file created successfully: {project_file_path}")
 
-        # Process the project file (reuses the bound ProjectManager)
         processing_result = await project_manager.process_project_from_git(project_file_path)
 
         if processing_result:
@@ -2971,7 +2673,7 @@ async def create_self_service_project(
             }
             return JSONResponse(content=content, status_code=200)
         else:
-            # Processing failed - rollback subdomain registration if we registered one
+            # Processing failed, so a subdomain registered for it is given back.
             if subdomain_registered and project_data.subdomain and project_data.base_domain:
                 await _rollback_subdomain_registration(
                     project_data.project_name,
@@ -3001,13 +2703,11 @@ async def create_self_service_project(
     except HTTPException:
         raise
     except (SubdomainNotAvailableError, SubdomainValidationError, BaseDomainValidationError) as e:
-        # Subdomain-related errors should return 400 Bad Request with clear message
         # Note: subdomain_registered will be False since registration failed
         elapsed_time = time.time() - start_time
         logger.warning(f"Subdomain error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        # Rollback subdomain registration on exception
         if subdomain_registered and project_data.subdomain and project_data.base_domain:
             await _rollback_subdomain_registration(
                 project_data.project_name,
@@ -3042,12 +2742,9 @@ async def _rollback_subdomain_registration(
             )
         else:
             logger.debug(f"No subdomain registration to rollback for '{project_name}/{deployment_name}'")
-    except Exception as rollback_error:
-        # Log but don't raise - rollback is best-effort
+    except Exception as rollback_error:  # noqa: BLE001  # best-effort rollback; it must not hide the failure it follows
+        # Best effort: a rollback that fails may not hide the failure it follows.
         logger.error(f"Failed to rollback subdomain registration for '{project_name}': {rollback_error}")
-
-
-# Subdomain API endpoints for nice URL feature
 
 
 class SubdomainRegistration(BaseModel):
@@ -3087,20 +2784,10 @@ async def list_subdomains(
     limit: int = 100,
     offset: int = 0,
 ) -> SubdomainListResponse:
-    """
-    List subdomain registrations with pagination support.
+    """List subdomain registrations with pagination support.
 
-    ``project_name`` is required and must match the API key: it stood in the document as an
-    optional filter, while leaving it out could only produce
-    ``401 Missing project_name parameter`` -- the projectsleutel is checked against it.
-
-    Args:
-        project_name: Project name matching the API key (required)
-        limit: Maximum number of results to return (default: 100, max: 1000)
-        offset: Number of results to skip for pagination (default: 0)
-
-    Returns:
-        Paginated list of subdomain registrations with total count
+    ``project_name`` is required and is checked against the API key, so leaving it out can
+    only produce ``401 Missing project_name parameter``.
 
     Example:
     ```bash
@@ -3113,7 +2800,7 @@ async def list_subdomains(
       -H "X-API-Key: your-api-key"
     ```
     """
-    # Validate and cap limit to prevent excessive queries
+    # Capped, so one request cannot ask for the whole table.
     if limit < 1:
         limit = 1
     elif limit > 1000:
@@ -3126,17 +2813,15 @@ async def list_subdomains(
         connector = create_subdomain_connector()
 
         if project_name:
-            # For project-specific queries, get all and slice (pagination less critical here)
+            # Per project the whole list is read and sliced; only the full list pages in the
+            # database.
             all_registrations = await connector.get_by_project(project_name)
             total = len(all_registrations)
             registrations = all_registrations[offset : offset + limit]
         else:
-            # For full list, use database-level pagination
             registrations = await connector.list_all(limit=limit, offset=offset)
-            # Get total count for pagination info
             total = await connector.count_all()
 
-        # Convert datetime objects to strings for JSON serialization
         items = []
         for reg in registrations:
             reg_dict = dict(reg)
@@ -3170,13 +2855,9 @@ async def list_subdomains(
 async def add_registry_by_secret(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryBySecretRequest = Body(...)
 ) -> JSONResponse:
-    """
-    Add or update a container registry that references a pre-existing Kubernetes secret.
+    """Add or update a container registry that references a pre-existing Kubernetes secret.
 
     If a registry with the same name already exists, it is updated (upsert).
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
@@ -3212,7 +2893,6 @@ async def add_registry_by_secret(
         )
 
         if result["success"]:
-            # Process the project to reconcile imagePullSecrets
             processing_result = await project_manager.process_project_from_git(f"projects/{project_name}.yaml")
 
             status_code = 201 if result["created"] else 200
@@ -3268,14 +2948,10 @@ async def add_registry_by_secret(
 async def add_registry_by_credentials(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryByCredentialsRequest = Body(...)
 ) -> JSONResponse:
-    """
-    Add or update a container registry with username/password credentials.
+    """Add or update a container registry with username/password credentials.
 
     The password is AGE-encrypted with the project's public key before storing.
     If a registry with the same name already exists, it is updated (upsert).
-
-    Headers:
-        X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
@@ -3313,7 +2989,6 @@ async def add_registry_by_credentials(
         )
 
         if result["success"]:
-            # Process the project to reconcile imagePullSecrets
             processing_result = await project_manager.process_project_from_git(f"projects/{project_name}.yaml")
 
             status_code = 201 if result["created"] else 200

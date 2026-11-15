@@ -19,12 +19,10 @@ Under ``data`` because it is not configuration of a use -- it is the thing being
 these by id and *binds* it to a path or an env-var; that side is
 ``config_model.AttachmentsConfig``.
 
-Until now this shape was validated by nothing. ``validate_service_configs`` walks
-``config`` blocks, so it skipped the catalog entirely, and the ``attachment-data-entry``
-``$def`` in ``project_v2.json`` was referenced from nowhere. A catalog entry with a typo'd
-key, a missing filename, or an id that cannot become a Kubernetes volume name was
-therefore committed happily and failed much later, at deploy time. This model is what
-``Service.data_model_for`` hands the validation walk so the rejection happens at save.
+``validate_service_configs`` walks ``config`` blocks, so the catalog is only validated
+because ``Service.data_model_for`` hands it this model: that is what rejects a catalog
+entry with a typo'd key, a missing filename or an id that cannot become a Kubernetes
+volume name at save instead of at deploy time.
 """
 
 from __future__ import annotations
@@ -37,10 +35,8 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #:
 #: Attachments are meant for small files -- a certificate, a key, a truststore -- and each
 #: one is stored inline in the project YAML, so every upload makes that file permanently
-#: bigger for everyone who reads it (the wizard, every save, every deploy). 64 KB is a
-#: choice, not a law of nature: it is low because the project file has no import mechanism
-#: yet (``project_attachments_yaml_size``). If attachments ever move to their own files,
-#: raising this becomes a decision someone makes here rather than a limit they discover.
+#: bigger for everyone who reads it (the wizard, every save, every deploy). It is this low
+#: because the project file has no import mechanism (``project_attachments_yaml_size``).
 #:
 #: It lives in the service package, next to the model, because every road into the system
 #: has to honour it: the wizard upload, the project-level API upload and the

@@ -1,5 +1,5 @@
 """
-Unit tests for opi.core.task_helpers.
+Unit tests for opi.http.task_helpers.
 
 Tests cover:
 - create_async_task: local and federation routing
@@ -14,11 +14,13 @@ import pytest
 from fastapi import HTTPException
 from opi.core.actor import Actor, ActorKind
 from opi.core.actor import actor as actor_contextvar
-from opi.core.task_helpers import (
+from opi.http.task_helpers import (
     build_accepted_response,
     create_async_task,
     get_task_service,
+    queue_rollout,
     task_actor,
+    wait_for_task_answer,
     wait_for_task_completion,
 )
 
@@ -56,7 +58,7 @@ class TestTaskActor:
     """De taak en de git-trailer noemen dezelfde aanroeper als de log (RC-322).
 
     Een sessie-e-mailadres gaat voor; zonder sessie leest ``task_actor`` de contextvar van
-    ``opi.core.actor`` die de ingang (``handhaaf``) al zette, zodat een service account, een
+    ``opi.core.actor`` die de ingang (``enforce``) al zette, zodat een service account, een
     persoonlijk token en de oude projectsleutel hun eigen vorm meekrijgen in plaats van allemaal
     het vlakke "API".
     """
@@ -168,7 +170,7 @@ class TestCreateAsyncTask:
         request.app.state.federation_service = None
         request.state.user = {"email": "dev@example.com"}
 
-        with patch("opi.core.task_helpers.settings") as mock_settings:
+        with patch("opi.http.task_helpers.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "local"
             result = await create_async_task(
                 request=request,
@@ -246,7 +248,7 @@ class TestCreateAsyncTask:
         request.app.state.task_service = mock_service
         request.app.state.federation_service = None
 
-        with patch("opi.core.task_helpers.settings") as mock_settings:
+        with patch("opi.http.task_helpers.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "local"
             await create_async_task(
                 request=request,
@@ -257,6 +259,65 @@ class TestCreateAsyncTask:
         call_kwargs = mock_service.create_task.call_args[1]
         assert call_kwargs["payload"] == {}
         assert call_kwargs["deployment_name"] is None
+
+
+class TestQueueRollout:
+    """``queue_rollout``: the ``rollout_project`` task every portal save now enqueues.
+
+    The singular ``deployment_name`` kwarg exists for the routing and display a single
+    deployment gets elsewhere (federation, the progress fragment); the scope dedup itself
+    reads the plural ``deployment_names`` in the payload (``task_supersede.scope_of``).
+    """
+
+    def _request(self, service: AsyncMock) -> MagicMock:
+        request = MagicMock()
+        request.app.state.task_service = service
+        request.app.state.federation_service = None
+        request.state.user = {"email": "dev@example.com"}
+        return request
+
+    @pytest.mark.asyncio
+    async def test_a_single_deployment_names_both_the_scope_and_the_singular_field(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            task_id = await queue_rollout(self._request(mock_service), "demo", ["live"])
+
+        assert task_id == SAMPLE_TASK_ID
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "rollout_project"
+        assert call_kwargs["deployment_name"] == "live"
+        assert call_kwargs["payload"] == {"project_name": "demo", "deployment_names": ["live"]}
+        assert call_kwargs["max_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_several_deployments_carry_no_singular_field(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            await queue_rollout(self._request(mock_service), "demo", ["live", "test"])
+
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["deployment_name"] is None
+        assert call_kwargs["payload"]["deployment_names"] == ["live", "test"]
+
+    @pytest.mark.asyncio
+    async def test_a_project_wide_round_carries_none_in_the_payload_too(self) -> None:
+        """None means project-wide, as ``task_supersede.scope_of`` reads it: not an empty list."""
+        mock_service = AsyncMock()
+        mock_service.create_task.return_value = {"task_id": SAMPLE_TASK_ID}
+
+        with patch("opi.http.task_helpers.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "local"
+            await queue_rollout(self._request(mock_service), "demo", None)
+
+        call_kwargs = mock_service.create_task.call_args[1]
+        assert call_kwargs["deployment_name"] is None
+        assert call_kwargs["payload"]["deployment_names"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -418,3 +479,77 @@ class TestWaitForTaskCompletion:
 
         assert result["status"] == "completed"
         assert result["result"]["from"] == "federation"
+
+
+# ---------------------------------------------------------------------------
+# wait_for_task_answer
+# ---------------------------------------------------------------------------
+
+
+def _request_with(task_service: AsyncMock) -> MagicMock:
+    request = MagicMock()
+    request.app.state.task_service = task_service
+    request.app.state.federation_service = None
+    return request
+
+
+class TestWaitForTaskAnswer:
+    """The write-up of what a synchronous V1 endpoint is left waiting for after it hands a
+    restore or a clone to the task queue (RC-482): a terminal task whose handler's answer
+    may still be a beat behind the status flip to 'completed'."""
+
+    @pytest.mark.asyncio
+    async def test_the_answer_already_on_the_terminal_task_is_returned_immediately(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {
+            "task_id": SAMPLE_TASK_ID,
+            "status": "completed",
+            "result": {"source": {"host": "db.publiek.nl"}},
+        }
+
+        result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["result"]["source"]["host"] == "db.publiek.nl"
+        mock_service.get_task.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_lands_just_after_the_terminal_status_is_picked_up(self) -> None:
+        """The progress manager stamps the task done before the worker adds the answer, so
+        the first read of a just-finished task can still be missing it."""
+        mock_service = AsyncMock()
+        mock_service.get_task.side_effect = [
+            {"task_id": SAMPLE_TASK_ID, "status": "completed", "result": {}},
+            {"task_id": SAMPLE_TASK_ID, "status": "completed", "result": {"source": {"host": "db.publiek.nl"}}},
+        ]
+
+        with patch("opi.http.task_helpers.asyncio.sleep", AsyncMock()):
+            result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["result"]["source"]["host"] == "db.publiek.nl"
+        assert mock_service.get_task.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_never_lands_gives_back_the_terminal_task_without_it(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {"task_id": SAMPLE_TASK_ID, "status": "failed", "result": {}}
+
+        with (
+            patch("opi.http.task_helpers.asyncio.sleep", AsyncMock()),
+            patch("opi.http.task_helpers.TASK_ANSWER_GRACE_SECONDS", 0.01),
+        ):
+            result = await wait_for_task_answer(_request_with(mock_service), SAMPLE_TASK_ID, answer_key="source")
+
+        assert result["status"] == "failed"
+        assert "source" not in (result.get("result") or {})
+
+    @pytest.mark.asyncio
+    async def test_the_task_itself_timing_out_still_raises(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_task.return_value = {"task_id": SAMPLE_TASK_ID, "status": "running"}
+        request = _request_with(mock_service)
+
+        with (
+            patch("opi.http.task_helpers.wait_for_task_completion", side_effect=TimeoutError("niet klaar")),
+            pytest.raises(TimeoutError, match="niet klaar"),
+        ):
+            await wait_for_task_answer(request, SAMPLE_TASK_ID, answer_key="source")

@@ -20,6 +20,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 
 | Tool | What it does |
 |---|---|
+| `keycloak_debug.py` | Read-only look at a live Keycloak: `list-realms`, `get-realm`, `list-clients`, `get-client` and `get-themes` for a realm. Takes `--url`, `--user` and `--password` of an admin account. |
 | `keycloak_flow_tool.py` | Inspect/rebuild the ZAD **auto-link first-broker-login flow** on a live realm (`inspect <realm>`, `rebuild <realm> [--confirm-link]`, `inspect-all`). Rebuilds with explicit execution priorities so `idp-create-user-if-unique` precedes the handle-existing subflow (see `features/keycloak-auto-link.md`). Needs `KEYCLOAK_ADMIN_PASSWORD` (optional `KEYCLOAK_URL`, `KEYCLOAK_ADMIN_USER`). |
 | `keycloak_thema_shots.py` | Zet elke pagina van het NLDD-loginthema op de foto, in nl en en, op bureaublad- en telefoonbreedte, tegen de testcontainer van `task test-keycloak-image`. Doorloopt de flows met Playwright, dus hij meet tegelijk dat de NLDD-invoervelden hun waarde posten. Vraagt `--wachtwoord`, het adminwachtwoord dat die taak per ronde toont. Zie `features/keycloak-nldd-thema.md`. |
 
@@ -59,6 +60,12 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `transip_delete_dns.py` | Delete TransIP DNS records (the TransIP API key is IP-whitelisted; calls must originate from an allowed IP). |
+
+## De code zelf
+
+| Gereedschap | Wat het doet |
+|---|---|
+| `measure_code.py` | Meet `opi/` tegen de drempels van `docs/development/coding-rules.md`: per module, functie en class de maat, en per package de import-pijlen (apart voor top-level, in een functie en onder `TYPE_CHECKING`). Draai via `task code-metrics`, met `CSV=<map>` voor de tabellen. |
 
 ## De testsuite
 

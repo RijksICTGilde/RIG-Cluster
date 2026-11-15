@@ -75,7 +75,7 @@ class TestLogRecordFactory:
     @pytest.fixture(autouse=True)
     def _ensure_factory(self) -> None:
         # Importing logging_config registers our custom LogRecord factory
-        import opi.utils.logging_config  # noqa: F401
+        import opi.core.logging_config  # noqa: F401
 
     @pytest.fixture
     def capture_handler(self) -> logging.Handler:

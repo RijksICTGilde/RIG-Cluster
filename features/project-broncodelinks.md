@@ -65,9 +65,9 @@ langs de schemapoort, en die laat dezelfde url met een andere naam door.
 Er is geen nieuwe rol en geen nieuwe action: wie de omschrijving mag wijzigen
 (`project.edit`), mag ook de links wijzigen.
 
-Rechtstreeks in het projectbestand in git kan ook. De schemapoort in `git_monitor`
-valideert dat bestand vóór elke verwerking, dus een link die de vormregels niet haalt komt
-er niet in. Eén uitzondering: twee keer dezelfde url met een andere naam, zie hierboven.
+Rechtstreeks in het projectbestand in git kan ook. Elke schrijfroute valideert de
+eindtoestand tegen het schema, dus een link die de vormregels niet haalt komt er niet in.
+Eén uitzondering: twee keer dezelfde url met een andere naam, zie hierboven.
 
 ## Weergave
 

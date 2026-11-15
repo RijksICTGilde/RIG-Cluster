@@ -1,12 +1,8 @@
-"""What a project may set on a service, and how far it may go (RC-168).
+"""What a project may set on a service, and how far it may go.
 
-Three things keep turning up together whenever a service field becomes user-settable:
-a *bound* on what is responsible, a *value* a project picks inside it, and something
-that checks the choice. Today each of those sits somewhere else -- a ``le=`` on a
-pydantic field, a hardcoded number in a connector, a dropdown in the wizard -- and the
-second service that needs one builds a second variant.
-
-This module is the one shape for it. A service declares, per field:
+Three things belong together whenever a service field becomes user-settable: a *bound* on
+what is responsible, a *value* a project picks inside it, and something that checks the
+choice. This module is the one shape for all three. A service declares, per field:
 
 * the **room**: minimum, maximum (or the allowed set), and the default;
 * the **layers** on which a project may set the field at all.
@@ -17,12 +13,12 @@ declaration -- never against a number that happens to sit in a model.
 
 ::
 
-    dienst declareert:    min 1,  max 100,  standaard 20
+    service declares:     min 1,  max 100,  default 20
                                   |
-    projectbestand kiest:         60          <- getoetst aan het bovenstaande
-    deployment overschrijft:      80          <- idem
+    project file picks:           60          <- judged against the above
+    deployment overrides:         80          <- likewise
                                   |
-    connector krijgt:             80
+    connector receives:           80
 
 Three rules follow, and they are what the code below implements:
 
@@ -37,7 +33,7 @@ Three kinds of bound, and deliberately no fourth: whole numbers, Kubernetes quan
 (``100m`` and ``2`` are both CPU, ``512Mi`` and ``1Gi`` both memory, so they are parsed
 and compared as numbers rather than as text), and a value out of a closed set.
 
-A service that declares none behaves exactly as it did.
+A service that declares none has nothing extra checked and nothing extra settable.
 """
 
 from __future__ import annotations
@@ -49,8 +45,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Final
 
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 from opi.services.services import service_entry_config, service_entry_name
+from opi.utils.k8s_quantity import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -80,18 +76,16 @@ class QuantityKind(Enum):
     """Which Kubernetes quantity a bound is expressed in.
 
     The two are not interchangeable: ``2`` means two cores for CPU and two bytes for
-    memory. Naming the kind picks the parser, which is the whole reason quantities are
-    compared as numbers here instead of as strings -- ``1Gi`` sorts before ``512Mi``
-    alphabetically and is four times as large.
+    memory. Naming the kind picks the parser. Compare the parsed numbers, never the text:
+    ``1Gi`` sorts before ``512Mi`` alphabetically and is four times as large.
     """
 
     MEMORY = "memory"
     CPU = "cpu"
 
 
-#: The parser per kind. Both already existed and are reused rather than rewritten:
-#: ``opi/services/resource_analyzer.py`` is where the platform turns a Kubernetes
-#: quantity into a number, for auto-tune and for the storage ceiling.
+#: The parser per kind. ``opi/services/resource_analyzer.py`` is where the platform turns a
+#: Kubernetes quantity into a number, for auto-tune and for the storage ceiling.
 _QUANTITY_PARSERS: Final[dict[QuantityKind, Callable[[str], float]]] = {
     QuantityKind.MEMORY: parse_k8s_memory_to_mi,
     QuantityKind.CPU: parse_k8s_cpu_to_m,
@@ -188,11 +182,10 @@ class ConfigSetting(ABC):
         """Whether this setting judges a CHANGE, i.e. overrides ``check_change``.
 
         Read by ``__post_init__``, because a rule about a change is only sound on a field
-        that lives on exactly one layer -- see the refusal there. Answered by asking the
-        class rather than by a flag someone has to remember to set: giving
-        ``check_change`` a body IS the answer, so a next kind of bound cannot inherit the
-        gap that refusal closes. A subclass whose hook only judges under a condition of
-        its own (``QuantitySetting.grow_only``) narrows it down from here.
+        that lives on exactly one layer -- see the refusal there. Giving ``check_change`` a
+        body IS the answer; there is no flag to remember. A subclass whose hook only judges
+        under a condition of its own (``QuantitySetting.grow_only``) narrows it down from
+        here.
         """
         return type(self).check_change is not ConfigSetting.check_change
 
@@ -219,7 +212,7 @@ class ConfigSetting(ABC):
         return config_path(layer, service, "config", *self.path_parts)
 
     @abstractmethod
-    def check(self, value: Any) -> Any:
+    def check(self, value: Any) -> Any:  # noqa: ANN401  # a project-file value
         """Judge one value and return it (normalised where that means the same value).
 
         Raises:
@@ -234,7 +227,7 @@ class ConfigSetting(ABC):
         time, which is what keeps the screen and the validation on the same bounds.
         """
 
-    def check_change(self, previous: Any, new: Any) -> None:  # noqa: B027 - opt-in hook, most fields move both ways
+    def check_change(self, previous: Any, new: Any) -> None:  # noqa: B027, ANN401 - opt-in hook, most fields move both ways
         """Judge a value against the one it replaces. Default: any change is fine.
 
         Only a setting whose field cannot move both ways overrides this.
@@ -256,7 +249,7 @@ class IntegerSetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}': minimum {self.minimum} ligt boven maximum {self.maximum}")
         super().__post_init__()
 
-    def check(self, value: Any) -> int:
+    def check(self, value: Any) -> int:  # noqa: ANN401  # a project-file value
         # bool is an int in Python, and "true" is not a number anyone meant to write.
         if isinstance(value, bool):
             raise SettingError(f"'{self.path}' moet een geheel getal zijn; je gaf {value!r}.")
@@ -296,16 +289,16 @@ class QuantitySetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}': minimum {self.minimum} ligt boven maximum {self.maximum}")
         super().__post_init__()
 
-    def _parse(self, value: Any) -> float:
+    def _parse(self, value: Any) -> float:  # noqa: ANN401  # a project-file value
         """The value as a number in the kind's base unit (MiB or millicores)."""
         if not isinstance(value, str):
             raise SettingError(
                 f"'{self.path}' moet een Kubernetes-hoeveelheid zijn zoals {self.minimum} of {self.maximum}; "
                 f"je gaf {value!r}."
             )
-        # Eerst de VORM, dan het getal: de parsers strippen en laten een spatie tussen
-        # getal en eenheid door, dus '1 Gi' en '1Gi\n' kwamen als geldige hoeveelheid
-        # binnen. Hetzelfde pattern als het projectschema gebruikt.
+        # The SHAPE first, then the number: the parsers strip and let a space between number
+        # and unit through, so '1 Gi' and '1Gi\n' would pass as a valid quantity. The same
+        # pattern the project schema uses.
         if not re.match(K8S_QUANTITY_PATTERN, value):
             raise SettingError(
                 f"'{self.path}' is geen geldige Kubernetes-hoeveelheid: {value!r}. "
@@ -320,7 +313,7 @@ class QuantitySetting(ConfigSetting):
                 f"Gebruik iets als {self.minimum} of {self.maximum}."
             ) from None
 
-    def check(self, value: Any) -> str:
+    def check(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         amount = self._parse(value)
         if not self._parse(self.minimum) <= amount <= self._parse(self.maximum):
             raise SettingError(f"'{self.path}' moet tussen {self.minimum} en {self.maximum} liggen; je gaf {value}.")
@@ -330,7 +323,7 @@ class QuantitySetting(ConfigSetting):
     def judges_changes(self) -> bool:
         return self.grow_only
 
-    def check_change(self, previous: Any, new: Any) -> None:
+    def check_change(self, previous: Any, new: Any) -> None:  # noqa: ANN401  # a project-file value
         if not self.grow_only:
             return
         if self._parse(new) < self._parse(previous):
@@ -359,7 +352,7 @@ class ChoiceSetting(ConfigSetting):
             raise ValueError(f"Instelbaar veld '{self.path}' noemt geen enkele toegestane waarde")
         super().__post_init__()
 
-    def check(self, value: Any) -> str:
+    def check(self, value: Any) -> str:  # noqa: ANN401  # a project-file value
         if not isinstance(value, str) or value not in self.allowed:
             raise SettingError(
                 f"'{self.path}' moet een van deze waarden zijn: {', '.join(self.allowed)}; je gaf {value!r}."
@@ -376,7 +369,7 @@ def wrong_layer_message(setting: ConfigSetting, layer: ConfigLayer) -> str:
     return f"'{setting.path}' kun je niet {_LAYER_LABEL[layer]} zetten; dat kan alleen {allowed}."
 
 
-def read_setting_value(config: Any, setting: ConfigSetting) -> Any:
+def read_setting_value(config: Any, setting: ConfigSetting) -> Any:  # noqa: ANN401  # a project-file value
     """The raw value of ``setting`` in one config block, or ``MISSING``.
 
     Walks ``setting.path`` key by key. Anything that is not a dict on the way down means
@@ -391,14 +384,13 @@ def read_setting_value(config: Any, setting: ConfigSetting) -> Any:
     return node
 
 
-def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSetting) -> Any:
+def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSetting) -> Any:  # noqa: ANN401  # a project-file value
     """What one ``services`` list says about ``setting`` for ``service``, or None.
 
     The layer is the list: a project's ``services``, or a deployment's. Reads the entry
-    format-agnostically (``service_entry_name``/``service_entry_config``), because a
-    configured service that happens to be written as a uniform record was otherwise read
-    as unconfigured. None means "says nothing", which is exactly what ``resolve_setting``
-    skips.
+    format-agnostically (``service_entry_name``/``service_entry_config``), so a configured
+    service written as a uniform record is not read as unconfigured. None means "says
+    nothing", which is exactly what ``resolve_setting`` skips.
     """
     for entry in entries or []:
         if service_entry_name(entry) == service.value:
@@ -407,7 +399,7 @@ def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSet
     return None
 
 
-def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -> Any:
+def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -> Any:  # noqa: ANN401  # a project-file value
     """The effective value: the most specific layer that says something, else the default.
 
     ``values`` maps a layer to what the project file has there; a layer that is absent,
@@ -427,7 +419,7 @@ def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -
     return setting.default
 
 
-def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: ConfigLayer) -> None:
+def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: ConfigLayer) -> None:  # noqa: ANN401  # a project-file value
     """Judge every declared setting that ``config`` mentions, at ``layer``.
 
     Two refusals: a value outside the declared room, and a value on a layer the service
@@ -451,7 +443,7 @@ def check_settings(settings: Sequence[ConfigSetting], config: Any, layer: Config
             raise SettingError(str(e), setting=setting) from None
 
 
-def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:
+def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, config: Any, layer: ConfigLayer) -> None:  # noqa: ANN401  # a project-file value
     """Judge what ``config`` changes about the settings, against ``previous``.
 
     A field a version does not mention stands on the service default, and that holds for

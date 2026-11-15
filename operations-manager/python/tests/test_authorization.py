@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.actor import ACTOR_UNKNOWN, get_actor, user_actor
-from opi.middleware.authorization import AuthorizationMiddleware, get_user
+from opi.http.auth.session_guard import get_user
+from opi.middleware.authorization import AuthorizationMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Match

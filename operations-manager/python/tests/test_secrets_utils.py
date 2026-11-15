@@ -1,5 +1,5 @@
 """
-Tests for opi.utils.secrets module.
+Tests for opi.services.secrets module.
 
 Tests the pure and semi-pure aspects of secret dataclasses including
 serialization, deserialization, property computation, and secret naming.
@@ -10,7 +10,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.utils.secrets import (
+from opi.services.secrets import (
     DatabaseSecret,
     KeycloakSecret,
     MinIOSecret,

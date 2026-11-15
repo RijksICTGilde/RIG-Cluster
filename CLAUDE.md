@@ -12,7 +12,7 @@ Think and act as a Principal Engineer. Be a critical thinker - do not agree with
 
 ## Woordenlijst
 
-**Code is Engels**: namen, commentaar, docstrings en testnamen, ook in een module of testbestand dat nog Nederlands is. Bestaande Nederlandse code wordt niet met terugwerkende kracht omgezet en ook niet vertaald als je hem toevallig raakt.
+**Code is Engels**: namen, commentaar, docstrings en testnamen, ook in een module of testbestand dat nog Nederlands is. Nederlandse code wordt omgezet in de opschoonronde die zijn package raakt. Gewoon werk raakt alleen zijn eigen regels, en schrijft die in het Engels.
 
 Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor documenten, commitberichten, teksten die de gebruiker ziet en antwoorden in de chat.
 
@@ -179,6 +179,11 @@ which also states which folder is for what (`docs/development/` vs `features/` v
   publiceren, pinnen, deployen, de CMP-sidecar, en de kubectl-context per cluster.
 - `docs/development/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
+- `docs/development/coding-rules.md` - de regels waar code hier aan voldoet, en de gates die ze
+  afdwingen: de ruff-ratchet (`operations-manager/python/ruff-baseline.toml`), de conventiecheck
+  op taal en commentaardichtheid (`scripts/code-conventions-baseline.json`) en het layers-contract
+  van import-linter (`operations-manager/python/pyproject.toml`). Alle drie de baselines kunnen
+  alleen krimpen, dus bestaande overtredingen blijven staan en nieuwe worden geweigerd.
 
 When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames, and add a line for it to `features/README.md`.
 
@@ -197,8 +202,9 @@ Plans, TODO lists, run reports, design briefs for unbuilt work (the old `feature
 Geldt voor alle code, commentaar, documentatie en commit-berichten in deze repo.
 
 - **Minimale uitleg.** Een commentaar of docstring zegt kort *wat* iets doet, en alleen als dat niet al uit de code volgt. Herhaalt de uitleg wat de code zelf zegt, dan is het ruis die veroudert.
-- **Comply or explain.** Wijk je af van een afspraak of van de voor de hand liggende oplossing, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
-- **Wat wel blijft staan**: waarom een afwijking bestaat, welke valkuil de vorige versie in liep, welke afspraak hier geldt. Dat kan een lezer niet uit de code halen.
+- **Comply or explain.** Wijk je af van een afspraak, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
+- **Wat wel blijft staan**: een afwijking van een afspraak, een valkuil die nu nog geldt, een randvoorwaarde die niet uit de code blijkt. Niet: waarom de code zo is opgezet, welke alternatieven zijn afgewogen of wat de vorige versie deed; dat hoort in het commitbericht of de PR.
+- **Nooit meer commentaar dan code.** Een functie met meer commentaarregels dan coderegels legt iets uit dat de code zelf had moeten zeggen. Een conventiecheck meet dit per bestand; de regel staat in hoofdstuk 6 van `docs/development/coding-rules.md`.
 - **Nooit em dashes.** Niet in code, niet in commentaar, niet in documentatie, niet in commit-berichten. Gebruik een komma, een dubbele punt of een punt.
 
 ## Post-Development Validation
@@ -265,6 +271,8 @@ When your changes create orphans:
 - Don't remove pre-existing dead code unless asked.
 
 The test: Every changed line should trace directly to the user's request.
+
+Opruimen gebeurt in een opschoonronde (hoofdstuk 11 van `docs/development/coding-rules.md`), niet terloops. Zie je een overtreding buiten je opdracht, laat hem staan: de ratchet-baselines houden hem vast tot de ronde voor dat package komt.
 
 ## 4. Goal-Driven Execution
 

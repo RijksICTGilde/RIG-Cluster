@@ -1,8 +1,7 @@
 """TransIP REST API v6 connector for DNS administration.
 
 Only what the CAA reconciler needs: authenticate, list the domains this account
-holds, read a zone, and add a record. There is deliberately no delete method --
-we never need one here, and what does not exist cannot be called by accident.
+holds, read a zone, and add a record.
 
 The API key is IP-whitelisted at TransIP, so these calls only succeed from a
 whitelisted source (in our setup: a pod in the production cluster, the same
@@ -20,9 +19,15 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
+from opi.connectors.http import client_session
+
 logger = logging.getLogger(__name__)
 
 TRANSIP_API_BASE = "https://api.transip.nl/v6"
+
+#: Budget for one TransIP call. The API answers in well under a second; this is the
+#: ceiling that keeps a startup reconciliation from waiting on a silent endpoint.
+TRANSIP_TIMEOUT_SECONDS = 30.0
 
 
 class TransIPError(Exception):
@@ -41,9 +46,9 @@ class TransIPConnector:
     async def _get_token(self) -> str:
         """Fetch (and cache) an access token.
 
-        The signature covers the exact bytes of the request body, so the body is
-        built once and both signed and sent -- serializing twice would produce a
-        different byte string and TransIP would reject the signature.
+        The signature covers the exact bytes of the body, so the body is built once and both
+        signed and sent: serializing it twice yields other bytes and TransIP rejects the
+        signature.
         """
         if self._token:
             return self._token
@@ -66,26 +71,31 @@ class TransIPConnector:
             raise TransIPError(msg)
         signature = private_key.sign(body, padding.PKCS1v15(), hashes.SHA512())
 
-        async with (
-            aiohttp.ClientSession() as session,
-            session.post(
-                f"{self.base_url}/auth",
-                data=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Signature": base64.b64encode(signature).decode(),
-                },
-            ) as response,
-        ):
-            text = await response.text()
-            if response.status >= 400:
-                msg = f"TransIP auth failed: {response.status} {text}"
-                raise TransIPError(msg)
-            try:
-                token = json.loads(text)["token"]
-            except (json.JSONDecodeError, KeyError) as e:
-                msg = f"TransIP auth returned no token: {text}"
-                raise TransIPError(msg) from e
+        try:
+            async with (
+                client_session(TRANSIP_TIMEOUT_SECONDS) as session,
+                session.post(
+                    f"{self.base_url}/auth",
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Signature": base64.b64encode(signature).decode(),
+                    },
+                ) as response,
+            ):
+                text = await response.text()
+                status = response.status
+        except (aiohttp.ClientError, TimeoutError) as e:
+            msg = f"TransIP auth is not reachable: {str(e) or type(e).__name__}"
+            raise TransIPError(msg) from e
+        if status >= 400:
+            msg = f"TransIP auth failed: {status} {text}"
+            raise TransIPError(msg)
+        try:
+            token = json.loads(text)["token"]
+        except (json.JSONDecodeError, KeyError) as e:
+            msg = f"TransIP auth returned no token: {text}"
+            raise TransIPError(msg) from e
 
         self._token = token
         return token
@@ -98,21 +108,26 @@ class TransIPConnector:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
 
-        async with (
-            aiohttp.ClientSession() as session,
-            session.request(method, f"{self.base_url}{path}", data=data, headers=headers) as response,
-        ):
-            text = await response.text()
-            if response.status >= 400:
-                msg = f"TransIP {method} {path} failed: {response.status} {text}"
-                raise TransIPError(msg)
-            if not text:
-                return {}
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as e:
-                msg = f"TransIP {method} {path} returned no JSON: {text}"
-                raise TransIPError(msg) from e
+        try:
+            async with (
+                client_session(TRANSIP_TIMEOUT_SECONDS) as session,
+                session.request(method, f"{self.base_url}{path}", data=data, headers=headers) as response,
+            ):
+                text = await response.text()
+                status = response.status
+        except (aiohttp.ClientError, TimeoutError) as e:
+            msg = f"TransIP {method} {path} is not reachable: {str(e) or type(e).__name__}"
+            raise TransIPError(msg) from e
+        if status >= 400:
+            msg = f"TransIP {method} {path} failed: {status} {text}"
+            raise TransIPError(msg)
+        if not text:
+            return {}
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            msg = f"TransIP {method} {path} returned no JSON: {text}"
+            raise TransIPError(msg) from e
 
     async def list_domains(self) -> list[str]:
         """Domain names this account holds."""

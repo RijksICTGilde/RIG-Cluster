@@ -1,4 +1,4 @@
-"""Config model for the storage services (RC-5 Phase 2).
+"""Config model for the storage services.
 
 ``persistent-storage`` and ``temp-storage`` share one config shape: a component-level
 *list* of mount specs (``[{name, size, mount-path}]``). The ``type``
@@ -22,7 +22,7 @@ from typing import ClassVar, Final
 from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationInfo, field_validator
 
 from opi.services.catalog.shared.revisions import CloneState
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 
 #: Absolute path built from word characters, dots, slashes and dashes.
 MOUNT_PATH_PATTERN = re.compile(r"^/[\w./-]+\Z")
@@ -99,15 +99,11 @@ class StorageEntry(BaseModel):
     def _reject_traversal(cls, value: str) -> str:
         """Absolute path, no ``..`` anywhere.
 
-        This guard used to live in the JSON schema, on the v1 ``storage:`` block
-        ($defs/storage-entry) -- which meant it only ever applied to v1 files, never
-        to the current service-config shape. Removing that def with the rest of the
-        v1 forms (RC-32) made the gap visible; the guard belongs here, on the model
-        that describes the shape people actually write. Container-side a ``..`` can
-        escape the intended storage root if any tool resolves the path.
+        Container-side a ``..`` can escape the intended storage root if any tool resolves the
+        path, and this model is what describes the shape people actually write.
 
-        Pydantic's ``pattern=`` cannot express this (its regex engine has no
-        look-ahead), hence a validator.
+        Pydantic's ``pattern=`` cannot express this (its regex engine has no look-ahead),
+        hence a validator.
         """
         if not MOUNT_PATH_PATTERN.match(value) or ".." in value:
             raise ValueError(f"Ongeldig mount-pad '{value}': moet absoluut zijn en mag geen '..' bevatten")
@@ -118,22 +114,18 @@ class StorageEntry(BaseModel):
     def _within_offered_sizes(cls, value: str, info: ValidationInfo) -> str:
         """Cap the size of a mount that is being SUBMITTED; leave stored data alone.
 
-        Until now the only brake was the form's dropdown, and a dropdown is not a rule:
-        the size editable carries a ``values_provider`` and no validator, the JSON schema
-        typed ``size`` as a bare string, and the config API was not checked at all. A
-        ``10Gi`` mount went straight through to a PVC.
-
-        This model types the generated config endpoints' request bodies, so the check
-        lands on the API write path where it belongs: at the boundary, as a 422, before
-        anything is stored.
+        A dropdown is not a rule: the size editable carries a ``values_provider`` and no
+        validator, and the JSON schema types ``size`` as a bare string. This model types the
+        generated config endpoints' request bodies, so the check lands on the API write path
+        where it belongs: at the boundary, as a 422, before anything is stored.
 
         What it deliberately does NOT do is judge a project file that already exists.
         ``project_validation`` runs this same model over the whole file on every save and
         every reprocess, so a ceiling applied there would turn an older project with a
         larger mount into a file that can no longer be saved -- and a PVC cannot shrink,
-        so its owner could not even comply. That is the ``dp-bn7`` fault: a validation
-        gap that silently stalls every deploy of one project. The whole-file gate
-        therefore passes ``STORED_CONTEXT_KEY`` and only the shape is checked there.
+        so its owner could not even comply, which silently stalls every deploy of that
+        project. The whole-file gate therefore passes ``STORED_CONTEXT_KEY`` and only the
+        shape is checked there.
         """
         if info.context and info.context.get(STORED_CONTEXT_KEY):
             return value

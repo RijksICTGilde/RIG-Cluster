@@ -11,18 +11,18 @@ Tests the subdomain restriction and custom domain approval system:
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.connectors.subdomain import (
-    get_project_allowed_domain_config,
-    get_project_allowed_subdomains,
-    is_domain_allowed_for_project,
-    is_subdomain_allowed_for_project,
-)
 from opi.core.cluster_config import (
     get_restricted_subdomain_domains,
     is_domain_subdomain_restricted,
 )
 from opi.forms.editables.generators import IssuerGenerator
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.services.catalog.publish_on_web.subdomain import (
+    get_project_allowed_domain_config,
+    get_project_allowed_subdomains,
+    is_domain_allowed_for_project,
+    is_subdomain_allowed_for_project,
+)
 
 # ---------------------------------------------------------------------------
 # Cluster config helpers

@@ -1,13 +1,12 @@
-"""Typed task response models for the async task system.
+"""The typed answer of the async task system: one result model per TaskType.
 
-Provides:
-- Result models for each TaskType, matching actual handler output
-- Generic TaskResponse[TResult] wrapper used by both V1 and V2 endpoints
-- TASK_RESULT_MODELS registry mapping TaskType -> result model class
-- SubtaskStatus for progress tracking
+``TASK_RESULT_MODELS`` maps a TaskType onto its result model, and ``TaskResponse`` is the
+wrapper both the V1 and the V2 endpoints answer with.
 """
 
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from opi.api.v2.models import (
     APPROVALS_DESCRIPTION,
@@ -16,17 +15,11 @@ from opi.api.v2.models import (
     PendingRolloutResponse,
     error_category_for,
 )
-from opi.core import progress_steps
-from opi.core.async_task_service import TaskType
-from pydantic import BaseModel, Field
+from opi.services.tasks import progress_steps
+from opi.services.tasks.async_task_service import TaskType
 
-# ---------------------------------------------------------------------------
-# Shared sub-models
-# ---------------------------------------------------------------------------
-
-#: Every result model that reports ``error_type`` reports the category beside it, in the
-#: same words, so a client does not have to keep its own table of free-form strings that
-#: goes quiet the day a new one appears. Filled in by ``task_response_from_dict``.
+#: Every result model that reports ``error_type`` reports the category beside it, in the same
+#: words, so a client needs no table of its own. Filled in by ``task_response_from_dict``.
 ERROR_CATEGORY_FIELD = Field(
     default=None,
     description=(
@@ -39,8 +32,6 @@ ERROR_CATEGORY_FIELD = Field(
 
 
 class SubtaskStatus(BaseModel):
-    """Status of a single subtask within a task's progress."""
-
     id: str
     name: str
     status: str  # pending, running, completed, failed
@@ -50,15 +41,11 @@ class SubtaskStatus(BaseModel):
 
 
 class DeploymentUrls(BaseModel):
-    """URLs for a single deployment."""
-
     cluster: str
     urls: dict[str, str] = Field(default_factory=dict)
 
 
 class DeploymentInfo(BaseModel):
-    """Information about a deployment."""
-
     name: str
     project: str
     components: list[dict[str, str]] = Field(default_factory=list)
@@ -67,8 +54,6 @@ class DeploymentInfo(BaseModel):
 
 
 class ProjectInfo(BaseModel):
-    """Project identification."""
-
     name: str
     file_path: str
 
@@ -76,11 +61,9 @@ class ProjectInfo(BaseModel):
 class ComponentFailureInfo(BaseModel):
     """Per-component failure detail for deployment health issues.
 
-    ``title`` en ``suggestion`` komen uit de event_interpreter en zijn de vertaalde vorm
-    van ``message``: dat laatste is de rauwe kubelet-tekst, die voor een image-pull-fout
-    ruim 700 tekens is en dezelfde fout twee keer bevat. De vertaling stond al in het
-    antwoord van de handler maar niet in dit model, dus elke API-lezer kreeg alleen de
-    rauwe variant.
+    ``title`` and ``suggestion`` come from the event_interpreter and are the translated form
+    of ``message``, which is the raw kubelet text: for an image-pull failure that runs to
+    some 700 characters and holds the same error twice.
     """
 
     component: str
@@ -96,20 +79,13 @@ class ComponentFailureInfo(BaseModel):
 
 
 class ProcessingStatus(BaseModel):
-    """Processing step status."""
-
     status: str  # completed, failed, skipped
     message: str | None = None
     error: str | None = None
     result: Any | None = None
     component_failures: list[ComponentFailureInfo] | None = None
-    # De deployments waarvan deze run een lopende ArgoCD-sync afbrak.
+    # The deployments whose running ArgoCD sync this run broke off.
     terminated_syncs: list[str] | None = None
-
-
-# ---------------------------------------------------------------------------
-# Result models - one per TaskType, matching handler return shapes
-# ---------------------------------------------------------------------------
 
 
 class CreateProjectResult(BaseModel):
@@ -124,8 +100,8 @@ class CreateProjectResult(BaseModel):
     error: str | None = None
     error_type: str | None = None
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
-    # Ook bij status "success": een project kan uitgerold zijn en toch componenten hebben
-    # die niet gezond draaien. Zonder dit veld had die uitkomst geen gestructureerd kanaal.
+    # Also on status "success": a project can be rolled out and still hold components that
+    # do not run healthily.
     processing: ProcessingStatus | None = None
 
 
@@ -192,7 +168,7 @@ class DeleteDeploymentResult(BaseModel):
 
     False together with ``already_absent`` means the deployment was not there to begin
     with. Deleting is idempotent on purpose, but "it is gone" and "it was never here"
-    are different facts and a script has to be able to tell them apart (RC-66)."""
+    are different facts and a script has to be able to tell them apart."""
     already_absent: bool = False
     """The deployment was not in the project; nothing was removed by this call."""
     deletion_results: dict[str, Any] = Field(default_factory=dict)
@@ -389,7 +365,7 @@ class ConfigureServiceResult(BaseModel):
 
 
 class ConfigureServiceValuesResult(BaseModel):
-    """Result of a configure_service_values task (RC-55).
+    """Result of a configure_service_values task.
 
     ``changed`` is False when the values asked for were already stored: the request
     succeeded, nothing was committed and nothing was rolled out. Reported rather than
@@ -412,12 +388,12 @@ class ConfigureServiceValuesResult(BaseModel):
 
 
 class ManageDatabaseSchemasResult(BaseModel):
-    """Result of a manage_database_schemas task (RC-59).
+    """Result of a manage_database_schemas task.
 
-    ``changed`` is False when the request found nothing to write -- removing a schema
-    that was already marked. The remaining flags say which of the three outcomes
-    happened, because "removed" alone would not distinguish marking (the schema and its
-    data stay, and it can come back) from forgetting the entry.
+    ``changed`` is False when the request found nothing to write, such as removing a schema
+    that was already marked. The remaining flags say which of the three outcomes happened,
+    because "removed" alone would not distinguish marking (the schema and its data stay, and
+    it can come back) from forgetting the entry.
     """
 
     status: str
@@ -435,10 +411,7 @@ class ManageDatabaseSchemasResult(BaseModel):
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
-# ---------------------------------------------------------------------------
-# Registry: TaskType -> result model class
-# ---------------------------------------------------------------------------
-
+#: Which result model a task type answers with.
 TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.CREATE_PROJECT: CreateProjectResult,
     TaskType.UPSERT_DEPLOYMENT: UpsertDeploymentResult,
@@ -460,18 +433,13 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Generic task wrapper
-# ---------------------------------------------------------------------------
-
-
 class SupersededByResponse(BaseModel):
     """The task that took over the work of a task that gave way.
 
-    A superseded task is recorded as ``completed`` - the durable work was done and a
-    newer task reprocesses from there - so a client that only reads ``status`` cannot
-    tell the difference. This field can be read without knowing the result shape of
-    any particular task type.
+    A superseded task is recorded as ``completed`` (the durable work was done and a newer
+    task reprocesses from there), so a client that only reads ``status`` cannot tell the
+    difference. This field can be read without knowing the result shape of any particular
+    task type.
     """
 
     task_id: str = Field(..., description="Task that took over; poll this one to see how the work ended.")
@@ -480,11 +448,11 @@ class SupersededByResponse(BaseModel):
 
 
 class WaitingForResponse(BaseModel):
-    """De taak waardoor deze taak nog niet aan de beurt is.
+    """The task this task is waiting behind.
 
-    Zonder dit lijkt een geblokkeerde taak gewoon te hangen. Wie een delete start terwijl
-    er een projectbrede taak op hetzelfde project loopt, moet kunnen zien dat er niets
-    stuk is: er loopt iets anders dat dezelfde deployment raakt.
+    Without it a blocked task simply looks like it hangs: whoever starts a delete while a
+    project-wide task runs on the same project has to be able to see that nothing is broken
+    and something else is touching the same deployment.
     """
 
     task_id: str = Field(..., description="De blokkerende taak; volg die om te zien wanneer hij klaar is.")
@@ -505,11 +473,9 @@ class WaitingForResponse(BaseModel):
 class TaskResponse[TResult: BaseModel](BaseModel):
     """Generic async task response wrapper.
 
-    Used by both V1 (blocking) and V2 (async) endpoints. The type parameter
-    TResult specifies the shape of the ``result`` field when the task completes.
-
-    OpenAPI docs show the full result schema for each endpoint, so API consumers
-    know upfront what ``result`` will contain.
+    Answered by both the V1 (blocking) and the V2 (async) endpoints. The type parameter
+    ``TResult`` is the shape of the ``result`` field once the task finishes, so every endpoint
+    documents its own result schema.
     """
 
     task_id: str = Field(..., description="Unique task identifier (UUID)")
@@ -569,15 +535,13 @@ class TaskResponse[TResult: BaseModel](BaseModel):
 def _with_error_category(result: object) -> object:
     """Put ``error_category`` beside ``error_type`` on a failed task result.
 
-    Here and not at the two dozen places that build a failure dict: this is the single
-    point where a stored task record becomes an API answer (V1 and V2 both), so one
-    translation covers every task type, including the ones added tomorrow.
+    Here and not at the two dozen places that build a failure dict: this is the single point
+    where a stored task record becomes an API answer (V1 and V2 both), so one translation
+    covers every task type.
 
-    A handler that sets the category itself keeps it. Everything else gets the derived
-    one, ``Unknown`` included: for a client, a category that is absent and a category
-    that says Unknown mean the same thing, and saying it out loud is the difference
-    between "we looked and cannot attribute this" and "this endpoint does not report
-    categories".
+    A handler that sets the category itself keeps it. Everything else gets the derived one,
+    ``Unknown`` included, which says "we looked and cannot attribute this" rather than "this
+    endpoint does not report categories".
     """
     if not isinstance(result, dict) or "error_type" not in result or result.get("error_category"):
         return result
@@ -596,23 +560,22 @@ def _superseded_by(result: object) -> dict | None:
 
 
 def _waiting_step(waiting_for: dict | None) -> str | None:
-    """De stapregel van een taak die op een andere taak wacht, of None.
+    """The step line of a task that waits on another task, or None.
 
-    Afgeleid, niet opgeslagen: de kolom houdt zijn "Queued", want de reden om te wachten
-    verandert continu terwijl de rij dat niet doet. ``current_step`` is wel het veld dat
-    het portaal en de CLI al tonen, dus daar hoort te staan waarop gewacht wordt.
+    Derived and not stored: the column keeps its "Queued", because the reason to wait keeps
+    changing while the row does not. ``current_step`` is the field the portal and the CLI
+    already show, so what is being waited on belongs there.
     """
     if not waiting_for:
         return None
-    waarop = waiting_for.get("deployment_name") or progress_steps.WAITING_WHOLE_PROJECT
-    return progress_steps.waiting_for_task(str(waiting_for.get("task_type", "?")), waarop)
+    subject = waiting_for.get("deployment_name") or progress_steps.WAITING_WHOLE_PROJECT
+    return progress_steps.waiting_for_task(str(waiting_for.get("task_type", "?")), subject)
 
 
 def task_response_from_dict(task: dict) -> dict:
     """Convert a task record dict to a TaskResponse-compatible dict.
 
-    This replaces the old _task_to_response helper with proper datetime
-    handling. The result is still a plain dict for JSONResponse serialization.
+    The result is a plain dict, for JSONResponse to serialize.
     """
     waiting_for = task.get("waiting_for")
     return {
@@ -624,17 +587,16 @@ def task_response_from_dict(task: dict) -> dict:
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),
-        # Uit het resultaat naar het topniveau getild: dit is het enige punt waar een
-        # opgeslagen taakrecord een API-antwoord wordt (V1 en V2 allebei), net als
-        # error_category. Altijd aanwezig, null als er niets is - een sleutel die soms
-        # ontbreekt dwingt elke lezer tot een extra controle.
+        # Lifted out of the result to the top level, at the one point where a stored task
+        # record becomes an API answer (V1 and V2 both), like error_category. Always present
+        # and null when there is nothing: a key that is sometimes absent forces every reader
+        # into an extra check.
         "superseded_by": _superseded_by(task.get("result")),
-        # Zelfde reden als hierboven: altijd aanwezig, null als de taak niet wacht. Gevuld
-        # door de taakroute, die de wachtrij op leesmoment bevraagt.
+        # Same reason as above: always present, null when the task is not waiting. Filled in
+        # by the task route, which asks the queue at the moment of reading.
         "waiting_for": waiting_for,
-        # Altijd aanwezig, ook als er niets te tellen valt: een sleutel die soms ontbreekt
-        # dwingt elke lezer tot een extra controle, en null zegt hetzelfde. Gevuld door de
-        # taakroute zodra de taak klaar is (zad-cli, punt 24).
+        # Always present, also when there is nothing to count, and filled in by the task
+        # route once the task is finished.
         "pending_rollout": task.get("pending_rollout"),
         "created_at": _safe_datetime_str(task.get("created_at")) or "",
         "started_at": _safe_datetime_str(task.get("started_at")),

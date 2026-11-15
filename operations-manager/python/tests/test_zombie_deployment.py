@@ -24,11 +24,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.connectors.git import GitPushConflictError
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.config import settings
-from opi.manager.argo_manager import ApplicationGone
+from opi.manager.argo_manager import ApplicationGoneError
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import ProjectManager
+from opi.services.tasks.async_task_service import AsyncTaskService
 from opi.utils.naming import (
     generate_argocd_appproject_prefix,
     generate_gitops_argocd_application_path,
@@ -90,7 +90,7 @@ def _manager(
 
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(return_value=open_deletes)
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
 
     pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
     pm.has_deployments_for_current_cluster = AsyncMock(return_value=True)  # type: ignore[method-assign]
@@ -177,7 +177,7 @@ async def test_een_onbereikbare_takentabel_laat_de_ronde_doorgaan(monkeypatch: p
     pm, provisioner = _manager(monkeypatch, {})
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(side_effect=OperationalError("select", {}, Exception("down")))
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
 
     assert await pm.process_project() is True
 
@@ -218,19 +218,19 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
     # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
     # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
     argo.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
-    monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo)
-    # ApplicationGone is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
+    monkeypatch.setattr("opi.manager.project.rollout.create_argo_connector", lambda *a, **k: argo)
+    # ApplicationGoneError is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
     # de wacht stopt daar, zodat deze test de wacht meet en niet de hele uitrol erna.
     monkeypatch.setattr(
         pm._argo_manager,
         "wait_for_application_synced",
-        AsyncMock(side_effect=ApplicationGone("Application 'demo-pr-244' verdween")),
+        AsyncMock(side_effect=ApplicationGoneError("Application 'demo-pr-244' verdween")),
         raising=False,
     )
 
     service = MagicMock()
     service.find_open_delete_deployments = AsyncMock(return_value=open_deletes)
-    monkeypatch.setattr("opi.manager.project_manager.AsyncTaskService", lambda cluster: service)
+    monkeypatch.setattr("opi.manager.project.rollout.AsyncTaskService", lambda cluster: service)
     return pm
 
 
@@ -384,10 +384,13 @@ async def _delete(manager: DeleteProjectManager, exists=_niets_bestaat) -> dict[
 
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=exists),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
     ):
         return await manager.delete_deployment("test-project", "pr-42")
 
@@ -431,10 +434,13 @@ async def test_een_mislukte_commit_in_stap_2_wacht_niet_op_argocd() -> None:
     begonnen = time.monotonic()
     with (
         patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.project.deployment_removal.create_argo_connector", return_value=argo),
         patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("opi.manager.project.deployment_removal.get_project_store", return_value=store),
         patch("os.path.exists", side_effect=_niets_bestaat),
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        patch("opi.manager.project.deployment_removal.SubdomainConnector", subdomain),
         pytest.raises(HTTPException),
     ):
         await manager.delete_deployment("test-project", "pr-42")

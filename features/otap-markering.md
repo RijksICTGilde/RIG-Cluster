@@ -63,7 +63,7 @@ deployments.
 
 ## Waar het vandaan komt in de code
 
-Alles staat in `opi/core/project_environment.py`: de enum `Omgeving`, de labels voor het
+Alles staat in `opi/services/project_environment.py`: de enum `Omgeving`, de labels voor het
 scherm, `effective_environment(deployment)` (de markering met de standaard toegepast),
 `highest_environment(project_data)` en `is_production_downgrade`. Elke lezer gaat
 daarlangs.
