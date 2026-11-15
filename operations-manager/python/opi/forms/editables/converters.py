@@ -6,6 +6,7 @@ from typing import Any
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
+from opi.services.catalog.invite.target_format import split_target
 from opi.utils.age import (
     AgeEncryptionError,
     carries_encrypted_value,
@@ -855,7 +856,6 @@ class InviteTargetConverter:
         the merged project file back in as the submission.
         """
         from opi.services.catalog.invite.destination import target_for_url
-        from opi.services.catalog.invite.target_format import split_target
 
         if not value or not isinstance(value, str) or not context_data:
             return None
