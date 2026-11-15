@@ -233,6 +233,9 @@ jobs:
           output: 'trivy-${{ matrix.image.name }}.sarif'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+          # Dezelfde uitzonderingen als de gate, zodat een afgewogen bevinding niet meetelt in
+          # het Security-tabblad. Na zijn vervaldatum komt hij daar terug.
+          trivyignores: '.trivyignore.yaml'
 
       # Scant hetzelfde image als de SARIF, maar faalt op oplosbare HIGH/CRITICAL die niet in
       # .trivyignore.yaml staan. SARIF-upload staat op if: always() zodat het Security-tabblad gevuld blijft.
