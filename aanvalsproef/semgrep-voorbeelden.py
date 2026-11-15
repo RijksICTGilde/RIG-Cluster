@@ -37,6 +37,13 @@ async def open_pagina(request: Request) -> str:
     return "open"
 
 
+# ok: zad-webroute-zonder-sso
+@router.get("/open-with-reason")
+async def open_page(request: Request) -> str:
+    """DELIBERATELY WITHOUT ``@requires_sso``: a public explanation page."""
+    return "open"
+
+
 # ruleid: zad-subprocess-via-een-shell
 # ruleid: zad-subprocess-buiten-connector
 def roep_via_een_shell(naam: str) -> None:
