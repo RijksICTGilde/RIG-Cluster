@@ -849,11 +849,18 @@ class InviteTargetConverter:
         return url_for_target(value, context_data) or ""
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:  # noqa: ANN401  # a project-file value
-        """The chosen address as the choice behind it, or None to write nothing."""
+        """The chosen address as the choice behind it, or None to write nothing.
+
+        A value that already is a choice passes unchanged: the whole-flow validation feeds
+        the merged project file back in as the submission.
+        """
         from opi.services.catalog.invite.destination import target_for_url
+        from opi.services.catalog.invite.target_format import split_target
 
         if not value or not isinstance(value, str) or not context_data:
             return None
+        if split_target(value)[0]:
+            return value
         return target_for_url(value, context_data)
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:  # noqa: ANN401  # a project-file value

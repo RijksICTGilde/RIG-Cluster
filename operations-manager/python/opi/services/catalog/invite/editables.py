@@ -20,7 +20,6 @@ from opi.forms.editables.validators import (
     EmailValidator,
     InviteKeyValidator,
     RealmRoleValidator,
-    UrlValidator,
 )
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.invite.defaults import (
@@ -129,7 +128,6 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
 INVITE_APPLICATION_TARGET_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "application-target"),
     values_provider="InviteApplicationUrlOptionsProvider",
-    validator=UrlValidator(),
     converter=InviteTargetConverter(),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
