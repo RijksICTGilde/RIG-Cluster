@@ -163,7 +163,7 @@ class TestRenderKeyValueEditor:
         assert 'data-format="yaml"' in html
 
     def test_a_masked_field_carries_the_veil_and_its_toggle(self) -> None:
-        field = self._make_field(value="API_KEY=secret", attributes={"kv_format": "env", "kv_mask_values": True})
+        field = self._make_field(value="API_KEY=secret", attributes={"kv_format": "env", "kv_mask_values": "true"})
         html = LOTCWidgetAdapter().render_key_value_editor(field)
         assert 'data-mask-values="true"' in html
         assert "toggleKvMask(" in html
@@ -174,6 +174,6 @@ class TestRenderKeyValueEditor:
         assert "toggleKvMask(" not in html
 
     def test_both_env_vars_fields_are_masked_and_the_aliases_are_not(self) -> None:
-        assert COMPONENT_USER_ENV_VARS.attributes.get("kv_mask_values") is True
-        assert DEPLOYMENT_COMP_USER_ENV_VARS.attributes.get("kv_mask_values") is True
+        assert COMPONENT_USER_ENV_VARS.attributes.get("kv_mask_values") == "true"
+        assert DEPLOYMENT_COMP_USER_ENV_VARS.attributes.get("kv_mask_values") == "true"
         assert not COMPONENT_ALIASES.attributes.get("kv_mask_values")
