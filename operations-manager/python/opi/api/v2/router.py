@@ -1297,9 +1297,7 @@ async def create_project_v2(
     user = get_current_user(request) or {}
     owner_email = str(user.get("email", ""))
 
-    # The technical name is generated here, not supplied, and checked against the store. The
-    # wizard builds its name with ``generate_project_name`` and checks no uniqueness, so a
-    # collision there only surfaces when the create task runs.
+    # The technical name is generated here, not supplied, and checked against the store.
     store = get_project_store()
     await store.reconcile()
     existing_names = {summary.name for summary in store.get_all()}
