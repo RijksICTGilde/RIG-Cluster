@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from opi.connectors.skopeo import SkopeoConnector
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_sync, generate_age_key_pair, unwrap_project_key_sync
 from opi.utils.yaml_util import load_yaml_from_string
@@ -136,6 +137,8 @@ def wizard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform_key: str) -
     monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "PROJECT_REPO_PASSWORD", REPO_PASSWORD)
     monkeypatch.setattr(wizard_session, "_STORE_DIR", None)
+    # Where skopeo is installed (CI), the registry step would log in to ghcr.io for real.
+    monkeypatch.setattr(SkopeoConnector, "check_login", AsyncMock(return_value=(True, "")))
 
     app = FastAPI()
 
