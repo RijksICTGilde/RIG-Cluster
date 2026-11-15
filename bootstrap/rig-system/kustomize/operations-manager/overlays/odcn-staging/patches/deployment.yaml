@@ -9,7 +9,7 @@ spec:
       - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
-        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.11.15.2055-bafbbca6@sha256:437d28d69b772a4db383e5bc295c10ca2c5ca4d69a0fec26b5fce74266d16606
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.11.15.2204-27af49fb@sha256:0fa0b3eaaae652253d49d179c346c58ae8e758a5d0a6186118f60d1315874a3e
         # Limits boven requests, want de pieken zijn kortstondig en het gemiddelde is
         # laag. OPI splitst per aanroep een kubectl af; bij gelijktijdige verzoeken
         # lopen dat er tientallen tegelijk zijn (gemeten: 27), en elk kost tientallen
