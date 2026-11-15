@@ -119,6 +119,10 @@ class ProjectNotFoundError(ProjectStoreError):
     """The requested project does not exist in the store."""
 
 
+class ProjectExistsError(ProjectStoreError):
+    """A create named a project that already exists."""
+
+
 class ConflictError(ProjectStoreError):
     """The project file changed after the caller read it, and the two changes
     could not be combined automatically.
@@ -361,7 +365,7 @@ class GitProjectStore(ProjectStore):
                 # Re-checked every attempt: a competing create may have landed remotely
                 # while we were pushing.
                 if await self._read_committed(connector, relative_path) is not None:
-                    raise ProjectStoreError(f"Project '{name}' already exists")
+                    raise ProjectExistsError(f"Project '{name}' already exists")
                 try:
                     await self._persist(connector, relative_path, data, message, actor)
                     break

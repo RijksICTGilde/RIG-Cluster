@@ -188,11 +188,12 @@ class TestHandleCreateProjectExistenceCheck:
     async def test_create_project_blocked_when_file_already_exists(self, monkeypatch) -> None:
         from opi.runtime.tasks import task_handlers_project
 
-        # The existence check asks the ProjectStore, which owns the projects repo.
+        # The existence check is ProjectStore.create, which owns the projects repo.
         # A store that already has the file must stop the create.
+        from opi.services.project_store import ProjectExistsError
+
         fake_store = AsyncMock()
-        fake_store.reconcile = AsyncMock()
-        fake_store.read_path = AsyncMock(return_value={"name": "victim-project"})
+        fake_store.create = AsyncMock(side_effect=ProjectExistsError("Project 'victim-project' already exists"))
         fake_store.save = AsyncMock()
 
         monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
@@ -277,6 +278,53 @@ class TestHandleCreateProjectExistenceCheck:
         # single validated save path rather than a raw create_or_update_file commit.
         assert len(saved_calls) == 1
         assert saved_calls[0][0].get("name") == "existing-project"
+
+    @pytest.mark.asyncio
+    async def test_new_project_is_written_through_create_not_save(self, monkeypatch) -> None:
+        """save is last-writer-wins, so a create that lost a race would overwrite the winner."""
+        from opi.runtime.tasks import task_handlers_project
+
+        fake_store = AsyncMock()
+        monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
+        monkeypatch.setattr("opi.utils.project_names.validate_project_name", lambda name: True)
+
+        saved_calls: list[tuple] = []
+
+        class _FakeProjectManager:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def save_and_commit_project(self, project_data, commit_message, **_kwargs):
+                saved_calls.append((project_data, commit_message))
+
+            async def get_contents(self):
+                return {"name": "new-project"}
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr("opi.manager.project_manager.ProjectManager", _FakeProjectManager)
+
+        progress = AsyncMock()
+        progress.add_task = lambda *_: object()
+        progress.update_current_step = lambda *_: None
+        progress.complete_task = lambda *_: None
+        progress.fail_task = lambda *_: None
+        progress.fail_project = lambda *_: None
+        progress.complete_project = lambda *_: None
+
+        payload = {
+            "project_name": "new-project",
+            "yaml_content": "name: new-project\n",
+            "is_new_project": True,
+            "rollout": False,
+        }
+        result = await task_handlers_project.handle_create_project(payload, progress)
+
+        assert result["status"] == "success"
+        fake_store.create.assert_awaited_once()
+        assert fake_store.create.await_args.args[0] == "new-project"
+        assert saved_calls == []
 
 
 # ---------------------------------------------------------------------------

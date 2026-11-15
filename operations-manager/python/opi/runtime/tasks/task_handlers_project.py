@@ -10,6 +10,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from opi.core.actor import get_actor
 from opi.core.cluster_config import is_reserved_project_name
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.tasks import progress_steps as steps
@@ -37,7 +38,7 @@ async def handle_create_project(payload: dict, progress: PersistentTaskProgressM
     """
     from opi.manager.project_manager import ProjectManager
     from opi.runtime.tasks.simple_background import _monitor_argocd_and_deployment
-    from opi.services.project_store import ConflictError, get_project_store
+    from opi.services.project_store import ConflictError, ProjectExistsError, get_project_store
     from opi.services.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml
     from opi.utils.project_names import validate_project_name
 
@@ -125,32 +126,8 @@ async def handle_create_project(payload: dict, progress: PersistentTaskProgressM
             else f"Update project {project_name}"
         )
 
-        # Project-create flow: refuse if the project file already exists.
-        # Without this a tenant could pick another tenant's name and take
-        # over their project on the next reload. Edit/update flows that
-        # reuse this task type (modal-edit, component delete) MUST set
-        # is_new_project=False so legitimate overwrites still work.
-        # Asked of the store, not of a private clone: the store owns the projects
-        # repo, and reconcile() first costs one ls-remote (~60ms) when nothing
-        # changed, so a project created by another cluster is still seen.
         store = get_project_store()
         is_new_project = payload.get("is_new_project", False)
-        if is_new_project:
-            await store.reconcile()
-        if is_new_project and await store.read_path(project_file_path) is not None:
-            error_msg = (
-                f"Project '{project_name}' bestaat al. "
-                f"Kies een andere projectnaam; een bestaand project kan niet "
-                f"via aanmaken worden overschreven."
-            )
-            progress.fail_task(git_task, error_msg)
-            progress.fail_project(error_msg)
-            return {
-                "project_name": project_name,
-                "status": "failed",
-                "error": error_msg,
-                "error_type": "already_exists",
-            }
 
         project_data_dict = load_yaml_from_string(yaml_content)
         if not project_data_dict:
@@ -173,31 +150,45 @@ async def handle_create_project(payload: dict, progress: PersistentTaskProgressM
             # tests/test_project_store_gelijktijdig_ui_en_api.py.
             project_data_dict = await project_manager.get_contents()
             logger.info("Project file at %s was already saved by the caller; not rewriting it", project_file_path)
+        elif is_new_project:
+            # Refuses an existing file under the store lock, re-checked on every push retry, so
+            # neither a name taken by another tenant nor a concurrent create is overwritten.
+            # Edit flows that reuse this task type MUST set is_new_project=False.
+            await store.create(project_name, project_data_dict, message=commit_message, actor=get_actor())
+            project_data_dict = await project_manager.get_contents()
         else:
             # Publish the complete project file: schema validation, canonical dumper,
             # commit + push in one shot. base_version lets the store merge concurrent changes.
             base: dict[str, Any] | None = None
-            if not is_new_project:
-                base_version: str | None = payload.get("base_version")
-                if base_version:
-                    base = await store.read_version(base_version)
-                    if base is None:
-                        logger.warning(
-                            "Version %s of %s is no longer readable; saving without a concurrency check",
-                            base_version,
-                            project_file_path,
-                        )
-                else:
+            base_version: str | None = payload.get("base_version")
+            if base_version:
+                base = await store.read_version(base_version)
+                if base is None:
                     logger.warning(
-                        "No base_version in the create_project payload for %s; that caller is not wired up yet, "
-                        "so a concurrent change to this project would be overwritten",
-                        project_name,
+                        "Version %s of %s is no longer readable; saving without a concurrency check",
+                        base_version,
+                        project_file_path,
                     )
+            else:
+                logger.warning(
+                    "No base_version in the create_project payload for %s; that caller is not wired up yet, "
+                    "so a concurrent change to this project would be overwritten",
+                    project_name,
+                )
 
             await project_manager.save_and_commit_project(project_data_dict, commit_message, base=base)
             logger.info("Project file created and pushed at %s", project_file_path)
 
         progress.complete_task(git_task)
+    except ProjectExistsError:
+        error_msg = (
+            f"Project '{project_name}' bestaat al. "
+            f"Kies een andere projectnaam; een bestaand project kan niet "
+            f"via aanmaken worden overschreven."
+        )
+        progress.fail_task(git_task, error_msg)
+        progress.fail_project(error_msg)
+        return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "already_exists"}
     except ConflictError as exc:
         logger.warning("Concurrent change blocked the save of %s: %s", project_name, exc)
         error_msg = (

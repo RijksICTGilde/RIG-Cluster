@@ -656,8 +656,7 @@ class TestDeMeldingNaastDeGrendel:
         from opi.runtime.tasks import task_handlers_project
 
         store = MagicMock()
-        store.reconcile = AsyncMock(return_value=None)
-        store.read_path = AsyncMock(return_value=None)
+        store.create = AsyncMock(return_value=None)
         monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: store)
 
         manager = AsyncMock()
