@@ -152,7 +152,7 @@ async def handle_create_project(payload: dict, progress: PersistentTaskProgressM
             logger.info("Project file at %s was already saved by the caller; not rewriting it", project_file_path)
         elif is_new_project:
             # Refuses an existing file under the store lock, re-checked on every push retry, so
-            # neither a name taken by another tenant nor a concurrent create is overwritten.
+            # neither a name another tenant already uses nor a concurrent create is overwritten.
             # Edit flows that reuse this task type MUST set is_new_project=False.
             await store.create(project_name, project_data_dict, message=commit_message, actor=get_actor())
             project_data_dict = await project_manager.get_contents()
