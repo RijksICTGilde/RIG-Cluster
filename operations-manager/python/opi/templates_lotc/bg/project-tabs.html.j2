@@ -536,11 +536,12 @@
 
                                            Per deployment een keer, want de knoppen hierboven zijn er een per
                                            deployment en de melding gaat over de deployment, niet over de link. #}
+                                        {# Only publish-on-web notices: other approvals do not change the address. #}
                                         {% set gemeld = namespace(deployments=[]) %}
                                         {% for link in component.ingress_links %}
                                             {% if link.deployment_name not in gemeld.deployments %}
                                                 {% set _ = gemeld.deployments.append(link.deployment_name) %}
-                                                {{ approval_alerts(approval_notices.get(link.deployment_name, [])) }}
+                                                {{ approval_alerts(approval_notices.get(link.deployment_name, []) | selectattr("service", "equalto", "publish-on-web") | list) }}
                                             {% endif %}
                                         {% endfor %}
                                     </c-stack>
