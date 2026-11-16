@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 env:
   # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
@@ -159,6 +158,10 @@ jobs:
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -301,6 +304,10 @@ jobs:
   manifest-scan:
     name: Manifest config scan - ${{ matrix.map }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -395,6 +402,10 @@ jobs:
   sast-semgrep:
     name: SAST - Semgrep
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     defaults:
       run:
@@ -465,6 +476,10 @@ jobs:
   manifest-posture:
     name: Manifest posture
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
