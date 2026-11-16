@@ -603,6 +603,8 @@ ZAD_ENV_CONFIG: dict[str, str] = {
     "GRAFANA_URL": "adres, geen geheim; de token ernaast roteert via grafana",
     "BACKUP_S3_ENDPOINT": "adres, geen geheim",
     "BACKUP_S3_ACCESS_KEY": "accountnaam bij BACKUP_S3_SECRET_KEY, die via minio-backup roteert",
+    "ADMIN_EMAILS": "toegangslijst, geen geheim",
+    "ALLOWED_EMAILS": "toegangslijst, geen geheim",
 }
 
 ZAD_ENV_NON_ROTATABLE: dict[str, str] = {
