@@ -349,6 +349,8 @@ class TestTheDeclarationDrivesTheValueCheck:
             # niet bestaat is een typefout en hoort bij het opslaan te sneuvelen.
             "components[*]/services{image-registries}/config/registry",
             "deployments[*]/components[*]/services/image-registries/config/registry",
+            # RC-498: the database points at the same list, so the same statement.
+            "services/namespace-postgresql-database/config/registry",
         }
 
 

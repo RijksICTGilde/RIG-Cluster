@@ -140,9 +140,9 @@ project geen registries, dan blijft de componentvorm zoals hij was: de toestand 
 
 Het keuzeveld verdwijnt als de laatste registry weggaat OF als de dienst op projectniveau
 wordt uitgezet, maar de verwijzing in het projectbestand niet. `validate_registry_references`
-(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de
-componenten erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert
-stilletjes waar een image vandaan komt.
+(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de plekken
+erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert stilletjes waar
+een image vandaan komt.
 
 Voor de tweede route slaat `_strip_removed_services_from_components` (`wizard_sections.py`,
 de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
@@ -150,6 +150,28 @@ de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
 projectniveau staat, waarna de grendel niets meer ziet. Zonder de uitzondering deed dezelfde
 handeling bovendien twee dingen: de lijstvorm op een component werd gestript, de dict-vorm op
 een deployment-component niet, en die laatste werd dan wel geweigerd.
+
+Een registry weghalen kan dus pas als geen component, geen deployment en ook de database er
+niet meer naar wijst. Waar je elke verwijzing aanpast:
+
+| Verwijzing | Waar je hem aanpast |
+|---|---|
+| `components[].services{image-registries}.config.registry` | de component-wizard, veld Registry bij de image |
+| `deployments[].components[].services.image-registries.config.registry` | de deployment-wizard, fieldset "Eigen registry (alleen voor deze deployment)" |
+| `services[namespace-postgresql-database].config.registry` | het databaseformulier, veld Registry |
+| `services[postgresql-database].config.registry` met `scope: project` | alleen via de API of het projectbestand: dit veld heeft geen formulier, net als de andere clustervelden van die service |
+
+Staat de keuze van een component leeg terwijl een deployment er zelf een registry koos, dan
+noemt de lege optie van het componentveld die deployment bij naam
+(`ImageRegistryOptionsProvider._deployment_deviations`). Zonder die melding leest het veld als
+"Automatisch" terwijl de image wel uit een registry komt, en is er in dat formulier niets te
+zien om aan te passen.
+
+De database viel tot RC-498 buiten de grendel. Het opslaan slaagde dan, en pas de verwerking
+viel om: `infrastructure.py` gooit een `ValueError` over een registry die er niet is, en
+daarmee valt het hele project om. Beide diensten die een eigen cluster vragen
+(`namespace-postgresql-database` en `postgresql-database` met `scope: project`) komen langs
+dezelfde route, dus de grendel telt ze allebei.
 
 Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
 keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.
