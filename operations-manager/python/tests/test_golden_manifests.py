@@ -321,6 +321,14 @@ SCENARIOS: list[tuple[str, str, dict[str, object]]] = [
             "project": {"name": "myproject"},
         },
     ),
+    # --- default-deny-network-policy.yaml.jinja (namespace-wide) ---------------
+    # The posture gate lints this directory: without it, kube-linter sees no policy
+    # for the workloads above and reports every pod as non-isolated.
+    (
+        "networkpolicy-default-deny",
+        "default-deny-network-policy.yaml.jinja",
+        {"name": "default-deny-network-policy", "namespace": "rig-myproject"},
+    ),
 ]
 
 _UPDATE = os.environ.get("UPDATE_GOLDEN") == "1"

@@ -9,6 +9,10 @@
 # hier niet in, want daar liggen losse overlay-patches naast de bases, en een patch is geen
 # volledig manifest: de gate zou de patch meten en niet de uitkomst. Die kant dekken de
 # Kyverno-policies bij admission (infrastructure/bootstrap/infrastructure/kyverno).
+#
+# no-read-only-root-fs is left out on purpose: the tenant image is not ours, so ZAD keeps
+# the root filesystem writable. The decision and its expiry date live with CKV_K8S_22 in
+# aanvalsproef/uitzonderingen.yaml; Kyverno reports it on the cluster in audit mode.
 checks:
   doNotAutoAddDefaults: true
   include:
@@ -16,7 +20,6 @@ checks:
     - privileged-container
     - privilege-escalation-container
     - run-as-non-root
-    - no-read-only-root-fs
     - host-network
     - host-pid
     - host-ipc
