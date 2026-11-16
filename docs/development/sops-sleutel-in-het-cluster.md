@@ -100,10 +100,9 @@ aan root, en de groep is het enige wat met `fsGroup` naar de uid van OPI te bren
 **Geef een kindproces zijn omgeving met `child_env()`, nooit met `os.environ`.**
 `child_env()` (`opi/core/subprocess_env.py`) weert alles met prefix `SOPS_AGE_` plus elke
 naam uit de env-bronnen van het deployment: elke `secretKeyRef` en elk secret achter een
-`envFrom`, dat laatste zowel uit `base/deployment.yaml` als uit de patches van de overlays
-(productie zet er met een inline JSON-patch in `kustomization.yaml` een derde bij,
-`operations-manager-access`). Wat een proces echt nodig heeft, geeft de aanroeper expliciet
-mee, zoals `sops` zijn `SOPS_AGE_KEY` per aanroep krijgt. Voeg je een geheim aan een van die
+`envFrom`, dat laatste zowel uit `base/deployment.yaml` als uit de patches van de overlays.
+Wat een proces echt nodig heeft, geeft de aanroeper expliciet mee, zoals `sops` zijn
+`SOPS_AGE_KEY` per aanroep krijgt. Voeg je een geheim aan een van die
 bronnen toe, dan faalt `tests/test_platformsleutel_als_bestand.py` tot de naam ook op de
 lijst staat; een `envFrom` die de toets niet kent laat hem ook falen. De toets leest elke
 Deployment-patch van elke overlay, niet alleen `patches/deployment.yaml`, en ook de inline
