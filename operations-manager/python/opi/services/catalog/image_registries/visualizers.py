@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.image_registries.config_model import QUOTA_FREE_MAX_GIB, QUOTA_MAX_GIB
 from opi.services.catalog.image_registries.editables import (
     COMPONENT_REGISTRY_EDITABLE,
     DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
@@ -11,6 +12,7 @@ from opi.services.catalog.image_registries.editables import (
     REGISTRY_DISPLAY_NAME_EDITABLE,
     REGISTRY_NAME_EDITABLE,
     REGISTRY_PASSWORD_EDITABLE,
+    REGISTRY_QUOTA_EDITABLE,
     REGISTRY_UPSTREAM_EDITABLE,
     REGISTRY_USERNAME_EDITABLE,
 )
@@ -68,6 +70,23 @@ REGISTRY_PASSWORD = EditableVisualizer(
     ),
 )
 
+REGISTRY_QUOTA = EditableVisualizer(
+    editable=REGISTRY_QUOTA_EDITABLE,
+    widget=WidgetType.NUMBER,
+    label="Opslagquota (GiB)",
+    description=(
+        f"Leeg laten betekent de standaard van het platform. Tot en met {QUOTA_FREE_MAX_GIB} GiB kies "
+        "je zelf, daarboven is het een aanvraag."
+    ),
+    # Bounds on the field itself, otherwise the spinner arrows step to 0 and beyond the
+    # ceiling. The server guards the same range (see the editable).
+    attributes={"min": "1", "max": str(QUOTA_MAX_GIB), "step": "1"},
+    help_text=(
+        "De cache ruimt tags op die een dag niet zijn opgehaald. "
+        "Loopt de registry vol, vraag het platformteam om tags te verwijderen."
+    ),
+)
+
 REGISTRIES_SEQUENCE = EditableVisualizer(
     editable=REGISTRIES_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -76,7 +95,14 @@ REGISTRIES_SEQUENCE = EditableVisualizer(
         "De private registries waaruit dit project images haalt. Voor een publieke image hoef je hier niets "
         "in te vullen."
     ),
-    children=[REGISTRY_DISPLAY_NAME, REGISTRY_NAME, REGISTRY_UPSTREAM, REGISTRY_USERNAME, REGISTRY_PASSWORD],
+    children=[
+        REGISTRY_DISPLAY_NAME,
+        REGISTRY_NAME,
+        REGISTRY_UPSTREAM,
+        REGISTRY_USERNAME,
+        REGISTRY_PASSWORD,
+        REGISTRY_QUOTA,
+    ],
 )
 
 COMPONENT_REGISTRY = EditableVisualizer(

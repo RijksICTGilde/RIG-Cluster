@@ -359,6 +359,20 @@ Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
         quota-gib: 15
 ```
 
+Hetzelfde veld staat in het formulier van de dienst (`Opslagquota (GiB)` in
+`modal-edit-image-registries-config`), dus een afnemer hoeft er de API niet voor. Leeg laten
+betekent de clusterstandaard en haalt `quota-gib` uit het projectbestand.
+
+De projectpagina toont per registry de effectieve quota, met "15 GiB aangevraagd" ernaast zolang
+een aanvraag openstaat.
+
+Het statusfragment toont het gebruik uit `status.quota` van de operator, in GiB en als percentage.
+Bij 80% of meer geeft het fragment een waarschuwing. Meldt de operator geen `status.quota`, dan
+staat er niets over gebruik, en dat is geen fout.
+
+Die quotaregel staat er alleen bij registries met een organisatie op de proxy-cluster; niet bij
+rijen die een bestaand secret gebruiken.
+
 Tot en met 10 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
 die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 10,
 of de laatst goedgekeurde waarde; een afwijzing houdt hem daar. Verlagen binnen een goedgekeurde
@@ -380,6 +394,24 @@ afzenderadres en het dagbudget van send-email.
 
 De grens van 20 staat als `le` op het model en niet als `IntegerSetting`, omdat
 `config_settings` niet in een lijst kijkt.
+
+### De time machine staat uit
+
+Het sjabloon zet `spec.timeMachineSeconds: 0`. Weggelaten houdt Quay zijn eigen venster aan
+(volgens het CRD twee weken); een tag die verloopt gaat dan niet weg maar blijft herstelbaar,
+en telt maanden mee voor de quota. Zo liep de proxy-cache van verge-jdv vol (november 2026).
+Voor een proxy-cache heeft herstel geen waarde: de upstream heeft het image nog, en de cache
+haalt het bij de volgende pull opnieuw op. Quay accepteert hier alleen de waarden 0, 86400,
+604800, 1209600 of 2419200 seconden.
+
+`proxyCache.defaultTagExpirationSeconds` blijft juist weg. Weggelaten geldt al 86400 seconden
+(een dag), wat we willen. Zet je dit veld expliciet, bouwt de operator de proxy-cacheconfiguratie
+opnieuw op, zonder dat er iets verandert. Beide velden zijn platformbeslissingen, niet bedoeld
+voor de afnemer.
+
+Wat het cluster accepteert staat in `opi/schemas/external/quay-organization.v1alpha1.json`, en
+`tests/test_quay_organization_contract.py` legt het sjabloon daarnaast. Dat bestand ververs je
+met `kubectl get --raw /openapi/v3/apis/quay.k8s.rijksapps.nl/v1alpha1`.
 
 ### Wie tags mag verwijderen
 

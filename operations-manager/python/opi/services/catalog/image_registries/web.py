@@ -121,6 +121,34 @@ async def _organization_status(
         "message": message,
         "expires_at": expires,
         "expires_soon": _expires_soon(str(expires)),
+        **_quota_usage(status.get("quota")),
+    }
+
+
+QUOTA_WARNING_PERCENT = 80  # Same as operator warningPercent
+
+
+def _gib(value: object) -> str:
+    """Bytes as gibibytes with one decimal, Dutch notation and without a trailing ``,0``."""
+    gib = f"{int(str(value)) / 1024**3:.1f}".replace(".", ",")
+    return gib.removesuffix(",0")
+
+
+def _quota_usage(quota: object) -> dict[str, Any]:
+    """The quota usage from ``status.quota``, or empty if the operator has not reported it yet."""
+    if not isinstance(quota, dict):
+        return {}
+    try:
+        percent = round(float(quota["usagePercent"]))
+        used, limit = _gib(quota["usedBytes"]), _gib(quota["limitBytes"])
+    except KeyError, TypeError, ValueError:
+        logger.info(f"Onleesbare quotastand in de organisatiestatus: {quota}")
+        return {}
+    return {
+        "quota_used_gib": used,
+        "quota_limit_gib": limit,
+        "quota_percent": percent,
+        "quota_warning": percent >= QUOTA_WARNING_PERCENT,
     }
 
 

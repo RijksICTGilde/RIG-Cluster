@@ -24,7 +24,11 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.catalog.events import on
-from opi.services.catalog.image_registries.backends import QuayProxyOrganizationBackend, backend_for_cluster
+from opi.services.catalog.image_registries.backends import (
+    QuayProxyOrganizationBackend,
+    backend_for_cluster,
+    cluster_default_quota_gib,
+)
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
 from opi.services.catalog.image_registries.editables import (
     COMPONENT_REGISTRY_EDITABLE,
@@ -38,7 +42,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
-from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL
+from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL, effective_quota_gib, pending_quota_gib
 from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.visualizers import (
@@ -240,13 +244,21 @@ class ImageRegistriesService(Service):
         # carries the token in plain text; that does not belong in a render context. Of the
         # token only the QUESTION whether it is there travels along: with the username
         # optional, that is the only way the block recognises an entry with credentials.
-        shown = [
-            {
+        # A quota belongs to the Organization, which exists only on a proxy cluster and not
+        # for a row that points at an existing secret (``backends.py``).
+        on_proxy = isinstance(backend_for_cluster(settings.CLUSTER_MANAGER), QuayProxyOrganizationBackend)
+        cluster_default = cluster_default_quota_gib(settings.CLUSTER_MANAGER)
+        shown = []
+        for registry in registries:
+            name = str(registry.get("name", ""))
+            entry: dict[str, Any] = {
                 **{key: registry.get(key) for key in ("name", "upstream", "username", "secretName")},
                 "has_token": bool(registry.get("password")),
             }
-            for registry in registries
-        ]
+            if on_proxy and not registry.get("secretName"):
+                entry["effective_quota_gib"] = effective_quota_gib(ctx.project_data, name, cluster_default)
+                entry["requested_quota_gib"] = pending_quota_gib(ctx.project_data, name)
+            shown.append(entry)
         return [
             DetailPageSection(
                 template="image_registries/section-detail.html.j2",
