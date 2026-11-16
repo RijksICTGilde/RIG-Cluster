@@ -51,7 +51,7 @@ Manual trigger via GitHub Actions UI.
 | `secret-scan` | `scripts/scan-secrets.py` | Every tracked file in the branch tree | Push, PR, weekly |
 | `secret-scan-history` | `scripts/scan-secrets.py --history` | Every blob that ever existed, minus `scripts/secret-scan-baseline.json` | Weekly and on demand |
 | `container-scan` | Trivy | The five images CI builds plus `argocd-rig` (HIGH/CRITICAL), en de configuratie van hun Dockerfile | Push, PR, weekly |
-| `manifest-scan` | Trivy | De Kubernetes-manifesten in `bootstrap/` en `infrastructure/`, rapporterend | Push, PR, weekly |
+| `manifest-scan` | Trivy | De Kubernetes-manifesten in `bootstrap/` en `infrastructure/`, zonder de sandbox | Push, PR, weekly |
 | `sbom` | Trivy | CycloneDX SBOM | Main only |
 | `gitleaks` | gitleaks | sleutelvormen in de boom, met de vendorregels | Push, PR, weekly |
 | `gitleaks-history` | gitleaks | elke blob die ooit bestond, met de vendorregels | Weekly and on demand |
@@ -127,10 +127,12 @@ een CVE-scan niet ziet: een container zonder niet-root `USER`, een `apt-get inst
 `--no-install-recommends`. `argocd-rig` valt af, die heeft geen Dockerfile.
 
 De Kubernetes-manifesten in `bootstrap/` en `infrastructure/` gaan door de job
-`manifest-scan`, die RAPPORTEERT en niet gatet. De bevindingen daar zijn platformbesluiten
-(OPI beheert secrets en namespaces, dat is zijn taak) en ontbrekende
-`readOnlyRootFilesystem` per component. Elk daarvan afwegen is eigen werk; ze tegenhouden
-zou de poort met tientallen uitzonderingen moeten openzetten, en dan meet hij niets meer.
+`manifest-scan`, die faalt op een nieuwe HIGH of CRITICAL. De bevindingen die er stonden
+toen de gate kwam, staan in `.trivyignore.yaml` onder `misconfigurations`, per regel en per
+bestand. Zo telt een nieuw bestand of een nieuwe regel op een bestaand bestand wel mee.
+Oplossen of met reden uitzonderen staat op issue #433. De SARIF krijgt die lijst niet mee:
+de bevindingen zijn nog niet afgewogen en blijven zichtbaar in het Security-tabblad. De
+sandbox-overlays (`sandboxed-local*`, `bootstrap/sandbox`) vallen buiten de scan.
 
 ### De container-gate
 
