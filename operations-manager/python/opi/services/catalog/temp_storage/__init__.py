@@ -8,24 +8,26 @@ shape (a list of mount specs) is shared with persistent-storage and so lives in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE, StorageConfig
-from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SEQUENCE_EDITABLE
+from opi.services.catalog.shared.storage_service import StorageSizeServiceMixin
+from opi.services.catalog.temp_storage.editables import (
+    DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE_EDITABLE,
+    TEMP_STORAGE_SEQUENCE_EDITABLE,
+)
 from opi.services.catalog.temp_storage.variables import TempStorageVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-
     from opi.forms.editables.editable import Editable
     from opi.forms.layout import LayoutChild
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-class TempStorageService(Service):
+class TempStorageService(StorageSizeServiceMixin, Service):
     service_type = ServiceType.TEMP_STORAGE
     definition = ServiceDefinition(
         name="Tijdelijke schijfruimte",
@@ -43,6 +45,8 @@ class TempStorageService(Service):
     )
     config_model = StorageConfig
     config_schema_version = "1.0"
+    # The size override per volume is a caller's setting, so this layer gets a route.
+    config_api_write_layers: ClassVar[frozenset[ConfigLayer]] = frozenset({ConfigLayer.DEPLOYMENT_COMPONENT})
     # May enrol itself: the mounts live on the component; the project layer holds
     # no storage decision.
     allows_implicit_project_selection = True
@@ -51,18 +55,17 @@ class TempStorageService(Service):
     # Component-level service: hooks a storage-mounts sequence into the component form.
     # Config is a LIST of {name, size, mount-path} entries (see persistent-storage).
 
-    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
-        # Mount specs on the component, per-mount clone state on the deployment-component.
-        from opi.services.catalog.shared.storage import StorageCloneState
-
-        if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
-            return StorageCloneState
-        return self.config_model
-
     def config_editables(self, layer: ConfigLayer) -> list[Editable]:
-        if layer is not ConfigLayer.COMPONENT:
-            return []
-        return [TEMP_STORAGE_SEQUENCE_EDITABLE]
+        if layer is ConfigLayer.COMPONENT:
+            return [TEMP_STORAGE_SEQUENCE_EDITABLE]
+        if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
+            return [DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE_EDITABLE]
+        return []
+
+    def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
+        from opi.services.catalog.temp_storage.visualizers import DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE
+
+        return [DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE]
 
     def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.temp_storage.visualizers import TEMP_STORAGE_SEQUENCE

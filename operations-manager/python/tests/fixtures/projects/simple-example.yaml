@@ -14,7 +14,21 @@ users:
 # Platform services this project uses
 services:
   - publish-on-web
-  - persistent-storage
+  # Het volume van 10Gi hieronder ligt boven de vrije maat, dus het heeft een goedkeuring
+  # nodig om echt gerenderd te worden. Een bestaand bestand kreeg die bij de migratie naar
+  # 2.19; dit is hoe dat blok eruitziet.
+  - name: persistent-storage
+    config:
+      size-approval:
+        frontend/data:
+          status: approved
+          value: 10Gi
+          approved-value: 10Gi
+          history:
+            - date: '2026-01-01T00:00:00+00:00'
+              status: approved
+              by: schema-migration
+              message: Bestaande opslaggrootte overgenomen bij de migratie naar 2.19
   - temp-storage
 
 # Repository configuration

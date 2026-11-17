@@ -36,6 +36,7 @@ from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_schema import validate_project_schema
 from opi.services.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
+from opi.services.services import service_entry_name
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.naming import generate_deployment_manifest_path
 from ruamel.yaml import YAML
@@ -163,9 +164,15 @@ def _seed_secrets(manager: ProjectManager, scenario: str, root: Path = GOLDEN_DI
             manager._add_secret_to_create(deployment_name, service, classes[service](**fields))
 
 
-async def _render(scenario: str, project_config: dict[str, str], output_root: Path) -> tuple[dict[str, str], list[str]]:
-    """Run the real method for every deployment, and return the output tree plus its return value."""
-    project = _load_project(scenario, project_config)
+async def _render(
+    scenario: str, project_config: dict[str, str], output_root: Path, project: dict[str, Any] | None = None
+) -> tuple[dict[str, str], list[str]]:
+    """Run the real method for every deployment, and return the output tree plus its return value.
+
+    ``project`` renders a variation on the scenario's file instead of the file itself, for a
+    test that measures what one changed field does to the output.
+    """
+    project = project if project is not None else _load_project(scenario, project_config)
     registry = FakeSubdomainRegistry()
 
     with patch("opi.manager.project_manager.KubectlConnector"):
@@ -278,6 +285,34 @@ async def test_two_renders_are_identical(scenario: str, project_config: dict[str
 
     assert first == second
     assert created_first == created_second
+
+
+#: The scenario whose component mounts a volume above the free size, with the approval a
+#: migrated file carries.
+_APPROVED_STORAGE_SCENARIO = "bestaand-simple-example"
+_APPROVED_STORAGE_PVC = "infra/local/example-project/just-a-name/frontend-data-pvc.yaml"
+
+
+@needs_age
+@pytest.mark.asyncio
+async def test_a_volume_above_the_free_size_renders_on_its_approval(
+    project_config: dict[str, str], tmp_path: Path
+) -> None:
+    """The fallback, measured on the real pipeline rather than on the resolver alone.
+
+    Withdrawing the approval must lower the PVC to the free maximum, because that is what
+    the project was allowed without a decision. The golden tree above is the other half: with
+    the approval the volume renders on the 10Gi the component asks for.
+    """
+    approved, _ = await _render(_APPROVED_STORAGE_SCENARIO, project_config, tmp_path / "approved")
+    assert 'storage: "10Gi"' in approved[_APPROVED_STORAGE_PVC]
+
+    project = _load_project(_APPROVED_STORAGE_SCENARIO, project_config)
+    service = next(entry for entry in project["services"] if service_entry_name(entry) == "persistent-storage")
+    del service["config"]["size-approval"]
+    without, _ = await _render(_APPROVED_STORAGE_SCENARIO, project_config, tmp_path / "without", project)
+
+    assert 'storage: "2Gi"' in without[_APPROVED_STORAGE_PVC]
 
 
 @pytest.mark.parametrize("scenario", _scenarios())

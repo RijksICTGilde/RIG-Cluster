@@ -92,10 +92,11 @@ class TestSequenceEditables:
         assert nested_seq[0].children is not None
         # reference, image, pullPolicy, the publish-on-web certificate override
         # (tls + attachment, RC-78), per-deployment attachments sequence, and the
-        # image-registries override (een andere registry alleen voor deze deployment).
+        # image-registries override (een andere registry alleen voor deze deployment), plus
+        # the two storage sequences of RC-499 (an own size per volume).
         # user-env-vars staat hier sinds RC-388 niet meer tussen: die overschrijving gaat
         # alleen via het step-up-venster.
-        assert len(nested_seq[0].children) == 7
+        assert len(nested_seq[0].children) == 9
 
 
 class TestReadonlyEditables:

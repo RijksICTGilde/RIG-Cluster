@@ -265,6 +265,18 @@ SLEUTELROUTES: dict[tuple[str, str], Action] = {
     ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
+        "/api/v2/projects/{project_name}/services/persistent-storage/config/deployment/{deployment_name}/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "PATCH",
+        "/api/v2/projects/{project_name}/services/persistent-storage/config/deployment/{deployment_name}/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "PUT",
+        "/api/v2/projects/{project_name}/services/persistent-storage/config/deployment/{deployment_name}/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "DELETE",
         "/api/v2/projects/{project_name}/services/postgresql-database/config/deployment/{deployment_name}",
     ): Action.SERVICE_CONFIGURE,
     (
@@ -346,6 +358,18 @@ SLEUTELROUTES: dict[tuple[str, str], Action] = {
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/temp-storage/config/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "DELETE",
+        "/api/v2/projects/{project_name}/services/temp-storage/config/deployment/{deployment_name}/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "PATCH",
+        "/api/v2/projects/{project_name}/services/temp-storage/config/deployment/{deployment_name}/component/{component_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "PUT",
+        "/api/v2/projects/{project_name}/services/temp-storage/config/deployment/{deployment_name}/component/{component_name}",
     ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",

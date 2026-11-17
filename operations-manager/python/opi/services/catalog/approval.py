@@ -13,6 +13,7 @@ lives in the project's ``domains:`` block and its rules are the predicates in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -279,6 +280,31 @@ class _ApprovalState:
     def clear(self, project_data: dict[str, Any]) -> None:
         """Remove the block so a next request starts from zero."""
         (self._block_holder(project_data, create=False) or {}).pop(self.config_key, None)
+
+
+def record_migration_approval(
+    state: _ApprovalState,
+    project_data: dict[str, Any],
+    value: Any,  # noqa: ANN401  # a project-file value
+    message: str,
+) -> None:
+    """Write an APPROVED block for ``value`` as a schema migration, with its own history line.
+
+    A state that has been legal until now and needs a decision from this version on is carried
+    over rather than withdrawn: the alternative is that every project that already had it sees
+    its value silently drop on the next render. The only writer besides the approval route, and
+    only from a migration step, which runs once per file.
+    """
+    state.write(
+        project_data,
+        {"status": ApprovalStatus.APPROVED.value, "value": value, LAST_APPROVED_KEY: value},
+        {
+            "date": datetime.now(UTC).isoformat(),
+            "status": ApprovalStatus.APPROVED.value,
+            "by": "schema-migration",
+            "message": message,
+        },
+    )
 
 
 def _notice_text(activity: str, consequence: str, status: ApprovalStatus) -> str:
@@ -1010,12 +1036,15 @@ class ConfigItemValueApproval:
         last_approved_value: the last value an administrator approved for this item.
         ensure_requested: records the request of every item and removes the blocks of
             items that no longer exist. State-shaped, so idempotent.
+        record_migration_approval: writes an approved block for this item as a schema
+            migration; see :func:`record_migration_approval`.
     """
 
     spec: ApprovalSpec
     is_approved: Callable[[dict[str, Any], str], bool]
     last_approved_value: Callable[[dict[str, Any], str], str]
     ensure_requested: Callable[[dict[str, Any]], None]
+    record_migration_approval: Callable[[dict[str, Any], str, Any, str], None]
 
 
 def config_item_value_approval(
@@ -1162,4 +1191,313 @@ def config_item_value_approval(
         is_approved=_is_approved,
         last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
+        record_migration_approval=lambda project_data, item, value, message: record_migration_approval(
+            _state(item), project_data, value, message
+        ),
     )
+
+
+#: Prefix of the spec key of an approval on the DEPLOYMENT-COMPONENT layer.
+#:
+#: A key of its own, like ``DEPLOYMENT_APPROVAL_KEY_PREFIX``: ``Service.approval_specs``
+#: deduplicates on key, so an override sharing the component spec's key would never reach the
+#: approvals page.
+DEPLOYMENT_COMPONENT_APPROVAL_KEY_PREFIX = "deployment-component-"
+
+#: How many parts the identity of such an item has: project, deployment, component, item.
+_DEPLOYMENT_COMPONENT_ITEM_PARTS = 4
+
+
+def deployment_component_item_name(project_name: str, item: tuple[str, str, str]) -> str:
+    """``<project>/<deployment>/<component>/<item>``, the identity on the approvals page.
+
+    None of the four may contain a ``/`` (project, deployment and component names are DNS
+    labels, and the item is a generated storage name), so this identity is unambiguous and
+    ``_record`` can take it apart again.
+    """
+    return DEPLOYMENT_ITEM_SEPARATOR.join([project_name, *item])
+
+
+class _DeploymentComponentItemState(_ApprovalState):
+    """The approval block of ONE item of ONE component inside ONE deployment.
+
+    On that layer ``services`` is a MAP keyed by service name, and a service keeping a record
+    per item stores a LIST of ``{reference, config}`` under its key. Both the lookup and the
+    creation therefore differ from the services-list shape the base class walks.
+    """
+
+    def __init__(self, service: str, config_key: str, item: tuple[str, str, str]) -> None:
+        deployment_name, component_name, self.item = item
+        super().__init__(
+            service,
+            config_key,
+            holder=lambda project_data: _deployment_component(project_data, deployment_name, component_name) or {},
+        )
+
+    def _records(self, project_data: dict[str, Any], *, create: bool) -> list[Any] | None:
+        """The service's list of per-item records on this component."""
+        holder = self._holder(project_data)
+        services = holder.get("services")
+        if services is None and create and holder:
+            services = holder.setdefault("services", {})
+        if not isinstance(services, dict):
+            return None
+        records = services.setdefault(self.service, []) if create else services.get(self.service)
+        return records if isinstance(records, list) else None
+
+    def entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
+        for record in self._records(project_data, create=False) or []:
+            if isinstance(record, dict) and record.get("reference") == self.item:
+                return record
+        return None
+
+    def _block_holder(self, project_data: dict[str, Any], *, create: bool) -> dict[str, Any] | None:
+        entry = self.entry(project_data)
+        if entry is None:
+            if not create:
+                return None
+            records = self._records(project_data, create=True)
+            if records is None:
+                return None
+            entry: dict[str, Any] = {"reference": self.item}
+            records.append(entry)
+        config = entry.setdefault("config", {}) if create else entry.get("config")
+        return config if isinstance(config, dict) else None
+
+    def clear(self, project_data: dict[str, Any]) -> None:
+        """Remove this item's block, and the record it stood in once nothing is left in it.
+
+        Without the pruning a withdrawn override leaves an empty ``{reference, config: {}}``
+        behind in every deployment that ever had one.
+        """
+        super().clear(project_data)
+        entry = self.entry(project_data)
+        if entry is None:
+            return
+        if entry.get("config") == {}:
+            entry.pop("config", None)
+        if set(entry) != {"reference"}:
+            return
+        records = self._records(project_data, create=False) or []
+        records.remove(entry)
+        if not records:
+            self._holder(project_data).get("services", {}).pop(self.service, None)
+
+
+def _deployment_component(
+    project_data: dict[str, Any], deployment_name: str, component_name: str
+) -> dict[str, Any] | None:
+    """The entry of ``component_name`` inside ``deployment_name``, or None."""
+    deployment = Project(project_data).find("deployments", name=deployment_name)
+    if deployment is None:
+        return None
+    return Project(project_data).locate(deployment.get("components") or [], reference=component_name)
+
+
+@dataclass(frozen=True)
+class DeploymentComponentItemValueApproval:
+    """Same as :class:`ConfigItemValueApproval`, but per item of one component in one deployment.
+
+    Attributes:
+        spec: the :class:`ApprovalSpec` for ``config_approvals(ConfigLayer.DEPLOYMENT_COMPONENT)``.
+        is_approved: THE GATE: does this item ask for a decision, and is it there?
+        last_approved_value: the last value an administrator approved for this item.
+        ensure_requested: records the request of every item and removes the blocks of items
+            that no longer exist. State-shaped, so idempotent.
+        record_migration_approval: writes an approved block for this item as a schema
+            migration; see :func:`record_migration_approval`.
+    """
+
+    spec: ApprovalSpec
+    is_approved: Callable[[dict[str, Any], tuple[str, str, str]], bool]
+    last_approved_value: Callable[[dict[str, Any], tuple[str, str, str]], str]
+    ensure_requested: Callable[[dict[str, Any]], None]
+    record_migration_approval: Callable[[dict[str, Any], tuple[str, str, str], Any, str], None]
+
+
+def deployment_component_item_value_approval(
+    service_type: ServiceType,
+    *,
+    field: str,
+    label: str,
+    items: Callable[[dict[str, Any]], list[tuple[str, str, str]]],
+    activity: Callable[[tuple[str, str, str], Any], str],
+    consequence: Callable[[dict[str, Any], tuple[str, str, str]], str],
+    requested_value: Callable[[dict[str, Any], tuple[str, str, str]], str],
+    subject: Callable[[dict[str, Any], tuple[str, str, str], str], str] | None = None,
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> DeploymentComponentItemValueApproval:
+    """Approval of a value ONE DEPLOYMENT overrides on ONE item of ONE of its components.
+
+    The fourth of this family, one layer below :func:`config_item_value_approval`: there a
+    decision belongs to an item of the project, here to that item inside one deployment, so an
+    approved override keeps standing when the component's own value goes down later. The rules
+    are shared (``_status_of_value``, ``_record_value``, ``_ensure_value_requested``); only
+    where the block lives differs, see :class:`_DeploymentComponentItemState`.
+
+    The state lives at ``deployments[*].components[<ref>].services[<svc>][reference=<item>]
+    .config.<field>-approval``. That block sits inside a list item, where ``PLATFORM_MANAGED``
+    does not reach, so it is protected per item instead -- see
+    ``ServiceAdapter._keep_platform_fields``.
+
+    An item is addressed as the triple (deployment, component, item).
+
+    Args:
+        service_type: the service that owns the items.
+        field: the key of the value on the item.
+        label: the heading of the request on the approvals page.
+        items: the triples this project has now.
+        activity: what the decision is about, given the triple and the value.
+        consequence: what happens for this item in the meantime.
+        requested_value: the requested value of ONE item as text, empty for no request.
+        subject: what the request is called on the approvals page; defaults to ``activity``.
+        approver: who may decide.
+    """
+    state_key = f"{field}{VALUE_APPROVAL_SUFFIX}"
+    service = service_type.value
+    selection = _ApprovalState(service, state_key)
+
+    def _state(item: tuple[str, str, str]) -> _DeploymentComponentItemState:
+        return _DeploymentComponentItemState(service, state_key, item)
+
+    def _requested(project_data: dict[str, Any], item: tuple[str, str, str]) -> Any:  # noqa: ANN401  # a project-file value
+        return requested_value(project_data, item) or None
+
+    def _subject(project_data: dict[str, Any], item: tuple[str, str, str], value: Any) -> str:  # noqa: ANN401  # a project-file value
+        if subject is not None:
+            return subject(project_data, item, str(value))
+        return activity(item, value)
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:  # noqa: ANN401  # a project-file value
+        """THE CHECK, with the item in ``value``: the pair (triple, value), as per deployment."""
+        item, item_value = value
+        return _status_of_value(_state(item), project_data, item_value)
+
+    def _is_approved(project_data: dict[str, Any], item: tuple[str, str, str]) -> bool:
+        value = _requested(project_data, item)
+        return value is not None and _status_of(project_data, (item, value)) is ApprovalStatus.APPROVED
+
+    def _last_approved_value(project_data: dict[str, Any], item: tuple[str, str, str]) -> str:
+        last = (_state(item).read(project_data) or {}).get(LAST_APPROVED_KEY)
+        return "" if last is None else str(last)
+
+    def _approved_values(project_data: dict[str, Any]) -> dict[str, Any]:
+        """THE MEMORY, per item. The identity carries the deployment and the component, so two
+        deployments overriding the same volume are two values."""
+        return _stored_approved_values(
+            [(DEPLOYMENT_ITEM_SEPARATOR.join(item), _state(item)) for item in items(project_data)], project_data
+        )
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """THE LIST. One entry per item with an open or decided request."""
+        listed: list[ApprovalItem] = []
+        project_name = project_data.get("name", "")
+        for item in items(project_data):
+            block = _state(item).read(project_data)
+            value = _requested(project_data, item)
+            if block is None or "value" not in block or value is None:
+                continue
+            listed.append(
+                _value_item(
+                    field=f"{DEPLOYMENT_COMPONENT_APPROVAL_KEY_PREFIX}{field}",
+                    block=block,
+                    value=value,
+                    subject=_subject(project_data, item, value),
+                    name=deployment_component_item_name(project_name, item),
+                    extra={"deployment": item[0]},
+                )
+            )
+        return listed
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        parts = str(item.get("name", "")).split(DEPLOYMENT_ITEM_SEPARATOR)
+        if len(parts) != _DEPLOYMENT_COMPONENT_ITEM_PARTS:
+            return
+        triple = (parts[1], parts[2], parts[3])
+        _record_value(_state(triple), project_data, _requested(project_data, triple), item, history_entry)
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        """THE NOTICE. What the owner of THIS deployment is told."""
+        if not selection.selected(project_data):
+            return []
+        notices: list[ApprovalNotice] = []
+        for item in items(project_data):
+            if item[0] != deployment.get("name"):
+                continue
+            value = _requested(project_data, item)
+            if value is None:
+                continue
+            status = _status_of(project_data, (item, value))
+            if status is ApprovalStatus.APPROVED:
+                continue
+            notices.append(
+                _notice(
+                    _state(item),
+                    project_data,
+                    subject=_subject(project_data, item, value),
+                    status=status,
+                    text=_notice_text(activity(item, value), consequence(project_data, item), status),
+                )
+            )
+        return notices
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        if not selection.selected(project_data):
+            return
+        for item in items(project_data):
+            _ensure_value_requested(_state(item), project_data, _requested(project_data, item))
+        # A removed volume's block would hand a later volume with the same name a decision
+        # that was not about it.
+        for orphan in _stored_items(project_data, service, state_key):
+            if orphan not in items(project_data):
+                _state(orphan).clear(project_data)
+
+    return DeploymentComponentItemValueApproval(
+        spec=ApprovalSpec(
+            key=f"{DEPLOYMENT_COMPONENT_APPROVAL_KEY_PREFIX}{field}",
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
+            approved_values=_approved_values,
+            # Enabling the service asks nothing; only a value above the free range does.
+            requires_approval_for=lambda _config: False,
+        ),
+        is_approved=_is_approved,
+        last_approved_value=_last_approved_value,
+        ensure_requested=_ensure_requested,
+        record_migration_approval=lambda project_data, item, value, message: record_migration_approval(
+            _state(item), project_data, value, message
+        ),
+    )
+
+
+def _stored_items(project_data: dict[str, Any], service: str, state_key: str) -> list[tuple[str, str, str]]:
+    """Every (deployment, component, item) that carries a block of this service in the file.
+
+    What ``items`` returns is what the project asks for NOW; this is what is written down, so
+    the two together say which blocks belong to a volume that no longer exists.
+    """
+    stored: list[tuple[str, str, str]] = []
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict):
+            continue
+        for component in deployment.get("components") or []:
+            if not isinstance(component, dict):
+                continue
+            services = component.get("services")
+            records = services.get(service) if isinstance(services, dict) else None
+            for record in records or []:
+                if not isinstance(record, dict) or not isinstance(record.get("config"), dict):
+                    continue
+                if state_key in record["config"] and record.get("reference"):
+                    stored.append(
+                        (
+                            str(deployment.get("name") or ""),
+                            str(component.get("reference") or ""),
+                            str(record["reference"]),
+                        )
+                    )
+    return stored

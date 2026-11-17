@@ -125,7 +125,7 @@ from opi.services.catalog.actions import (
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer, ConfigRole, config_endpoint_path, config_path
+from opi.services.catalog.base import ConfigLayer, ConfigRole, ConfigWrite, config_endpoint_path, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
@@ -2132,6 +2132,16 @@ def _service_or_404(service_name: str) -> Service:
     return get_service(service_type)
 
 
+def _has_config_route(service: Service, layer: ConfigLayer) -> bool:
+    """Whether a config-write route is generated for this (service, layer).
+
+    The three standard layers always, ``DEPLOYMENT_COMPONENT`` only for a service that asks
+    for it. One derivation, so what ``service describe`` advertises and what the router
+    registers cannot come apart.
+    """
+    return layer in _CONFIG_WRITE_LAYERS or layer in service.config_api_write_layers
+
+
 def _accepts_config_at(service: Service, layer: ConfigLayer) -> bool:
     """Whether a service accepts a config block at ``layer``.
 
@@ -2456,7 +2466,7 @@ class ServiceDescription(BaseModel):
 def _layer_info(service: Service, service_type: ServiceType, layer: ConfigLayer) -> ServiceLayerInfo:
     """One layer of a service, out of what the service declares about that layer."""
     endpoint = None
-    if _accepts_config_at(service, layer) and layer in _CONFIG_WRITE_LAYERS:
+    if _accepts_config_at(service, layer) and _has_config_route(service, layer):
         endpoint = f"PUT {config_endpoint_path(layer, service_type.value)}"
     exempt_reason = service.form_exempt_layers.get(layer)
     return ServiceLayerInfo(
@@ -2677,12 +2687,26 @@ async def _enqueue_config_write(
         raise HTTPException(status_code=400, detail="Invalid project name format.")
     service = _service_or_404(service_name)
     layer = _resolve_supported_layer(service, service_name, target)
+    project_data = _project_data_or_404(project_name)
     try:
-        ServiceAdapter.require_config_target(
-            _project_data_or_404(project_name), layer, component_name=component, deployment_name=deployment
-        )
+        ServiceAdapter.require_config_target(project_data, layer, component_name=component, deployment_name=deployment)
     except ServiceValidationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Service validation for rules the model can't judge (e.g., override names valid volume).
+    written = config if config is not None else (add or None)
+    if written is not None:
+        refusals = service.validate_config_write(
+            ConfigWrite(
+                project_data=project_data,
+                layer=layer,
+                config=written,
+                component_name=component,
+                deployment_name=deployment,
+            )
+        )
+        if refusals:
+            raise HTTPException(status_code=422, detail="; ".join(refusals))
 
     payload: dict[str, Any] = {
         "project_name": project_name,
@@ -2721,29 +2745,32 @@ async def _enqueue_config_write(
 # and enum values per service (a client can be generated from it) instead of a
 # generic config dict resolved only at request time. The path is a predictable
 # pattern: /projects/{project}/services/<service>/config/<target>[/<name>].
-# deployment-component is intentionally omitted: no service accepts config there today, and
-# what does land there is written via the image-update storage actions.
+# deployment-component is OPT-IN (``Service.config_api_write_layers``): most of what lives
+# there is state the platform writes (a PVC generation, a verdict) or may only be written
+# through the step-up window (user-env-vars). The storage pair opts in for the size override.
 
 
-def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
-    """The path suffix and the extra path-param name for a target layer.
+def _config_write_route(layer: ConfigLayer) -> tuple[str, tuple[str, ...]]:
+    """The path suffix and the extra path-param names for a target layer.
 
     The suffix comes from ``config_endpoint_path`` in the catalog, so the route this
-    registers and the route an error message points a caller at are the same string.
+    registers and the route an error message points a caller at are the same string. The
+    deployment-component layer names two things, hence a tuple.
     """
-    name_params = {
-        ConfigLayer.PROJECT: None,
-        ConfigLayer.COMPONENT: "component_name",
-        ConfigLayer.DEPLOYMENT: "deployment_name",
+    name_params: dict[ConfigLayer, tuple[str, ...]] = {
+        ConfigLayer.PROJECT: (),
+        ConfigLayer.COMPONENT: ("component_name",),
+        ConfigLayer.DEPLOYMENT: ("deployment_name",),
+        ConfigLayer.DEPLOYMENT_COMPONENT: ("deployment_name", "component_name"),
     }
     if layer not in name_params:
         raise ValueError(f"No config write route for layer {layer!r}")
     return config_endpoint_path(layer, "{svc}").split("{svc}", 1)[1], name_params[layer]
 
 
-def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:
-    """Build the endpoint signature FastAPI introspects: request, project_name, an
-    optional component/deployment name, and (for upsert) the typed config body.
+def _config_write_signature(name_params: tuple[str, ...], body_model: type | None) -> Signature:
+    """Build the endpoint signature FastAPI introspects: request, project_name, the
+    component/deployment names the layer addresses, and (for upsert) the typed config body.
     """
     # The shared annotations rather than a bare ``str``: every generated endpoint documents
     # its parameters, and they all come from this one signature.
@@ -2751,7 +2778,7 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
         Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
     ]
-    if name_param:
+    for name_param in name_params:
         annotation = DeploymentNamePath if name_param == "deployment_name" else ComponentNamePath
         params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation))
     if body_model is not None:
@@ -2852,7 +2879,7 @@ def _stored_config_at(
 def _make_upsert_endpoint(
     service_name: str,
     target: str,
-    name_param: str | None,
+    name_params: tuple[str, ...],
     config_model: type,
     managed: frozenset[str],
     singular: frozenset[str],
@@ -2893,13 +2920,13 @@ def _make_upsert_endpoint(
             rollout=kwargs.get("rollout", True),
         )
 
-    endpoint.__signature__ = _config_write_signature(name_param, config_model)
+    endpoint.__signature__ = _config_write_signature(name_params, config_model)
     endpoint.__name__ = f"configure_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
     return endpoint
 
 
 def _make_clear_endpoint(
-    service_name: str, target: str, name_param: str | None
+    service_name: str, target: str, name_params: tuple[str, ...]
 ) -> Callable[..., Awaitable[JSONResponse]]:
     """Build a DELETE endpoint that clears this service's config at a target."""
 
@@ -2915,7 +2942,7 @@ def _make_clear_endpoint(
             rollout=kwargs.get("rollout", True),
         )
 
-    endpoint.__signature__ = _config_write_signature(name_param, None)
+    endpoint.__signature__ = _config_write_signature(name_params, None)
     endpoint.__name__ = f"clear_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
     return endpoint
 
@@ -3017,7 +3044,7 @@ def _config_patch_description(
 
 
 def _make_patch_endpoint(
-    service_name: str, target: str, name_param: str | None, body_model: type, list_field: str | None
+    service_name: str, target: str, name_params: tuple[str, ...], body_model: type, list_field: str | None
 ) -> Callable[..., Awaitable[JSONResponse]]:
     """Build a typed PATCH endpoint whose body is the service's add/remove patch model."""
 
@@ -3040,7 +3067,7 @@ def _make_patch_endpoint(
             rollout=kwargs.get("rollout", True),
         )
 
-    endpoint.__signature__ = _config_write_signature(name_param, body_model)
+    endpoint.__signature__ = _config_write_signature(name_params, body_model)
     suffix = f"_{list_field.replace('-', '_')}" if list_field else ""
     endpoint.__name__ = f"patch_{service_name.replace('-', '_')}_{target.replace('-', '_')}{suffix}"
     return endpoint
@@ -3051,6 +3078,9 @@ _CONFIG_WRITE_PLACE = {
     ConfigLayer.PROJECT: "the project's own `services` list",
     ConfigLayer.COMPONENT: "the `services` list of component `{component_name}`",
     ConfigLayer.DEPLOYMENT: "the `services` list of deployment `{deployment_name}`",
+    ConfigLayer.DEPLOYMENT_COMPONENT: (
+        "the `services` map of component `{component_name}` inside deployment `{deployment_name}`"
+    ),
 }
 
 
@@ -3115,15 +3145,15 @@ def _register_service_config_routes(router: APIRouter) -> None:
     for service_type, service in SERVICES.items():
         service_name = service_type.value
         for layer in ConfigLayer:
-            if not _accepts_config_at(service, layer) or layer not in _CONFIG_WRITE_LAYERS:
+            if not _accepts_config_at(service, layer) or not _has_config_route(service, layer):
                 continue
             # Not None by construction: _accepts_config_at already requires the model, and
             # the route body IS that model. Narrowed rather than re-tested, so the two
             # cannot come apart into "supported target with no route".
-            model = service.config_model_for(layer)
+            model = service.config_api_body_model(layer)
             if model is None:  # pragma: no cover - guarded by _accepts_config_at
                 continue
-            suffix, name_param = _config_write_route(layer)
+            suffix, name_params = _config_write_route(layer)
             path = f"/projects/{{project_name}}/services/{service_name}{suffix}"
             target = layer.value
             managed = service.platform_managed_fields(layer)
@@ -3136,7 +3166,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 path,
                 action_marker(Action.SERVICE_CONFIGURE)(
                     validate_api_token(
-                        _make_upsert_endpoint(service_name, target, name_param, body_model, managed, singular)
+                        _make_upsert_endpoint(service_name, target, name_params, body_model, managed, singular)
                     )
                 ),
                 methods=["PUT"],
@@ -3148,7 +3178,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
             router.add_api_route(
                 path,
                 action_marker(Action.SERVICE_CONFIGURE)(
-                    validate_api_token(_make_clear_endpoint(service_name, target, name_param))
+                    validate_api_token(_make_clear_endpoint(service_name, target, name_params))
                 ),
                 methods=["DELETE"],
                 tags=[service_name],
@@ -3171,7 +3201,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                     path + spec.path_suffix,
                     action_marker(Action.SERVICE_CONFIGURE)(
                         validate_api_token(
-                            _make_patch_endpoint(service_name, target, name_param, patch_body, spec.name)
+                            _make_patch_endpoint(service_name, target, name_params, patch_body, spec.name)
                         )
                     ),
                     methods=["PATCH"],
@@ -3182,7 +3212,8 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 )
 
 
-#: The layers we generate write routes for (deployment-component intentionally out).
+#: The layers every configurable service gets a write route for. A service adds
+#: ``DEPLOYMENT_COMPONENT`` to its own ``config_api_write_layers`` when it wants one there.
 _CONFIG_WRITE_LAYERS = (ConfigLayer.PROJECT, ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT)
 
 _register_service_config_routes(v2_router)

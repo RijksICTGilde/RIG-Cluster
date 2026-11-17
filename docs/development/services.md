@@ -50,8 +50,9 @@ out. The measure is literal: copy the directory, rename it, and it works.
 
 Only `__init__.py` is required. A behaviour-only service is a few lines
 (`opi/services/catalog/redis/__init__.py`); keycloak and namespace-postgres use every file.
-Shared building blocks live in `catalog/shared/` (e.g. `storage.py` for the two storage
-services).
+Shared building blocks live in `catalog/shared/` (e.g. `storage.py` for the config shape of
+the two storage services, and `storage_service.py` for the hooks that carry their size rule:
+a mixin both services bring in, like `BackupsPageMixin`).
 
 `editables.py` and `visualizers.py` are the service's user interface. A package without them
 has no wizard screens, which is fine for a service the platform switches on itself and wrong
@@ -363,6 +364,21 @@ for you. Pick the layer from where the value belongs, then implement that row:
 | `COMPONENT` | A fieldset inside the per-component form | `config_editables(COMPONENT)`, `config_component_visualizers()`, `config_component_layout()`, `config_component_order` | **None.** The registry collects it automatically |
 | `DEPLOYMENT` | A per-deployment modal behind a button on the deployment card | `config_editables(DEPLOYMENT)`, `config_form_section(DEPLOYMENT)`, a `deployment_form_section(index)` and an `actions_provider` button built with `deployment_modal_action` | An `IndexedFlow` in `flows.py` (cross-domain-access and postgresql-database are the examples). Deployment-level config is often OPI-managed state; exempt such a layer with `form_exempt_layers` |
 | `DEPLOYMENT_COMPONENT` | A fieldset inside the per-deployment component form | `config_editables(DEPLOYMENT_COMPONENT)`, `config_deployment_component_visualizers()`, `config_deployment_component_layout()` | **None.** The registry collects it, like the component layer (RC-25) |
+
+**De config-route van de API is er voor drie lagen, en de vierde is opt-in.** Project,
+component en deployment krijgen hun `PUT`/`DELETE`/`PATCH` automatisch zodra je een
+configmodel op die laag hebt (`_CONFIG_WRITE_LAYERS` in `opi/api/v2/router.py`). Voor
+`DEPLOYMENT_COMPONENT` moet je erom vragen, met
+`config_api_write_layers = frozenset({ConfigLayer.DEPLOYMENT_COMPONENT})` op je dienst: wat
+daar staat is meestal toestand die OPI zelf schrijft, en `user-env-vars` mag alleen via het
+step-up-venster (RC-388). Het pad is
+`/config/deployment/{deployment_name}/component/{component_name}`.
+
+Is wat een client daar schrijft niet de opgeslagen vorm, geef dan een eigen body-model terug
+uit `config_api_body_model(layer)`. De opslagdiensten doen dat: hun records op die laag dragen
+ook de PVC-generatie en het goedkeuringsblok, en een client zet alleen de grootte. Een regel
+die het model niet uit de body alleen kan beoordelen hoort in `validate_config_write(write)`;
+die meldingen worden een 422 voordat er iets in de wachtrij komt.
 
 **Every layer you carry config on needs an answer to "where do I edit this".** That answer
 is `config_form_section(layer)`, or an entry in `form_exempt_layers` naming the reason
@@ -901,7 +917,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `replaced_by` / `replaced_on_cluster(cluster)` | whether this service has a SUCCESSOR on that cluster. Same two readers as `available_on_cluster`, with a softer verdict: the card goes only for a project that does not have the service yet, and the save is refused only for a project that would GET it. See `features/dienst-vervangen-door-een-opvolger.md` |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `validate_project(project_data)` | this service's rules on a WHOLE project, as messages, for what `validate_config` cannot judge from one config block. `validate_project_structure` refuses the write when any service returns one. Runs for EVERY project, also one that does not declare the service |
-| `validate_project_change(previous, project_data)` | the sibling of `validate_project` for a rule that needs the version the save REPLACES: a stricter bound on a NEW value, where a value already in the project file has to keep validating (the invite key's minimum length). `previous` is `{}` on a create. For a scalar with a numeric bound, `ConfigSetting`'s `grow_only` already covers it |
+| `validate_project_change(previous, project_data, *, approval_decision)` | the sibling of `validate_project` for a rule that needs the version the save REPLACES: a stricter bound on a NEW value, where a value already in the project file has to keep validating (the invite key's minimum length). `previous` is `{}` on a create. `approval_decision` marks an approver's verdict, and a rule that bounds what a PROJECT may change has to yield to it where the verdict itself is the change, otherwise a standing approval can no longer be withdrawn (`refused_shrinks` in `catalog/shared/storage_size.py`). For a scalar with a numeric bound, `ConfigSetting`'s `grow_only` already covers it |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
 | `contribute_project_manifests(ctx)` | project-wide manifests, written once per project into `<cluster>/<project>/_project/` in the deployments repo (e.g. a registry pull-secret, a ServiceAccount). The filename MUST start with the service name, so the symmetric prune removes it again when the service goes away. See `features/image-registries.md` |
@@ -1228,6 +1244,45 @@ versie niet bestond niet van de goedkeuringsroute kan komen.
 Bestaande bestanden die de waarde al droegen zijn een migratiestap, geen uitzondering in de
 code: `approve_existing_acl_key_prefix_optout` (schemaversie 2.10) neemt zo'n stand over als
 goedgekeurd, met `by: schema-migration` in de history.
+
+### Dezelfde waarde, maar per deployment of per item
+
+`config_value_approval` geldt voor het project als geheel. Staat dezelfde waarde op meer dan
+een plek, dan is er per plek een besluit nodig, en daar zijn drie varianten voor. Ze delen de
+regels (`_status_of_value`, `_record_value`, `_ensure_value_requested`): alleen de plek van
+het blok verschilt, en elke variant heeft een eigen spec-key, want `approval_specs()` dedupt
+op key.
+
+| Functie | Het besluit gaat over | Waar het blok staat |
+|---|---|---|
+| `config_value_approval` | het project | `services/[<dienst>]/config/<veld>-approval` |
+| `deployment_value_approval` | een deployment | `deployments[*]/services/[<dienst>]/config/<veld>-approval` |
+| `config_item_value_approval` | een item uit een lijst in de projectconfig | `services/[<dienst>]/config/<veld>-approval/<item>` |
+| `deployment_component_item_value_approval` | een item van een component BINNEN een deployment | `deployments[*]/components[<ref>]/services/<dienst>[reference=<item>]/config/<veld>-approval` |
+
+De laatste is de enige die in een lijstitem staat, waar `PLATFORM_MANAGED` niet komt: dat
+dekt alleen een veld op het hoogste niveau van een configblok. Het blok wordt daar per item
+beschermd, door `ServiceAdapter._keep_platform_fields` op elk record los toe te passen. Een
+item is er de drietal (deployment, component, item), en zijn identiteit op de
+aanvragenpagina is `<project>/<deployment>/<component>/<item>`; geen van de vier kan een `/`
+bevatten, dus die identiteit is eenduidig.
+
+De opslagdiensten gebruiken de onderste twee samen: de component zet de grootte per volume
+(een besluit dat geldt voor elke deployment die erft) en een deployment mag er per volume van
+afwijken met een eigen besluit. Zie `features/opslag-op-aanvraag.md` en
+`opi/services/catalog/shared/storage_size.py`.
+
+### De sleutel van een volume
+
+Een opslagvolume heeft twee namen in omloop. Het renderpad sleutelt de PVC-naam en de
+generatie op `generate_storage_name(mount-pad, index)`, waarbij de index de plek in de
+VOLLEDIGE opslaglijst van het component is (beide diensten door elkaar). Backup en restore
+gebruiken het `name`-veld uit de componentconfig. Alles rond de grootte gebruikt de eerste,
+via `storage_size.mount_key()`, want de override en zijn goedkeuring staan in hetzelfde blok
+als de clone-toestand. Dat die twee sleutels naast elkaar bestaan is bekend en staat op een
+eigen kaartje. Een pad dat een volume bij zijn `name` kent en de grootte nodig heeft, vertaalt
+die naam met `storage_size.mount_key_for_name()` en rekent niet zelf; backup en restore gaan
+via `effective_persistent_size_by_name()`, dat die vertaling en de resolver in één doet.
 
 ## Adding a service
 

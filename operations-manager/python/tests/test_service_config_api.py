@@ -178,20 +178,87 @@ class TestSetServiceConfigDeploymentLayers:
         entry = next(e for e in dep["services"] if service_entry_name(e) == "minio-storage")
         assert entry["reference"] == "minio-storage"
 
-    def test_deployment_component_layer_writes_on_nested_ref(self) -> None:
+    def test_deployment_component_layer_writes_a_record_per_volume(self) -> None:
+        """``services`` is a MAP on this layer, and the storage pair keeps a record per
+        volume under its key, which is where the PVC generation already lives."""
         data = _project()
         ServiceAdapter.set_service_config(
             data,
             ServiceType.PERSISTENT_STORAGE.value,
             ConfigLayer.DEPLOYMENT_COMPONENT,
-            [{"name": "data", "action": "recreate"}],
+            [{"reference": "data", "config": {"size": "3Gi"}}],
             deployment_name="deployment-1",
             component_name="backend",
         )
         dep = next(d for d in data["deployments"] if d["name"] == "deployment-1")
-        comp = next(c for c in dep["components"] if service_entry_name(c) == "backend")
-        entry = next(e for e in comp["services"] if service_entry_name(e) == "persistent-storage")
-        assert service_entry_config(entry) == [{"name": "data", "action": "recreate"}]
+        comp = next(c for c in dep["components"] if c["reference"] == "backend")
+        assert comp["services"]["persistent-storage"] == [{"reference": "data", "config": {"size": "3Gi"}}]
+
+    def test_a_second_write_keeps_the_platform_state_of_that_volume(self) -> None:
+        """The generation lives in the same record, so writing a size may not drop it."""
+        data = _project()
+        dep = next(d for d in data["deployments"] if d["name"] == "deployment-1")
+        comp = next(c for c in dep["components"] if c["reference"] == "backend")
+        comp["services"] = {"persistent-storage": [{"reference": "data", "config": {"generation": 2}}]}
+        ServiceAdapter.set_service_config(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.DEPLOYMENT_COMPONENT,
+            [{"reference": "data", "config": {"size": "3Gi"}}],
+            deployment_name="deployment-1",
+            component_name="backend",
+        )
+        assert comp["services"]["persistent-storage"] == [
+            {"reference": "data", "config": {"size": "3Gi", "generation": 2}}
+        ]
+
+    def test_clearing_one_volume_keeps_its_platform_state(self) -> None:
+        """DELETE on this layer means 'drop my override', not 'throw away the generation'."""
+        data = _project()
+        dep = next(d for d in data["deployments"] if d["name"] == "deployment-1")
+        comp = next(c for c in dep["components"] if c["reference"] == "backend")
+        comp["services"] = {"persistent-storage": [{"reference": "data", "config": {"size": "3Gi", "generation": 2}}]}
+
+        changed = ServiceAdapter.remove_service_config(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.DEPLOYMENT_COMPONENT,
+            deployment_name="deployment-1",
+            component_name="backend",
+        )
+
+        assert changed is True
+        assert comp["services"]["persistent-storage"] == [{"reference": "data", "config": {"generation": 2}}]
+
+    def test_clearing_the_only_volume_without_platform_state_drops_the_service(self) -> None:
+        """Nothing left to keep for that volume: the record, and then the service key,
+        both go, the same as a cleared config on any other layer."""
+        data = _project()
+        dep = next(d for d in data["deployments"] if d["name"] == "deployment-1")
+        comp = next(c for c in dep["components"] if c["reference"] == "backend")
+        comp["services"] = {"persistent-storage": [{"reference": "data", "config": {"size": "3Gi"}}]}
+
+        changed = ServiceAdapter.remove_service_config(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.DEPLOYMENT_COMPONENT,
+            deployment_name="deployment-1",
+            component_name="backend",
+        )
+
+        assert changed is True
+        assert "persistent-storage" not in comp["services"]
+
+    def test_clearing_an_absent_service_reports_no_change(self) -> None:
+        data = _project()
+        changed = ServiceAdapter.remove_service_config(
+            data,
+            ServiceType.PERSISTENT_STORAGE.value,
+            ConfigLayer.DEPLOYMENT_COMPONENT,
+            deployment_name="deployment-1",
+            component_name="backend",
+        )
+        assert changed is False
 
 
 class TestUnknownService:
@@ -1052,7 +1119,9 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "minio-storage": ["project", "deployment"],
     "namespace-postgresql-database": ["project"],
     "namespace-redis": [],
-    "persistent-storage": ["component"],
+    # RC-499: the size per volume is on the component, a deployment's own size on the
+    # deployment-component layer.
+    "persistent-storage": ["component", "deployment-component"],
     "platform": [],
     "postgresql-database": ["project", "deployment"],  # RC-201: connection-limit
     # RC-60: the web address is deployment-level config of this service. RC-78: the
@@ -1069,13 +1138,25 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     # per deployment, so the sender and the budget are overridable there.
     "send-email": ["project", "deployment"],
     "sleep-mode": ["project"],
-    "temp-storage": ["component"],
+    "temp-storage": ["component", "deployment-component"],
     # RC-142: er valt niets te kiezen -- een endpoint, een variabele, een regel. Geen
     # configblok betekent geen configroute.
     "vlam": [],
     # RC-177: de registries op het project, de verwijzing bij naam op (deployment-)component.
     "image-registries": ["project", "component", "deployment-component"],
 }
+
+
+def _target_of(suffix: str) -> str:
+    """The layer a config route's path suffix addresses.
+
+    ``deployment/{d}/component/{c}`` is the deployment-component layer: the only suffix with
+    two names in it, so the first segment alone does not say which layer it is.
+    """
+    segments = suffix.split("/")
+    if segments[0] == "deployment" and "component" in segments:
+        return ConfigLayer.DEPLOYMENT_COMPONENT.value
+    return segments[0]
 
 
 class TestApiConfigCoverage:
@@ -1109,7 +1190,7 @@ class TestApiConfigCoverage:
         # target. They used to be two derivations (_accepts_config_at re-deriving the
         # form hooks, the registration loop separately requiring a model), so a service
         # with editables but no model at a layer could be advertised and not exist.
-        from opi.api.v2.router import _CONFIG_WRITE_LAYERS, _supported_targets
+        from opi.api.v2.router import _has_config_route, _supported_targets
         from opi.server import app
         from opi.services.registry import SERVICES
 
@@ -1121,10 +1202,10 @@ class TestApiConfigCoverage:
                 continue
             service_name, _, rest = path.split(marker, 1)[1].partition("/config/")
             if service_name in routed:
-                routed[service_name].add(rest.split("/")[0])
+                routed[service_name].add(_target_of(rest))
 
         for service_type, service in SERVICES.items():
-            advertised = {t for t in _supported_targets(service) if ConfigLayer(t) in _CONFIG_WRITE_LAYERS}
+            advertised = {t for t in _supported_targets(service) if _has_config_route(service, ConfigLayer(t))}
             assert routed[service_type.value] == advertised, (
                 f"'{service_type.value}': routes {sorted(routed[service_type.value])} do not match the "
                 f"advertised targets {sorted(advertised)}"

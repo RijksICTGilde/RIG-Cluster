@@ -259,6 +259,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Een database is alleen te openen door zijn eigen rollen](database-alleen-eigen-rollen.md)
 - [Namespace PostgreSQL Database Service](namespace-postgresql-database.md)
 - [OPI op een eigen databaserol](opi-op-een-eigen-databaserol.md)
+- [Opslag boven 2Gi op aanvraag](opslag-op-aanvraag.md)
 - [Oude versies in een bucket hebben een grens](oude-versies-in-een-bucket.md)
 - [PgBouncer Connection Pooling](pgbouncer-connection-pooling.md)
 - [Platformdatabase: één instance](platformdatabase-een-instance.md)

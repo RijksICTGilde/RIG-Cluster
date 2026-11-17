@@ -14,6 +14,7 @@ from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 from opi.manager.backup.database_backup import create_database_backup_manager
 from opi.manager.backup.pvc_backup import create_backup_manager
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
+from opi.services.catalog.shared.storage_size import effective_persistent_size_by_name
 from opi.services.project_file_handler import find_persistent_storage
 from opi.services.secrets import DatabaseSecret
 from opi.utils.naming import (
@@ -98,7 +99,10 @@ async def restore_pvc_with_versioning(
     base_component = base_components.get(component_name, {})
     target_storage = find_persistent_storage(base_component, storage_name)
 
-    storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
+    # The effective size of THIS deployment's volume, not the component's raw one: a size
+    # above the free range only counts once it is approved (catalog/shared/storage_size.py).
+    # By name, because that is the identity this path carries, and it is not the render key.
+    storage_size = effective_persistent_size_by_name(project_data, deployment_name, component_name, storage_name)
     storage_class = get_storage_class_name(deployment_cluster)
     access_modes = get_storage_access_modes(deployment_cluster)
     backup_enabled = target_storage.get("backup", True) if target_storage else True

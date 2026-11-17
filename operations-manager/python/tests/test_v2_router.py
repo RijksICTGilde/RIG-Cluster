@@ -397,7 +397,9 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "image-registries": ["quota-gib-approval"],
             "keycloak": ["realms"],
             "minio-storage": ["generation", "revisions"],
-            "persistent-storage": ["generation", "revisions"],
+            # RC-499: the verdict on this deployment's own size, next to the clone state in
+            # the same deployment-component record.
+            "persistent-storage": ["generation", "revisions", "size-approval"],
             "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],
             # RC-338: het besluit over een Redis-gebruiker zonder sleutelprefix. Zelfde
@@ -413,7 +415,7 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             # own Secret, so there is nothing of the account left in the project file. The
             # two value verdicts also exist on the DEPLOYMENT layer, which overrides them.
             "send-email": ["approval", "from-address-approval", "messages-per-day-approval"],
-            "temp-storage": ["generation", "revisions"],
+            "temp-storage": ["generation", "revisions", "size-approval"],
         }
 
         # keycloak answers "realms" at every layer because it serves one model to all of

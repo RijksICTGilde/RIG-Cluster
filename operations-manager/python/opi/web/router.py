@@ -1648,12 +1648,19 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The ungranted approvals per deployment, asked of the catalog, where each service
         # writes its own notice, so this page holds no domain knowledge.
         from opi.services.approvals import collect_deployment_approval_notices
+        from opi.services.catalog.publish_on_web.urls import address_approval_notices
 
         approval_notices: dict[str, list[dict[str, Any]]] = {}
+        # The subset about the web ADDRESS, for the notice under the public links; the
+        # service that owns the address decides which notices those are.
+        address_notices: dict[str, list[dict[str, Any]]] = {}
         for deployment in project_details["deployments"]:
             notices = collect_deployment_approval_notices(project_data_decrypted, deployment)
             if notices:
                 approval_notices[deployment.get("name", "")] = notices
+                address = address_approval_notices(notices)
+                if address:
+                    address_notices[deployment.get("name", "")] = address
 
         backups_available = False
         if not map_tab:
@@ -1848,6 +1855,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
                 "approval_notices": approval_notices,
+                "address_approval_notices": address_notices,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,

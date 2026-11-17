@@ -411,41 +411,41 @@ class StorageTypeOptionsProvider:
 
 
 class StorageSizeOptionsProvider:
-    """Provides storage size options for persistent volumes."""
+    """The sizes the platform offers, plus the stored value when that is not among them.
+
+    The series is a convenience and not the rule: ``check_storage_size`` accepts every
+    quantity in the range, and a volume may not shrink. Without the stored value the select
+    would offer a volume on ``3Gi`` nothing but shrinking, and the save then refuses the
+    form's own proposal.
+    """
 
     # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
-    #: Only the label per size. The sizes themselves live in ``STORAGE_SIZES``, which also
-    #: carries the upper bound the config model enforces; two lists drifting apart is exactly
-    #: how a list of choices starts promising something the API does not accept.
+    #: Only the label per size. The sizes themselves live in ``SIZES``, so a list of choices
+    #: cannot start promising something the API does not accept.
     LABELS: ClassVar[dict[str, str]] = {
         "50Mi": "50 MB",
         "100Mi": "100 MB",
         "250Mi": "250 MB",
         "500Mi": "500 MB",
         "1Gi": "1 GB",
+        "2Gi": "2 GB",
+        "5Gi": "5 GB",
+        "10Gi": "10 GB",
+        "20Gi": "20 GB",
+        "50Gi": "50 GB",
     }
 
-    def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
-
-
-class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
-    """The platform sizes, plus the stored value when that is not among them.
-
-    A PostgreSQL cluster of its own may go up to 20Gi (``POSTGRES_STORAGE``) and its volume
-    may not shrink, so without the stored value the select offers a project on 2Gi nothing
-    but shrinking and the save then refuses its own proposal. A class of its own and not the
-    parent, because for persistent-storage and temp-storage ``check_storage_size`` does cap
-    at 1Gi.
-    """
+    #: The series this select offers. A subclass narrows it where the field has bounds of
+    #: its own (see ``PostgresStorageSizeOptionsProvider``).
+    SIZES: ClassVar[tuple[str, ...]] = STORAGE_SIZES
 
     def __init__(self, current_value: str | None = None) -> None:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        options = super().get_options()
+        options = [{"value": size, "label": self.LABELS.get(size, size)} for size in self.SIZES]
         stored = (self.current_value or "").strip()
         if not stored or any(option["value"] == stored for option in options):
             return options
@@ -456,6 +456,28 @@ class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
             # A stored size that cannot be read has no place in the series, but it does have
             # to stay selectable: otherwise the form submits a shrink.
             return options
+
+
+class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
+    """The same select for a PostgreSQL volume, on the series that field's bounds allow.
+
+    ``POSTGRES_STORAGE`` runs to 20Gi while the storage services now run to 50Gi, so the
+    series is a subclass rather than the shared one: a select must not offer a size the
+    declaration refuses.
+    """
+
+    SIZES: ClassVar[tuple[str, ...]] = ("50Mi", "100Mi", "250Mi", "500Mi", "1Gi")
+
+
+class StorageSizeOverrideOptionsProvider(StorageSizeOptionsProvider):
+    """The same select for ONE deployment's override, led by the inherit option.
+
+    Empty means: follow the component. The size the component says is the placeholder the
+    form shows, so the list itself does not have to name it.
+    """
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": "", "label": "Zelfde als het component"}, *super().get_options()]
 
 
 class IntegerStepOptionsProvider:
@@ -2231,6 +2253,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "PostgresStorageSizeOptionsProvider": PostgresStorageSizeOptionsProvider,
+    "StorageSizeOverrideOptionsProvider": StorageSizeOverrideOptionsProvider,
     "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
     "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
     "MaxNoncurrentVersionsOptionsProvider": MaxNoncurrentVersionsOptionsProvider,

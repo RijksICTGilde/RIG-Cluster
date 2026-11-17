@@ -65,6 +65,7 @@ from opi.services.catalog.publish_on_web.subdomain import (
     validate_bare_domain_allowed,
 )
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.catalog.shared.storage_size import resolve_component_storage
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project_file_handler import extract_service_names_from_component
 from opi.services.registry import deployment_manifest_services
@@ -773,7 +774,10 @@ class ApplicationManifests:
         # the database console and jobs.
         image_url, image_pull_policy = resolve_image(image_url, component.get("imagePullPolicy", "Always"))
 
-        storage_configs = self._host._project_file_handler.extract_component_storage(project_data, component_reference)
+        # The EFFECTIVE size per volume, so the PVC and the sizeLimit both get what this
+        # deployment is actually allowed: the resolver applies the component's size, this
+        # deployment's override and the approval each needs (catalog/shared/storage_size.py).
+        storage_configs = resolve_component_storage(project_data, deployment_name, component_reference)
 
         publish_on_web = self._host._project_file_handler.extract_component_publish_on_web(
             project_data, component_reference

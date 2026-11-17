@@ -14,7 +14,7 @@
           "type": "string"
         },
         "size": {
-          "description": "Size of the volume as a Kubernetes quantity, e.g. 500Mi. At most 1Gi; the platform offers 50Mi, 100Mi, 250Mi, 500Mi, 1Gi.",
+          "description": "Size of the volume as a Kubernetes quantity, e.g. 500Mi. From 50Mi up to and including 50Gi. Up to and including 2Gi applies at once; above it a platform administrator approves the request, and until then the volume keeps the size it was already allowed.",
           "title": "Size",
           "type": "string"
         }

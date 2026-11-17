@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from opi.http.render.templates_lotc import templates_lotc as templates
+from opi.services.catalog.publish_on_web.urls import address_approval_notices
 from opi.web.lotc_fixtures import page_data
 
 DOMAIN_TEXT = "Het domein mijn-app.nl is aangevraagd en wacht op goedkeuring."
@@ -37,6 +38,9 @@ def _render_components_tab(notices: list[dict[str, str]]) -> str:
         ],
     }
     data["approval_notices"] = {"production": notices}
+    # Through the service's own filter, because that is what the page does: the general
+    # template may not know which service owns the address.
+    data["address_approval_notices"] = {"production": address_approval_notices(notices)}
     data["active_tab"] = "componenten"
     data["tabs"] = {key: {**tab, "url": "#"} for key, tab in data["tabs"].items()}
     return templates.env.get_template("bg/project-tabs.html.j2").render(request=request, navigation=[], **data)

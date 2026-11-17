@@ -129,6 +129,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         # approvals not yet granted. The example data has to have the SHAPE of the real data,
         # or the preview proves nothing about the real page.
         "approval_notices": {},
+        "address_approval_notices": {},
         "backups_available": False,
         "current_cluster": "odcn-production",
         "cluster_base_domains": {},
