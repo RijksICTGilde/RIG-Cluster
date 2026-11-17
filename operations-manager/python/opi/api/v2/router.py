@@ -70,6 +70,7 @@ from opi.api.v2.models import (
     RunningSync,
     StatusDeviation,
     StatusError,
+    StatusWarning,
     SubdomainCheckResponse,
 )
 from opi.api.v2.project_read import (
@@ -145,7 +146,15 @@ from opi.services.component_values import validate_value_for_storage as validate
 from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
 from opi.services.credential_rotation import rotatable_services_for_deployment, services_with_pending_clone
-from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors, gather_sync_deviations
+from opi.services.deployment_diagnostics import (
+    EXCLUDED_RESOURCE_CONDITION,
+    EXCLUDED_RESOURCE_SEVERITY,
+    ExcludedResource,
+    categorize_error,
+    gather_deployment_errors,
+    gather_excluded_resources,
+    gather_sync_deviations,
+)
 from opi.services.help_text import service_guide_markdown, service_help_markdown
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.postgres_scope import get_postgres_schemas
@@ -242,6 +251,7 @@ class _LiveStatus(NamedTuple):
     rolled_out_revision: str | None
     running_sync: RunningSync | None
     errors: list[StatusError]
+    warnings: list[StatusWarning]
     deviations: list[StatusDeviation]
 
 
@@ -256,6 +266,7 @@ def _empty_live_status(status: DeploymentStatus) -> _LiveStatus:
         rolled_out_revision=None,
         running_sync=None,
         errors=[],
+        warnings=[],
         deviations=[],
     )
 
@@ -320,7 +331,23 @@ def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: 
             else None
         ),
         errors=[],
+        warnings=[],
         deviations=[],
+    )
+
+
+def _status_warning(excluded: ExcludedResource) -> StatusWarning:
+    """One excluded resource as the API entry for it."""
+    category, _ = categorize_error(EXCLUDED_RESOURCE_CONDITION, excluded.raw_message)
+    return StatusWarning(
+        type=EXCLUDED_RESOURCE_CONDITION,
+        severity=EXCLUDED_RESOURCE_SEVERITY,
+        category=category,
+        group=excluded.group,
+        kind=excluded.kind,
+        name=excluded.name,
+        message=excluded.message,
+        raw_message=excluded.raw_message,
     )
 
 
@@ -362,6 +389,9 @@ async def _fetch_one_live_status(
     # cluster: zero replicas there can also mean something went wrong.
     fully_disabled = deployment_disabled_state(project_data, deployment_name).is_disabled
     live = _extract_live_status(status_data, fully_disabled=fully_disabled)
+    # A resource ArgoCD leaves out of the rollout keeps the app Synced and Healthy, so this
+    # is read for every status, not only a problem one.
+    live = live._replace(warnings=[_status_warning(e) for e in gather_excluded_resources(status_data or {})])
     if live.status not in _PROBLEM_STATUSES:
         return live
 
@@ -521,6 +551,7 @@ def _build_deployment_detail(
         rolled_out_revision=live.rolled_out_revision,
         running_sync=live.running_sync,
         errors=live.errors,
+        warnings=live.warnings,
         deviations=live.deviations,
         # Here and not only in the answer to the write: a request runs for days, while the
         # answer to the PUT is gone the moment the client has read it. Through the one

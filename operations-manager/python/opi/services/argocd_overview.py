@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from opi.connectors.argo import create_argo_connector
+from opi.services.deployment_diagnostics import gather_excluded_resources
 from opi.utils.naming import generate_argocd_application_name
 
 logger = logging.getLogger(__name__)
@@ -69,16 +70,19 @@ def _summarize(application: dict[str, Any]) -> dict[str, Any]:
         "sync": sync.get("status", "Unknown"),
         "revision": revision[:7] if revision else None,
         "last_sync": last_sync,
+        # How many resources ArgoCD leaves out of the rollout: the row says so, because the
+        # app stays Synced and Healthy with it.
+        "excluded_resources": len(gather_excluded_resources(application)),
     }
 
 
 async def get_project_argocd_statuses(project_name: str, deployment_names: list[str]) -> dict[str, dict[str, Any]]:
     """The ArgoCD state of every named deployment, out of ONE query.
 
-    Per deployment name a dict with ``available``, ``health``, ``sync``, ``revision`` and
-    ``last_sync``. A deployment ArgoCD does not know IS in there, with ``available: False``,
-    so the table can show the difference between "nothing rolled out yet" and "we do not
-    know".
+    Per deployment name a dict with ``available``, ``health``, ``sync``, ``revision``,
+    ``last_sync`` and ``excluded_resources`` (a count). A deployment ArgoCD does not know IS
+    in there, with ``available: False``, so the table can show the difference between
+    "nothing rolled out yet" and "we do not know".
 
     With ArgoCD not connected an EMPTY dict comes back. The page knows that already
     (``argocd_available``) and says it there in plain words; inventing an "Unknown" per row

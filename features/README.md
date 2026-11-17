@@ -228,6 +228,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [AppProjects: wat een Application mag uitrollen](argocd-appprojects.md)
 - [ArgoCD Refresh Performance Issue](argocd-refresh-performance.md)
 - [ArgoCD Render/Compare Error Surfacing](argocd-render-error-surfacing.md)
+- [ArgoCD rolt alleen soorten uit die op de allowlist staan](argocd-resource-allowlist.md)
 - [ArgoCD synct alleen ondertekende commits](ondertekende-gitops-commits.md)
 - [ArgoCD token-cache](argocd-token-cache.md)
 - [ArgoCD-rollen op least privilege, en ZAD op een eigen account](argocd-least-privilege.md)

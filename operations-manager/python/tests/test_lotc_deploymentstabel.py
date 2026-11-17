@@ -262,6 +262,36 @@ def test_een_dienstbadge_verbergt_geen_echte_storing() -> None:
     assert [tag["label"] for tag in tags] == ["uitgeschakeld", "Degraded", "Synced"]
 
 
+def test_an_excluded_resource_gets_a_warning_badge() -> None:
+    """Healthy/Synced hides an excluded resource (RC-501); the badge says so."""
+    tags = deployment_status_tags(
+        replacing_badges=[],
+        accompanying_badges=[],
+        argocd={"available": True, "health": "Healthy", "sync": "Synced", "excluded_resources": 1},
+    )
+
+    assert [tag["label"] for tag in tags] == ["Healthy", "1 resource niet uitgerold", "Synced"]
+    assert [tag["type"] for tag in tags] == ["success", "warning", "success"]
+
+
+def test_multiple_excluded_resources_get_the_plural_label() -> None:
+    tags = deployment_status_tags(
+        replacing_badges=[],
+        accompanying_badges=[],
+        argocd={"available": True, "health": "Healthy", "sync": "Synced", "excluded_resources": 2},
+    )
+
+    assert "2 resources niet uitgerold" in [tag["label"] for tag in tags]
+
+
+def test_without_excluded_resources_the_badge_stays_away() -> None:
+    tags = deployment_status_tags(
+        replacing_badges=[], accompanying_badges=[], argocd={"available": True, "health": "Healthy", "sync": "Synced"}
+    )
+
+    assert [tag["label"] for tag in tags] == ["Healthy", "Synced"]
+
+
 def test_sync_unknown_is_rood_en_niet_neutraal() -> None:
     """Unknown betekent dat ArgoCD niet kan vergelijken - vaak een renderfout. Grijs zou
     lezen als "nog mee bezig"."""

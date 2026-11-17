@@ -63,6 +63,9 @@ class ErrorCategory(StrEnum):
     HealthCheck = "HealthCheck"
     SyncFailed = "SyncFailed"
     ComparisonError = "ComparisonError"
+    # ArgoCD leaves a resource out of the rollout because its kind is not on the cluster's
+    # allowlist (``spec.resourceInclusions``). The rest of the application does roll out.
+    ExcludedResource = "ExcludedResource"
     Unknown = "Unknown"
 
 
