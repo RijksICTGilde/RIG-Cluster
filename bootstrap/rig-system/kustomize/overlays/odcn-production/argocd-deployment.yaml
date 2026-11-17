@@ -231,6 +231,50 @@ spec:
       requests:
         cpu: "250m"
         memory: 64Mi
+  # Alleen de kinds die ZAD uitrolt, plus Pod en ReplicaSet voor de diagnose van OPI. Een
+  # namespace-scoped controller watcht elk type in elke namespace apart; zonder deze lijst
+  # zijn dat op ODCN 589 types per namespace en blijft de client-limiter verzadigd. Een
+  # kind die hier ontbreekt, rolt ArgoCD niet uit. Zelfde lijst als sandboxed-local.
+  resourceInclusions: |
+    - apiGroups: [""]
+      kinds: [ConfigMap, Secret, Service, ServiceAccount, PersistentVolumeClaim, Pod]
+      clusters: ["*"]
+    - apiGroups: [apps]
+      kinds: [Deployment, ReplicaSet, StatefulSet]
+      clusters: ["*"]
+    - apiGroups: [batch]
+      kinds: [Job, CronJob]
+      clusters: ["*"]
+    - apiGroups: [networking.k8s.io]
+      kinds: [Ingress, NetworkPolicy]
+      clusters: ["*"]
+    - apiGroups: [policy]
+      kinds: [PodDisruptionBudget]
+      clusters: ["*"]
+    - apiGroups: [autoscaling]
+      kinds: [HorizontalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [autoscaling.k8s.io]
+      kinds: [VerticalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [rbac.authorization.k8s.io]
+      kinds: [Role, RoleBinding]
+      clusters: ["*"]
+    - apiGroups: [cert-manager.io]
+      kinds: [Issuer, Certificate]
+      clusters: ["*"]
+    - apiGroups: [postgresql.cnpg.io]
+      kinds: [Cluster, Database]
+      clusters: ["*"]
+    - apiGroups: [quay.k8s.rijksapps.nl]
+      kinds: [Organization]
+      clusters: ["*"]
+    - apiGroups: [monitoring.coreos.com]
+      kinds: [PodMonitor, ServiceMonitor, PrometheusRule]
+      clusters: ["*"]
+    - apiGroups: [argoproj.io]
+      kinds: [Application, AppProject]
+      clusters: ["*"]
   controller:
     extraCommandArgs:
       - --repo-server-timeout-seconds=180
