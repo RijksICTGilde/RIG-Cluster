@@ -72,6 +72,56 @@ spec:
       enabled: false
     route:
       enabled: false
+  # Alleen de kinds die ZAD uitrolt, plus Pod en ReplicaSet voor de diagnose van OPI. Een
+  # namespace-scoped controller watcht elk type in elke namespace apart; zonder deze lijst
+  # zijn dat op ODCN 589 types per namespace en blijft de client-limiter verzadigd. Een
+  # kind die hier ontbreekt, rolt ArgoCD niet uit. Zelfde lijst als sandboxed-local en odcn-production.
+  resourceInclusions: |
+    - apiGroups: [""]
+      kinds: [ConfigMap, Secret, Service, ServiceAccount, PersistentVolumeClaim, Pod]
+      clusters: ["*"]
+    - apiGroups: [apps]
+      kinds: [Deployment, ReplicaSet, StatefulSet, DaemonSet]
+      clusters: ["*"]
+    - apiGroups: [batch]
+      kinds: [Job, CronJob]
+      clusters: ["*"]
+    - apiGroups: [networking.k8s.io]
+      kinds: [Ingress, NetworkPolicy]
+      clusters: ["*"]
+    - apiGroups: [gateway.networking.k8s.io]
+      kinds: [Gateway, HTTPRoute]
+      clusters: ["*"]
+    - apiGroups: [policy]
+      kinds: [PodDisruptionBudget]
+      clusters: ["*"]
+    - apiGroups: [autoscaling]
+      kinds: [HorizontalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [autoscaling.k8s.io]
+      kinds: [VerticalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [rbac.authorization.k8s.io]
+      kinds: [Role, RoleBinding]
+      clusters: ["*"]
+    - apiGroups: [cert-manager.io]
+      kinds: [Issuer, Certificate]
+      clusters: ["*"]
+    - apiGroups: [postgresql.cnpg.io]
+      kinds: [Cluster, Database, Pooler, ScheduledBackup, ImageCatalog]
+      clusters: ["*"]
+    - apiGroups: [quay.k8s.rijksapps.nl]
+      kinds: [Organization]
+      clusters: ["*"]
+    - apiGroups: [monitoring.coreos.com]
+      kinds: [PodMonitor, ServiceMonitor, PrometheusRule]
+      clusters: ["*"]
+    - apiGroups: [grafana.integreatly.org]
+      kinds: [GrafanaDashboard]
+      clusters: ["*"]
+    - apiGroups: [argoproj.io]
+      kinds: [Application, AppProject]
+      clusters: ["*"]
   # De standaarduitsluitingen van de operator (overgenomen uit argocd-cm, want dit veld
   # vervangt ze) plus Calico. De application-controller van staging mag de Calico-
   # policies niet lijsten ("operation on Calico tiered policy is forbidden", gemeten
