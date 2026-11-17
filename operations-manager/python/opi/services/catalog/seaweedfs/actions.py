@@ -16,7 +16,7 @@ def seaweedfs_storage_actions(project_data: dict[str, Any], deployment_name: str
         deployment_name,
         service=ServiceType.SEAWEEDFS_STORAGE,
         modal_prefix="modal-edit-seaweedfs-deployment-",
-        label="Oude versies",
+        label="Versiebeheer objectstorage",
         icon="wolk",
     )
     return [action] if action else []

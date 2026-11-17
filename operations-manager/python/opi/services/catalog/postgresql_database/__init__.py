@@ -166,9 +166,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         suffix = "" if deployment_index is None else f"-{deployment_index}"
         return FormSection(
             section_id=f"postgresql-deployment-config{suffix}",
-            title="Database per deployment",
+            title="Database configuratie voor deze deployment",
             icon="database",
-            description="De meelezende gebruiker krijgt dezelfde limiet.",
+            description="Maximaal aantal gelijktijdige verbindingen met de database voor deze deployment.",
             post_save_action="process_project",
             editables=[field],
             layout=[Fieldset(legend="Verbindingen", children=[field.editable.yaml_path])],

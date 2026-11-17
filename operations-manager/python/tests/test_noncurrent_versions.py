@@ -339,9 +339,9 @@ def test_de_deploymentkaart_van_seaweedfs_krijgt_dezelfde_knop() -> None:
     """Zelfde knop als bij minio, maar met het eigen modal-voorvoegsel (RC-380)."""
     project = _project({}, dienst=ServiceType.SEAWEEDFS_STORAGE.value, test=None, productie=None)
     (knop,) = seaweedfs_storage_actions(project, "productie")
-    assert knop.label == "Oude versies"
+    assert knop.label == "Versiebeheer objectstorage"
     assert knop.modal_endpoint == "/projects/proj/modal-wizard/modal-edit-seaweedfs-deployment-1"
-    assert knop.modal_title == "Oude versies - productie"
+    assert knop.modal_title == "Versiebeheer objectstorage - productie"
 
 
 @pytest.mark.parametrize(
