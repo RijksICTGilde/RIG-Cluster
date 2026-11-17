@@ -7,23 +7,17 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import (
-    get_backup_namespace,
-    get_cluster_cidrs,
-    get_database_operator_namespace,
     get_ingress_controller_selector,
     get_letsencrypt_contact_email,
-    get_namespace,
-    get_ops_egress,
 )
 from opi.generation.manifests import MANIFEST_TEMPLATES_DIR
-from opi.services.project_utils import namespace_level_deployment
+from opi.services.catalog.platform.network_policies import legacy_deployment_policy_filenames
 from opi.utils.naming import (
     generate_issuer_manifest_name,
     generate_issuer_name,
     generate_issuer_secret_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
-    get_infrastructure_namespace,
 )
 
 if TYPE_CHECKING:
@@ -60,80 +54,17 @@ def emit_acme_network_policy(
     return f"{manifest_name}.yaml"
 
 
-def emit_namespace_network_policies(
-    manifest_generator: ManifestGenerator,
-    *,
-    project_data: dict[str, Any],
-    project_name: str,
-    deployment: dict[str, Any],
-    cluster_name: str,
-    namespace: str,
-    output_dir: str,
-) -> list[str]:
-    """Create or clean up namespace-level NetworkPolicies (default-deny, unlabeled-baseline, dedicated-database)."""
-    default_deny_name = generate_network_policy_manifest_name("default-deny")
-    unlabeled_name = generate_network_policy_manifest_name("unlabeled-baseline")
-    database_name = generate_network_policy_manifest_name("dedicated-database")
+def remove_namespace_network_policies(output_dir: str) -> None:
+    """Remove a pre-RC-503 copy of the namespace-wide policies from a deployment directory.
 
-    owner = namespace_level_deployment(project_data.get("deployments", []), cluster_name, deployment["namespace"])
-    if owner is None or owner["name"] != deployment["name"]:
-        for filename in (default_deny_name, unlabeled_name, database_name):
-            stale = os.path.join(output_dir, f"{filename}.yaml")
-            if os.path.exists(stale):
-                os.remove(stale)
-                logger.info(f"Removed namespace network policy '{filename}' from non-owner '{deployment['name']}'")
-        return []
-
-    os.makedirs(output_dir, exist_ok=True)
-    baseline_values = {
-        "name": generate_network_policy_name("unlabeled-baseline"),
-        "namespace": namespace,
-        # Not a deployment_selector but its counterpart: exactly the pods without the
-        # label, with the same rights as a deployment.
-        "deployment_selector": None,
-        "unlabeled_selector": True,
-        "ops_namespace": get_namespace(cluster_name),
-        "backup_namespace": get_backup_namespace(cluster_name),
-        "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
-        "ops_egress": get_ops_egress(cluster_name),
-        "cluster_cidrs": get_cluster_cidrs(cluster_name),
-        # The operator reaches the database cluster through the policy below, not through
-        # the baseline: it does not need the helm pods in this namespace.
-        "database_operator_namespace": None,
-        "project_infra_namespace": get_infrastructure_namespace(cluster_name, project_name),
-    }
-    specs = (
-        (
-            default_deny_name,
-            "default-deny-network-policy.yaml.jinja",
-            {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
-        ),
-        (unlabeled_name, "tenant-baseline-network-policy.yaml.jinja", baseline_values),
-        (
-            database_name,
-            "dedicated-database-network-policy.yaml.jinja",
-            {
-                "name": generate_network_policy_name("dedicated-database"),
-                "namespace": namespace,
-                "database_operator_namespace": get_database_operator_namespace(cluster_name),
-            },
-        ),
-    )
-    created_files = []
-    for filename, template_name, values in specs:
-        manifest_generator.create_manifest_file(
-            template_path=os.path.join(MANIFEST_TEMPLATES_DIR, template_name),
-            values=values,
-            output_dir=output_dir,
-            output_filename=filename,
-            use_sops=False,
-        )
-        created_files.append(f"{filename}.yaml")
-    logger.info(
-        f"Created namespace network policies for '{namespace}' "
-        f"(owner deployment '{deployment['name']}'): {', '.join(created_files)}"
-    )
-    return created_files
+    They are contributed to the project level now; this clears the copy of a project that
+    has not been reprocessed since.
+    """
+    for filename in legacy_deployment_policy_filenames():
+        stale = os.path.join(output_dir, filename)
+        if os.path.exists(stale):
+            os.remove(stale)
+            logger.info(f"Removed namespace network policy '{filename}' from deployment directory {output_dir}")
 
 
 def emit_letsencrypt_issuer(

@@ -433,25 +433,6 @@ RESERVED_PROJECT_NAME_MESSAGE = (
 )
 
 
-def namespace_level_deployment(
-    deployments: list[dict[str, Any]], cluster: str, namespace: str
-) -> dict[str, Any] | None:
-    """The deployment writing the NAMESPACE-wide manifests of this namespace, or None.
-
-    The same rule as ``project_level_deployment``, one layer down: the alphabetically first
-    deployment in the namespace is the owner. Without such an owner, two deployments in the
-    same namespace put the same object in two ArgoCD applications.
-    """
-    in_namespace = [
-        d
-        for d in deployments
-        if isinstance(d, dict) and d.get("name") and d.get("cluster") == cluster and d.get("namespace") == namespace
-    ]
-    if not in_namespace:
-        return None
-    return min(in_namespace, key=lambda d: str(d["name"]))
-
-
 # should_encrypt_user_env_var function removed - all user env vars are now always encrypted
 
 

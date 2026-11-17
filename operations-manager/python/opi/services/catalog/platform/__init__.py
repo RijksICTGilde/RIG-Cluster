@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from opi.services.catalog.base import ProjectManifestContext, ProjectManifestSpec, Service
+from opi.services.catalog.platform.network_policies import namespace_network_policy_specs
 from opi.services.catalog.platform.variables import PlatformVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -28,11 +29,12 @@ class PlatformService(Service):
     allows_implicit_project_selection = True
 
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
-        """The project's own service account, without pull secrets.
+        """The project's own service account and the namespace-wide NetworkPolicies.
 
-        With the platform and not with image-registries, because every project needs it,
-        including a project without a private registry. See
-        ``generate_project_service_account_name``.
+        With the platform and not with image-registries or a database service, because
+        every project needs them, including a project without a private registry or a
+        dedicated database. See ``generate_project_service_account_name`` and
+        ``namespace_network_policy_specs``.
         """
         name = generate_project_service_account_name(ctx.project_name)
         return [
@@ -40,5 +42,8 @@ class PlatformService(Service):
                 filename=f"{self.service_type.value}-{name}",
                 template_path="project-serviceaccount.yaml.jinja",
                 values={"name": name, "namespace": ctx.namespace},
-            )
+            ),
+            *namespace_network_policy_specs(
+                cluster=ctx.cluster, project_name=ctx.project_name, namespace=ctx.namespace
+            ),
         ]

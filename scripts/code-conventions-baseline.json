@@ -2108,10 +2108,6 @@
     "tests/test_multi_schema.py": {
       "dutch-comments": 3
     },
-    "tests/test_namespace_network_policies.py": {
-      "dutch-identifiers": 17,
-      "dutch-comments": 4
-    },
     "tests/test_naming_utils.py": {
       "dutch-identifiers": 18,
       "dutch-comments": 9

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from opi.connectors.git_repo import GitRepoConflictError
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.generation.manifests import MANIFEST_TEMPLATES_DIR
-from opi.manager.project.emitters import emit_namespace_network_policies
+from opi.manager.project.emitters import remove_namespace_network_policies
 from opi.manager.project.helm_deployment import deployment_uses_helm_charts, deployment_uses_helmfile
 from opi.manager.project.manifests.application import ApplicationManifests, ApplicationManifestsAccess
 from opi.manager.project.manifests.pruning import (
@@ -75,7 +75,6 @@ class RepositoryManifestsAccess(ApplicationManifestsAccess, Protocol):
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None: ...
 
     async def _process_helmfile_deployment(
@@ -83,7 +82,6 @@ class RepositoryManifestsAccess(ApplicationManifestsAccess, Protocol):
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None: ...
 
     def _step(
@@ -330,30 +328,18 @@ class RepositoryManifests:
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
 
-        # For all three kinds of deployment: a helm or helmfile pod in particular carries no
-        # deployment label and used to fall outside every policy.
-        namespace_policy_files = emit_namespace_network_policies(
-            self._host._manifest_generator,
-            project_data=project_data,
-            project_name=project_name,
-            deployment=deployment,
-            cluster_name=cluster_name,
-            namespace=prefixed_namespace,
-            output_dir=target_path,
-        )
+        # The namespace-wide policies live at project level since RC-503; this clears the
+        # copy of a project that has not been reprocessed since.
+        remove_namespace_network_policies(target_path)
 
         if deployment_uses_helmfile(deployment):
             logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
-            await self._host._process_helmfile_deployment(
-                deployment, git_connector, target_path, namespace_policy_files
-            )
+            await self._host._process_helmfile_deployment(deployment, git_connector, target_path)
             return
 
         if deployment_uses_helm_charts(deployment):
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
-            await self._host._process_helm_chart_deployment(
-                deployment, git_connector, target_path, namespace_policy_files
-            )
+            await self._host._process_helm_chart_deployment(deployment, git_connector, target_path)
             return
 
         logger.info(f"Deployment '{deployment_name}' uses components - processing as standard deployment")
@@ -369,9 +355,6 @@ class RepositoryManifests:
         except Exception:
             await ApplicationManifests(self._host).rollback_subdomain_if_needed()
             raise
-
-        # Part of this directory's desired state, so the prunes below leave them alone.
-        created_files.extend(namespace_policy_files)
 
         # Prune obsolete per-component manifests: any file this run did not regenerate
         # (removed component, or a renamed/dropped file of a surviving component such as
