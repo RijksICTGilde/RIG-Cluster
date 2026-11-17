@@ -562,6 +562,61 @@ class TestGetDeployment:
             }
         ]
 
+    def test_an_excluded_resource_lands_in_warnings_and_not_in_errors(
+        self, mock_settings: Any, mock_project_service: Any
+    ) -> None:
+        """A kind that is not on the cluster's allowlist (RC-501): ArgoCD keeps the app
+        Synced/Healthy, so the omission only reaches a client through ``warnings``."""
+        from opi.server import create_app
+        from opi.utils.naming import generate_argocd_application_name
+
+        app: FastAPI = create_app()
+        app_name = generate_argocd_application_name("test-project", "production")
+        argo_status = {
+            "status": {
+                "sync": {"status": "Synced", "revision": "deadbeefcafe"},
+                "health": {"status": "Healthy"},
+                "conditions": [
+                    {
+                        "type": "ExcludedResourceWarning",
+                        "message": "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+                    }
+                ],
+            },
+        }
+        argo_mock = _make_argo_mock(status_by_app={app_name: argo_status})
+        kubectl_mock = _make_kubectl_mock()
+        with (
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
+            patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
+            patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
+            patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="rig-test-project"),
+        ):
+            client = TestClient(app)
+            response = client.get(
+                "/api/v2/projects/test-project/deployments/production",
+                headers={"X-API-Key": API_KEY},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "Healthy"
+        assert data["errors"] == []
+        assert data["warnings"] == [
+            {
+                "type": "ExcludedResourceWarning",
+                "severity": "warning",
+                "category": "ExcludedResource",
+                "group": "gateway.networking.k8s.io",
+                "kind": "HTTPRoute",
+                "name": "web",
+                "message": (
+                    "HTTPRoute web wordt niet uitgerold: dit type staat niet op de lijst die het platform ondersteunt."
+                ),
+                "raw_message": "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+            }
+        ]
+
     def test_deployment_not_found(self, client: TestClient) -> None:
         response = client.get(
             "/api/v2/projects/test-project/deployments/nonexistent",

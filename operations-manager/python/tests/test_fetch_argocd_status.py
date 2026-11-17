@@ -47,6 +47,55 @@ async def test_healthy_with_comparison_error_still_surfaces_it():
 
 
 @pytest.mark.asyncio
+async def test_excluded_resource_is_a_warning_not_an_error_and_stays_healthy():
+    """A resource that is not on ArgoCD's allowlist (RC-501): the app keeps reporting
+    Healthy/Synced, nothing lands in 'errors', and the card gets the warning through
+    'excluded_resources'."""
+    status_data = {
+        "status": {
+            "health": {"status": "Healthy"},
+            "sync": {"status": "Synced"},
+            "conditions": [
+                {
+                    "type": "ExcludedResourceWarning",
+                    "message": "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+                }
+            ],
+        }
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+
+    deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": [{"reference": "web"}]}
+    result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+
+    assert result["health"] == "Healthy"
+    assert result["sync"] == "Synced"
+    assert result["errors"] == []
+    [excluded] = result["excluded_resources"]
+    assert excluded.kind == "HTTPRoute"
+    assert excluded.name == "web"
+    # The cheap path must not reach for the expensive resource tree / events.
+    argo.get_application_resource_tree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_without_the_condition_excluded_resources_is_empty():
+    status_data = {"status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+
+    deployment = {"name": "deploy-1", "namespace": "ns", "cluster": "local", "components": []}
+    result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+
+    assert result["excluded_resources"] == []
+
+
+@pytest.mark.asyncio
 async def test_healthy_without_conditions_has_no_errors():
     status_data = {"status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
     argo = MagicMock()

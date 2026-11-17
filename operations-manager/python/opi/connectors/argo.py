@@ -540,10 +540,13 @@ class ArgoConnector:
                 response_data = json.loads(response_text)
                 status = response_data.get("status", {}) or {}
                 # ArgoCD sets an *Error condition (e.g. ComparisonError) when it cannot
-                # generate or compare the manifests. Logging it here puts the real cause in
-                # the OPI logs instead of only in the ArgoCD UI.
+                # generate or compare the manifests, and an *Warning one (e.g.
+                # ExcludedResourceWarning) for an object it leaves out of the rollout.
+                # Logging both here puts the real cause in the OPI logs instead of only in
+                # the ArgoCD UI. The message names a kind and a name, never manifest content.
                 for condition in status.get("conditions", []) or []:
-                    if str(condition.get("type", "")).endswith("Error"):
+                    condition_type = str(condition.get("type", ""))
+                    if condition_type.endswith(("Error", "Warning")):
                         logger.warning(
                             "Application '%s' has condition %s: %s",
                             app_name,

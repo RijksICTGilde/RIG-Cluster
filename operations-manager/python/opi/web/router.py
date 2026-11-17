@@ -1963,6 +1963,7 @@ async def _fetch_argocd_deployment_status(
         conditions_to_errors,
         describe_image_pull_failures,
         gather_deployment_errors,
+        gather_excluded_resources,
         gather_sync_deviations,
         summarize_component_pods,
     )
@@ -2066,6 +2067,9 @@ async def _fetch_argocd_deployment_status(
             "operation_duration": operation_duration,
             "operation_is_stuck": is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS),
             "errors": errors,
+            # A resource ArgoCD does not roll out, while it keeps the app Synced and Healthy.
+            # Read on both branches, at no extra API call.
+            "excluded_resources": gather_excluded_resources(status_data),
             "deviations": deviations,
             "pods": pod_summaries,
             # Costs no cluster call: the observer counted this cluster at most a minute ago.
