@@ -1248,29 +1248,31 @@ goedgekeurd, met `by: schema-migration` in de history.
 ### Dezelfde waarde, maar per deployment of per item
 
 `config_value_approval` geldt voor het project als geheel. Staat dezelfde waarde op meer dan
-een plek, dan is er per plek een besluit nodig, en daar zijn drie varianten voor. Ze delen de
-regels (`_status_of_value`, `_record_value`, `_ensure_value_requested`): alleen de plek van
-het blok verschilt, en elke variant heeft een eigen spec-key, want `approval_specs()` dedupt
-op key.
+een plek, dan is er per plek een besluit nodig, en daar zijn twee varianten voor. Alle drie
+delen de regels (`_status_of_value`, `_record_value`, `_ensure_value_requested`): alleen de
+plek van het blok verschilt, en elke variant heeft een eigen spec-key, want
+`approval_specs()` dedupt op key.
 
 | Functie | Het besluit gaat over | Waar het blok staat |
 |---|---|---|
 | `config_value_approval` | het project | `services/[<dienst>]/config/<veld>-approval` |
 | `deployment_value_approval` | een deployment | `deployments[*]/services/[<dienst>]/config/<veld>-approval` |
 | `config_item_value_approval` | een item uit een lijst in de projectconfig | `services/[<dienst>]/config/<veld>-approval/<item>` |
-| `deployment_component_item_value_approval` | een item van een component BINNEN een deployment | `deployments[*]/components[<ref>]/services/<dienst>[reference=<item>]/config/<veld>-approval` |
 
-De laatste is de enige die in een lijstitem staat, waar `PLATFORM_MANAGED` niet komt: dat
-dekt alleen een veld op het hoogste niveau van een configblok. Het blok wordt daar per item
-beschermd, door `ServiceAdapter._keep_platform_fields` op elk record los toe te passen. Een
-item is er de drietal (deployment, component, item), en zijn identiteit op de
-aanvragenpagina is `<project>/<deployment>/<component>/<item>`; geen van de vier kan een `/`
-bevatten, dus die identiteit is eenduidig.
+Bij `config_item_value_approval` staat het blok onder een map per itemnaam en niet op het
+item zelf: `PLATFORM_MANAGED` dekt alleen een veld op het hoogste niveau van een configblok,
+dus op het item zou een project zijn eigen verdict kunnen schrijven. De identiteit op de
+aanvragenpagina is daar `<project>/<item>`; een itemnaam kan geen `/` bevatten, dus die
+identiteit is eenduidig.
 
-De opslagdiensten gebruiken de onderste twee samen: de component zet de grootte per volume
-(een besluit dat geldt voor elke deployment die erft) en een deployment mag er per volume van
-afwijken met een eigen besluit. Zie `features/opslag-op-aanvraag.md` en
+Send-email en de opslagdiensten gebruiken de eerste twee samen: het project zet een waarde
+voor al zijn deployments, en een deployment die meer nodig heeft vraagt een eigen besluit dat
+blijft staan als de projectwaarde later omlaag gaat. Zie `features/opslag-op-aanvraag.md` en
 `opi/services/catalog/shared/storage_size.py`.
+
+Een waarde-approval zet `requires_approval_for` op "nee": het AANZETTEN van de dienst vraagt
+niets, alleen een waarde doet dat. Zonder dat zou `enabling_needs_approval()` True zijn en
+zou een dienst zich niet meer impliciet kunnen inschrijven.
 
 ### De sleutel van een volume
 
@@ -1278,9 +1280,9 @@ Een opslagvolume heeft twee namen in omloop. Het renderpad sleutelt de PVC-naam 
 generatie op `generate_storage_name(mount-pad, index)`, waarbij de index de plek in de
 VOLLEDIGE opslaglijst van het component is (beide diensten door elkaar). Backup en restore
 gebruiken het `name`-veld uit de componentconfig. Alles rond de grootte gebruikt de eerste,
-via `storage_size.mount_key()`, want de override en zijn goedkeuring staan in hetzelfde blok
-als de clone-toestand. Dat die twee sleutels naast elkaar bestaan is bekend en staat op een
-eigen kaartje. Een pad dat een volume bij zijn `name` kent en de grootte nodig heeft, vertaalt
+via `storage_size.mount_key()`, want de override staat in hetzelfde blok als de
+clone-toestand. Dat die twee sleutels naast elkaar bestaan is bekend en staat op een eigen
+kaartje. Een pad dat een volume bij zijn `name` kent en de grootte nodig heeft, vertaalt
 die naam met `storage_size.mount_key_for_name()` en rekent niet zelf; backup en restore gaan
 via `effective_persistent_size_by_name()`, dat die vertaling en de resolver in één doet.
 

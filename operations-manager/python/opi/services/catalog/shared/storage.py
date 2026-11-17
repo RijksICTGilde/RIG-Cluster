@@ -99,8 +99,8 @@ class StorageEntry(BaseModel):
             "Size of the volume as a Kubernetes quantity, e.g. 500Mi. "
             f"From {MIN_STORAGE_SIZE} up to and including {MAX_STORAGE_SIZE}. "
             f"Up to and including {FREE_MAX_STORAGE_SIZE} applies at once; above it a platform "
-            "administrator approves the request, and until then the volume keeps the size it "
-            "was already allowed."
+            "administrator approves a ceiling for the service, which then covers every volume "
+            "of it, and until then the volume keeps the size it was already allowed."
         )
     )
     mount_path: str = Field(
@@ -164,10 +164,10 @@ SIZE_FIELD: Final[str] = "size"
 
 
 class StorageApprovalConfig(BaseModel):
-    """The project-layer config of both storage services: the size approvals, nothing else.
+    """The project-layer config of both storage services: the size ceiling, nothing else.
 
-    The mounts live on the component; the project layer carries only the verdicts on their
-    sizes, one block per ``<component>/<volume>``. A model of its own rather than
+    The mounts live on the component; the project layer carries only the verdict on the
+    largest volume this service may have in this project. A model of its own rather than
     ``StorageConfig`` (the mount list), because a project that could write its own verdict
     has no approval: the field is ``PLATFORM_MANAGED``, and that marking only covers a
     top-level field of a config block.
@@ -178,7 +178,31 @@ class StorageApprovalConfig(BaseModel):
     size_approval: dict[str, Any] | None = Field(
         default=None,
         alias=f"{SIZE_FIELD}-approval",
-        description="Approval state per <component>/<volume>, keyed by that name. Written by the platform.",
+        description=(
+            "Approval state of the largest volume this service may have in this project. Written by the platform."
+        ),
+        json_schema_extra={PLATFORM_MANAGED: True},
+    )
+
+
+class StorageDeploymentApprovalConfig(BaseModel):
+    """The deployment-layer config of both storage services: this deployment's own ceiling.
+
+    A deployment that needs larger volumes than the rest of the project asks for a ceiling of
+    its own, and that verdict is this deployment's alone, so it keeps standing when the
+    project's ceiling goes down later. Nothing else lives here: the override itself is a
+    ``size`` on the volume's record under the component.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    size_approval: dict[str, Any] | None = Field(
+        default=None,
+        alias=f"{SIZE_FIELD}-approval",
+        description=(
+            "Approval state of the largest volume this deployment may have, above the project's "
+            "ceiling. Written by the platform."
+        ),
         json_schema_extra={PLATFORM_MANAGED: True},
     )
 
@@ -187,8 +211,9 @@ class StorageCloneState(CloneState):
     """Per-mount state a DEPLOYMENT carries, as a list of ``{reference, config}`` items.
 
     Two things live here: the PVC generation each mount points at (the shared clone state),
-    and this deployment's own size for that mount, with the verdict on it. A deployment that
-    sets no ``size`` follows the component.
+    and this deployment's own size for that mount. A deployment that sets no ``size`` follows
+    the component. The verdict is not here: it is one ceiling per deployment, on the
+    deployment layer.
     """
 
     size: str | None = Field(
@@ -196,14 +221,9 @@ class StorageCloneState(CloneState):
         description=(
             "This deployment's own size for this volume, overriding the component's. "
             f"Same range as the component ({MIN_STORAGE_SIZE} up to and including {MAX_STORAGE_SIZE}); "
-            f"above {FREE_MAX_STORAGE_SIZE} it needs an approval of its own. Absent means: follow the component."
+            f"above the project's ceiling (at least {FREE_MAX_STORAGE_SIZE}) this deployment needs a "
+            "ceiling of its own. Absent means: follow the component."
         ),
-    )
-    size_approval: dict[str, Any] | None = Field(
-        default=None,
-        alias=f"{SIZE_FIELD}-approval",
-        description="Approval state of this deployment's own size. Written by the platform.",
-        json_schema_extra={PLATFORM_MANAGED: True},
     )
 
     @field_validator("size")

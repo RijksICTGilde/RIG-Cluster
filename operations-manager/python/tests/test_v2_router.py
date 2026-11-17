@@ -397,8 +397,8 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "image-registries": ["quota-gib-approval"],
             "keycloak": ["realms"],
             "minio-storage": ["generation", "revisions"],
-            # RC-499: the verdict on this deployment's own size, next to the clone state in
-            # the same deployment-component record.
+            # RC-502: the verdict on the size ceiling of the service, on the project layer
+            # and once more per deployment. The clone state comes from the layer below.
             "persistent-storage": ["generation", "revisions", "size-approval"],
             "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],

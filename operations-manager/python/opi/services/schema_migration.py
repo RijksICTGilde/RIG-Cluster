@@ -35,7 +35,6 @@ from opi.utils.naming import generate_storage_name
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from opi.services.catalog.approval import ConfigItemValueApproval, DeploymentComponentItemValueApproval
 
 logger = logging.getLogger(__name__)
 
@@ -1636,52 +1635,49 @@ def encrypt_plain_secrets(project_data: dict[str, Any]) -> bool:
     return changed
 
 
+#: What the 2.19 migration writes in the history of every block it carries over. THIS step's
+#: version and not the latest: the line records which migration carried the size over, and
+#: that stays 2.19 when a version is added.
+_STORAGE_MIGRATION_MESSAGE = "Bestaande opslaggrootte overgenomen bij de migratie naar 2.19"
+
+
 def approve_existing_storage_above_the_free_size(project_data: dict[str, Any]) -> bool:
     """Carry an existing volume above the free size over as approved (v2.18 -> 2.19).
 
     A size above ``FREE_MAX_STORAGE_SIZE`` has needed a platform administrator's decision
     since this version. The volumes that already stood larger are the reason the rule exists
-    (project pocpl-0g8 ran out of disk and a beheerder set 5Gi by hand), so their size is
-    carried over instead of being lowered to the free maximum on the next render. A migration
-    runs once per file, so an enlargement after this goes through the ordinary request.
+    (project pocpl-0g8 ran out of disk and a beheerder set 5Gi by hand), so the ceiling that
+    covers them is carried over instead of every volume being lowered to the free maximum on
+    the next render. A migration runs once per file, so an enlargement after this goes through
+    the ordinary request.
 
-    Both layers: the size on the component, and a deployment's own override above what that
-    deployment was already allowed.
+    Both layers: the project's ceiling, and the ceiling of a deployment whose override stands
+    above it.
 
     Idempotent. Returns True when something changed.
     """
     from opi.services.catalog.shared.storage_size import (
-        COMPONENT_SIZE_APPROVALS,
-        OVERRIDE_SIZE_APPROVALS,
-        migration_items,
+        DEPLOYMENT_SIZE_APPROVALS,
+        PROJECT_SIZE_APPROVALS,
+        migration_ceilings,
     )
 
     changed = False
     for service in STORAGE_SERVICES:
-        for item, size in migration_items(project_data, service):
-            approval = COMPONENT_SIZE_APPROVALS[service] if isinstance(item, str) else OVERRIDE_SIZE_APPROVALS[service]
-            changed |= _approve_in_migration(project_data, approval, item, size)
+        project_ceiling, deployment_ceilings = migration_ceilings(project_data, service)
+        project_approval = PROJECT_SIZE_APPROVALS[service]
+        if project_ceiling and project_approval.last_approved_value(project_data) != project_ceiling:
+            project_approval.record_migration_approval(project_data, project_ceiling, _STORAGE_MIGRATION_MESSAGE)
+            changed = True
+        deployment_approval = DEPLOYMENT_SIZE_APPROVALS[service]
+        for deployment_name, ceiling in deployment_ceilings.items():
+            if deployment_approval.last_approved_value(project_data, deployment_name) == ceiling:
+                continue
+            deployment_approval.record_migration_approval(
+                project_data, deployment_name, ceiling, _STORAGE_MIGRATION_MESSAGE
+            )
+            changed = True
     return changed
-
-
-def _approve_in_migration(
-    project_data: dict[str, Any],
-    approval: ConfigItemValueApproval | DeploymentComponentItemValueApproval,
-    item: Any,  # noqa: ANN401  # the item name or the (deployment, component, volume) triple
-    size: str,
-) -> bool:
-    """Write one approved block, unless this item already has one. True when it wrote."""
-    if approval.last_approved_value(project_data, item) == size:
-        return False
-    approval.record_migration_approval(
-        project_data,
-        item,
-        size,
-        # THIS step's version and not the latest: the line records which migration carried
-        # the size over, and that stays 2.19 when a version is added.
-        "Bestaande opslaggrootte overgenomen bij de migratie naar 2.19",
-    )
-    return True
 
 
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``

@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "description": "The deployment-layer config of both storage services: this deployment's own ceiling.\n\nA deployment that needs larger volumes than the rest of the project asks for a ceiling of\nits own, and that verdict is this deployment's alone, so it keeps standing when the\nproject's ceiling goes down later. Nothing else lives here: the override itself is a\n``size`` on the volume's record under the component.",
+  "properties": {
+    "size-approval": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Approval state of the largest volume this deployment may have, above the project's ceiling. Written by the platform.",
+      "title": "Size-Approval",
+      "x-platform-managed": true
+    }
+  },
+  "title": "StorageDeploymentApprovalConfig",
+  "type": "object"
+}

@@ -1,17 +1,21 @@
 # Opslag boven 2Gi op aanvraag
 
 Een volume van `persistent-storage` of `temp-storage` mag tot 50Gi groot zijn. Tot en met
-2Gi kies je zelf; daarboven keurt een platformbeheerder de aanvraag goed, en tot die
-goedkeuring rendert het volume op wat al mocht. Een deployment kan per volume een andere
-grootte krijgen dan het component.
+2Gi kies je zelf; daarboven keurt een platformbeheerder een **plafond** voor de dienst goed,
+en tot die goedkeuring rendert het volume op wat al mocht. Een deployment die meer nodig
+heeft dan de rest krijgt een eigen plafond.
+
+Het besluit gaat over de dienst, niet over een partitie: "persistent-storage mag in dit
+project volumes tot 5Gi". Een plafond van 20Gi geldt dus voor elk volume van die dienst, in
+elke deployment. Er is geen totaalbudget.
 
 ```
 component zegt:       data: 5Gi
 zonder goedkeuring:   PVC van 2Gi, met een melding op de projectpagina
-na goedkeuring:       PVC van 5Gi
+na goedkeuring:       PVC van 5Gi, en elk ander volume van die dienst mag ook tot 5Gi
 
 deployment "productie" zegt voor data: 20Gi
-zonder goedkeuring:   PVC van 5Gi (wat het component al mocht)
+zonder goedkeuring:   PVC van 5Gi (het plafond van het project)
 na goedkeuring:       PVC van 20Gi, alleen voor die deployment
 ```
 
@@ -38,27 +42,33 @@ De getallen staan in `opi/services/catalog/shared/storage.py` (`MIN_STORAGE_SIZE
 
 ## Wat er geldt zolang er geen besluit is
 
-De effectieve grootte is de gekozen grootte als die is goedgekeurd, en anders de kleinste
-van de gekozen grootte en wat al mocht. Wat al mocht is de grootste van 2Gi en de laatst
-goedgekeurde grootte. Een open aanvraag verlaagt dus nooit wat al gold, en een verlaging
-binnen wat al mocht geldt meteen.
+Het plafond van het project is de grootste van 2Gi en het laatst goedgekeurde plafond. De
+effectieve grootte van een volume is de kleinste van de gekozen grootte en dat plafond. Een
+open aanvraag verlaagt dus nooit wat al gold, en kleiner kiezen geldt meteen.
+
+De aanvraag is de grootste `size` over alle volumes van die dienst op de componentlaag, als
+die boven het plafond ligt. Twee volumes van 5Gi en 10Gi geven dus een aanvraag: 10Gi.
 
 Vergelijken gaat op hoeveelheid, nooit op tekst: `5Gi` en `5120Mi` zijn dezelfde aanvraag en
 dezelfde goedkeuring.
 
 ## Erven en afwijken per deployment
 
-De grootte op het component geldt voor al zijn deployments, en een goedkeuring daarvan geldt
-voor elke deployment die erft. Er is dus een aanvraag per volume van het component, niet een
-per deployment.
+Het plafond van het project geldt voor elke deployment. Een deployment mag per volume een
+eigen `size` zetten; blijft die binnen het plafond van het project, dan vraagt dat niets, ook
+niet als hij kleiner is.
 
-Een deployment mag per volume een eigen grootte zetten. Groter dan wat die deployment al
-mocht vraagt een eigen besluit, alleen voor die deployment. Wat al mocht is daar de grootste
-van 2Gi, de effectieve grootte van het component en de laatst goedgekeurde override van die
-deployment. Een override daarbinnen, ook een kleinere, vraagt niets.
+Gaat een override erboven, dan vraagt die deployment een eigen plafond aan, en dat besluit
+geldt alleen voor die deployment. De aanvraag is de grootste override van die dienst in die
+deployment. Het plafond van een deployment is de grootste van het projectplafond en het
+laatst goedgekeurde deploymentplafond, dus een goedgekeurd plafond blijft staan als het
+projectplafond later omlaag gaat. Een tweede deployment houdt het projectplafond.
 
-Een goedgekeurde override blijft staan als het component later omlaag gaat. Een deployment
-die niets invult volgt het component.
+Net als op projectniveau geldt dat plafond voor elk volume van die dienst in die deployment,
+ook voor een volume dat geen eigen override heeft: de effectieve grootte is de kleinste van
+de gekozen grootte en het plafond van die deployment.
+
+Een deployment die niets invult volgt het component.
 
 ## In het projectbestand
 
@@ -75,29 +85,35 @@ components:
             mount-path: /data
 ```
 
-De verdicten staan op projectniveau, onder de dienst, per `<component>/<volume>`. Dat blok
-schrijft alleen de goedkeuringsroute:
+Het plafond staat op projectniveau, onder de dienst, als een enkel blok. Dat blok schrijft
+alleen de goedkeuringsroute:
 
 ```yaml
 services:
   - name: persistent-storage
     config:
       size-approval:
-        loep-service/data:
-          status: approved
-          value: 5Gi
-          approved-value: 5Gi
-          history:
-            - date: '2026-11-16T10:00:00+00:00'
-              status: approved
-              by: beheerder@rijksoverheid.nl
+        status: approved
+        value: 5Gi
+        approved-value: 5Gi
+        history:
+          - date: '2026-11-16T10:00:00+00:00'
+            status: approved
+            by: beheerder@rijksoverheid.nl
 ```
 
-De override van een deployment staat in het record per volume, naast de PVC-generatie:
+De override van een deployment staat in het record per volume, naast de PVC-generatie, en het
+plafond van die deployment staat in zijn eigen dienstblok:
 
 ```yaml
 deployments:
   - name: productie
+    services:
+      - name: persistent-storage
+        config:
+          size-approval:
+            status: requested
+            value: 20Gi
     components:
       - reference: loep-service
         services:
@@ -106,9 +122,6 @@ deployments:
               config:
                 size: 20Gi
                 generation: 2
-                size-approval:
-                  status: requested
-                  value: 20Gi
 ```
 
 Het volume heet hier naar het mount-pad (`/data` wordt `data`), dezelfde naam waarmee het
@@ -133,9 +146,9 @@ PUT /api/v2/projects/{project}/services/persistent-storage/config/deployment/{de
 ```
 
 De server voegt dat samen met de records die er al staan: een volume dat je niet noemt houdt
-wat het had, en `generation`, `revisions` en `size-approval` blijven staan. Een body die een
-van die drie meestuurt is een 422, en een `reference` die geen volume van dat component is
-ook. Laat je `size` weg, dan vervalt de override en volgt de deployment het component weer.
+wat het had, en `generation` en `revisions` blijven staan. Een body die een van die twee
+meestuurt is een 422, en een `reference` die geen volume van dat component is ook. Laat je
+`size` weg, dan vervalt de override en volgt de deployment het component weer.
 
 Wil je één volume zetten zonder de andere mee te sturen, dan kan dat met een PATCH op
 hetzelfde pad:
@@ -147,18 +160,18 @@ PATCH /api/v2/projects/{project}/services/persistent-storage/config/deployment/{
 
 Dezelfde regels gelden: hetzelfde bereik, dezelfde 422 op een onbekende `reference`, en de
 platformvelden van het record blijven staan. `remove` laat de override van een volume
-vervallen: `generation`, `revisions` en `size-approval` blijven staan, en een record dat
-daarna niets anders meer bevat verdwijnt.
+vervallen: `generation` en `revisions` blijven staan, en een record dat daarna niets anders
+meer bevat verdwijnt.
 
 Een schrijfactie legt de ontbrekende aanvraag meteen vast, in dezelfde commit. Een
 goedkeuring geven kan alleen via de aanvragenpagina, nooit via deze route.
 
 ## Wat de gebruiker ziet
 
-Op de projectpagina staat per volume met een open aanvraag wat er voorlopig geldt: "staat op
-2Gi tot de aanvraag voor 5Gi is goedgekeurd". Op de aanvragenpagina staat de aanvraag met
-het component, het volume, de deployment (bij een override) en de gevraagde en huidige
-grootte.
+Op de aanvragenpagina staat per dienst het gevraagde plafond en wat er nu geldt: "Opslag tot
+20Gi per volume voor persistent-storage (nu 2Gi)", en voor een deployment "... in deployment
+productie (nu 5Gi)". Op de projectpagina staat bij die aanvraag welke volumes voorlopig
+kleiner renderen: "Voorlopig geldt: data op 2Gi".
 
 ## Krimpen
 
@@ -170,10 +183,10 @@ een nieuwe PVC en dus geen krimp.
 
 ## Bestaande projecten
 
-Schemaversie 2.19 neemt elk volume dat al boven 2Gi stond over als goedgekeurd, met
-`by: schema-migration` in de history, en hetzelfde voor elke bestaande override boven wat die
-deployment mocht. Niemands volume gaat dus omlaag door deze regel. Een vergroting daarna
-loopt langs de gewone aanvraag.
+Schemaversie 2.19 zet per dienst het projectplafond op de grootste grootte die al boven 2Gi
+stond, als goedgekeurd met `by: schema-migration` in de history, en geeft een deployment met
+een override daarboven een eigen goedgekeurd plafond. Niemands volume gaat dus omlaag door
+deze regel. Een vergroting daarna loopt langs de gewone aanvraag.
 
 ## Waar het staat
 
@@ -181,7 +194,7 @@ loopt langs de gewone aanvraag.
 |---|---|
 | maten, bereik en de modellen | `opi/services/catalog/shared/storage.py` |
 | de regels: kiezen, toegestaan, aanvragen, effectief, krimpen | `opi/services/catalog/shared/storage_size.py` |
-| de generieke approval-helper per item van een deployment-component | `opi/services/catalog/approval.py` |
+| de generieke approval-helpers (`config_value_approval`, `deployment_value_approval`) | `opi/services/catalog/approval.py` |
 | de resolver die het renderpad leest | `storage_size.resolve_component_storage()` |
 | de migratie | `opi/services/schema_migration.py`, stap 2.19 |
 

@@ -1098,7 +1098,10 @@ class ServiceAdapter:
                 target_list[index] = record
                 return
 
-        target_list.append({key: service_name, "config": config})
+        # Also on a FIRST write, where there is nothing stored to carry over: without this
+        # the write that CREATES the block can forge a platform-managed field, which is the
+        # very thing _keep_platform_fields exists to stop.
+        target_list.append({key: service_name, "config": cls._keep_platform_fields(service_name, layer, config, None)})
 
     @classmethod
     def _clear_deployment_component_config(

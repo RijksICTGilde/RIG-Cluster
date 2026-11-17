@@ -1,3 +1,3 @@
 {
-  "$comment": "v2.18 -> 2.19 (RC-499) liet een opslagvolume boven 2Gi op aanvraag gaan en gaf een deployment een eigen grootte per volume. Beide velden zijn toevoegingen in blokken die een dienst zelf valideert, en de 2.19-migratie zet een goedgekeurd blok bij elk volume dat al groter stond. Een 2.18-bestand is daarom zonder patch geldig onder het 2.19-schema; dit bestand bestaat omdat elke versie in de keten een schema moet hebben."
+  "$comment": "v2.18 -> 2.19 (RC-499, RC-502) liet een opslagvolume boven 2Gi op aanvraag gaan: een goedgekeurd plafond per opslagdienst, met een eigen plafond voor een deployment die meer nodig heeft. Beide velden zijn toevoegingen in blokken die een dienst zelf valideert, en de 2.19-migratie zet het plafond van elk project dat al groter stond. Een 2.18-bestand is daarom zonder patch geldig onder het 2.19-schema; dit bestand bestaat omdat elke versie in de keten een schema moet hebben."
 }

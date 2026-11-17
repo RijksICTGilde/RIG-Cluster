@@ -1996,7 +1996,8 @@ class TestApproveExistingStorageAboveTheFreeSize:
 
     Measured on the data of pocpl-0g8, the project this rule came from: component
     ``loep-service`` with ``data`` on 5Gi persistent, ``tmp`` on 5Gi temporary and
-    ``gesprekken`` on 1Gi.
+    ``gesprekken`` on 1Gi. The ceiling the migration writes is per service, so the two
+    services get 5Gi each and ``gesprekken`` is covered by the same decision.
     """
 
     @staticmethod
@@ -2040,26 +2041,34 @@ class TestApproveExistingStorageAboveTheFreeSize:
 
         assert self._sizes(data) == {"data": "5Gi", "gesprekken": "1Gi", "tmp": "5Gi"}
 
-    def test_a_volume_within_the_free_size_gets_no_block(self) -> None:
+    def test_one_ceiling_per_service_covers_every_volume(self) -> None:
         data = self._project()
         approve_existing_storage_above_the_free_size(data)
 
-        blocks = service_entry_config(data["services"][0])["size-approval"]
+        assert service_entry_config(data["services"][0])["size-approval"]["approved-value"] == "5Gi"
+        assert service_entry_config(data["services"][1])["size-approval"]["approved-value"] == "5Gi"
 
-        assert sorted(blocks) == ["loep-service/data"]
+    def test_a_project_within_the_free_size_gets_no_block(self) -> None:
+        data = self._project()
+        for entry in data["components"][0]["services"]:
+            for mount in entry["config"]:
+                mount["size"] = "1Gi"
+
+        assert approve_existing_storage_above_the_free_size(data) is False
+        assert data["services"] == ["persistent-storage", "temp-storage"]
 
     def test_the_block_records_the_migration(self) -> None:
         data = self._project()
         approve_existing_storage_above_the_free_size(data)
 
-        block = service_entry_config(data["services"][0])["size-approval"]["loep-service/data"]
+        block = service_entry_config(data["services"][0])["size-approval"]
 
         assert block["status"] == ApprovalStatus.APPROVED.value
         assert block["approved-value"] == "5Gi"
         assert block["history"][0]["by"] == "schema-migration"
         assert "2.19" in block["history"][0]["message"]
 
-    def test_an_existing_override_above_what_was_allowed_is_carried_over(self) -> None:
+    def test_an_existing_override_above_the_project_ceiling_is_carried_over(self) -> None:
         data = self._project()
         data["deployments"][0]["components"][0]["services"] = {
             "persistent-storage": [{"reference": "data", "config": {"size": "20Gi"}}]
@@ -2068,6 +2077,18 @@ class TestApproveExistingStorageAboveTheFreeSize:
         approve_existing_storage_above_the_free_size(data)
 
         assert self._sizes(data)["data"] == "20Gi"
+        block = service_entry_config(data["deployments"][0]["services"][0])["size-approval"]
+        assert block["approved-value"] == "20Gi"
+
+    def test_an_override_within_the_project_ceiling_gets_no_block(self) -> None:
+        data = self._project()
+        data["deployments"][0]["components"][0]["services"] = {
+            "persistent-storage": [{"reference": "data", "config": {"size": "3Gi"}}]
+        }
+
+        approve_existing_storage_above_the_free_size(data)
+
+        assert "services" not in data["deployments"][0]
 
     def test_running_twice_changes_nothing(self) -> None:
         data = self._project()

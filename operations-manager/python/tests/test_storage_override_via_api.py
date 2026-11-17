@@ -8,8 +8,9 @@ What this file pins:
 
 * the route exists, and only for the services that ask for it -- ``user-env-vars`` may never
   get one, because that override goes through the step-up window only (RC-388);
-* the body is the size per volume and nothing else: ``generation``, ``revisions`` and the
-  approval block live in those same records and stay as they are;
+* the body is the size per volume and nothing else: ``generation`` and ``revisions`` live in
+  those same records and stay as they are, and the verdict is the platform's, on the
+  deployment layer;
 * a volume the component does not mount is a 422, not a setting that silently does nothing.
 """
 
@@ -23,7 +24,7 @@ from fastapi.testclient import TestClient
 from opi.services.catalog.base import ConfigLayer, config_endpoint_path
 from opi.services.catalog.shared.storage_size import effective_mount_size
 from opi.services.registry import SERVICES
-from opi.services.services import ServiceAdapter
+from opi.services.services import ServiceAdapter, service_entry_config
 from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
@@ -215,11 +216,11 @@ class TestThePatch:
         task_service.create_task.assert_not_called()
 
     async def test_the_patch_leaves_the_platform_fields_of_the_volume_alone(self) -> None:
-        """The generation and the verdict live in the record the patch rewrites."""
+        """The PVC generation lives in the record the patch rewrites."""
         data = _project()
         data["deployments"][0]["components"][0]["services"] = {
             PERSISTENT: [
-                {"reference": "data", "config": {"generation": 3, "size-approval": {"status": "approved"}}},
+                {"reference": "data", "config": {"generation": 3}},
             ]
         }
 
@@ -235,9 +236,7 @@ class TestThePatch:
 
         assert counts == {"added": 0, "updated": 1, "removed": 0}
         config = data["deployments"][0]["components"][0]["services"][PERSISTENT][0]["config"]
-        assert config["size"] == "2Gi"
-        assert config["generation"] == 3
-        assert config["size-approval"] == {"status": "approved"}
+        assert config == {"size": "2Gi", "generation": 3}
 
     async def test_a_remove_withdraws_the_override_and_keeps_the_generation(self) -> None:
         """The per-item merge cannot express a removal, so the patch drops the record itself."""
@@ -336,6 +335,9 @@ class TestTheWayIntoTheFile:
         records = data["deployments"][0]["components"][0]["services"][PERSISTENT]
         assert records[0]["reference"] == "data"
         assert records[0]["config"]["size"] == "10Gi"
-        # The request is in the same commit as the override that caused it.
-        assert records[0]["config"]["size-approval"]["status"] == "requested"
+        # The request is in the same commit as the override that caused it, as the ceiling of
+        # this deployment: one decision for every volume it overrides.
+        block = service_entry_config(data["deployments"][0]["services"][0])["size-approval"]
+        assert block["status"] == "requested"
+        assert block["value"] == "10Gi"
         assert effective_mount_size(data, ServiceType.PERSISTENT_STORAGE, ("meten", "loep", "data")) == "2Gi"

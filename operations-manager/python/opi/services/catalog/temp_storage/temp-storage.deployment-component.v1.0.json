@@ -86,7 +86,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Per-mount state a DEPLOYMENT carries, as a list of ``{reference, config}`` items.\n\nTwo things live here: the PVC generation each mount points at (the shared clone state),\nand this deployment's own size for that mount, with the verdict on it. A deployment that\nsets no ``size`` follows the component.",
+  "description": "Per-mount state a DEPLOYMENT carries, as a list of ``{reference, config}`` items.\n\nTwo things live here: the PVC generation each mount points at (the shared clone state),\nand this deployment's own size for that mount. A deployment that sets no ``size`` follows\nthe component. The verdict is not here: it is one ceiling per deployment, on the\ndeployment layer.",
   "properties": {
     "generation": {
       "anyOf": [
@@ -122,23 +122,8 @@
         }
       ],
       "default": null,
-      "description": "This deployment's own size for this volume, overriding the component's. Same range as the component (50Mi up to and including 50Gi); above 2Gi it needs an approval of its own. Absent means: follow the component.",
+      "description": "This deployment's own size for this volume, overriding the component's. Same range as the component (50Mi up to and including 50Gi); above the project's ceiling (at least 2Gi) this deployment needs a ceiling of its own. Absent means: follow the component.",
       "title": "Size"
-    },
-    "size-approval": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Approval state of this deployment's own size. Written by the platform.",
-      "title": "Size-Approval",
-      "x-platform-managed": true
     }
   },
   "title": "StorageCloneState",

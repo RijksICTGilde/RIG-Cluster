@@ -1,24 +1,17 @@
 """The size of a volume: who chooses it, what it takes, and what applies meanwhile.
 
-Shared by ``persistent-storage`` and ``temp-storage``, which have the same rule. Up to and
-including ``FREE_MAX_STORAGE_SIZE`` a project sets the size itself; above it a platform
-administrator decides, and until then the volume renders on what it was already allowed. Same
-shape as the registry quota of image-registries (``image_registries/quota.py``), one layer
-deeper: the component sets the size for all its deployments, and a deployment may override it
-per volume with a decision of its own.
+Shared by ``persistent-storage`` and ``temp-storage``: up to 2Gi a project chooses; above
+it, a platform ceiling for the service (one decision covering all volumes). A deployment may
+have its own ceiling. Same model as send-email: project value and per-deployment override.
 
-Pure functions on ``project_data``: no managers, no I/O. The managers and the manifest
-generation read only :func:`resolve_component_storage`.
+Pure functions on ``project_data``: no managers, no I/O.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
-from opi.services.catalog.approval import (
-    config_item_value_approval,
-    deployment_component_item_value_approval,
-)
+from opi.services.catalog.approval import config_value_approval, deployment_value_approval
 from opi.services.catalog.shared.storage import (
     DEFAULT_STORAGE_SIZE,
     FREE_MAX_STORAGE_MI,
@@ -31,16 +24,11 @@ from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
-    from opi.services.catalog.approval import ConfigItemValueApproval, DeploymentComponentItemValueApproval
+    from opi.services.catalog.approval import ConfigValueApproval, DeploymentValueApproval
 
-#: The two services this module serves. Each keeps its own approval state under its own
-#: service entry, so a persistent volume and a temporary one are separate decisions.
+#: The two services this module serves. Each keeps its own ceiling under its own service
+#: entry, so persistent volumes and temporary ones are separate decisions.
 STORAGE_SERVICES: Final[tuple[ServiceType, ...]] = (ServiceType.PERSISTENT_STORAGE, ServiceType.TEMP_STORAGE)
-
-#: Separator in the item name of a component-level approval: ``<component>/<volume>``.
-#: Neither half can contain a ``/`` (a component name is a DNS label, a volume key is the
-#: generated storage name), so the pair is unambiguous.
-ITEM_SEPARATOR: Final[str] = "/"
 
 #: Heading of a size request on the approvals page.
 SIZE_APPROVAL_LABEL: Final[str] = "Opslaggrootte"
@@ -68,13 +56,19 @@ def _larger(left: str, right: str) -> str:
     return left if _mi(left) >= _mi(right) else right
 
 
+def _size_of(config: dict[str, Any]) -> str:
+    """The ``size`` in a component entry or an override record; empty when there is none."""
+    size = config.get(SIZE_FIELD)
+    return size.strip() if isinstance(size, str) and size.strip() else ""
+
+
 def mount_key(entry: dict[str, Any], index: int) -> str:
     """The key that identifies this volume, the same one the render path uses.
 
     ``generate_storage_name`` over the mount path and the volume's position in the
-    component's full storage list, so the override, its approval, the PVC name and the clone
-    state all name the same volume. The ``name`` field is NOT that key: backup and restore
-    use it, the render path does not, and the two can disagree.
+    component's full storage list, so the override, the PVC name and the clone state all name
+    the same volume. The ``name`` field is NOT that key: backup and restore use it, the render
+    path does not, and the two can disagree.
     """
     return generate_storage_name(str(entry.get("mount-path") or entry.get("mount_path") or ""), index)
 
@@ -109,25 +103,18 @@ def mount_key_for_name(component: dict[str, Any], service: ServiceType, storage_
     return None
 
 
-def _component_item(component_name: str, key: str) -> str:
-    """The identity of one volume of one component on the approvals page."""
-    return f"{component_name}{ITEM_SEPARATOR}{key}"
+def _deployment_names(project_data: dict[str, Any]) -> list[str]:
+    return [
+        str(deployment["name"])
+        for deployment in project_data.get("deployments") or []
+        if isinstance(deployment, dict) and deployment.get("name")
+    ]
 
 
-def _component_items(project_data: dict[str, Any], service: ServiceType) -> list[str]:
-    """``<component>/<volume>`` for every volume this service mounts in the project."""
-    items: list[str] = []
-    for component in project_data.get("components") or []:
-        if not isinstance(component, dict):
-            continue
-        name = str(component.get("name") or "")
-        items += [_component_item(name, key) for key, owner, _ in component_mounts(component) if owner is service]
-    return items
-
-
-def _entry_of(project_data: dict[str, Any], service: ServiceType, item: str) -> dict[str, Any] | None:
-    """The component's storage entry behind an ``<component>/<volume>`` item."""
-    component_name, _, key = item.partition(ITEM_SEPARATOR)
+def _component_entry(
+    project_data: dict[str, Any], service: ServiceType, component_name: str, key: str
+) -> dict[str, Any] | None:
+    """The component's storage entry for this volume, or None when it has no such volume."""
     component = Project(project_data).find("components", name=component_name)
     if component is None:
         return None
@@ -136,89 +123,109 @@ def _entry_of(project_data: dict[str, Any], service: ServiceType, item: str) -> 
     )
 
 
-def _chosen(project_data: dict[str, Any], service: ServiceType, item: str) -> str | None:
-    """The size the component asks for, or None when there is no such volume or no size."""
-    entry = _entry_of(project_data, service, item)
-    size = entry.get(SIZE_FIELD) if entry else None
-    return size.strip() if isinstance(size, str) and size.strip() else None
+def _component_size(project_data: dict[str, Any], service: ServiceType, component_name: str, key: str) -> str:
+    """The size the component asks for, empty when it has no such volume or no size."""
+    return _size_of(_component_entry(project_data, service, component_name, key) or {})
 
 
-def _granted(project_data: dict[str, Any], service: ServiceType, item: str) -> str:
-    """The largest size this volume may use without a new approval."""
-    last = COMPONENT_SIZE_APPROVALS[service].last_approved_value(project_data, item)
+def _largest_component_size(project_data: dict[str, Any], service: ServiceType) -> str:
+    """The largest size any component asks for this service; empty when none does."""
+    largest = ""
+    for component in project_data.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        for _, owner, entry in component_mounts(component):
+            size = _size_of(entry)
+            if owner is service and size:
+                largest = _larger(largest, size)
+    return largest
+
+
+def _project_granted(project_data: dict[str, Any], service: ServiceType) -> str:
+    """The largest volume this service may have in this project without a new approval."""
+    last = PROJECT_SIZE_APPROVALS[service].last_approved_value(project_data)
     return _larger(FREE_MAX_STORAGE_SIZE, last) if last else FREE_MAX_STORAGE_SIZE
 
 
-def _requested(project_data: dict[str, Any], service: ServiceType, item: str) -> str:
-    """The size an administrator must decide on; empty is no request.
+def _requested_project_ceiling(project_data: dict[str, Any], service: ServiceType) -> str:
+    """The ceiling an administrator must decide on; empty is no request.
 
-    Staying within what was already allowed asks nothing and returns the last approved size,
-    so the block and with it the memory of what was granted stay put.
+    Staying within what was already allowed asks nothing and returns the last approved
+    ceiling, so the block and with it the memory of what was granted stay put.
     """
-    chosen = _chosen(project_data, service, item)
-    if chosen is None:
-        return ""
-    if _mi(chosen) > _mi(_granted(project_data, service, item)):
-        return chosen
-    return COMPONENT_SIZE_APPROVALS[service].last_approved_value(project_data, item)
+    largest = _largest_component_size(project_data, service)
+    if largest and _mi(largest) > _mi(_project_granted(project_data, service)):
+        return largest
+    return PROJECT_SIZE_APPROVALS[service].last_approved_value(project_data)
 
 
-def effective_component_size(project_data: dict[str, Any], service: ServiceType, component: str, key: str) -> str:
-    """The size this volume has for every deployment that inherits it.
-
-    The chosen size once it is approved, otherwise the smaller of the chosen size and what
-    was already allowed, so an open request never lowers what already held. A key the
-    component does not mount is a programming error and raises: falling back to the default
-    size there would answer 100Mi for a volume of 5Gi.
-    """
-    item = _component_item(component, key)
-    if _entry_of(project_data, service, item) is None:
-        raise KeyError(f"component '{component}' has no {service.value} volume '{key}'")
-    chosen = _chosen(project_data, service, item)
-    if chosen is None:
-        return DEFAULT_STORAGE_SIZE
-    if COMPONENT_SIZE_APPROVALS[service].is_approved(project_data, item):
-        return chosen
-    granted = _granted(project_data, service, item)
-    return chosen if _mi(chosen) <= _mi(granted) else granted
+def _ceiling_activity(service: ServiceType, value: str) -> str:
+    """What the decision is about, as the subject of a sentence."""
+    return f"Opslag tot {value} per volume voor {service.value}"
 
 
-def _component_consequence(project_data: dict[str, Any], service: ServiceType, item: str) -> str:
-    component, _, key = item.partition(ITEM_SEPARATOR)
-    return f"Het volume staat voorlopig op {effective_component_size(project_data, service, component, key)}."
+def _capped_volumes(project_data: dict[str, Any], service: ServiceType, deployment_name: str) -> list[str]:
+    """``<volume> op <size>`` for every volume of this deployment rendering below its size."""
+    capped: list[str] = []
+    for item in _mount_items(project_data, service):
+        if item[0] != deployment_name:
+            continue
+        chosen = _chosen_mount_size(project_data, service, item)
+        effective = effective_mount_size(project_data, service, item)
+        if chosen and _mi(effective) < _mi(chosen):
+            capped.append(f"{item[2]} op {effective}")
+    return capped
 
 
-def _component_subject(project_data: dict[str, Any], service: ServiceType, item: str, value: str) -> str:
-    component, _, key = item.partition(ITEM_SEPARATOR)
-    current = effective_component_size(project_data, service, component, key)
-    return f"{value} voor volume {key} van component {component} (nu {current})"
+def _ceiling_consequence(project_data: dict[str, Any], service: ServiceType, deployment: dict[str, Any]) -> str:
+    """Which volumes of this deployment render smaller meanwhile."""
+    capped = _capped_volumes(project_data, service, str(deployment.get("name") or ""))
+    return f"Voorlopig geldt: {', '.join(capped)}." if capped else ""
 
 
-def _component_size_approval(service: ServiceType) -> ConfigItemValueApproval:
-    """The approval of the component's size for every volume of one storage service.
-
-    One request per volume of the component, not one per deployment: a deployment that
-    inherits is covered by this decision.
-    """
-    return config_item_value_approval(
+def _project_ceiling_approval(service: ServiceType) -> ConfigValueApproval:
+    """The approval of the ceiling that covers every volume of one storage service."""
+    return config_value_approval(
         service,
         field=SIZE_FIELD,
         label=SIZE_APPROVAL_LABEL,
-        item_names=lambda project_data: _component_items(project_data, service),
-        requested_value=lambda project_data, item: _requested(project_data, service, item),
-        activity=lambda item, value: f"Een opslaggrootte van {value} voor {item}",
-        consequence=lambda project_data, item: _component_consequence(project_data, service, item),
-        subject=lambda project_data, item, value: _component_subject(project_data, service, item, value),
+        requested_value=lambda project_data: _requested_project_ceiling(project_data, service),
+        activity=lambda value: _ceiling_activity(service, str(value)),
+        consequence=lambda project_data, deployment: _ceiling_consequence(project_data, service, deployment),
+        subject=lambda project_data, value: (
+            f"{_ceiling_activity(service, value)} (nu {_project_granted(project_data, service)})"
+        ),
     )
 
 
 #: One instance per service, built once: the factory closes over the service.
-COMPONENT_SIZE_APPROVALS: Final[dict[ServiceType, ConfigItemValueApproval]] = {
-    service: _component_size_approval(service) for service in STORAGE_SERVICES
+PROJECT_SIZE_APPROVALS: Final[dict[ServiceType, ConfigValueApproval]] = {
+    service: _project_ceiling_approval(service) for service in STORAGE_SERVICES
 }
 
 
-# The deployment-component layer: ONE deployment's own size for ONE volume.
+# The deployment layer: ONE deployment's own ceiling, for the volumes it overrides.
+
+
+def _mount_items(project_data: dict[str, Any], service: ServiceType) -> list[tuple[str, str, str]]:
+    """Every (deployment, component, volume) this service has in the project.
+
+    The volumes to resolve a size for, not approval subjects: a verdict is one ceiling per
+    project and per deployment.
+    """
+    items: list[tuple[str, str, str]] = []
+    components = {c.get("name"): c for c in project_data.get("components") or [] if isinstance(c, dict)}
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict):
+            continue
+        for entry in deployment.get("components") or []:
+            if not isinstance(entry, dict):
+                continue
+            reference = str(entry.get("reference") or "")
+            for key, owner, _ in component_mounts(components.get(reference) or {}):
+                if owner is service:
+                    items.append((str(deployment.get("name") or ""), reference, key))
+    return items
 
 
 def _override_record(
@@ -238,101 +245,115 @@ def _override_record(
     return None
 
 
-def _override(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str | None:
-    """The size this deployment sets itself, or None when it inherits the component."""
+def _override(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
+    """The size this deployment sets itself, empty when it follows the component."""
     config = (_override_record(project_data, service, item) or {}).get("config")
-    size = config.get(SIZE_FIELD) if isinstance(config, dict) else None
-    return size.strip() if isinstance(size, str) and size.strip() else None
+    return _size_of(config) if isinstance(config, dict) else ""
 
 
-def _override_items(project_data: dict[str, Any], service: ServiceType) -> list[tuple[str, str, str]]:
-    """Every (deployment, component, volume) this service has in the project."""
-    items: list[tuple[str, str, str]] = []
-    components = {c.get("name"): c for c in project_data.get("components") or [] if isinstance(c, dict)}
-    for deployment in project_data.get("deployments") or []:
-        if not isinstance(deployment, dict):
-            continue
-        for entry in deployment.get("components") or []:
-            if not isinstance(entry, dict):
-                continue
-            reference = str(entry.get("reference") or "")
-            for key, owner, _ in component_mounts(components.get(reference) or {}):
-                if owner is service:
-                    items.append((str(deployment.get("name") or ""), reference, key))
-    return items
+def _largest_override(project_data: dict[str, Any], service: ServiceType, deployment_name: str) -> str:
+    """The largest size this deployment sets itself; empty when it overrides nothing."""
+    largest = ""
+    for item in _mount_items(project_data, service):
+        if item[0] == deployment_name:
+            largest = _larger(largest, _override(project_data, service, item))
+    return largest
 
 
-def _override_granted(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
-    """The largest size this deployment may set for this volume without a new approval.
+def _deployment_granted(project_data: dict[str, Any], service: ServiceType, deployment_name: str) -> str:
+    """The largest volume this deployment may have without a new approval.
 
-    The largest of three: the free maximum, the component's effective size, and an override
-    approved earlier for THIS deployment. The last of those is why an approved override keeps
-    standing when the component's own size goes down later.
+    The project's ceiling, or higher once a ceiling was approved for THIS deployment. That
+    last part is why an approved ceiling keeps standing when the project's goes down later.
     """
-    _, component, key = item
-    granted = _larger(FREE_MAX_STORAGE_SIZE, effective_component_size(project_data, service, component, key))
-    last = OVERRIDE_SIZE_APPROVALS[service].last_approved_value(project_data, item)
+    granted = _project_granted(project_data, service)
+    last = DEPLOYMENT_SIZE_APPROVALS[service].last_approved_value(project_data, deployment_name)
     return _larger(granted, last) if last else granted
 
 
-def _override_requested(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
-    """The override an administrator must decide on; empty is no request."""
-    override = _override(project_data, service, item)
-    if override is None:
-        return ""
-    if _mi(override) > _mi(_override_granted(project_data, service, item)):
-        return override
-    return OVERRIDE_SIZE_APPROVALS[service].last_approved_value(project_data, item)
+def _requested_deployment_ceiling(project_data: dict[str, Any], service: ServiceType, deployment_name: str) -> str:
+    """The ceiling an administrator must decide on for this deployment; empty is no request.
+
+    The bound is the PROJECT's ceiling and not this deployment's own: its verdict stands
+    apart, so it keeps standing when the project lowers its ceiling later. An override within
+    the project's ceiling asks nothing.
+    """
+    largest = _largest_override(project_data, service, deployment_name)
+    if largest and _mi(largest) > _mi(_project_granted(project_data, service)):
+        return largest
+    return DEPLOYMENT_SIZE_APPROVALS[service].last_approved_value(project_data, deployment_name)
+
+
+def _deployment_ceiling_approval(service: ServiceType) -> DeploymentValueApproval:
+    """The approval of ONE deployment's own ceiling."""
+    return deployment_value_approval(
+        service,
+        field=SIZE_FIELD,
+        label=f"{SIZE_APPROVAL_LABEL} per deployment",
+        requested_value=lambda project_data, deployment_name: _requested_deployment_ceiling(
+            project_data, service, deployment_name
+        ),
+        activity=lambda value: _ceiling_activity(service, str(value)),
+        consequence=lambda project_data, deployment: _ceiling_consequence(project_data, service, deployment),
+        subject=lambda project_data, deployment_name, value: (
+            f"{_ceiling_activity(service, value)} in deployment {deployment_name} "
+            f"(nu {_deployment_granted(project_data, service, deployment_name)})"
+        ),
+    )
+
+
+DEPLOYMENT_SIZE_APPROVALS: Final[dict[ServiceType, DeploymentValueApproval]] = {
+    service: _deployment_ceiling_approval(service) for service in STORAGE_SERVICES
+}
+
+
+def _require_volume(project_data: dict[str, Any], service: ServiceType, component: str, key: str) -> None:
+    """Raise when the component does not mount this volume.
+
+    A key the component does not have is a programming error: falling back to the default
+    size there would answer 100Mi for a volume of 5Gi.
+
+    Raises:
+        KeyError: naming the component and the volume.
+    """
+    if _component_entry(project_data, service, component, key) is None:
+        raise KeyError(f"component '{component}' has no {service.value} volume '{key}'")
+
+
+def _capped(chosen: str, granted: str) -> str:
+    """The chosen size, never above what is granted; the default when nothing was chosen.
+
+    An open request therefore never lowers what already held, and a smaller choice applies at
+    once.
+    """
+    if not chosen:
+        return DEFAULT_STORAGE_SIZE
+    return chosen if _mi(chosen) <= _mi(granted) else granted
+
+
+def _chosen_mount_size(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
+    """The size asked for this volume in this deployment: its override, else the component's."""
+    _, component, key = item
+    return _override(project_data, service, item) or _component_size(project_data, service, component, key)
+
+
+def effective_component_size(project_data: dict[str, Any], service: ServiceType, component: str, key: str) -> str:
+    """The size this volume has on the project map, where there is no deployment yet."""
+    _require_volume(project_data, service, component, key)
+    return _capped(_component_size(project_data, service, component, key), _project_granted(project_data, service))
 
 
 def effective_mount_size(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
     """THE RESOLVER for one volume of one component in one deployment.
 
-    Three cases: no override, so the component's effective size; an override within what this
-    deployment was already allowed, or approved for exactly that size, so the override; and
-    otherwise what it was already allowed, because an open request never lowers what held.
+    The override when this deployment sets one, else the component's size, capped at this
+    deployment's ceiling.
     """
-    _, component, key = item
-    override = _override(project_data, service, item)
-    if override is None:
-        return effective_component_size(project_data, service, component, key)
-    granted = _override_granted(project_data, service, item)
-    if _mi(override) <= _mi(granted) or OVERRIDE_SIZE_APPROVALS[service].is_approved(project_data, item):
-        return override
-    return granted
-
-
-def _override_consequence(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
-    deployment, _, key = item
-    size = effective_mount_size(project_data, service, item)
-    return f"Volume {key} staat voor deployment {deployment} voorlopig op {size}."
-
-
-def _override_subject(
-    project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str], value: str
-) -> str:
     deployment, component, key = item
-    current = effective_mount_size(project_data, service, item)
-    return f"{value} voor volume {key} van component {component} in deployment {deployment} (nu {current})"
-
-
-def _override_size_approval(service: ServiceType) -> DeploymentComponentItemValueApproval:
-    """The approval of ONE deployment's override, per volume."""
-    return deployment_component_item_value_approval(
-        service,
-        field=SIZE_FIELD,
-        label=f"{SIZE_APPROVAL_LABEL} per deployment",
-        items=lambda project_data: _override_items(project_data, service),
-        requested_value=lambda project_data, item: _override_requested(project_data, service, item),
-        activity=lambda item, value: f"Een opslaggrootte van {value} voor volume {item[2]} van {item[1]}",
-        consequence=lambda project_data, item: _override_consequence(project_data, service, item),
-        subject=lambda project_data, item, value: _override_subject(project_data, service, item, value),
+    _require_volume(project_data, service, component, key)
+    return _capped(
+        _chosen_mount_size(project_data, service, item), _deployment_granted(project_data, service, deployment)
     )
-
-
-OVERRIDE_SIZE_APPROVALS: Final[dict[ServiceType, DeploymentComponentItemValueApproval]] = {
-    service: _override_size_approval(service) for service in STORAGE_SERVICES
-}
 
 
 def resolve_component_storage(
@@ -378,7 +399,7 @@ def unknown_override_references(project_data: dict[str, Any], service: ServiceTy
     stale record is inert anyway -- the resolver only reads volumes the component has.
     """
     errors: list[str] = []
-    known = set(_override_items(project_data, service))
+    known = set(_mount_items(project_data, service))
     for deployment in project_data.get("deployments") or []:
         if not isinstance(deployment, dict):
             continue
@@ -408,25 +429,21 @@ def refused_shrinks(
 ) -> list[str]:
     """Messages for every persistent volume whose effective size goes DOWN in this save.
 
-    Kubernetes refuses a smaller PVC, and the sync of the whole deployment fails on it, so the
-    save is refused instead. ``temp-storage`` is an ``emptyDir`` and may shrink. A new
-    generation of a volume (a recreate through the storage actions) is a new PVC rather than a
-    shrink of the one standing, so a changed generation is not judged.
-
-    The rule bounds what a PROJECT may change, so it yields on the approval route for a volume
-    whose allowance was withdrawn by that very verdict: denying a standing approval is the way
-    back, and refusing the drop it causes would leave the approver unable to take a decision
-    back. Only that drop is exempt, so a shrink the verdict does not explain is still refused.
+    Kubernetes refuses a shrink, so the save is refused. Exceptions: temp-storage is emptyDir
+    and may shrink; a generation change is a new PVC not a shrink; on the approval route, a
+    volume shrinking because its ceiling was withdrawn by that verdict is allowed (denying
+    approval is how to go back).
     """
     errors: list[str] = []
     service = ServiceType.PERSISTENT_STORAGE
-    for item in _override_items(project_data, service):
-        if item not in _override_items(previous, service):
+    known_before = set(_mount_items(previous, service))
+    for item in _mount_items(project_data, service):
+        if item not in known_before:
             continue
         if _generation(previous, service, item) != _generation(project_data, service, item):
             continue
-        if approval_decision and _mi(_allowance(project_data, service, item)) < _mi(
-            _allowance(previous, service, item)
+        if approval_decision and _mi(_deployment_granted(project_data, service, item[0])) < _mi(
+            _deployment_granted(previous, service, item[0])
         ):
             continue
         before = effective_mount_size(previous, service, item)
@@ -439,39 +456,25 @@ def refused_shrinks(
     return errors
 
 
-def _allowance(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> str:
-    """The largest size this volume is allowed by DECISION alone, free maximum included.
-
-    What ``_override_granted`` answers minus the chosen sizes: the free maximum, the last
-    approval of the component volume and the last approval of this deployment's override. So a
-    drop in it is a withdrawn decision and never a project lowering its own size.
-    """
-    _, component, key = item
-    allowed = _granted(project_data, service, _component_item(component, key))
-    last = OVERRIDE_SIZE_APPROVALS[service].last_approved_value(project_data, item)
-    return _larger(allowed, last) if last else allowed
-
-
 def _generation(project_data: dict[str, Any], service: ServiceType, item: tuple[str, str, str]) -> Any:  # noqa: ANN401  # a project-file value
     config = (_override_record(project_data, service, item) or {}).get("config")
     return config.get("generation") if isinstance(config, dict) else None
 
 
-def migration_items(project_data: dict[str, Any], service: ServiceType) -> list[tuple[str | tuple[str, str, str], str]]:
-    """What the 2.19 migration has to carry over as approved, with the size to approve.
+def migration_ceilings(project_data: dict[str, Any], service: ServiceType) -> tuple[str, dict[str, str]]:
+    """What the 2.19 migration has to carry over as approved: the project's ceiling, and the
+    ceiling of every deployment that overrides above it.
 
-    Every component volume above the free size, and every deployment override above what that
-    deployment would be allowed without it. The item is the component item name for the first
-    and the (deployment, component, volume) triple for the second, so the caller picks the
-    matching approval without re-deriving which layer a volume sits on.
+    The project ceiling is the largest size any component asks for, when that is above the
+    free size; a deployment's ceiling is the largest override it sets above that. Both empty
+    means there is nothing to carry over.
     """
-    items: list[tuple[str | tuple[str, str, str], str]] = []
-    for item in _component_items(project_data, service):
-        chosen = _chosen(project_data, service, item)
-        if chosen is not None and _mi(chosen) > FREE_MAX_STORAGE_MI:
-            items.append((item, chosen))
-    for triple in _override_items(project_data, service):
-        override = _override(project_data, service, triple)
-        if override is not None and _mi(override) > _mi(_override_granted(project_data, service, triple)):
-            items.append((triple, override))
-    return items
+    largest = _largest_component_size(project_data, service)
+    project_ceiling = largest if _mi(largest) > FREE_MAX_STORAGE_MI else ""
+    bound = project_ceiling or FREE_MAX_STORAGE_SIZE
+    deployments: dict[str, str] = {}
+    for name in _deployment_names(project_data):
+        override = _largest_override(project_data, service, name)
+        if override and _mi(override) > _mi(bound):
+            deployments[name] = override
+    return project_ceiling, deployments

@@ -1,14 +1,14 @@
-"""A volume above 2Gi needs approval, and a deployment may deviate from its component.
+"""A volume above 2Gi needs approval: one ceiling per service, one per deployment.
 
 What this file pins, in three layers:
 
 1. The rule itself (``catalog/shared/storage_size.py``): up to and including 2Gi the project
-   picks, above it a platform administrator decides, and until then the volume renders on what
-   it was already allowed. Sizes are compared as quantities, so ``5Gi`` and ``5120Mi`` are one
-   request.
-2. The two layers: the component sets the size for all its deployments, a deployment may
-   deviate per volume with a decision of its own, and an approved deviation keeps standing
-   when the component's own size goes down later.
+   picks, above it a platform administrator raises the ceiling of the service, and until then
+   the volume renders on what it was already allowed. Sizes are compared as quantities, so
+   ``5Gi`` and ``5120Mi`` are one request.
+2. The two layers: the project's ceiling covers every volume of that service in every
+   deployment, a deployment that needs more gets a ceiling of its own, and that one keeps
+   standing when the project's ceiling goes down later.
 3. The guards around it: the block is platform-managed, an ``approved`` that did not come from
    the approval route is refused, and a persistent volume cannot shrink.
 """
@@ -23,8 +23,8 @@ import pytest
 from opi.services.approvals import apply_approval_verdicts, collect_approval_items, collect_deployment_approval_notices
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.shared.storage_size import (
-    COMPONENT_SIZE_APPROVALS,
-    OVERRIDE_SIZE_APPROVALS,
+    DEPLOYMENT_SIZE_APPROVALS,
+    PROJECT_SIZE_APPROVALS,
     RESTORE_UNKNOWN_VOLUME_SIZE,
     effective_component_size,
     effective_mount_size,
@@ -49,6 +49,10 @@ TEMP = ServiceType.TEMP_STORAGE
 
 #: The volume nearly every test measures: component ``loep``, deployment ``meten``.
 DATA = ("meten", "loep", "data")
+
+#: The spec keys of the two layers, as the approvals page routes them.
+PROJECT_SPEC = "size"
+DEPLOYMENT_SPEC = "deployment-size"
 
 
 def _project(size: str = "1Gi", *, temp: str | None = None) -> dict[str, Any]:
@@ -88,20 +92,32 @@ def _decide(project: dict[str, Any], status: str, *, spec_type: str | None = Non
     apply_approval_verdicts(project, items, admin_email="admin@test.nl")
 
 
-def _set_override(project: dict[str, Any], size: str | None, *, service: ServiceType = PERSISTENT) -> None:
+def _set_override(
+    project: dict[str, Any],
+    size: str | None,
+    *,
+    service: ServiceType = PERSISTENT,
+    deployment: str = "meten",
+    reference: str | None = None,
+) -> None:
     ServiceAdapter.set_service_config(
         project,
         service.value,
         ConfigLayer.DEPLOYMENT_COMPONENT,
-        [{"reference": "data" if service is PERSISTENT else "tmp", "config": {} if size is None else {"size": size}}],
-        deployment_name="meten",
+        [
+            {
+                "reference": reference or ("data" if service is PERSISTENT else "tmp"),
+                "config": {} if size is None else {"size": size},
+            }
+        ],
+        deployment_name=deployment,
         component_name="loep",
     )
 
 
 class TestTheKeyOfAVolume:
     def test_the_key_is_the_one_the_render_path_uses(self) -> None:
-        """The override, its approval and the PVC name must name the same volume."""
+        """The override, the PVC name and the clone state must name the same volume."""
         assert mount_key({"mount-path": "/app/logs"}, 1) == "applogs"
         assert mount_key({"mount-path": ""}, 2) == "storage2"
 
@@ -129,7 +145,7 @@ class TestTheKeyOfAVolume:
         project = _project("5Gi")
         project["components"][0]["services"][0]["config"] = [{"name": "logs", "size": "5Gi", "mount-path": "/var/log"}]
         _requests(project)
-        _decide(project, "approved", spec_type="size")
+        _decide(project, "approved", spec_type=PROJECT_SPEC)
 
         assert effective_persistent_size_by_name(project, "meten", "loep", "logs") == "5Gi"
 
@@ -192,23 +208,83 @@ class TestUpToTwoGigabytes:
     def test_each_of_the_two_services_has_its_own_decision(self) -> None:
         project = _project("5Gi", temp="5Gi")
         _requests(project)
-        _decide(project, "approved", spec_type="size")
+        items = collect_approval_items(project)
+        assert sorted(item["service"] for item in items) == ["persistent-storage", "temp-storage"]
+        _decide(project, "approved", spec_type=PROJECT_SPEC)
         assert effective_component_size(project, PERSISTENT, "loep", "data") == "5Gi"
         assert effective_component_size(project, TEMP, "loep", "tmp") == "5Gi"
 
 
-class TestTheOverridePerDeployment:
+class TestOneCeilingForEveryVolume:
+    """The decision is about what the service may have, not about one partition."""
+
+    @staticmethod
+    def _two_components() -> dict[str, Any]:
+        project = _project("5Gi")
+        project["components"].append(
+            {
+                "name": "toon",
+                "type": "single",
+                "services": [
+                    {
+                        "reference": "persistent-storage",
+                        "config": [{"name": "gesprekken", "size": "10Gi", "mount-path": "/gesprekken"}],
+                    }
+                ],
+            }
+        )
+        project["deployments"][0]["components"].append({"reference": "toon"})
+        return project
+
+    def test_two_volumes_above_the_free_size_give_one_request_for_the_largest(self) -> None:
+        project = self._two_components()
+        _requests(project)
+
+        items = collect_approval_items(project)
+
+        assert [item["domain"] for item in items] == ["10Gi"]
+
+    def test_after_approval_both_volumes_render_on_their_own_size(self) -> None:
+        project = self._two_components()
+        _requests(project)
+        _decide(project, "approved")
+
+        assert effective_component_size(project, PERSISTENT, "loep", "data") == "5Gi"
+        assert effective_component_size(project, PERSISTENT, "toon", "gesprekken") == "10Gi"
+
+    def test_a_second_volume_within_the_ceiling_asks_nothing(self) -> None:
+        """One ceiling of 10Gi covers every volume of the service, in every deployment."""
+        project = self._two_components()
+        _requests(project)
+        _decide(project, "approved")
+        project["components"][0]["services"][0]["config"].append(
+            {"name": "extra", "size": "10Gi", "mount-path": "/extra"}
+        )
+        _requests(project)
+
+        assert _pending(project) == []
+        assert effective_component_size(project, PERSISTENT, "loep", "extra") == "10Gi"
+
+    def test_the_last_approved_ceiling_stays_known(self) -> None:
+        project = _project("5Gi")
+        _requests(project)
+        _decide(project, "approved")
+
+        assert PROJECT_SIZE_APPROVALS[PERSISTENT].last_approved_value(project) == "5Gi"
+
+
+class TestTheCeilingPerDeployment:
     def test_without_an_override_the_deployment_inherits(self) -> None:
         project = _project("5Gi")
         _requests(project)
         _decide(project, "approved")
         assert effective_mount_size(project, PERSISTENT, DATA) == "5Gi"
 
-    def test_an_override_within_what_was_allowed_requests_nothing(self) -> None:
+    def test_an_override_within_the_project_ceiling_requests_nothing(self) -> None:
         project = _project("1Gi")
         _set_override(project, "2Gi")
         _requests(project)
-        assert _pending(project) == []
+        assert collect_approval_items(project) == []
         assert effective_mount_size(project, PERSISTENT, DATA) == "2Gi"
 
     def test_a_smaller_override_requests_nothing(self) -> None:
@@ -218,12 +294,12 @@ class TestTheOverridePerDeployment:
         assert _pending(project) == []
         assert effective_mount_size(project, PERSISTENT, DATA) == "500Mi"
 
-    def test_an_override_above_it_needs_a_decision_of_its_own(self) -> None:
+    def test_an_override_above_it_needs_a_ceiling_of_its_own(self) -> None:
         project = _project("1Gi")
         _set_override(project, "10Gi")
         _requests(project)
         items = collect_approval_items(project)
-        assert [item["type"] for item in items] == ["deployment-component-size"]
+        assert [item["type"] for item in items] == [DEPLOYMENT_SPEC]
         assert items[0]["deployment"] == "meten"
         assert effective_mount_size(project, PERSISTENT, DATA) == "2Gi"
 
@@ -234,25 +310,58 @@ class TestTheOverridePerDeployment:
         _decide(project, "approved")
         assert effective_mount_size(project, PERSISTENT, DATA) == "10Gi"
 
-    def test_an_approved_override_stands_when_the_component_goes_down(self) -> None:
+    def test_an_approved_ceiling_stands_when_the_project_goes_down(self) -> None:
         project = _project("5Gi")
         _requests(project)
-        _decide(project, "approved")
+        _decide(project, "approved", spec_type=PROJECT_SPEC)
         _set_override(project, "10Gi")
         _requests(project)
-        _decide(project, "approved", spec_type="deployment-component-size")
+        _decide(project, "approved", spec_type=DEPLOYMENT_SPEC)
         project["components"][0]["services"][0]["config"][0]["size"] = "500Mi"
         _requests(project)
         assert effective_mount_size(project, PERSISTENT, DATA) == "10Gi"
 
-    def test_the_override_applies_to_that_deployment_only(self) -> None:
+    def test_a_second_deployment_keeps_the_project_ceiling(self) -> None:
         project = _project("1Gi")
         project["deployments"].append({"name": "acceptatie", "cluster": "local", "components": [{"reference": "loep"}]})
         _set_override(project, "10Gi")
+        _set_override(project, "2Gi", deployment="acceptatie")
         _requests(project)
+        items = collect_approval_items(project)
+
+        assert [item["deployment"] for item in items] == ["meten"]
         _decide(project, "approved")
         assert effective_mount_size(project, PERSISTENT, DATA) == "10Gi"
-        assert effective_mount_size(project, PERSISTENT, ("acceptatie", "loep", "data")) == "1Gi"
+        assert effective_mount_size(project, PERSISTENT, ("acceptatie", "loep", "data")) == "2Gi"
+
+    def test_the_ceiling_covers_every_volume_of_that_deployment(self) -> None:
+        """One approved ceiling of 10Gi, and a second volume of 10Gi asks nothing."""
+        project = _project("1Gi")
+        project["components"][0]["services"][0]["config"].append(
+            {"name": "gesprekken", "size": "1Gi", "mount-path": "/gesprekken"}
+        )
+        _set_override(project, "10Gi")
+        _requests(project)
+        _decide(project, "approved")
+        _set_override(project, "10Gi", reference="gesprekken")
+        _requests(project)
+
+        assert _pending(project) == []
+        assert effective_mount_size(project, PERSISTENT, ("meten", "loep", "gesprekken")) == "10Gi"
+
+    def test_a_volume_that_inherits_rises_to_the_ceiling_of_its_deployment(self) -> None:
+        """The cap is this deployment's ceiling, also for a volume it does not override."""
+        project = _project("1Gi")
+        project["components"][0]["services"][0]["config"].append(
+            {"name": "gesprekken", "size": "10Gi", "mount-path": "/gesprekken"}
+        )
+        _set_override(project, "10Gi")
+        _requests(project)
+        _decide(project, "approved", spec_type=DEPLOYMENT_SPEC)
+
+        assert effective_mount_size(project, PERSISTENT, ("meten", "loep", "gesprekken")) == "10Gi"
+        # On the project map, without a deployment, only the project ceiling counts.
+        assert effective_component_size(project, PERSISTENT, "loep", "gesprekken") == "2Gi"
 
     def test_removing_the_override_makes_the_deployment_inherit_again(self) -> None:
         project = _project("1Gi")
@@ -268,6 +377,14 @@ class TestTheOverridePerDeployment:
         component["services"] = {"persistent-storage": [{"reference": "bestaat-niet", "config": {"size": "1Gi"}}]}
         assert unknown_override_references(project, PERSISTENT)
 
+    def test_the_last_approved_ceiling_of_a_deployment_stays_known(self) -> None:
+        project = _project("1Gi")
+        _set_override(project, "10Gi")
+        _requests(project)
+        _decide(project, "approved")
+
+        assert DEPLOYMENT_SIZE_APPROVALS[PERSISTENT].last_approved_value(project, "meten") == "10Gi"
+
 
 class TestTheBlockBelongsToThePlatform:
     def test_a_project_write_cannot_set_it(self) -> None:
@@ -276,11 +393,11 @@ class TestTheBlockBelongsToThePlatform:
             project,
             PERSISTENT.value,
             ConfigLayer.PROJECT,
-            {"size-approval": {"loep/data": {"status": "approved", "approved-value": "5Gi"}}},
+            {"size-approval": {"status": "approved", "approved-value": "5Gi"}},
         )
         assert effective_component_size(project, PERSISTENT, "loep", "data") == "2Gi"
 
-    def test_an_override_write_cannot_set_it(self) -> None:
+    def test_an_override_write_cannot_set_a_ceiling(self) -> None:
         project = _project("1Gi")
         ServiceAdapter.set_service_config(
             project,
@@ -297,6 +414,18 @@ class TestTheBlockBelongsToThePlatform:
         )
         assert effective_mount_size(project, PERSISTENT, DATA) == "2Gi"
 
+    def test_a_deployment_write_cannot_set_it(self) -> None:
+        project = _project("1Gi")
+        _set_override(project, "10Gi")
+        ServiceAdapter.set_service_config(
+            project,
+            PERSISTENT.value,
+            ConfigLayer.DEPLOYMENT,
+            {"size-approval": {"status": "approved", "approved-value": "10Gi"}},
+            deployment_name="meten",
+        )
+        assert effective_mount_size(project, PERSISTENT, DATA) == "2Gi"
+
     def test_the_generation_of_a_volume_survives_an_override(self) -> None:
         project = _project("1Gi")
         project["deployments"][0]["components"][0]["services"] = {
@@ -310,20 +439,24 @@ class TestTheBlockBelongsToThePlatform:
         before = _project("5Gi")
         _requests(before)
         after = copy.deepcopy(before)
-        config = after["services"][0]["config"]["size-approval"]["loep/data"]
+        config = after["services"][0]["config"]["size-approval"]
         config["status"] = "approved"
         config["approved-value"] = "5Gi"
         with pytest.raises(ProjectIntegrityError, match="alleen van de goedkeuringsroute"):
             validate_approval_decisions(before, after)
 
-    def test_a_vanished_volume_cleans_up_its_block(self) -> None:
+    def test_a_vanished_volume_cleans_up_both_blocks(self) -> None:
         project = _project("5Gi")
         _set_override(project, "10Gi")
         _requests(project)
         assert project["services"][0]["config"]["size-approval"]
+        assert project["deployments"][0]["services"]
+
         project["components"][0]["services"][0]["config"] = []
         _requests(project)
+
         assert "size-approval" not in project["services"][0]["config"]
+        assert "services" not in project["deployments"][0]
         # The block goes; the override itself is user data and stays, inert, because the
         # resolver only reads volumes the component still has.
         records = project["deployments"][0]["components"][0]["services"]["persistent-storage"]
@@ -335,31 +468,31 @@ class TestWhatTheApplicantSees:
         project = _project("5Gi")
         _requests(project)
         notices = collect_deployment_approval_notices(project, project["deployments"][0])
-        teksten = [notice["text"] for notice in notices if notice["type"] == "size"]
+        teksten = [notice["text"] for notice in notices if notice["type"] == PROJECT_SPEC]
         assert teksten
         assert "2Gi" in teksten[0]
         assert "5Gi" in teksten[0]
+        assert "data" in teksten[0]
 
-    def test_the_request_names_the_volume_and_what_applies_now(self) -> None:
+    def test_the_request_names_the_service_and_what_applies_now(self) -> None:
         project = _project("5Gi")
         _requests(project)
         subject = collect_approval_items(project)[0]["subject"]
-        assert "data" in subject
-        assert "loep" in subject
-        assert "nu 2Gi" in subject
+        assert subject == "Opslag tot 5Gi per volume voor persistent-storage (nu 2Gi)"
 
-    def test_an_override_request_names_the_deployment(self) -> None:
+    def test_a_deployment_request_names_the_deployment(self) -> None:
         project = _project("1Gi")
         _set_override(project, "10Gi")
         _requests(project)
-        assert "meten" in collect_approval_items(project)[0]["subject"]
+        subject = collect_approval_items(project)[0]["subject"]
+        assert subject == "Opslag tot 10Gi per volume voor persistent-storage in deployment meten (nu 2Gi)"
 
 
 class TestTheResolver:
     def test_the_volume_list_carries_the_effective_size(self) -> None:
         project = _project("5Gi", temp="5Gi")
         _requests(project)
-        _decide(project, "approved", spec_type="size")
+        _decide(project, "approved", spec_type=PROJECT_SPEC)
         project["components"][0]["services"][0]["config"][0]["size"] = "20Gi"
         _requests(project)
         sizes = {entry["name"]: entry["size"] for entry in resolve_component_storage(project, "meten", "loep")}
@@ -422,7 +555,7 @@ class TestShrinking:
         assert refused_shrinks(before, after, approval_decision=True) == []
         asyncio.run(validate_project_structure(after, previous=before, approval_decision=True))
 
-    def test_an_approver_may_take_a_standing_override_back(self) -> None:
+    def test_an_approver_may_take_a_standing_deployment_ceiling_back(self) -> None:
         """The same on the deployment layer, where the decision is that deployment's own."""
         before = _project("1Gi")
         _set_override(before, "10Gi")
@@ -461,27 +594,3 @@ class TestShrinking:
         after = copy.deepcopy(before)
         after["components"][0]["services"][0]["config"][0]["size"] = "1Gi"
         assert get_service(PERSISTENT).validate_project_change(before, after)
-
-
-class TestApprovalPerVolume:
-    def test_every_volume_has_its_own_decision(self) -> None:
-        project = _project("5Gi")
-        project["components"][0]["services"][0]["config"].append(
-            {"name": "gesprekken", "size": "10Gi", "mount-path": "/gesprekken"}
-        )
-        _requests(project)
-        items = {item["domain"] for item in collect_approval_items(project)}
-        assert items == {"5Gi", "10Gi"}
-        _decide(project, "approved")
-        assert effective_component_size(project, PERSISTENT, "loep", "data") == "5Gi"
-        assert effective_component_size(project, PERSISTENT, "loep", "gesprekken") == "10Gi"
-
-    def test_the_last_approved_size_stays_known(self) -> None:
-        project = _project("5Gi")
-        _requests(project)
-        _decide(project, "approved")
-        assert COMPONENT_SIZE_APPROVALS[PERSISTENT].last_approved_value(project, "loep/data") == "5Gi"
-        _set_override(project, "10Gi")
-        _requests(project)
-        _decide(project, "approved", spec_type="deployment-component-size")
-        assert OVERRIDE_SIZE_APPROVALS[PERSISTENT].last_approved_value(project, DATA) == "10Gi"
