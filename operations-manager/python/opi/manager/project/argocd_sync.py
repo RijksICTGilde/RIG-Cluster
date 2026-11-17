@@ -65,6 +65,15 @@ class ArgoSyncAccess(Protocol):
     def _end_step(self, step_id: str | None, error: str | None = None) -> None: ...
 
 
+def compared_revisions(sync: dict[str, Any]) -> list[str]:
+    """The revisions an Application compared, from `status.sync`.
+
+    A multi-source Application (`spec.sources`, which `user-applications` is in all three
+    overlays) reports them in `revisions`, one per source, and leaves `revision` empty.
+    """
+    return [revision for revision in [*(sync.get("revisions") or []), sync.get("revision")] if revision]
+
+
 class ArgoCDSync:
     """The ArgoCD waits of ``ProjectManager``, built per call around its host."""
 
@@ -101,11 +110,11 @@ class ArgoCDSync:
 
             status_data = await argo_connector.get_application_status("user-applications") or {}
             status = status_data.get("status", {}) or {}
-            revision = status.get("sync", {}).get("revision")
-            self._host._argo_manager.last_umbrella_revision = revision
+            revisions = compared_revisions(status.get("sync", {}) or {})
+            self._host._argo_manager.last_umbrella_revision = ", ".join(revisions) or None
             self._host._argo_manager.last_umbrella_reconciled_at = status.get("reconciledAt")
 
-            if revision == pushed_commit:
+            if pushed_commit in revisions:
                 logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
                 return
 
@@ -114,7 +123,8 @@ class ArgoCDSync:
 
             umbrella_refresh_lost_total.inc()
             logger.info(
-                f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
+                f"user-applications staat nog op revisie {', '.join(revisions) or 'onbekend'} in plaats van "
+                f"{pushed_commit}; "
                 "de vorige refresh is verloren gegaan, opnieuw verversen"
             )
             # The refresh above waited for a reconcile itself; came it back at once anyway,

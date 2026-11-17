@@ -5,16 +5,20 @@ lopende reconcile wist het als hij klaar is, terwijl die zijn revisie ophaalde v
 pushten. Dan wacht OPI 360 seconden op een applicatie die pas bij de volgende reconcile
 (op productie een kwartier later) aangemaakt wordt. Het enige harde bewijs dat de umbrella
 onze wijziging gezien heeft is de revisie; `reconciledAt` kan nieuw zijn terwijl de
-vergeleken revisie oud is.
+vergeleken revisie oud is. `user-applications` is in alle drie de overlays een
+multi-source Application, dus die revisie staat in `status.sync.revisions` en niet in
+`status.sync.revision`.
 """
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.metrics import umbrella_refresh_lost_total
 from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MAX_ATTEMPTS,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDS,
@@ -22,14 +26,22 @@ from opi.manager.argo_manager import (
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 RECONCILED_AT = "2026-08-19T12:00:00Z"
 
 
 class FakeArgoConnector:
-    """Telt refreshes en serveert een reeks revisies (de laatste blijft gelden)."""
+    """Counts refresh requests and serves a sequence of revisions.
 
-    def __init__(self, revisions: list[str | None]) -> None:
+    The ``shape`` parameter controls whether the returned status has ``revision`` (single-source)
+    or ``revisions`` (multi-source) format.
+    """
+
+    def __init__(self, revisions: list[str | None], shape: str = "revision") -> None:
         self._revisions = list(revisions)
+        self._shape = shape
         self.refreshes = 0
         self.status_calls = 0
 
@@ -41,17 +53,28 @@ class FakeArgoConnector:
     async def get_application_status(self, app_name: str) -> dict:
         self.status_calls += 1
         revision = self._revisions.pop(0) if len(self._revisions) > 1 else self._revisions[0]
-        return {"status": {"sync": {"revision": revision}, "reconciledAt": RECONCILED_AT}}
+        sync = {"revisions": [revision] if revision else []} if self._shape == "revisions" else {"revision": revision}
+        return {"status": {"sync": sync, "reconciledAt": RECONCILED_AT}}
+
+
+@pytest.fixture(params=["revision", "revisions"])
+def make_connector(request: pytest.FixtureRequest) -> Callable[[list[str | None]], FakeArgoConnector]:
+    """The same test against both shapes of an Application status."""
+
+    def _make(revisions: list[str | None]) -> FakeArgoConnector:
+        return FakeArgoConnector(revisions, shape=request.param)
+
+    return _make
 
 
 def _watcher_self() -> SimpleNamespace:
-    """Het minimum dat de bewaker van zijn ProjectManager gebruikt."""
+    """The minimum mocks the watcher reads from ProjectManager."""
     return SimpleNamespace(_argo_manager=SimpleNamespace(last_umbrella_revision=None, last_umbrella_reconciled_at=None))
 
 
 @pytest.fixture
 def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Vangt de wachttijden op zonder ze echt te wachten."""
+    """Captures sleep durations without actually waiting."""
     opgevangen: list[float] = []
     echte_sleep = asyncio.sleep
 
@@ -63,8 +86,10 @@ def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return opgevangen
 
 
-async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -> None:
-    connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
+async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
+    connector = make_connector(["oude-revisie", "oude-revisie", "onze-commit"])
     zelf = _watcher_self()
 
     await ArgoCDSync(zelf)._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
@@ -76,17 +101,21 @@ async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -
     assert zelf._argo_manager.last_umbrella_reconciled_at == RECONCILED_AT
 
 
-async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(sleeps: list[float]) -> None:
-    connector = FakeArgoConnector(["onze-commit"])
+async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
+    connector = make_connector(["onze-commit"])
 
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert connector.refreshes == 1, "alleen de eerste ronde"
 
 
-async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[float]) -> None:
+async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
     """De lus loopt op het antwoord van de refresh; de ondergrens is alleen een rem."""
-    connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
+    connector = make_connector(["oude-revisie", "oude-revisie", "onze-commit"])
 
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
@@ -96,17 +125,21 @@ async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[
     )
 
 
-async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None:
+async def test_stopt_na_het_maximum_aantal_pogingen(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
     """Blijft de revisie verkeerd, dan is er iets anders aan de hand dan een verloren wekker."""
-    connector = FakeArgoConnector(["oude-revisie"])
+    connector = make_connector(["oude-revisie"])
 
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert connector.refreshes == UMBRELLA_REFRESH_MAX_ATTEMPTS, "niet eindeloos doorprikken"
 
 
-async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[float]) -> None:
-    connector = FakeArgoConnector(["oude-revisie"])
+async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
+    connector = make_connector(["oude-revisie"])
 
     await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, None)  # type: ignore[arg-type]
 
@@ -114,9 +147,11 @@ async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[flo
     assert connector.status_calls == 0, "zonder bewijs niet gokken"
 
 
-async def test_drie_wachtende_applicaties_delen_een_bewaker(sleeps: list[float]) -> None:
+async def test_drie_wachtende_applicaties_delen_een_bewaker(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
     """Eén bewaker naast de wachters, niet één per applicatie."""
-    connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
+    connector = make_connector(["oude-revisie", "oude-revisie", "onze-commit"])
     watcher = asyncio.create_task(
         ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
     )
@@ -130,6 +165,51 @@ async def test_drie_wachtende_applicaties_delen_een_bewaker(sleeps: list[float])
     await watcher
 
     assert connector.refreshes == 3, "drie rondes, geen drie refreshes per ronde"
+
+
+async def test_a_multi_source_umbrella_counts_as_seen_after_one_refresh(sleeps: list[float]) -> None:
+    """`user-applications` reports its compared revision in `revisions`, not in `revision`."""
+    connector = FakeArgoConnector(["onze-commit"], shape="revisions")
+    lost_before = umbrella_refresh_lost_total._value.get()
+
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
+
+    assert connector.refreshes == 1, "only the first round"
+    assert umbrella_refresh_lost_total._value.get() == lost_before, "no lost refresh to count"
+
+
+async def test_the_compared_revision_is_recorded_from_either_shape(
+    sleeps: list[float], make_connector: Callable[[list[str | None]], FakeArgoConnector]
+) -> None:
+    """The timeout message names what the umbrella compared, also when it lags behind."""
+    connector = make_connector(["oude-revisie"])
+    host = _watcher_self()
+
+    await ArgoCDSync(host)._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
+
+    assert host._argo_manager.last_umbrella_revision == "oude-revisie"
+
+
+async def test_the_production_status_shape_of_user_applications(sleeps: list[float]) -> None:
+    """The shape odcn-production serves: `revisions` plus `status`, and no `revision`."""
+
+    class ProductionShapeConnector(FakeArgoConnector):
+        async def get_application_status(self, app_name: str) -> dict:
+            self.status_calls += 1
+            return {
+                "status": {
+                    "sync": {"revisions": ["onze-commit"], "status": "Synced"},
+                    "reconciledAt": RECONCILED_AT,
+                }
+            }
+
+    connector = ProductionShapeConnector(["onze-commit"])
+    host = _watcher_self()
+
+    await ArgoCDSync(host)._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
+
+    assert connector.refreshes == 1
+    assert host._argo_manager.last_umbrella_revision == "onze-commit"
 
 
 async def test_timeoutmelding_noemt_de_commit_en_de_gelezen_revisie() -> None:
