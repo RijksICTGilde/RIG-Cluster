@@ -38,6 +38,12 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/auth/login"): "begin van de inlogflow, per definitie zonder sessie",
     ("GET", "/auth/callback"): "terugkeer van Keycloak, legitimeert zich met de autorisatiecode",
     ("GET", "/auth/logout"): "uitloggen hoort te werken met een sessie die al verlopen is",
+    ("GET", "/auth/login/beheer"): (
+        "begin van de noodweg-inlogflow, per definitie zonder sessie; de grendel zit in Keycloak "
+        "(wachtwoord, verplichte OTP, clientrol op zad-beheer) en daarna in is_platform_admin, "
+        "zie features/sso-rijk-uitwijk.md"
+    ),
+    ("GET", "/auth/beheer/callback"): "terugkeer van de noodweg, legitimeert zich met de autorisatiecode",
     # De uitnodigingsflow. De sleutel in het pad IS de herkenning: wie hem heeft, is
     # uitgenodigd. Een sessie bestaat hier nog niet, want de gebruiker wordt juist aangemaakt.
     ("GET", "/invite/{key}"): "de uitnodigingssleutel in het pad is de herkenning",

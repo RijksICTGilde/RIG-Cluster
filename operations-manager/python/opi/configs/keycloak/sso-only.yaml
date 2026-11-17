@@ -48,6 +48,10 @@ realms:
     supportedLocales: ["nl", "en"]
     defaultLocale: "nl"
     bruteForceProtected: true
+    # De mails van deze realm komen uit Keycloaks eigen mailthema. Het thema
+    # `nl-design-system` levert er ook een, maar daarin staat alleen de magic-link-mail van
+    # de platformrealm (features/sso-rijk-uitwijk.md); een projectrealm verstuurt die niet.
+    emailTheme: "keycloak"
     loginTheme: "nl-design-system"
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin
     # events so identity changes are traceable afterwards (see docs/post-mortems/

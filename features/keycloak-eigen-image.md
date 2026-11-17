@@ -10,7 +10,7 @@ Bron: `images/keycloak-zad/Dockerfile`. Image: `ghcr.io/rijksictgilde/zad/keyclo
 | Provider | Waar hij vandaan komt |
 |---|---|
 | `keycloak-relay-email-sender` | `images/keycloak-zad/extensions/relay-email-sender/`, gebouwd tijdens de imagebouw |
-| `keycloak-saml-nameid-mapper` (vier SPI's) | `images/keycloak-zad/extensions/custom-mapper/`, gebouwd tijdens de imagebouw |
+| `keycloak-saml-nameid-mapper` (vijf SPI's) | `images/keycloak-zad/extensions/custom-mapper/`, gebouwd tijdens de imagebouw |
 | `nl-design-system` (thema) | `images/keycloak-zad/theme/`, gebouwd tijdens de imagebouw; zie `keycloak-nldd-thema.md` |
 
 De twee eigen jars komen dus uit de bron in deze repo. Een jar kan daarmee niet meer uit de

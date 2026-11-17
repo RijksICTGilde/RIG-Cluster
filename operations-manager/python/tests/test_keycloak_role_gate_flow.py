@@ -422,3 +422,40 @@ async def test_een_clientrol_geeft_de_template_net_zo_goed_door() -> None:
 
     aanroep = keycloak.create_restricted_browser_flow.await_args
     assert aanroep.kwargs["redirect_to_idp"] == "rig-platform-oidc"
+
+
+# --- the blueprint's requireOtp key reaches the connector ----------------------------
+
+
+def _yaml_handler() -> tuple[Any, AsyncMock]:
+    from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
+
+    keycloak = AsyncMock()
+    return KeycloakYamlHandler(keycloak), keycloak
+
+
+@pytest.mark.asyncio
+async def test_requireotp_in_the_blueprint_makes_the_gate_demand_otp() -> None:
+    """The break-glass client (``zad-beheer``) sets this; without the wiring OTP stays optional."""
+    handler, keycloak = _yaml_handler()
+
+    await handler._process_restrict_access(
+        realm_name="rig-platform",
+        client_id="zad-beheer",
+        restrict_access={"enabled": True, "role": "platform-beheer", "requireOtp": True},
+    )
+
+    assert keycloak.create_restricted_browser_flow.await_args.kwargs["require_otp"] is True
+
+
+@pytest.mark.asyncio
+async def test_without_requireotp_the_second_factor_stays_optional_as_before() -> None:
+    handler, keycloak = _yaml_handler()
+
+    await handler._process_restrict_access(
+        realm_name="realm-a",
+        client_id="proj-app",
+        restrict_access={"enabled": True, "role": "app-beheerder"},
+    )
+
+    assert keycloak.create_restricted_browser_flow.await_args.kwargs["require_otp"] is False

@@ -15,6 +15,7 @@ import aiohttp
 import httpx
 
 if TYPE_CHECKING:
+    from authlib.integrations.starlette_client import OAuth
     from fastapi import FastAPI
 
     from opi.connectors.kubectl import KubectlConnector
@@ -305,6 +306,41 @@ async def register_oauth_client_after_keycloak_setup(app: FastAPI) -> None:
             "scope": "openid profile email",
             # PKCE with S256, required by the OPI client in Keycloak.
             "code_challenge_method": "S256",
+        },
+    )
+
+    register_break_glass_oauth_client(oauth)
+
+
+#: The client of the break-glass login, in the platform realm (``bootstrap.yaml``).
+BREAK_GLASS_CLIENT_ID = "zad-beheer"
+
+
+def register_break_glass_oauth_client(oauth: OAuth) -> None:
+    """Register the second OAuth client: the break-glass login past SSO Rijk.
+
+    Straight into the platform realm and not into OPI's own realm, because the normal chain
+    runs through that realm to SSO Rijk and the break-glass login may not depend on it.
+
+    A PUBLIC client, so there is no secret for OPI to keep: the guard is the password, the
+    mandatory OTP of Keycloak and the ``platform-beheer`` client role, all three in the
+    browser flow of the client itself. See ``features/sso-rijk-uitwijk.md``.
+    """
+    from opi.core.config import settings
+
+    discovery_url = f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}/.well-known/openid-configuration"
+    logger.info(f"Registering the break-glass OAuth client '{BREAK_GLASS_CLIENT_ID}' on {discovery_url}")
+
+    oauth.register(  # type: ignore
+        name="beheer",
+        client_id=BREAK_GLASS_CLIENT_ID,
+        server_metadata_url=discovery_url,
+        client_kwargs={
+            "scope": "openid profile email",
+            "code_challenge_method": "S256",
+            # A public client authenticates with nothing at the token endpoint; without this
+            # authlib sends an empty secret and Keycloak refuses the exchange.
+            "token_endpoint_auth_method": "none",
         },
     )
 

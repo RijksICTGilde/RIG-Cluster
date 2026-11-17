@@ -29,6 +29,7 @@ SCRAPE_TOKEN = {"Authorization": "Bearer niet-het-scrape-token"}
 #: Routes die onder deze fixture om een andere reden dan configuratie een 5xx geven, met reden.
 UITGEZONDERD: dict[str, str] = {
     "/auth/login": "de OAuth-client wordt door de lifespan geregistreerd, en die draait hier niet",
+    "/auth/login/beheer": "de noodweg-client wordt door de lifespan geregistreerd, en die draait hier niet",
 }
 
 #: De instellingen waar een herkenning op afgaat. Leeg gezet hoort elke route die ze leest

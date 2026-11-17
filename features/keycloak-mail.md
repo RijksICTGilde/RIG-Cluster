@@ -1,7 +1,9 @@
 # De mailketen van Keycloak
 
-Keycloak verstuurt post: bevestigingsmail voor een e-mailadres, "wachtwoord vergeten", en de
-berichten die bij het koppelen van een SSO-account horen. Dit document beschrijft hoe die
+Keycloak verstuurt post: bevestigingsmail voor een e-mailadres, "wachtwoord vergeten", de
+berichten die bij het koppelen van een SSO-account horen, en de code en link van de
+storingsstand (`features/sso-rijk-uitwijk.md`, met eigen sjablonen onder
+`images/keycloak-zad/theme/nl-design-system/email/`). Dit document beschrijft hoe die
 post het platform verlaat, waarom er in **geen enkele realm een wachtwoord of een bestemming
 staat**, wat een projectbeheerder daarmee wel en niet kan, en wat er bij een rotatie gebeurt.
 
@@ -301,10 +303,16 @@ Drie dingen om te weten:
 - **Een taal is pas beschikbaar als login-, account- EN emailthema hem ondersteunen.** Voor
   `nl` is dat het geval: Keycloak levert `messages_nl.properties` mee in zijn base/email-thema.
 
-**`emailTheme` blijft leeg.** `nl-design-system` levert geen mailthema (zie
-`features/keycloak-nldd-thema.md`); met het MinBZK-thema dat er tot RC-424 stond kwam er
-kale Engelse tekst uit (waargenomen). Eigen mailsjablonen zijn een eigen taak, met een
-echte ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`.
+**`emailTheme`: `nl-design-system` op `rig-platform`, `keycloak` op een projectrealm.** Sinds
+RC-496 heeft `nl-design-system` een mailthema, met precies een mail erin: de magic link van de
+storingsstand (`features/sso-rijk-uitwijk.md`). Keycloak zoekt dat sjabloon in het mailthema van
+de realm, dus `rig-platform` moet ernaar wijzen. Het thema erft van `base`, dus de mails van
+Keycloak zelf houden hun teksten; het standaardthema `keycloak` voegt daar ook niets aan toe dan
+zijn eigen themabeschrijving. Een projectrealm verstuurt die mail niet en blijft op `keycloak`.
+
+Eigen mailsjablonen voor de rest van de post zijn nog steeds een eigen taak, met een echte
+ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`. Met het MinBZK-thema dat er tot RC-424
+stond kwam er kale Engelse tekst uit (waargenomen).
 
 ### Wanneer het landt
 

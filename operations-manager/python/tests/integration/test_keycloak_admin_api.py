@@ -710,6 +710,21 @@ class TestFlows:
             (e.get("displayName"), e.get("requirement")) for e in executions
         ]
 
+    async def test_ensure_magic_link_browser_flow_skips_on_an_image_without_the_authenticator(
+        self, connector: KeycloakConnector, api: AdminApi, made_realm: str
+    ) -> None:
+        """RC-496: the generic test image carries no ``zad-magic-link-authenticator``, which
+        is every Keycloak whose image is older than the ``keycloak-zad`` release. Measured
+        against a real server, because a mocked admin API cannot tell us whether the skip
+        actually leaves the realm untouched."""
+        before = api.flows(made_realm)
+
+        changed = await connector.ensure_magic_link_browser_flow(made_realm, "SSO Rijk storing")
+
+        assert changed is False
+        after = api.flows(made_realm)
+        assert [flow["alias"] for flow in after] == [flow["alias"] for flow in before]
+
     async def test_create_restricted_browser_flow_gates_on_a_client_role(
         self, connector: KeycloakConnector, api: AdminApi, made_realm: str
     ) -> None:

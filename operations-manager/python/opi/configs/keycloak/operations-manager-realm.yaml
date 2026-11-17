@@ -25,6 +25,13 @@ extends: sso-support
 # De winst is dus nul. Wie dit omzet, zet alleen de bevestiging bij een adreswijziging aan.
 realms:
   - name: "{{ project_realm_name }}"
+    # De uitsluiting na te veel mislukte inlogpogingen. Sinds RC-496 schrijft OPI dit veld
+    # ook op een BESTAANDE realm, en de noodweg van de platformbeheerder leunt erop.
+    bruteForceProtected: true
+    # De mails van deze realm komen uit Keycloaks eigen mailthema. Het thema
+    # `nl-design-system` levert er ook een, maar daarin staat alleen de magic-link-mail van
+    # de platformrealm (features/sso-rijk-uitwijk.md); een projectrealm verstuurt die niet.
+    emailTheme: "keycloak"
     registrationAllowed: false
     loginWithEmailAllowed: false
     resetPasswordAllowed: false

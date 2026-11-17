@@ -234,3 +234,27 @@ async def test_de_opi_login_stuurt_een_code_challenge_mee() -> None:
     locatie = response.headers["location"]
     assert "code_challenge=" in locatie
     assert "code_challenge_method=S256" in locatie
+
+
+async def test_the_break_glass_client_is_public_and_carries_no_secret() -> None:
+    """``zad-beheer`` (RC-496) keeps no secret: the guard sits on the role, not on this one.
+
+    Without ``token_endpoint_auth_method: none`` authlib sends an empty secret along and
+    Keycloak refuses the exchange (see the docstring of ``register_break_glass_oauth_client``).
+    """
+    app = SimpleNamespace(state=SimpleNamespace(oauth=OAuth()))
+    with (
+        patch.object(settings, "OIDC_CLIENT_ID", "rig-platform-operations-manager"),
+        patch.object(settings, "OIDC_CLIENT_SECRET", "geheim"),
+        patch.object(
+            settings, "OIDC_DISCOVERY_URL", "https://keycloak.example/realms/x/.well-known/openid-configuration"
+        ),
+        patch.object(settings, "KEYCLOAK_URL", "https://keycloak.example"),
+        patch.object(settings, "KEYCLOAK_DEFAULT_REALM", "rig-platform"),
+    ):
+        await register_oauth_client_after_keycloak_setup(app)
+
+    client = app.state.oauth.beheer
+    assert client.client_id == "zad-beheer"
+    assert client.client_kwargs["token_endpoint_auth_method"] == "none"
+    assert client.client_kwargs["code_challenge_method"] == "S256"

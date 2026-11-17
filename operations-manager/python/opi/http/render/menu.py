@@ -75,6 +75,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # declares, and since send-email that is more than one.
         menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
         menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
+        menu_items.append({"label": "Platformacties", "link": "/admin/platform", "icon": "schild-met-vinkje-erop"})
 
     # Add user-specific menu items
     if user:

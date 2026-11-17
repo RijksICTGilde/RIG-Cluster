@@ -37,6 +37,17 @@ REQUIRED_OTP_BROWSER_FLOW = "Browser with required OTP"
 #: Keycloak's own browser flow, for every blueprint that asks for nothing else.
 DEFAULT_BROWSER_FLOW = "browser"
 
+#: The normal browser flow of the platform realm: straight on to SSO Rijk.
+SSO_REDIRECT_BROWSER_FLOW = "External IDP Redirector"
+
+#: The outage browser flow of the platform realm: logging in by mail while SSO Rijk is down
+#: (built by ensure_magic_link_browser_flow). See features/sso-rijk-uitwijk.md.
+SSO_OUTAGE_BROWSER_FLOW = "SSO Rijk storing"
+
+#: The provider id of the magic-link authenticator in the zad Keycloak image
+#: (``images/keycloak-zad/extensions/custom-mapper/``).
+MAGIC_LINK_AUTHENTICATOR = "zad-magic-link-authenticator"
+
 #: Browser flows that show a username/password form. A realm bound to anything else (such as
 #: "External IDP Redirector") redirects straight to the IdP, so a local account cannot log in
 #: there. Read by whoever decides whether a local account is a way in.
@@ -1859,8 +1870,15 @@ class KeycloakConnector:
         except (KeycloakError, OSError, ValueError) as e:
             logger.warning(f"Error assigning custom client scope to client '{client_id}': {e}")
 
-    async def configure_sso_redirect_flow(self, realm_name: str, provider_alias: str) -> None:
-        """Point the realm at SSO-only authentication, redirecting to ``provider_alias``."""
+    async def configure_sso_redirect_flow(
+        self, realm_name: str, provider_alias: str, bind_browser_flow: bool = True
+    ) -> None:
+        """Point the realm at SSO-only authentication, redirecting to ``provider_alias``.
+
+        ``bind_browser_flow`` False builds the flow but leaves the realm's ``browserFlow``
+        alone, so a binding someone chose stays chosen; see
+        ``KeycloakYamlHandler._process_authentication_flows``.
+        """
         logger.info(f"Configuring External IDP Redirector flow for realm {realm_name}")
 
         self.admin.change_current_realm(realm_name)
@@ -1876,22 +1894,23 @@ class KeycloakConnector:
             "userManagedAccessAllowed": False,
             "verifyEmail": False,
             "registrationEmailAsUsername": False,
-            "bruteForceProtected": False,
         }
 
         self.admin.update_realm(realm_name=realm_name, payload=realm_update_data)
         logger.debug(f"Updated realm {realm_name} to disable local authentication")
 
         # Step 2: Create External IDP Redirector flow
-        await self._create_external_idp_redirector_flow(realm_name, provider_alias)
+        await self._create_external_idp_redirector_flow(realm_name, provider_alias, bind_browser_flow)
 
         self.admin.change_current_realm("master")
 
         logger.info(f"Successfully configured External IDP Redirector flow for realm {realm_name}")
 
-    async def _create_external_idp_redirector_flow(self, realm_name: str, provider_alias: str) -> None:
+    async def _create_external_idp_redirector_flow(
+        self, realm_name: str, provider_alias: str, bind_browser_flow: bool = True
+    ) -> None:
         """Create the External IDP Redirector flow, redirecting to ``provider_alias``."""
-        flow_alias = "External IDP Redirector"
+        flow_alias = SSO_REDIRECT_BROWSER_FLOW
 
         logger.info(f"Creating External IDP Redirector flow for realm {realm_name}")
 
@@ -1928,6 +1947,10 @@ class KeycloakConnector:
         await self._configure_redirector_execution(realm_name, flow_alias, provider_alias)
 
         # Step 5: Set as Browser Flow
+        if not bind_browser_flow:
+            logger.info(f"Left the browser flow of realm {realm_name} as it stands")
+            return
+
         realm_flow_update = {"browserFlow": flow_alias}
         self.admin.update_realm(realm_name=realm_name, payload=realm_flow_update)
         logger.info(f"Set '{flow_alias}' as Browser Flow for realm {realm_name}")
@@ -2675,6 +2698,57 @@ class KeycloakConnector:
             logger.info(f"Required-OTP browser flow '{flow_alias}' is in place in realm '{realm_name}'")
         finally:
             self.admin.change_current_realm("master")
+
+    async def ensure_magic_link_browser_flow(self, realm_name: str, flow_alias: str) -> bool:
+        """Ensure the outage browser flow: the realm session, or else a magic link by mail.
+
+        Two ALTERNATIVE steps and no nested subflow: the cookie lets an existing session
+        through, and whoever has none lands on the magic-link screen. That screen carries the
+        button to the identity provider itself (the ``socialProviders`` section of
+        ``zad-magic-link.ftl``), so SSO Rijk stays reachable for whoever it still works for.
+
+        Creating the flow does NOT bind it: switching the realm over is a deliberate act of a
+        platform administrator (``opi/services/sso_outage.py``).
+
+        Returns False and changes nothing when this Keycloak has no magic-link authenticator,
+        which is every Keycloak whose image is older than this release. Skipping is right:
+        this runs in the bootstrap of every start, and an exception there would stop OPI from
+        starting over a flow nobody can use yet. The admin page then says the realm has no
+        outage flow.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            if not self._has_authenticator(MAGIC_LINK_AUTHENTICATOR):
+                logger.warning(
+                    f"Keycloak does not have '{MAGIC_LINK_AUTHENTICATOR}', so realm '{realm_name}' gets no "
+                    f"flow '{flow_alias}'. Build and pin the keycloak-zad image (features/keycloak-eigen-image.md)."
+                )
+                return False
+
+            if not any(flow.get("alias") == flow_alias for flow in self.admin.get_authentication_flows()):
+                self.admin.create_authentication_flow(
+                    payload={
+                        "alias": flow_alias,
+                        "providerId": "basic-flow",
+                        "topLevel": True,
+                        "builtIn": False,
+                        "description": "Browser flow for an outage of the identity provider: logging in by mail",
+                    }
+                )
+                logger.info(f"Created magic-link browser flow '{flow_alias}' in realm '{realm_name}'")
+
+            await self._ensure_execution_in_flow(flow_alias, "auth-cookie", "ALTERNATIVE", priority=10)
+            await self._ensure_execution_in_flow(flow_alias, MAGIC_LINK_AUTHENTICATOR, "ALTERNATIVE", priority=20)
+            logger.info(f"Magic-link browser flow '{flow_alias}' is in place in realm '{realm_name}'")
+            return True
+        finally:
+            self.admin.change_current_realm("master")
+
+    def _has_authenticator(self, provider_id: str) -> bool:
+        """Whether this Keycloak carries this authenticator provider. Realm already switched."""
+        providers = self.admin.get_authenticator_providers()
+        return any(provider.get("id") == provider_id for provider in providers)
 
     async def ensure_configure_totp_required(
         self, realm_name: str, skip_usernames: frozenset[str] = frozenset()

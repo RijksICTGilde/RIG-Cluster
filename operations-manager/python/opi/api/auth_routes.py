@@ -1,7 +1,10 @@
 """The login, logout and OAuth callback endpoints of the Keycloak SSO flow."""
 
+from __future__ import annotations
+
 import logging
 import time
+from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuthError
@@ -13,6 +16,9 @@ from starlette.responses import Response
 from opi.http.session import ServerSideSession
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_service import get_user_service
+
+if TYPE_CHECKING:
+    from authlib.integrations.starlette_client import StarletteOAuth2App
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +65,53 @@ async def login(request: Request) -> Response:
         ) from e
 
 
+@auth_router.get("/login/beheer")
+async def login_beheer(request: Request) -> Response:
+    """The break-glass login: straight into the platform realm, past SSO Rijk.
+
+    A local administrator account with a password, a mandatory OTP of Keycloak and the
+    ``platform-beheer`` client role (the ``zad-beheer`` client in ``bootstrap.yaml``). It
+    opens exactly the same session as the normal login, so being a platform administrator
+    still hangs on ``is_platform_admin`` and the step-up of ZAD still applies.
+
+    Not in the menu, and open in the normal state as well; see
+    ``features/sso-rijk-uitwijk.md`` for what guards it.
+    """
+    oauth = request.app.state.oauth
+
+    if not hasattr(oauth, "beheer"):
+        logger.error("Break-glass login unavailable: the zad-beheer OAuth client is not registered")
+        raise HTTPException(status_code=503, detail="De noodweg is op dit cluster niet beschikbaar.")
+
+    redirect_uri = str(request.url_for("beheer_callback"))
+    logger.info(f"Break-glass login started with redirect URI: {redirect_uri}")
+    return await oauth.beheer.authorize_redirect(request, redirect_uri)
+
+
+@auth_router.get("/beheer/callback", name="beheer_callback")
+async def beheer_callback(request: Request) -> Response:
+    """The callback of the break-glass login; the same session as the normal one."""
+    return await _finish_login(request, "beheer")
+
+
 @auth_router.get("/callback")
 async def auth_callback(request: Request) -> Response:
     """Exchange the authorization code from Keycloak for the user and open a session."""
-    try:
-        oauth = request.app.state.oauth
-        keycloak = oauth.keycloak
+    return await _finish_login(request, "keycloak")
 
-        token = await keycloak.authorize_access_token(request)
+
+async def _finish_login(request: Request, client_name: str) -> Response:
+    """Exchange the authorization code for the user and open the portal session.
+
+    Shared by the normal login and the break-glass login: both end in one session of the
+    same kind, so there is one place where an identity becomes a session.
+
+    The client is looked up INSIDE the try: an unregistered client (a startup that did not
+    finish) is then a failed login like any other, and not a 500.
+    """
+    try:
+        client: StarletteOAuth2App = getattr(request.app.state.oauth, client_name)
+        token = await client.authorize_access_token(request)
 
         user_info = None
 

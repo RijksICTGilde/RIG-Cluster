@@ -35,6 +35,8 @@ pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 PROVIDERS = (
     ("identity-provider-mapper", "saml-unrestricted-xpath-idp-mapper"),
     ("authenticator", "require-client-role-authenticator"),
+    ("authenticator", "zad-magic-link-authenticator"),
+    ("actionTokenHandler", "zad-magic-link"),
     ("eventsListener", "rig-metrics-listener"),
     ("realm-restapi-extension", "rig-metrics"),
     ("realm-restapi-extension", "always-clear-session-logout"),

@@ -174,7 +174,7 @@
     {
      "name": "keycloak",
      "file": "opi/connectors/keycloak.py",
-     "uses": 13
+     "uses": 15
     }
    ],
    "services": [

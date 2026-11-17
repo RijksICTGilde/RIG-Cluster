@@ -89,6 +89,7 @@ from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
 from .router_otp import otp_router
+from .router_platform_admin import platform_admin_router
 from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
@@ -124,6 +125,7 @@ web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
+web_router.include_router(platform_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(shared_services_router)
 web_router.include_router(rolmatrix_router)

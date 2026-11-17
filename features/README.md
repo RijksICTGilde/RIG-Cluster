@@ -183,6 +183,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [PKCE op de OPI-login](pkce-op-de-opi-login.md)
 - [Sandbox SSO Setup](sandbox-sso-setup.md)
 - [Server-side sessies met een begrensde hot-cache](server-side-sessies.md)
+- [Uitwijk als SSO Rijk uitvalt](sso-rijk-uitwijk.md)
 - [Verplichte OTP voor lokale accounts](keycloak-verplichte-otp.md)
 - [ZAD External User Support with Local Accounts](zad-external-user-support.md)
 

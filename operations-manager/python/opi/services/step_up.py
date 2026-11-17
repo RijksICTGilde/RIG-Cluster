@@ -87,6 +87,7 @@ class StepUpAction(StrEnum):
     USER_SESSIONS_REVOKE = "user-sessions-revoke"
     USER_DELETE = "user-delete"
     USER_OTP_RESET = "user-otp-reset"
+    SSO_OUTAGE_SET = "sso-outage-set"
     ELEVATE = "elevate"
 
     @property
@@ -122,6 +123,7 @@ _PHRASE = {
     StepUpAction.USER_SESSIONS_REVOKE: "de sessies van deze gebruiker te beëindigen",
     StepUpAction.USER_DELETE: "deze gebruiker te verwijderen",
     StepUpAction.USER_OTP_RESET: "de 2-factor van deze gebruiker leeg te maken",
+    StepUpAction.SSO_OUTAGE_SET: "de storingsstand van SSO Rijk om te zetten",
     StepUpAction.ELEVATE: "verhoogde rechten te activeren",
 }
 
@@ -154,6 +156,7 @@ _REASON = {
     StepUpAction.USER_SESSIONS_REVOKE: "de gebruiker moet daarna opnieuw inloggen",
     StepUpAction.USER_DELETE: "de gebruiker kan daarna niet meer op het portaal inloggen",
     StepUpAction.USER_OTP_RESET: "wie de 2-factor van een ander leegmaakt zet zijn tweede slot open",
+    StepUpAction.SSO_OUTAGE_SET: "de inlogweg van het hele platform verandert",
     StepUpAction.ELEVATE: "verhoogde rechten openen platformbeheer en alle projecten voor '{doelwit}'",
 }
 
