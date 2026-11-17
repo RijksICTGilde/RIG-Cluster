@@ -23,7 +23,7 @@
   en tijd in plaats van middenin. Bewaakt door
   tests/e2e/test_lotc_takentabel_datumkolom.py; die test meet het opnieuw.
 #}
-<div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
+<div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-ext="morph" hx-swap="morph:outerHTML">
     {# No panel around it: the tab is the page, a card only adds a frame and a second title. #}
         {% if not items %}
             <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>

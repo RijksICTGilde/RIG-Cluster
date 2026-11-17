@@ -92,6 +92,15 @@ class TestProgressFragmentRoute:
         assert f'hx-get="/projects/progress/{SAMPLE_TASK_ID}/fragment"' in response.text
         assert 'hx-trigger="every 2s"' in response.text
 
+    def test_poll_morphs_instead_of_replacing(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """A plain outerHTML swap rebuilds every web component on each poll, which flickers."""
+        mock_task_service.get_task = AsyncMock(return_value=_make_v2_task())
+
+        response = client.get(f"/projects/progress/{SAMPLE_TASK_ID}/fragment")
+
+        assert 'hx-ext="morph"' in response.text
+        assert 'hx-swap="morph:outerHTML"' in response.text
+
     def test_renders_steps_and_substeps(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         """The steps RC-30 added show up on the full page too, without being rebuilt."""
         subtasks = [
@@ -193,6 +202,13 @@ class TestProgressPage:
         assert "Deploying" in response.text
         assert "Projectbestand ophalen" in response.text
         assert f'hx-get="/projects/progress/{SAMPLE_TASK_ID}/fragment"' in response.text
+
+    def test_page_loads_the_morph_extension(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.get_task = AsyncMock(return_value=_make_v2_task())
+
+        response = client.get(f"/projects/progress/{SAMPLE_TASK_ID}")
+
+        assert "js/idiomorph-ext.min.js" in response.text
 
     def test_page_has_no_javascript_dates_and_no_json_poller(
         self, client: TestClient, mock_task_service: AsyncMock
