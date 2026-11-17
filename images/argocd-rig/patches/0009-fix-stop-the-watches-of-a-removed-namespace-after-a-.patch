@@ -1,0 +1,346 @@
+From 533640bbf363861023c0050a91a53a6d6aa59b1a Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Tue, 17 Nov 2026 10:29:43 +0100
+Subject: [PATCH 9/9] fix: stop the watches of a removed namespace after a full
+ sync
+
+RemoveNamespace cancels the watches it finds in apiMeta.namespaceCancels, but only the incremental add (syncNamespaceResources) registered a per-namespace cancel there. sync() and startMissingWatches started every namespaced watch on the API-wide context, so after a full sync RemoveNamespace found nothing to cancel. The watches of the removed namespace kept running, and once the namespace was deleted every list and watch on it returned 403 (the controller's RoleBinding went with it). watchEvents only stops on 404, so it retried every watchResourcesRetryTimeout per API type until the next full resync, which saturated the client-side rate limiter and starved the incremental add of new namespaces.
+
+- Every path that starts a namespaced watch now derives a per-namespace context through apiMeta.namespaceWatchContext, which registers its cancel and cancels a previous one for the same namespace (a re-added namespace leaked its old watch before).
+- Safety net: watchEvents stops instead of retrying when its namespace is no longer managed, and a 404 for such a namespace no longer drops the whole GVK through stopWatching.
+- RemoveNamespace logs "Stop syncing namespace" with the number of stopped watches.
+
+Tests: watches of a namespace from a full sync and from an incremental add go quiet after RemoveNamespace; an unmanaged namespace's watch stops on 403 and keeps the GVK on 404; re-registering cancels the previous context. TestSync_SyncWarnings_ResetBetweenSyncs now changes the namespaces under the lock, because the watches of its first sync read them.
+---
+ gitops-engine/pkg/cache/cluster.go            |  64 ++++++-
+ gitops-engine/pkg/cache/cluster_test.go       |   3 +
+ .../pkg/cache/rig_namespace_watch_test.go     | 165 ++++++++++++++++++
+ 3 files changed, 225 insertions(+), 7 deletions(-)
+ create mode 100644 gitops-engine/pkg/cache/rig_namespace_watch_test.go
+
+diff --git a/gitops-engine/pkg/cache/cluster.go b/gitops-engine/pkg/cache/cluster.go
+index 45855558f..5222e6e14 100644
+--- a/gitops-engine/pkg/cache/cluster.go
++++ b/gitops-engine/pkg/cache/cluster.go
+@@ -115,11 +115,30 @@ type apiMeta struct {
+ 	watchCancel context.CancelFunc
+ 	// watchCtx is the parent context for all watches of this API. Used to derive per-namespace contexts.
+ 	watchCtx context.Context
+-	// namespaceCancels tracks per-namespace watch cancellation for incremental namespace operations.
+-	// Only populated when using incremental namespace sync.
++	// namespaceCancels tracks per-namespace watch cancellation, so RemoveNamespace can stop the watches of
++	// one namespace. Populated by every path that starts a namespaced watch, see namespaceWatchContext.
+ 	namespaceCancels map[string]context.CancelFunc
+ }
+ 
++// namespaceWatchContext derives the context for listing and watching one namespace of this API and registers
++// its cancel in namespaceCancels. Every path that starts a namespaced watch (full sync, startMissingWatches and
++// the incremental add) must go through here: RemoveNamespace can only stop watches it finds in namespaceCancels,
++// and upstream PR 25229 only registered the incremental add, so watches started by a full sync kept running
++// after their namespace was removed. A cluster-wide watch (ns == "") uses the API context directly. An earlier
++// watch for the same namespace is cancelled, so a re-added namespace does not leak its old watch.
++// The caller must hold the lock that guards namespaceCancels.
++func (m *apiMeta) namespaceWatchContext(ns string) context.Context {
++	if ns == "" {
++		return m.watchCtx
++	}
++	if cancel, ok := m.namespaceCancels[ns]; ok {
++		cancel()
++	}
++	ctx, cancel := context.WithCancel(m.watchCtx)
++	m.namespaceCancels[ns] = cancel
++	return ctx
++}
++
+ type eventMeta struct {
+ 	event watch.EventType
+ 	un    *unstructured.Unstructured
+@@ -707,15 +726,19 @@ func (c *clusterCache) RemoveNamespace(namespace string) error {
+ 	}
+ 
+ 	// Cancel watches for the removed namespace
++	stopped := 0
+ 	for _, meta := range c.apisMeta {
+ 		if cancel, exists := meta.namespaceCancels[namespace]; exists {
+ 			cancel()
+ 			delete(meta.namespaceCancels, namespace)
++			stopped++
+ 		}
+ 	}
+ 
+ 	c.lock.Unlock()
+ 
++	c.log.Info("Stop syncing namespace", "namespace", namespace, "stoppedWatches", stopped)
++
+ 	return nil
+ }
+ 
+@@ -762,11 +785,9 @@ func (c *clusterCache) syncNamespaceResources(namespace string, apisToSync map[s
+ 			continue
+ 		}
+ 
+-		// Create per-namespace context derived from the API's parent context
+-		nsCtx, nsCancel := context.WithCancel(meta.watchCtx)
+ 		// namespaceCancels is shared across goroutines, lock the write
+ 		c.lock.Lock()
+-		meta.namespaceCancels[namespace] = nsCancel
++		nsCtx := meta.namespaceWatchContext(namespace)
+ 		c.lock.Unlock()
+ 
+ 		if err := c.loadNamespaceResources(nsCtx, client, clientset, api, namespace); err != nil {
+@@ -878,9 +899,12 @@ func (c *clusterCache) startMissingWatches() error {
+ 			// into namespaceCancels, so an apiMeta created here (an API that appeared after
+ 			// the full sync, e.g. a new CRD) would otherwise panic on the first incremental
+ 			// namespace add. Upstream PR 25229 only initializes them in sync().
+-			c.apisMeta[api.GroupKind] = &apiMeta{namespaced: api.Meta.Namespaced, watchCancel: cancel, watchCtx: ctx, namespaceCancels: make(map[string]context.CancelFunc)}
++			meta := &apiMeta{namespaced: api.Meta.Namespaced, watchCancel: cancel, watchCtx: ctx, namespaceCancels: make(map[string]context.CancelFunc)}
++			c.apisMeta[api.GroupKind] = meta
+ 
+ 			err := c.processApi(client, api, func(resClient dynamic.ResourceInterface, ns string) error {
++				// c.lock is held by our caller, which guards meta.namespaceCancels
++				ctx := meta.namespaceWatchContext(ns)
+ 				resourceVersion, err := c.loadInitialState(ctx, api, resClient, ns, false) // don't lock here, we are already in a lock before startMissingWatches is called inside watchEvents
+ 				if err != nil {
+ 					if ns != "" {
+@@ -1013,6 +1037,15 @@ func (c *clusterCache) watchEvents(ctx context.Context, api kube.APIResourceInfo
+ 			}
+ 		}()
+ 
++		// Safety net for a namespace that was removed while its watch kept running. Once the namespace
++		// is gone, list and watch fail with 403 (its RoleBinding went with it), which stopWatching does
++		// not catch, so without this check the watch retries every watchResourcesRetryTimeout until the
++		// next full resync and saturates the client-side rate limiter.
++		if !c.watchesNamespace(ns) {
++			c.log.Info("Stop watching: namespace is no longer managed", "groupKind", api.GroupKind.String(), "namespace", ns)
++			return nil
++		}
++
+ 		// load API initial state if no resource version provided
+ 		if resourceVersion == "" {
+ 			resourceVersion, err = c.loadInitialState(ctx, api, resClient, ns, true)
+@@ -1024,7 +1057,9 @@ func (c *clusterCache) watchEvents(ctx context.Context, api kube.APIResourceInfo
+ 		w, err := watchutil.NewRetryWatcherWithContext(ctx, resourceVersion, &cache.ListWatch{
+ 			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
+ 				res, err := resClient.Watch(ctx, options)
+-				if apierrors.IsNotFound(err) {
++				// A 404 for a namespace we no longer manage says nothing about the API itself;
++				// stopWatching would drop the whole GVK for every namespace.
++				if apierrors.IsNotFound(err) && c.watchesNamespace(ns) {
+ 					c.stopWatching(api.GroupKind, ns)
+ 				}
+ 				//nolint:wrapcheck // wrap outside the retry
+@@ -1460,6 +1495,9 @@ func (c *clusterCache) sync() error {
+ 		lock.Unlock()
+ 
+ 		return c.processApi(client, api, func(resClient dynamic.ResourceInterface, ns string) error {
++			// The namespaces of one API are processed sequentially by this goroutine, and c.lock is
++			// held for the whole sync, so nothing else touches info.namespaceCancels meanwhile.
++			ctx := info.namespaceWatchContext(ns)
+ 			resourceVersion, err := c.listResources(ctx, resClient, func(listPager *pager.ListPager) error {
+ 				return listPager.EachListItem(context.Background(), metav1.ListOptions{}, func(obj runtime.Object) error {
+ 					if un, ok := obj.(*unstructured.Unstructured); !ok {
+@@ -1830,6 +1868,18 @@ func (c *clusterCache) managesNamespace(namespace string) bool {
+ 	return slices.Contains(c.namespaces, namespace)
+ }
+ 
++// watchesNamespace reports whether a watch on ns should keep running: always for a cluster-wide watch
++// (ns == ""), and for a namespaced watch only while ns is still one of the managed namespaces.
++// It takes c.lock for reading, so the caller must not hold it.
++func (c *clusterCache) watchesNamespace(ns string) bool {
++	if ns == "" {
++		return true
++	}
++	c.lock.RLock()
++	defer c.lock.RUnlock()
++	return c.managesNamespace(ns)
++}
++
+ // GetManagedLiveObjs helps finding matching live K8S resources for a given resources list.
+ // The function returns all resources from cache for those `isManaged` function returns true and resources
+ // specified in targetObjs list.
+diff --git a/gitops-engine/pkg/cache/cluster_test.go b/gitops-engine/pkg/cache/cluster_test.go
+index 1102c8b5c..d58d0753d 100644
+--- a/gitops-engine/pkg/cache/cluster_test.go
++++ b/gitops-engine/pkg/cache/cluster_test.go
+@@ -3276,7 +3276,10 @@ func TestSync_SyncWarnings_ResetBetweenSyncs(t *testing.T) {
+ 	require.NotEmpty(t, cluster.GetClusterInfo().SyncWarnings, "first sync should record warnings for deleted-ns")
+ 
+ 	// Simulate namespace recovering / removed from the list — no 403 in sync 2.
++	// Under the lock: the watches of sync 1 are still running and read the namespaces.
++	cluster.lock.Lock()
+ 	cluster.namespaces = []string{"default"}
++	cluster.lock.Unlock()
+ 
+ 	// Sync 2: clean, no 403.
+ 	require.NoError(t, cluster.sync())
+diff --git a/gitops-engine/pkg/cache/rig_namespace_watch_test.go b/gitops-engine/pkg/cache/rig_namespace_watch_test.go
+new file mode 100644
+index 000000000..2de5bad06
+--- /dev/null
++++ b/gitops-engine/pkg/cache/rig_namespace_watch_test.go
+@@ -0,0 +1,165 @@
++package cache
++
++import (
++	"context"
++	"fmt"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/watch"
++	"k8s.io/client-go/dynamic/fake"
++	"k8s.io/client-go/rest"
++	testcore "k8s.io/client-go/testing"
++)
++
++var rigPodGK = schema.GroupKind{Group: "", Kind: "Pod"}
++
++// rigNamespaceWatchCluster returns an incrementally syncing cache over ns-a and ns-b whose watches restart every
++// 100ms, so a watch that is still running keeps re-listing and re-watching its namespace.
++func rigNamespaceWatchCluster(t *testing.T, namespaces ...string) (*clusterCache, *fake.FakeDynamicClient) {
++	t.Helper()
++	client, mockKubectl := setupFakeCluster(createPod("pod-a", "ns-a"), createPod("pod-b", "ns-b"))
++	cache := NewClusterCache(
++		&rest.Config{Host: "https://test"},
++		SetKubectl(mockKubectl),
++		SetNamespaces(namespaces),
++		WithIncrementalNamespaceSync(true),
++		SetWatchResyncTimeout(100*time.Millisecond),
++		SetClientset(rigSSAR(false)),
++	)
++	t.Cleanup(func() { cache.Invalidate() })
++	return cache, client
++}
++
++// rigForbidNamespace makes every list and watch in ns answer 403, like the API server does once a namespace and
++// the controller's RoleBinding in it are gone, and counts those requests.
++func rigForbidNamespace(client *fake.FakeDynamicClient, ns string) *atomic.Int64 {
++	var calls atomic.Int64
++	forbid := func(a testcore.Action) (bool, runtime.Object, error) {
++		if a.GetNamespace() != ns {
++			return false, nil, nil
++		}
++		calls.Add(1)
++		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: a.GetResource().Resource}, "", fmt.Errorf("namespace %q is gone", ns))
++	}
++	client.PrependReactor("list", "*", forbid)
++	client.PrependWatchReactor("*", func(a testcore.Action) (bool, watch.Interface, error) {
++		_, _, err := forbid(a)
++		if err != nil {
++			return true, nil, err
++		}
++		return false, nil, nil
++	})
++	return &calls
++}
++
++// assertNamespaceGoesQuiet fails if anything still lists or watches the namespace once in-flight requests had time
++// to finish. watchResourcesRetryTimeout is 1s, so a retry loop shows up well within the window.
++func assertNamespaceGoesQuiet(t *testing.T, calls *atomic.Int64, ns string) {
++	t.Helper()
++	time.Sleep(500 * time.Millisecond)
++	calls.Store(0)
++	time.Sleep(2500 * time.Millisecond)
++	assert.Zero(t, calls.Load(), "nothing may list or watch %s after it stopped being managed", ns)
++}
++
++func rigNamespaceCancels(c *clusterCache, ns string) int {
++	c.lock.RLock()
++	defer c.lock.RUnlock()
++	n := 0
++	for _, meta := range c.apisMeta {
++		if _, ok := meta.namespaceCancels[ns]; ok {
++			n++
++		}
++	}
++	return n
++}
++
++// A namespace picked up by a full sync must be stoppable by RemoveNamespace. Upstream PR 25229 only registered
++// per-namespace cancels for the incremental add, so after a full sync RemoveNamespace found nothing to cancel and
++// the watches of the removed namespace kept running (and, once it was deleted, retried on 403 every second).
++func TestRIG_RemoveNamespaceStopsWatchesFromFullSync(t *testing.T) {
++	cache, client := rigNamespaceWatchCluster(t, "ns-a", "ns-b")
++	require.NoError(t, cache.EnsureSynced())
++	require.Equal(t, 1, rigNamespaceCancels(cache, "ns-b"), "the full sync must register a cancel for ns-b")
++
++	require.NoError(t, cache.RemoveNamespace("ns-b"))
++	calls := rigForbidNamespace(client, "ns-b")
++
++	assert.Zero(t, rigNamespaceCancels(cache, "ns-b"))
++	assert.Equal(t, 1, rigNamespaceCancels(cache, "ns-a"), "ns-a keeps its watch")
++	assertNamespaceGoesQuiet(t, calls, "ns-b")
++	assertPodInCache(t, cache, "ns-a", "pod-a", "ns-a is still cached")
++}
++
++func TestRIG_RemoveNamespaceStopsWatchesFromIncrementalAdd(t *testing.T) {
++	cache, client := rigNamespaceWatchCluster(t, "ns-a")
++	require.NoError(t, cache.EnsureSynced())
++	require.NoError(t, cache.AddNamespace("ns-b"))
++	assertPodInCache(t, cache, "ns-b", "pod-b", "ns-b was added")
++
++	require.NoError(t, cache.RemoveNamespace("ns-b"))
++	calls := rigForbidNamespace(client, "ns-b")
++
++	assert.Zero(t, rigNamespaceCancels(cache, "ns-b"))
++	assertNamespaceGoesQuiet(t, calls, "ns-b")
++}
++
++// Safety net: a watch whose namespace is no longer managed stops by itself on the next retry, even when nothing
++// cancelled it, instead of retrying the 403 forever. A 404 for such a namespace must not drop the whole GVK.
++func TestRIG_WatchOnUnmanagedNamespaceStopsOnForbidden(t *testing.T) {
++	cache, client := rigNamespaceWatchCluster(t, "ns-a", "ns-b")
++	require.NoError(t, cache.EnsureSynced())
++
++	// Drop ns-b behind RemoveNamespace's back, so its watch is not cancelled.
++	cache.lock.Lock()
++	cache.namespaces = []string{"ns-a"}
++	cache.lock.Unlock()
++	calls := rigForbidNamespace(client, "ns-b")
++
++	assertNamespaceGoesQuiet(t, calls, "ns-b")
++	cache.lock.RLock()
++	assert.Contains(t, cache.apisMeta, rigPodGK, "the Pod watch of the managed namespaces must survive")
++	cache.lock.RUnlock()
++}
++
++func TestRIG_WatchOnUnmanagedNamespaceKeepsGVKOnNotFound(t *testing.T) {
++	cache, client := rigNamespaceWatchCluster(t, "ns-a", "ns-b")
++	require.NoError(t, cache.EnsureSynced())
++
++	cache.lock.Lock()
++	cache.namespaces = []string{"ns-a"}
++	cache.lock.Unlock()
++	client.PrependWatchReactor("*", func(a testcore.Action) (bool, watch.Interface, error) {
++		if a.GetNamespace() == "ns-b" {
++			return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: a.GetResource().Resource}, "")
++		}
++		return false, nil, nil
++	})
++
++	time.Sleep(1500 * time.Millisecond)
++	cache.lock.RLock()
++	defer cache.lock.RUnlock()
++	assert.Contains(t, cache.apisMeta, rigPodGK, "a 404 for an unmanaged namespace must not stop the Pod watch of ns-a")
++}
++
++// Re-registering a namespace cancels the watch context it replaces, so a re-added namespace does not leak its
++// previous watch.
++func TestRIG_NamespaceWatchContextCancelsPrevious(t *testing.T) {
++	parent := t.Context()
++	meta := &apiMeta{watchCtx: parent, namespaceCancels: map[string]context.CancelFunc{}}
++
++	first := meta.namespaceWatchContext("ns-b")
++	second := meta.namespaceWatchContext("ns-b")
++
++	require.ErrorIs(t, first.Err(), context.Canceled, "the replaced context must be cancelled")
++	require.NoError(t, second.Err())
++	assert.Same(t, parent, meta.namespaceWatchContext(""), "a cluster-wide watch uses the API context")
++	assert.Len(t, meta.namespaceCancels, 1)
++}

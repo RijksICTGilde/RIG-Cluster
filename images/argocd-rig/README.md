@@ -10,6 +10,7 @@ Upstream Argo CD **v3.5.6** (sinds `v3.5.6-rig1`; daarvoor v3.5.1) plus patches,
   clustercache te invalideren. Dít was de minutenlange hang van `user-applications` na elke
   projectaanmaak. Staat in deze image **standaard aan**;
   `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC=false` op de controller is de nooduitknop.
+  Sinds `v3.5.6-rig3` stopt een verwijderd project ook echt zijn watches (0009).
 - **CVE's** (0008, sinds `v3.5.6-rig2`): `golang.org/x/net` naar v0.62.0 en geen `pebble` in de image.
 
 De vorige iteratie van deze image (`v3.3.12-rig1`, branch `rig/ns-sync`) was gebaseerd op
@@ -32,6 +33,7 @@ we draaien in **namespace-mode**, precies het pad dat de cache-bug raakt.
 | `0006-chore-enable-incremental-namespace-sync-by-default.patch` | Zet de feature default aan; `ARGOCD_ENABLE_INCREMENTAL_NAMESPACE_SYNC=false` blijft werken als nooduitknop. |
 | `0007-test-pass-incremental-namespace-sync-flag-at-release.patch` | Vijf `NewApplicationController`-callsites die alleen op release-3.5 bestaan krijgen het nieuwe ctor-argument. |
 | `0008-chore-bump-golang.org-x-net-to-v0.62.0-and-drop-pebb.patch` | `golang.org/x/net` van v0.59.0 naar v0.62.0 voor de CVE's die Trivy meldt; `go mod tidy` schuift de rest van de `x/`-familie mee. Daarnaast weg: `/usr/bin/pebble`, dat buiten dpkg om in de Ubuntu-basis staat, door niets wordt gebruikt en eigen Go-CVE's heeft. Vervalt zodra upstream een release met x/net v0.62.0 heeft. |
+| `0009-fix-stop-the-watches-of-a-removed-namespace-after-a-.patch` | Eigen fix op de 25229-carry, gemeten in productie op 17 november 2026: `RemoveNamespace` stopte alleen watches die via de incrementele add waren gestart, want alleen dat pad registreerde een per-namespace cancel. Na een volledige sync (dus na elke resync) bleven de watches van een verwijderd project draaien, kregen 403 zodra de namespace weg was, en probeerden dat elke seconde opnieuw per API-type. Dat verzadigde de client-side limiter (QPS 50), waardoor de incrementele add van een nieuw project meer dan 19 minuten duurde en OPI opgaf. Nu registreren `sync()` en `startMissingWatches` ook een cancel per namespace, stopt een watch zelf als zijn namespace niet meer beheerd wordt, en logt `RemoveNamespace` "Stop syncing namespace". Het gat zit ook in upstream PR 25229. |
 
 De patches zijn de bron van waarheid: `task src:verify` bewijst dat de build-worktree exact
 `v3.5.6` + deze patches is.
