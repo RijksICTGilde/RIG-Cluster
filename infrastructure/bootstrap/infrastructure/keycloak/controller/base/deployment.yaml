@@ -164,6 +164,10 @@ spec:
                   name: prometheus-metrics-auth
                   key: token
                   optional: true
+            # Mitigation for CVE-2026-114938 (Java4Shell) until the base image ships a patched
+            # JDK (21.0.13.1 or later); remove it then.
+            - name: JAVA_OPTS_APPEND
+              value: "-XX:-UseBASE64Intrinsics"
           resources:
             limits:
               memory: "1Gi"
