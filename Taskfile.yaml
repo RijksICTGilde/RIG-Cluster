@@ -11,9 +11,6 @@ dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '{{if not .CLUSTER_TYPE}}.en
 
 vars:
   KIND_VERSION: 1.32.0
-  # Waar scripts/postgres-standalone-start.sh in de container hangt. De CNPG-image start
-  # niet zelf; zie dat script.
-  PG_START_IN_CONTAINER: /zad/postgres-standalone-start.sh
   # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
   KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
@@ -2209,8 +2206,7 @@ tasks:
           -p 127.0.0.1:{{.PORT}}:5432 \
           -e POSTGRES_PASSWORD='{{.PASSWORD}}' \
           -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       - task: _wacht-op
         vars:
           WAT: "De wegwerp-PostgreSQL op poort {{.PORT}}"
@@ -2590,8 +2586,7 @@ tasks:
           -p 127.0.0.1:{{.PG_PORT}}:5432 \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
           -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.PG_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.PG_IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       - task: _wacht-op
         vars:
           WAT: "De wegwerp-PostgreSQL op poort {{.PG_PORT}}"
@@ -2969,8 +2964,7 @@ tasks:
           -e POSTGRES_DB=keycloak \
           -e POSTGRES_USER=keycloak \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.DB_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.DB_IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       # Over TCP en niet over de socket: de opstart draait initdb eerst op een tijdelijke
       # server die alleen op de socket luistert, en in dat gat valt de eerste query.
       - task: _wacht-op
