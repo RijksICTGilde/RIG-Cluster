@@ -98,3 +98,9 @@ data:
     # REGISTRY_URL staat de image-upload uit.
 
     SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest
+
+    # Registratie-endpoint voor Fundament-installaties (features/fundament-registratie.md).
+    # Code, TransIP-token, client-secret en ACME-adres staan in de env-secret. De
+    # ACME-directory blijft op de standaard, de staging van Let's Encrypt.
+    FUNDAMENT_REGISTRATION_SSO_CLIENT_ID=zad-fundament-fieldlab
+    FUNDAMENT_REGISTRATION_SSO_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
