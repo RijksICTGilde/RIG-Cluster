@@ -77,6 +77,14 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
         "opi/services/user_otp_service.py",
         "UserOtpService.verify",
     ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
+    (
+        "opi/fundament_registration/store.py",
+        "mark_done",
+    ): "de certificaatsleutel van een fieldlab-installatie, een eigen tabel buiten het projectbestand",
+    (
+        "opi/fundament_registration/store.py",
+        "write_acme_account",
+    ): "lego's ACME-accountbestanden, een platformartefact zoals de andere platformcredentials",
 }
 
 

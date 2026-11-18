@@ -46,6 +46,7 @@ from opi.core.errors import (
     with_reference,
 )
 from opi.core.logging_redact import redact_invite_key_in_path
+from opi.fundament_registration import register_fundament_registration
 from opi.http.auth.auth_decorators import REQUIRES_STEP_UP, requires_sso
 from opi.http.auth.endpoint_util import check_route_actions
 from opi.http.auth.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
@@ -771,6 +772,7 @@ def create_app() -> FastAPI:
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
+    register_fundament_registration(app)  # Fieldlab registration; only where its code is set
 
     # The assets of the component system are spread over several installed packages (the
     # core plus each design system), hence a route with several roots instead of a mount.

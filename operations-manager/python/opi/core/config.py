@@ -742,6 +742,30 @@ class Settings(BaseSettings):
     JOB_ENABLED: bool = True
     JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
 
+    # Fundament registration: the throwaway endpoint that hands a fieldlab installation its
+    # own domain, a wildcard certificate and the SSO details. Without the code the route does
+    # not exist. Removed after the fieldlab, see features/fundament-registratie.md.
+    FUNDAMENT_REGISTRATION_CODE: str | None = None
+    # Access token of the TransIP account that holds the zone below, NOT the key pair the CAA
+    # reconciler uses.
+    FUNDAMENT_REGISTRATION_TRANSIP_TOKEN: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_CLIENT_ID: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_CLIENT_SECRET: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_DISCOVERY_URL: str | None = None
+    FUNDAMENT_REGISTRATION_ZONE: str = "zadlab.nl"
+    # The staging directory by default: a cluster that switches the endpoint on without
+    # thinking about it does not burn the issuance limit of the real one.
+    FUNDAMENT_REGISTRATION_ACME_DIRECTORY: str = "https://acme-staging-v02.api.letsencrypt.org/directory"
+    FUNDAMENT_REGISTRATION_ACME_EMAIL: str | None = None
+    # VLAM reaches the answer only when both secrets are set; the other three then come
+    # along with their defaults. They are read fresh per answer, so a replaced pre-auth key
+    # travels with the next installation without a migration.
+    FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY: str | None = None
+    FUNDAMENT_REGISTRATION_VLAM_API_KEY: str | None = None
+    FUNDAMENT_REGISTRATION_VLAM_LOGIN_SERVER: str = "https://vonk.rijksapp.dev"
+    FUNDAMENT_REGISTRATION_VLAM_GATEWAY: str = "100.80.0.1:443"
+    FUNDAMENT_REGISTRATION_VLAM_API_HOST: str = "vlam-api.overheid-i.nl"
+
     @property
     def database_app_password(self) -> str:
         """The password of the app role, or an error when the setting is empty.

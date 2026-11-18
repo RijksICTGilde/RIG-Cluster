@@ -26,6 +26,9 @@ ARG SOPS_VERSION=v3.13.3
 ARG KOPIA_VERSION=0.23.1
 # renovate: datasource=github-releases depName=jpillora/chisel extractVersion=^v(?<version>.+)$
 ARG CHISEL_VERSION=1.12.0
+# Alleen voor de registratie van het Fundament-fieldlab (RC-505); gaat eruit als dat voorbij is.
+# renovate: datasource=github-releases depName=go-acme/lego extractVersion=^v(?<version>.+)$
+ARG LEGO_VERSION=5.6.0
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -115,6 +118,21 @@ RUN case "${TARGETARCH}" in \
     && gunzip "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
     && chmod +x "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" \
     && mv "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" /usr/local/bin/chisel
+
+# Install lego - layer cached unless LEGO_VERSION ARG changes
+ARG LEGO_SHA256_AMD64=f02fc11b6f56b97e387fa7caa0268f86f5a336953b22458e6430e4651fea439a
+ARG LEGO_SHA256_ARM64=34d87a6552d69390c4a4560237045c47713a8e148d899e16db0e97040894ed1f
+RUN case "${TARGETARCH}" in \
+      amd64) LEGO_SHA256="${LEGO_SHA256_AMD64}" ;; \
+      arm64) LEGO_SHA256="${LEGO_SHA256_ARM64}" ;; \
+      *) echo "geen lego-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLO "https://github.com/go-acme/lego/releases/download/v${LEGO_VERSION}/lego_v${LEGO_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    && echo "${LEGO_SHA256}  lego_v${LEGO_VERSION}_linux_${TARGETARCH}.tar.gz" | sha256sum -c - \
+    && tar -xzf "lego_v${LEGO_VERSION}_linux_${TARGETARCH}.tar.gz" lego \
+    && chmod +x lego \
+    && mv lego /usr/local/bin/lego \
+    && rm -f "lego_v${LEGO_VERSION}_linux_${TARGETARCH}.tar.gz"
 
 # Install uv - cached unless uv version changes
 COPY --from=uv /uv /usr/local/bin/uv

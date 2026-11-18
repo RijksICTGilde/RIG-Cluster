@@ -13,7 +13,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.transip import TransIPConnector
 from opi.core.dns_config import MANAGED_DNS_ZONES
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
 
@@ -135,8 +134,8 @@ async def test_unexpected_caa_is_warned_not_deleted(caplog: pytest.LogCaptureFix
 
     assert any("digicert.com" in record.message for record in caplog.records)
     assert connector.add_dns_entry.await_count == 2 * len(zones)
-    # Wegpoetsen kan niet: de connector heeft geen verwijdermethode.
-    assert not [name for name in dir(TransIPConnector) if "delete" in name or "remove" in name]
+    # De reconciler is add-only: hij poetst niets weg, ook niet nu de connector dat kan.
+    connector.delete_dns_entry.assert_not_awaited()
 
 
 async def _reconcile(connector: AsyncMock) -> None:
