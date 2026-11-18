@@ -14,7 +14,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.transip import TransIPConnector
 from opi.core.dns_config import NO_MAIL_NAMES, no_mail_names
 from opi.runtime.periodic.no_mail_reconciler import reconcile_no_mail_records
 
@@ -199,8 +198,8 @@ async def test_own_spf_and_dmarc_are_left_alone(caplog: pytest.LogCaptureFixture
     assert [args for args in written_here if args[2] == "TXT"] == []
     assert any("ip4:147.181.48.71" in record.message for record in caplog.records)
     assert any("p=none" in record.message for record in caplog.records)
-    # Wegpoetsen kan niet: de connector heeft geen verwijdermethode.
-    assert not [attr for attr in dir(TransIPConnector) if "delete" in attr or "remove" in attr]
+    # De reconciler is add-only: hij poetst niets weg, ook niet nu de connector dat kan.
+    connector.delete_dns_entry.assert_not_awaited()
 
 
 @pytest.mark.asyncio

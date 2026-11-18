@@ -1,7 +1,8 @@
 """TransIP REST API v6 connector for DNS administration.
 
-Only what the CAA reconciler needs: authenticate, list the domains this account
-holds, read a zone, and add a record.
+Authenticate, list the domains this account holds, read a zone, and add or delete a
+record. Two ways to authenticate: an account name plus a private key that signs the
+``/auth`` call, or a ready-made access token (:meth:`TransIPConnector.with_access_token`).
 
 The API key is IP-whitelisted at TransIP, so these calls only succeed from a
 whitelisted source (in our setup: a pod in the production cluster, the same
@@ -34,14 +35,33 @@ class TransIPError(Exception):
     """A TransIP API call failed."""
 
 
+class TransIPAuthError(TransIPError):
+    """TransIP refused the credential: the token expired, or this source is not whitelisted.
+
+    A type of its own so a caller can name that cause instead of the status code. The
+    credential itself never reaches the message.
+    """
+
+
 class TransIPConnector:
-    """Minimal, add-only client for the TransIP REST API v6."""
+    """Minimal client for the TransIP REST API v6."""
 
     def __init__(self, account: str, private_key_pem: str, base_url: str = TRANSIP_API_BASE) -> None:
         self.account = account
         self.private_key_pem = private_key_pem
         self.base_url = base_url.rstrip("/")
         self._token: str | None = None
+
+    @classmethod
+    def with_access_token(cls, access_token: str, base_url: str = TRANSIP_API_BASE) -> TransIPConnector:
+        """A connector that carries a ready-made access token instead of signing in with a key.
+
+        For an account whose token is handed to us (the fieldlab zone): there is no private
+        key to sign the ``/auth`` call with, so that call never happens.
+        """
+        connector = cls("", "", base_url=base_url)
+        connector._token = access_token
+        return connector
 
     async def _get_token(self) -> str:
         """Fetch (and cache) an access token.
@@ -118,6 +138,9 @@ class TransIPConnector:
         except (aiohttp.ClientError, TimeoutError) as e:
             msg = f"TransIP {method} {path} is not reachable: {str(e) or type(e).__name__}"
             raise TransIPError(msg) from e
+        if status in (401, 403):
+            msg = f"TransIP refused the credential on {method} {path}: {status} {text}"
+            raise TransIPAuthError(msg)
         if status >= 400:
             msg = f"TransIP {method} {path} failed: {status} {text}"
             raise TransIPError(msg)
@@ -144,6 +167,19 @@ class TransIPConnector:
         logger.info(f"Adding {record_type} record '{name}' to zone {zone}: {content}")
         await self._request(
             "POST",
+            f"/domains/{zone}/dns",
+            {"dnsEntry": {"name": name, "expire": ttl, "type": record_type, "content": content}},
+        )
+
+    async def delete_dns_entry(self, zone: str, name: str, record_type: str, content: str, ttl: int) -> None:
+        """Delete a single DNS entry from a zone.
+
+        TransIP identifies the entry by its whole body, so the content and the TTL have to
+        match the record as the zone holds it; read it with :meth:`get_dns_entries` first.
+        """
+        logger.info(f"Deleting {record_type} record '{name}' from zone {zone}: {content}")
+        await self._request(
+            "DELETE",
             f"/domains/{zone}/dns",
             {"dnsEntry": {"name": name, "expire": ttl, "type": record_type, "content": content}},
         )

@@ -492,7 +492,7 @@
     {
      "name": "transip",
      "file": "opi/connectors/transip.py",
-     "uses": 2
+     "uses": 5
     }
    ],
    "services": [],

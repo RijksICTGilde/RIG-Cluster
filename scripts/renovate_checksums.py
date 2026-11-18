@@ -99,6 +99,11 @@ RELEASES: dict[str, Release] = {
     "CODE_SERVER": Release(
         artefact=f"{GITHUB}/coder/code-server/releases/download/v{{kaal}}/code-server_{{kaal}}_{{arch}}.deb",
     ),
+    # lego zet de `v` in de naam van het artefact maar niet in die van zijn checksumbestand.
+    "LEGO": Release(
+        artefact=f"{GITHUB}/go-acme/lego/releases/download/v{{kaal}}/lego_v{{kaal}}_linux_{{arch}}.tar.gz",
+        checksums=f"{GITHUB}/go-acme/lego/releases/download/v{{kaal}}/lego_{{kaal}}_checksums.txt",
+    ),
 }
 
 ARG_VERSIE = re.compile(r"^ARG ([A-Z0-9_]+)_VERSION=(\S+)$", re.MULTILINE)
