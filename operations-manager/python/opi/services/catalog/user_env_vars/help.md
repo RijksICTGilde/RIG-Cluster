@@ -11,3 +11,7 @@ Je geeft je applicatie instellingen mee zonder je container-image aan te passen:
 Je schrijft ze als **NAAM=waarde** of als YAML. Je kunt naar platformvariabelen verwijzen met **$DATABASE_SERVER_HOST**-achtige verwijzingen; een verwijzing die niet bestaat blijft gewoon staan.
 
 Je kunt ze per component instellen en per deployment overschrijven.
+
+## Waar staan deze variabelen in de API?
+
+De variabelen die hier gezet worden, staan **niet** bij de **variables** van de andere diensten: die lijst is wat het platform zelf levert. Wie wil weten wat er uiteindelijk in een container staat, moet daar de eigen omgevingsvariabelen van dit component en de **aliassen** bij optellen. Ze worden per component beheerd via **/api/v2/projects/{project}/services/user-env-vars/values/component/{component}**.
