@@ -73,8 +73,7 @@ Antwoord bij 200:
     "login_server": "https://vonk.rijksapp.dev",
     "gateway":      "100.80.0.1:443",
     "api_host":     "vlam-api.overheid-i.nl",
-    "preauth_key":  "...",
-    "api_key":      "..."
+    "preauth_key":  "..."
   }
 }
 ```
@@ -85,12 +84,12 @@ Antwoord bij 200:
 `KEYCLOAK_MASTER_OIDC_DISCOVERY_URL`, `KEYCLOAK_MASTER_OIDC_CLIENT_ID` en
 `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET` van de OPI op de installatie.
 
-`vlam` is **optioneel** en staat er alleen als `FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY` en
-`FUNDAMENT_REGISTRATION_VLAM_API_KEY` beide gezet zijn. Staat een van de twee niet, dan
-ontbreekt het hele veld: geen `null`, geen lege waarden, en de rest van het antwoord werkt
-gewoon. De vijf waarden komen bij elk 200-antwoord vers uit de instellingen en staan **niet**
-in de tabel, zodat een nieuwe pre-auth key na een week meteen met de volgende installatie
-meegaat.
+`vlam` is **optioneel** en staat er alleen als `FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY`
+gezet is. Het veld geeft alleen de tunnel: een API-key van VLAM zit er niet in, want die
+heeft elke gebruiker zelf. Staat de pre-auth key niet, dan ontbreekt het hele veld: geen
+`null`, geen lege waarden, en de rest van het antwoord werkt gewoon. De vier waarden komen bij
+elk 200-antwoord vers uit de instellingen en staan **niet** in de tabel, zodat een nieuwe
+pre-auth key na een week meteen met de volgende installatie meegaat.
 
 Twee dingen die buiten de tabel vallen:
 
@@ -193,8 +192,7 @@ Allemaal optioneel, want zonder de eerste bestaat de functie niet.
 | `FUNDAMENT_REGISTRATION_ZONE` | nee | `zadlab.nl` | de zone waarin de namen komen |
 | `FUNDAMENT_REGISTRATION_ACME_DIRECTORY` | nee | de **staging** van Let's Encrypt | voor het fieldlab de echte |
 | `FUNDAMENT_REGISTRATION_ACME_EMAIL` | nee | leeg | contactadres van het ACME-account |
-| `FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY` | ja | leeg | pre-auth key van VLAM; samen met de volgende de schakelaar van het `vlam`-veld |
-| `FUNDAMENT_REGISTRATION_VLAM_API_KEY` | ja | leeg | API-key van VLAM |
+| `FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY` | ja | leeg | pre-auth key van VLAM; de schakelaar van het `vlam`-veld |
 | `FUNDAMENT_REGISTRATION_VLAM_LOGIN_SERVER` | nee | `https://vonk.rijksapp.dev` | de login-server in het `vlam`-veld |
 | `FUNDAMENT_REGISTRATION_VLAM_GATEWAY` | nee | `100.80.0.1:443` | de gateway in het `vlam`-veld |
 | `FUNDAMENT_REGISTRATION_VLAM_API_HOST` | nee | `vlam-api.overheid-i.nl` | de API-host in het `vlam`-veld |
@@ -268,8 +266,8 @@ De toetsen in de suite:
 - **Geen vernieuwing.** Het fieldlab duurt drie dagen, een certificaat negentig. Een
   installatie die later een nieuw certificaat nodig heeft, moet het zelf regelen.
 - **Eén client voor alle teams.** Geen Keycloak-client per team.
-- **VLAM is alleen doorgeven.** Het endpoint deelt de pre-auth key en de API-key uit, het
-  maakt er geen aan en het praat zelf niet met VLAM.
+- **VLAM is alleen doorgeven.** Het endpoint deelt de pre-auth key uit, het maakt er geen
+  aan en het praat zelf niet met VLAM.
 - **Eén replica.** De achtergrondtaak draait in het OPI-proces. Met meerdere replica's blijft
   het veilig (de claim is een voorwaardelijke schrijfactie), maar dat is niet gemeten.
 - De route bestaat alleen waar de code gezet is, en daardoor zien de repo-brede

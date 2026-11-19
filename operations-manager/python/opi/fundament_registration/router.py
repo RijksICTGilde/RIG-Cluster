@@ -148,7 +148,6 @@ def _issued(found: Registration) -> JSONResponse:
             "gateway": vlam.gateway,
             "api_host": vlam.api_host,
             "preauth_key": vlam.preauth_key,
-            "api_key": vlam.api_key,
         }
     return JSONResponse(answer, headers={"Cache-Control": "no-store"})
 

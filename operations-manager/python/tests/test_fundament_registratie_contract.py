@@ -39,7 +39,6 @@ IP = "194.135.48.131"
 ZONE = "zadlab.nl"
 CLIENT_SECRET = "nep-client-secret"
 PREAUTH_KEY = "nep-vlam-preauth-key"
-VLAM_API_KEY = "nep-vlam-api-key"
 DISCOVERY = "https://keycloak.voorbeeld.nl/realms/rig-platform/.well-known/openid-configuration"
 PATH = "/api/fundament/registreer"
 
@@ -94,11 +93,8 @@ def spawns() -> Iterator[_Spawns]:
         yield recorder
 
 
-#: The two secrets that put the optional ``vlam`` field in the answer.
-VLAM_SECRETS: dict[str, Any] = {
-    "FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY": PREAUTH_KEY,
-    "FUNDAMENT_REGISTRATION_VLAM_API_KEY": VLAM_API_KEY,
-}
+#: The secret that puts the optional ``vlam`` field in the answer.
+VLAM_SECRETS: dict[str, Any] = {"FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY": PREAUTH_KEY}
 
 
 @pytest.fixture
@@ -371,7 +367,7 @@ async def _answer_with(**secrets: Any) -> Any:
             return await caller.post(PATH, json=QUESTION)
 
 
-async def test_the_answer_carries_vlam_when_both_secrets_are_set(orm_db: Any, spawns: _Spawns) -> None:
+async def test_the_answer_carries_vlam_when_the_preauth_key_is_set(orm_db: Any, spawns: _Spawns) -> None:
     answer = await _answer_with(**VLAM_SECRETS)
 
     assert answer.status_code == 200
@@ -380,22 +376,12 @@ async def test_the_answer_carries_vlam_when_both_secrets_are_set(orm_db: Any, sp
         "gateway": "100.80.0.1:443",
         "api_host": "vlam-api.overheid-i.nl",
         "preauth_key": PREAUTH_KEY,
-        "api_key": VLAM_API_KEY,
     }
 
 
-@pytest.mark.parametrize(
-    "secrets",
-    [
-        {},
-        {"FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY": PREAUTH_KEY},
-        {"FUNDAMENT_REGISTRATION_VLAM_API_KEY": VLAM_API_KEY},
-    ],
-    ids=["neither", "only-preauth", "only-api"],
-)
-async def test_without_both_secrets_the_field_is_absent(orm_db: Any, spawns: _Spawns, secrets: dict[str, Any]) -> None:
+async def test_without_the_preauth_key_the_field_is_absent(orm_db: Any, spawns: _Spawns) -> None:
     """Absent, not null and not empty: the rest of the answer has to keep working."""
-    answer = await _answer_with(**secrets)
+    answer = await _answer_with()
 
     assert answer.status_code == 200
     assert "vlam" not in answer.json()
@@ -412,7 +398,6 @@ async def test_the_vlam_values_are_not_stored_in_the_table(orm_db: Any, spawns: 
     assert row is not None
     stored = str(row.__dict__)
     assert PREAUTH_KEY not in stored
-    assert VLAM_API_KEY not in stored
 
 
 async def test_no_vlam_secret_reaches_the_log(orm_db: Any, spawns: _Spawns, caplog: pytest.LogCaptureFixture) -> None:
@@ -421,4 +406,3 @@ async def test_no_vlam_secret_reaches_the_log(orm_db: Any, spawns: _Spawns, capl
 
     assert answer.status_code == 200
     assert PREAUTH_KEY not in caplog.text
-    assert VLAM_API_KEY not in caplog.text

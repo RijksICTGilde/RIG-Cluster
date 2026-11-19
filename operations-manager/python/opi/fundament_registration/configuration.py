@@ -40,7 +40,6 @@ class VlamConfiguration:
     gateway: str
     api_host: str
     preauth_key: str
-    api_key: str
 
 
 #: The setting behind every value, so a 503 can name the one that is missing.
@@ -105,18 +104,18 @@ def hook_environment(config: FundamentConfiguration) -> dict[str, str]:
 
 
 def vlam_configuration() -> VlamConfiguration | None:
-    """The VLAM details, or None when the two secrets are not both set.
+    """The VLAM details, or None when the pre-auth key is not set.
 
-    Optional on purpose: a cluster without these two hands out an answer without a ``vlam``
+    Only the tunnel: every user brings their own VLAM API key. Optional on purpose: a cluster
+    without the key hands out an answer without a ``vlam``
     field, and the rest of the registration works as it does. Read per answer, so a replaced
     pre-auth key travels along with the next installation.
     """
-    if not (settings.FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY and settings.FUNDAMENT_REGISTRATION_VLAM_API_KEY):
+    if not settings.FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY:
         return None
     return VlamConfiguration(
         login_server=settings.FUNDAMENT_REGISTRATION_VLAM_LOGIN_SERVER,
         gateway=settings.FUNDAMENT_REGISTRATION_VLAM_GATEWAY,
         api_host=settings.FUNDAMENT_REGISTRATION_VLAM_API_HOST,
         preauth_key=settings.FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY,
-        api_key=settings.FUNDAMENT_REGISTRATION_VLAM_API_KEY,
     )

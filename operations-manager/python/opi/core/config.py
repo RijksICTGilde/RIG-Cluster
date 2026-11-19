@@ -757,11 +757,10 @@ class Settings(BaseSettings):
     # thinking about it does not burn the issuance limit of the real one.
     FUNDAMENT_REGISTRATION_ACME_DIRECTORY: str = "https://acme-staging-v02.api.letsencrypt.org/directory"
     FUNDAMENT_REGISTRATION_ACME_EMAIL: str | None = None
-    # VLAM reaches the answer only when both secrets are set; the other three then come
+    # VLAM reaches the answer only when the pre-auth key is set; the other three then come
     # along with their defaults. They are read fresh per answer, so a replaced pre-auth key
     # travels with the next installation without a migration.
     FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY: str | None = None
-    FUNDAMENT_REGISTRATION_VLAM_API_KEY: str | None = None
     FUNDAMENT_REGISTRATION_VLAM_LOGIN_SERVER: str = "https://vonk.rijksapp.dev"
     FUNDAMENT_REGISTRATION_VLAM_GATEWAY: str = "100.80.0.1:443"
     FUNDAMENT_REGISTRATION_VLAM_API_HOST: str = "vlam-api.overheid-i.nl"
