@@ -51,6 +51,14 @@ De redenering hierboven blijft staan omdat hij bij een volgend blok weer opgaat,
 
 Gevolg voor de mailkoppeling: het bronadres verklaart de storing niet meer. Zie het openstaande punt onderaan.
 
+### Bijgesteld op 19 november 2026: alle drie de adressen komen langs als bron
+
+De bevestiging van 17 augustus gold voor één bronadres, niet voor de hele egress. Van 29 oktober tot en met 10 november weigerde `rmrmail.rijksweb.nl` relaying naar externe domeinen wisselend, met `550 #5.1.0 Address rejected` bij `RCPT TO`, ook naar hetzelfde adres. Vanaf 13 november weigerde hij het altijd. Mail naar domeinen die rmrmail zelf bedient (rijksoverheid.nl, minbzk.nl, mindef.nl) kwam wel steeds aan, want daarvoor kijkt hij niet naar het bron-IP.
+
+De oorzaak: in de toelating stond alleen `.140`, terwijl ons verkeer ook via `.141` en `.142` naar buiten gaat. SSC-ICT heeft die twee toegevoegd (melding M261123287). Daarna werden drie testberichten naar gmail.com direct aangenomen. Welk adres een verbinding krijgt ligt bij de egressgateway van ODCN en is voor ons niet te zien.
+
+**Geef aan een tegenpartij dus altijd `145.21.227.140`, `.141` en `.142` door**, of het hele `/30`. Eén adres doorgeven geeft wisselend gedrag.
+
 ### Als een koppeling het niet doet
 
 Vraag of ze in hun firewalllogs kunnen zien **welk bronadres** ze werkelijk van ons zien, en of de poging wordt gelogd als drop. Een firewall die verkeer laat vallen, logt dat meestal wel, en daarmee is het in één blik beslist. Wij kunnen het zelf niet meten: de namespace `quattro-egress-gateway` is van ODCN en niet leesbaar met onze rechten, en met `rig-ron` is er geen internetbestemming die ons bronadres kan terugvertellen.
@@ -112,7 +120,7 @@ Werkt. `rmrmail.rijksweb.nl` (`145.21.161.201`) neemt op **poort 25** een berich
 Vier dingen die het ontwerp raken:
 
 1. **Poort 25, niet 587 of 465.** Die laatste twee zijn stil. Onze relay moet dus op 25 uitleveren.
-2. **Geen `AUTH` in de EHLO-lijst, dus geen credentials.** Het is een IP-gebaseerde relay: wie vanaf `145.21.227.140` verbindt mag relayen. Dat verklaart ook waarom ze om ons uitgaande IP vroegen en niet om een accountnaam.
+2. **Geen `AUTH` in de EHLO-lijst, dus geen credentials.** Het is een IP-gebaseerde relay: wie vanaf een adres in de toelating verbindt mag relayen (`145.21.227.140` tot en met `.142`, zie "Bijgesteld op 19 november 2026"). Dat verklaart ook waarom ze om ons uitgaande IP vroegen en niet om een accountnaam.
 3. **`SIZE 31457280`, dus 30 MB.** Onze eigen berichtlimiet moet daaronder liggen.
 4. **STARTTLS wordt aangeboden** en moet door de relay gebruikt worden. De testmeting hierboven ging plat, omdat er geen openssl in die pod zit.
 
