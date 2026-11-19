@@ -10,12 +10,13 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from keycloak.exceptions import KeycloakError
 from starlette.responses import Response
 
 from opi.core.authz.actions import Action, action
+from opi.core.config import settings
 from opi.http.auth.auth_decorators import require_platform_admin, requires_sso, requires_step_up
 from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.render.menu import get_menu_items
@@ -25,7 +26,16 @@ from opi.utils.csrf import ensure_csrf_token
 
 logger = logging.getLogger(__name__)
 
-platform_admin_router = APIRouter(prefix="/admin/platform", tags=["platform-admin"])
+
+def _require_sso_outage_enabled() -> None:
+    """Answer 404 before any login or step-up while the feature flag is off."""
+    if not settings.SSO_OUTAGE_ENABLED:
+        raise HTTPException(status_code=404)
+
+
+platform_admin_router = APIRouter(
+    prefix="/admin/platform", tags=["platform-admin"], dependencies=[Depends(_require_sso_outage_enabled)]
+)
 
 PATH = "/admin/platform"
 

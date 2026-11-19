@@ -1,7 +1,7 @@
 # SSO Rijk is stuk, wat nu
 
-Niemand kan meer nieuw inloggen: niet op ZAD en niet op een projectapplicatie met SSO. De
-uitwijk is de **storingsstand** van `rig-platform`, beschreven in
+Niemand kan meer nieuw inloggen met SSO Rijk: niet op ZAD en niet op een projectapplicatie met
+SSO. De uitwijk is de **storingsstand** van `rig-platform`, beschreven in
 [features/sso-rijk-uitwijk.md](../../features/sso-rijk-uitwijk.md). Dit is de volgorde waarin je
 hem gebruikt.
 
@@ -30,9 +30,13 @@ Drie uitkomsten, drie verschillende acties:
 In ZAD: **Beheer > Platformacties**, knop "Storingsstand aanzetten". Het vraagt een verse
 step-up met je OTP.
 
-Kom je niet bij ZAD omdat er geen sessie meer loopt, gebruik dan de noodweg:
-`https://<zad-host>/auth/login/beheer`, met je lokale beheerdersaccount in `rig-platform`
-(wachtwoord plus OTP). Die route staat niet in het menu en hangt niet van SSO Rijk af.
+Kom je niet bij ZAD omdat er geen sessie meer loopt, log dan in met je lokale account: het
+inlogscherm van ZAD (realm `operations-manager`) heeft naast de knop SSO Rijk een
+wachtwoordformulier, en dat hangt niet van SSO Rijk af.
+
+Staat de feature flag `SSO_OUTAGE_ENABLED` uit (buiten de sandbox is dat zo), dan is er geen
+Platformacties. Zet dan in de beheerconsole van Keycloak, realm `rig-platform`, de
+`browserFlow` om naar "SSO Rijk storing". Dat is precies wat de knop doet.
 
 Meld daarna aan de gebruikers: inloggen gaat nu met een code per e-mail, de code is 5 minuten
 geldig, en alleen voor wie al een account heeft.
@@ -52,6 +56,7 @@ blijven doorlopen: een browser-flow bepaalt alleen wat een NIEUWE login doet.
   [features/keycloak-mail.md](../../features/keycloak-mail.md) voor hoe je die keten naloopt.
   Het inlogscherm zegt niets over een onbekend adres, dus "ik krijg niets" kan ook betekenen
   dat het adres geen account heeft of geen gekoppelde SSO Rijk-identiteit.
-- **Je hebt geen lokaal beheerdersaccount.** Dat is een handstap per omgeving en geen
-  onderdeel van een release; `features/sso-rijk-uitwijk.md` beschrijft hem. Richt hem in
-  voordat je hem nodig hebt.
+- **Je hebt geen lokaal account in `operations-manager`.** Dat is een handstap per omgeving en
+  geen onderdeel van een release: maak het in de beheerconsole van Keycloak aan, met een
+  geverifieerd mailadres dat in ZAD platformbeheerder is. Richt het in voordat je het nodig
+  hebt.

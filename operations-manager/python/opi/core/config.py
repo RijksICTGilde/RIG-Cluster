@@ -417,6 +417,11 @@ class Settings(BaseSettings):
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "ZAD"
 
+    # The admin page that switches the platform realm to the SSO Rijk outage flow
+    # (features/sso-rijk-uitwijk.md). Off: no menu item and the routes answer 404. The
+    # blueprint still creates the outage flow, unbound.
+    SSO_OUTAGE_ENABLED: bool = False
+
     # Bootstrap configuration type: "default", "local", "sandbox" or "staging"
     # - "default": Production setup with direct SSO-Rijk integration
     # - "local": Local Kind cluster using production Keycloak as upstream IDP

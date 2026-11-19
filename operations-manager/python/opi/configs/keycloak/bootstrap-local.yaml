@@ -251,37 +251,3 @@ clientScopes:
 
     # Assign as realm-level default client scope
     defaultScope: true
-
-clients:
-  # De noodweg: inloggen op ZAD met een lokaal beheerdersaccount in deze realm, zonder SSO
-  # Rijk. Eigen browser-flow via restrictAccess: gebruikersnaam, wachtwoord, verplichte OTP
-  # van Keycloak, en de clientrol hieronder. Een account zonder die rol komt er niet door.
-  # De accounts zelf maakt deze ship niet aan; zie features/sso-rijk-uitwijk.md.
-  #
-  # Publieke client met PKCE en niet vertrouwelijk: er is dan geen geheim dat OPI moet
-  # bewaren, en de drempel is toch het wachtwoord plus de OTP plus de rol.
-  - clientId: "zad-beheer"
-    name: "ZAD Beheer (noodweg)"
-    enabled: true
-    publicClient: true
-    protocol: "openid-connect"
-    redirectUris:
-      - "https://{{ operations_manager_domain }}/auth/beheer/callback"
-    postLogoutRedirectUris:
-      - "+"
-    webOrigins:
-      - "https://{{ operations_manager_domain }}"
-    standardFlowEnabled: true
-    implicitFlowEnabled: false
-    directAccessGrantsEnabled: false
-    serviceAccountsEnabled: false
-    pkceCodeChallengeMethod: "S256"
-    attributes:
-      login_theme: "nl-design-system"
-    clientRoles:
-      - name: "platform-beheer"
-        description: "Mag via de noodweg op ZAD inloggen"
-    restrictAccess:
-      enabled: true
-      role: "platform-beheer"
-      requireOtp: true

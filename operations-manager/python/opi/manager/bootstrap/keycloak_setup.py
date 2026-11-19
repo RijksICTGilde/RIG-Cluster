@@ -69,8 +69,6 @@ class KeycloakSetup:
                 "sso_discovery_url": settings.KEYCLOAK_MASTER_OIDC_DISCOVERY_URL,
                 # SAML SP Entity ID for direct SSO-Rijk connection
                 "saml_sp_entity_id": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}",
-                # Where the break-glass login of ZAD comes back to (the zad-beheer client).
-                "operations_manager_domain": extract_domain_from_url(settings.OWN_DOMAIN),
             }
 
             bootstrap_config = settings.KEYCLOAK_BOOTSTRAP_CONFIG

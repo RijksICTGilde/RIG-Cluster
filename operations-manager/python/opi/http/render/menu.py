@@ -8,6 +8,7 @@ that are used across different web routes.
 import logging
 from typing import Any
 
+from opi.core.config import settings
 from opi.services.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
@@ -75,7 +76,8 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # declares, and since send-email that is more than one.
         menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
         menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
-        menu_items.append({"label": "Platformacties", "link": "/admin/platform", "icon": "schild-met-vinkje-erop"})
+        if settings.SSO_OUTAGE_ENABLED:
+            menu_items.append({"label": "Platformacties", "link": "/admin/platform", "icon": "schild-met-vinkje-erop"})
 
     # Add user-specific menu items
     if user:

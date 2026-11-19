@@ -20,7 +20,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import (
     DEFAULT_BROWSER_FLOW,
@@ -28,6 +29,8 @@ from opi.connectors.keycloak import (
     SSO_REDIRECT_BROWSER_FLOW,
 )
 from opi.core.authz.actions import audit_fields_of
+from opi.core.config import settings
+from opi.http.render.menu import get_menu_items
 from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 from opi.web import router_platform_admin
 
@@ -74,6 +77,37 @@ def _keycloak(browser_flow: str | None) -> Any:
     keycloak.get_realm = AsyncMock(return_value={"browserFlow": browser_flow} if browser_flow else {})
     keycloak.ensure_browser_flow = AsyncMock(return_value=True)
     return keycloak
+
+
+# --- the feature flag -----------------------------------------------------------------
+
+
+def _client() -> TestClient:
+    app = FastAPI()
+    app.include_router(router_platform_admin.platform_admin_router)
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(("method", "path"), [("GET", "/admin/platform"), ("POST", "/admin/platform/sso-storing")])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_the_feature_flag_hides_the_routes_before_any_login(method: str, path: str, enabled: bool) -> None:
+    """Off is a 404 without a session; on, the request reaches the login guards instead."""
+    with patch.object(settings, "SSO_OUTAGE_ENABLED", enabled):
+        response = _client().request(method, path)
+
+    assert (response.status_code == 404) is not enabled
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_the_menu_shows_platform_actions_only_with_the_feature_flag(enabled: bool) -> None:
+    with (
+        patch.object(settings, "SSO_OUTAGE_ENABLED", enabled),
+        patch("opi.http.render.menu.is_elevated_admin", return_value=True),
+        patch("opi.http.render.menu.get_user_service"),
+    ):
+        links = [item["link"] for item in get_menu_items({"email": ADMIN})]
+
+    assert ("/admin/platform" in links) is enabled
 
 
 # --- the guard on the page and on the switch ---------------------------------------

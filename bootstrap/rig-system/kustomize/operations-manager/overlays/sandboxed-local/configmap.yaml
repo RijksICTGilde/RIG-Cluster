@@ -7,6 +7,8 @@ data:
   .env: |
     CLUSTER_MANAGER=sandboxed-local
     KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
+    # Storingsstand SSO Rijk (features/sso-rijk-uitwijk.md): alleen hier aan, elders nog uit.
+    SSO_OUTAGE_ENABLED=true
 
     # Stable SECRET_KEY zodat dev-sessies overleven na pod-restarts (zonder
     # zou de Field(default_factory=generate_secret_key) per process een nieuwe

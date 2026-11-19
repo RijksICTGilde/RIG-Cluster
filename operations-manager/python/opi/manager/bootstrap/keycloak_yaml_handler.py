@@ -1279,7 +1279,6 @@ class KeycloakYamlHandler:
             client_id=client_id,
             role_name=role_name,
             error_message=error_message,
-            require_otp=bool(restrict_access.get("requireOtp")),
         )
 
         await self.keycloak.set_client_authentication_flow_override(
