@@ -36,9 +36,11 @@ from opi.core.cluster_config import (
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_namespace_prefix,
+    renders_gateway_api,
 )
 from opi.core.config import settings
 from opi.generation.manifests import render_template
+from opi.manager.project.manifests.routing import shared_https_parent
 from opi.manager.run_support import (
     ANNOT_EXPIRES,
     ANNOT_HOSTNAME,
@@ -491,22 +493,28 @@ class DbConsoleManager:
                 "authorization_wall": authorization_wall,
             },
         )
-        manifests["ingress"] = render_template(
-            "ingress.yaml.jinja",
-            {
-                **common,
-                "hostname": hostname,
-                "service_port": AUTH_WALL_PORT,
-                "enable_tls": True,
-                "ip_whitelist": get_ingress_ip_whitelist(cluster),
-                "path": "/",
-            },
-        )
+        route_values = {
+            **common,
+            "hostname": hostname,
+            "service_port": AUTH_WALL_PORT,
+            "enable_tls": True,
+            "path": "/",
+        }
+        if renders_gateway_api(cluster):
+            # The console hostname sits in the cluster zone, so the wildcard certificate of
+            # the shared Gateway covers it and no ListenerSet is needed.
+            manifests["route"] = render_template(
+                "httproute.yaml.jinja", {**route_values, "parent": shared_https_parent(cluster)}
+            )
+        else:
+            manifests["route"] = render_template(
+                "ingress.yaml.jinja", {**route_values, "ip_whitelist": get_ingress_ip_whitelist(cluster)}
+            )
 
         # One-time action: apply the whole bundle as a single multi-document
         # manifest. Every resource carries the rig.zad/run=<session> label, so
         # teardown removes the bundle with a single label-scoped delete.
-        order = ["secret", "emails", "signin", "service", "pod", "ingress"]
+        order = ["secret", "emails", "signin", "service", "pod", "route"]
         ok, stderr = await apply_bundle(self._kubectl, namespace, [manifests[key] for key in order], cluster)
         if not ok:
             raise DbConsoleError(f"Kon de databaseconsole niet aanmaken: {stderr.strip() or 'onbekende fout'}")
@@ -522,7 +530,7 @@ class DbConsoleManager:
         ended_by: str | None = None,
     ) -> None:
         """Remove an entire console bundle in one action (by shared label). Idempotent."""
-        # Label-scoped delete removes Pod, Service, Ingress, Secret and both ConfigMaps.
+        # Label-scoped delete removes Pod, Service, the publication, Secret and both ConfigMaps.
         await delete_bundle(self._kubectl, namespace, session_id)
 
         if realm and client_id:

@@ -356,8 +356,10 @@ class TestBeidePublicatiepuntenHangenAanDeGoedkeuring:
         assert any("is_deployment_domain_approved" in guard for guard in guards)
 
     def test_de_ingress_op_de_apex(self):
-        guards = self._guards("ingress-bare-domain")
-        assert guards, "de kaal-domein-ingress is niet gevonden"
+        # The suffix and not the whole name: the manifest type follows the routing API of
+        # the cluster (Ingress or HTTPRoute), the guard in front of it does not.
+        guards = self._guards("-bare-domain")
+        assert guards, "de kaal-domein-publicatie is niet gevonden"
         assert any("is_deployment_domain_approved" in guard for guard in guards)
 
 

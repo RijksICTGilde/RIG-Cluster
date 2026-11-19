@@ -1,0 +1,8 @@
+web-deployment.yaml
+web-service.yaml
+productie-web-provided-tls-tls-secret.to-sops.yaml
+web-ingress.yaml
+web-platform-secret.yaml
+issuer-letsencrypt-voorbeeld-nl-productie.yaml
+acme-http-productie-network-policy.yaml
+productie-tenant-baseline-network-policy.yaml

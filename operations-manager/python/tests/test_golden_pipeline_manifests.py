@@ -32,7 +32,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
+from opi.core.cluster_config import RoutingApi, get_cluster_config
 from opi.core.config import settings
+from opi.manager.project.manifests.pruning import select_obsolete_component_manifests
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_schema import validate_project_schema
 from opi.services.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
 
 GOLDEN_DIR = Path(__file__).parent / "golden" / "pipeline"
 HELM_GOLDEN_DIR = Path(__file__).parent / "golden" / "pipeline-helm"
+GATEWAY_GOLDEN_DIR = Path(__file__).parent / "golden" / "pipeline-gateway"
 UPDATE_GOLDEN = os.environ.get("UPDATE_GOLDEN") == "1"
 
 #: Frozen clock: the waker manifests stamp ``datetime.now(UTC)``.
@@ -59,6 +62,29 @@ FIXED_COOKIE_SECRET = "golden-cookie-secret"  # a pinned test value, not a secre
 REPO_PATH = "infra"
 
 needs_age = pytest.mark.skipif(shutil.which("age-keygen") is None, reason="requires the age-keygen binary")
+
+#: The one cluster that carries a gateway block, and so the only one these scenarios run on.
+GATEWAY_CLUSTER = "sandboxed-local"
+
+#: The scenarios that publish something on the web, rendered a second time with the cluster in
+#: gateway routing. The other scenarios render no publication, so a second golden of them would
+#: measure nothing. The set covers each emitter (per path, root, bare domain) and each TLS mode.
+GATEWAY_SCENARIOS = [
+    "basis-publish-op-web",
+    "eigen-domein-letsencrypt",
+    "gestippeld-root-component",
+    "kaal-domein",
+    "tls-passthrough",
+    "tls-provided",
+]
+
+
+@contextmanager
+def _gateway_routing() -> Iterator[None]:
+    """Put the sandbox cluster in gateway routing for the duration of a render."""
+    ingress = {**get_cluster_config(GATEWAY_CLUSTER)["ingress"], "routing": RoutingApi.GATEWAY}
+    with patch.dict(get_cluster_config(GATEWAY_CLUSTER), {"ingress": ingress}):
+        yield
 
 
 def _scenarios(root: Path = GOLDEN_DIR) -> list[str]:
@@ -414,3 +440,83 @@ async def test_two_helm_renders_are_identical(
 def test_the_helm_scenario_is_a_valid_project_file(scenario: str) -> None:
     project = YAML(typ="safe").load((HELM_GOLDEN_DIR / scenario / "project.yaml").read_text())
     validate_project_schema(_encrypt_markers(project, None))
+
+
+@needs_age
+@pytest.mark.parametrize("scenario", GATEWAY_SCENARIOS)
+@pytest.mark.asyncio
+async def test_the_gateway_output_tree_matches_the_golden(
+    scenario: str, project_config: dict[str, str], tmp_path: Path
+) -> None:
+    """The same scenarios with the cluster in gateway routing: HTTPRoutes, TLSRoutes, listeners."""
+    with _gateway_routing():
+        tree, created = await _render(scenario, project_config, tmp_path)
+
+    if UPDATE_GOLDEN:
+        _write_golden(scenario, tree, created, GATEWAY_GOLDEN_DIR)
+        return
+
+    expected_tree, expected_created = _read_golden(scenario, GATEWAY_GOLDEN_DIR)
+    assert sorted(tree) == sorted(expected_tree), "a different set of files was written"
+    for name in sorted(expected_tree):
+        assert tree[name] == expected_tree[name], f"{scenario}/{name} differs from the gateway golden"
+    assert created == expected_created, "the returned list of created files changed"
+
+
+def _prune(project: dict[str, Any], root: Path, created: list[str]) -> None:
+    """Remove what this round did not write, the way _process_deployment_manifests does."""
+    components = {component["name"] for component in project["components"]}
+    for deployment in project["deployments"]:
+        directory = root / generate_deployment_manifest_path(
+            deployment["cluster"], project["name"], deployment["name"], REPO_PATH
+        )
+        for stale in select_obsolete_component_manifests(str(directory), components, set(created), deployment["name"]):
+            (directory / stale).unlink()
+
+
+def _kinds(tree: dict[str, str]) -> set[str]:
+    yaml = YAML(typ="safe")
+    return {
+        document["kind"]
+        for content in tree.values()
+        for document in yaml.load_all(content)
+        if isinstance(document, dict) and document.get("kind")
+    }
+
+
+#: The kinds each routing API publishes with. After a switch not one of the other side's
+#: kinds may be left in the tree.
+INGRESS_KINDS = frozenset({"Ingress"})
+GATEWAY_KINDS = frozenset({"HTTPRoute", "TLSRoute", "ListenerSet"})
+
+
+@needs_age
+@pytest.mark.parametrize("scenario", GATEWAY_SCENARIOS)
+@pytest.mark.parametrize("to_gateway", [True, False], ids=["naar-gateway", "naar-ingress"])
+@pytest.mark.asyncio
+async def test_a_switch_leaves_nothing_of_the_other_routing_api(
+    scenario: str, to_gateway: bool, project_config: dict[str, str], tmp_path: Path
+) -> None:
+    """Render in one routing API, then the other over it, and prune: the first one is gone.
+
+    This is the whole switch mechanism: a round writes only the files of its own API, the
+    prune takes the rest out of git, and ArgoCD removes the objects behind them.
+    """
+    project = _load_project(scenario, project_config)
+
+    if to_gateway:
+        await _render(scenario, project_config, tmp_path, project)
+        with _gateway_routing():
+            tree, created = await _render(scenario, project_config, tmp_path, project)
+        gone, stays = INGRESS_KINDS, GATEWAY_KINDS
+    else:
+        with _gateway_routing():
+            await _render(scenario, project_config, tmp_path, project)
+        tree, created = await _render(scenario, project_config, tmp_path, project)
+        gone, stays = GATEWAY_KINDS, INGRESS_KINDS
+
+    _prune(project, tmp_path, created)
+    kinds = _kinds(_tree(tmp_path))
+
+    assert not kinds & gone, f"{sorted(kinds & gone)} survived the switch"
+    assert kinds & stays, "the new routing API published nothing at all"

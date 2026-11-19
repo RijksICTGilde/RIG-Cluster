@@ -24,6 +24,7 @@ BEHEERROUTES: set[tuple[str, str]] = {
     ("GET", "/api/v2/admin/orphans/report"),
     ("POST", "/api/v2/admin/orphans/confirm"),
     ("POST", "/api/v2/admin/projects/:reconcile"),
+    ("POST", "/api/v2/admin/projects/:reprocess-all"),
     ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"),
 }
 

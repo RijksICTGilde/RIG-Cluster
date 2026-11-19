@@ -496,6 +496,50 @@ def _sjabloon_fixtures(waarde: str) -> dict[str, dict[str, Any]]:
             "path": "/api",
             "rewrite": "/",
         },
+        "httproute.yaml.jinja": {
+            "name": waarde,
+            "hostname": waarde,
+            "service_name": waarde,
+            "extra_labels": {waarde: waarde},
+            "external_dns_target": waarde,
+            "enable_tls": True,
+            "service_port": 8080,
+            "parent": {"kind": waarde, "name": waarde, "namespace": waarde, "section_name": waarde},
+            # path and rewrite are charset-validated at the source (SAFE_PATH_PATTERN in
+            # opi/utils/url_paths.py), as with ingress.yaml.jinja.
+            "path": "/api",
+            "rewrite": "/",
+        },
+        "tlsroute.yaml.jinja": {
+            "name": waarde,
+            "hostname": waarde,
+            "service_name": waarde,
+            "extra_labels": {waarde: waarde},
+            "external_dns_target": waarde,
+            "service_port": 8443,
+            "parent": {"kind": waarde, "name": waarde, "namespace": waarde, "section_name": waarde},
+        },
+        "listenerset.yaml.jinja": {
+            "namespace": waarde,
+            "gateway": {"name": waarde, "namespace": waarde},
+            "listener_sets": [
+                {
+                    "name": waarde,
+                    "issuer_name": waarde,
+                    "cluster_issuer": None,
+                    "listeners": [
+                        {
+                            "name": waarde,
+                            "hostname": waarde,
+                            "port": 443,
+                            "tls_secret_name": waarde,
+                            "passthrough": False,
+                        },
+                        {"name": waarde, "hostname": waarde, "port": 443, "passthrough": True},
+                    ],
+                }
+            ],
+        },
         "postgresql-cluster.yaml.jinja": {
             "project_name": waarde,
             "infrastructure_namespace": waarde,

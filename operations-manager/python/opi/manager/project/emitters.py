@@ -7,8 +7,10 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import (
+    get_gateway_config,
     get_ingress_controller_selector,
     get_letsencrypt_contact_email,
+    renders_gateway_api,
 )
 from opi.generation.manifests import MANIFEST_TEMPLATES_DIR
 from opi.services.catalog.platform.network_policies import legacy_deployment_policy_filenames
@@ -103,6 +105,9 @@ def emit_letsencrypt_issuer(
             "contact_email": contact_email,
             "staging": issuer_config == "letsencrypt-staging",
             "namespace": namespace,
+            # Gateway routing: the HTTP-01 solver route hangs on the Gateway instead of on
+            # a generated Ingress. Absent means the ingress solver, as before.
+            "gateway": get_gateway_config(cluster_name) if renders_gateway_api(cluster_name) else None,
         },
         output_dir=output_dir,
         output_filename=manifest_filename,

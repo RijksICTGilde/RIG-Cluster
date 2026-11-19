@@ -41,6 +41,7 @@ ROUTES_MET_STEP_UP = {
     ("DELETE", "/api/v2/admin/marked-for-deletion/{mark_id}"): StepUpAction.MARKING_REVOKE,
     ("POST", "/api/v2/admin/orphans/confirm"): StepUpAction.ORPHANS_CONFIRM,
     ("POST", "/api/v2/admin/projects/:reconcile"): StepUpAction.PROJECTS_RELOAD,
+    ("POST", "/api/v2/admin/projects/:reprocess-all"): StepUpAction.PROJECTS_REPROCESS_ALL,
     ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"): StepUpAction.PROJECT_KEY_REPLACE,
     # Leden en tokens (RC-387): elke handeling die een bewijsmiddel geeft of afneemt, in
     # de API en in het portaal. De leesroute (GET .../leden) staat er met opzet niet bij.

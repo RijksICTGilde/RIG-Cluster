@@ -1,0 +1,53 @@
+{# The listeners this namespace claims on the shared Gateway, for hostnames that bring a
+   certificate of their own. A hostname the Gateway's own wildcard covers does not belong
+   here: it attaches to that listener directly. #}
+{% for set in listener_sets %}
+{% if not loop.first %}
+---
+{% endif %}
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: {{ set.name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
+{% if set.issuer_name or set.cluster_issuer %}
+  annotations:
+{% if set.issuer_name %}
+    cert-manager.io/issuer: {{ set.issuer_name | yaml_scalar }}
+{% else %}
+    cert-manager.io/cluster-issuer: {{ set.cluster_issuer | yaml_scalar }}
+{% endif %}
+    # Modern key material: ECDSA P-384, fresh key on every renewal (no RSA-2048 default).
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+    # Hangs the HTTP-01 challenge route on the shared HTTP listener of the Gateway instead
+    # of on a listener of this set.
+    acme.cert-manager.io/http01-parentreffallback: "true"
+{% endif %}
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ gateway.name | yaml_scalar }}
+    namespace: {{ gateway.namespace | yaml_scalar }}
+  listeners:
+{% for listener in set.listeners %}
+    - name: {{ listener.name | yaml_scalar }}
+      hostname: {{ listener.hostname | yaml_scalar }}
+{% if listener.passthrough %}
+      protocol: TLS
+      port: {{ listener.port }}
+      tls:
+        mode: Passthrough
+{% else %}
+      protocol: HTTPS
+      port: {{ listener.port }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ listener.tls_secret_name | yaml_scalar }}
+{% endif %}
+{% endfor %}
+{% endfor %}

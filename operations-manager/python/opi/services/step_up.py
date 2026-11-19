@@ -74,6 +74,7 @@ class StepUpAction(StrEnum):
     MARKING_REVOKE = "marking-revoke"
     ORPHANS_CONFIRM = "orphans-confirm"
     PROJECTS_RELOAD = "projects-reload"
+    PROJECTS_REPROCESS_ALL = "projects-reprocess-all"
     PROJECT_KEY_REPLACE = "project-key-replace"
     TOKEN_ISSUE = "token-issue"  # noqa: S105  # the name of an action, not a secret
     TOKEN_ROTATE = "token-rotate"  # noqa: S105  # the name of an action, not a secret
@@ -110,6 +111,7 @@ _PHRASE = {
     StepUpAction.MARKING_REVOKE: "deze verwijdermarkering in te trekken",
     StepUpAction.ORPHANS_CONFIRM: "deze wezen te bevestigen",
     StepUpAction.PROJECTS_RELOAD: "de projects-repo nu in te lezen",
+    StepUpAction.PROJECTS_REPROCESS_ALL: "elk project opnieuw te laten verwerken",
     StepUpAction.PROJECT_KEY_REPLACE: "de projectsleutel te vervangen",
     StepUpAction.TOKEN_ISSUE: "een token uit te geven",
     StepUpAction.TOKEN_ROTATE: "dit token te roteren",
@@ -139,6 +141,10 @@ _REASON = {
     StepUpAction.MARKING_REVOKE: "de markering '{doelwit}' vervalt, en de geplande verwijdering ermee",
     StepUpAction.ORPHANS_CONFIRM: "bevestigde wezen worden na de genadeperiode van het platform verwijderd",
     StepUpAction.PROJECTS_RELOAD: "het inlezen vervangt de projectstore van dit cluster",
+    StepUpAction.PROJECTS_REPROCESS_ALL: (
+        "elk project van dit cluster krijgt nieuwe manifests, en een wissel van routing-API "
+        "vervangt daarmee de publicatie van elke deployment"
+    ),
     StepUpAction.PROJECT_KEY_REPLACE: (
         "de sleutel van '{doelwit}' wordt vervangen en elke versleutelde waarde opnieuw versleuteld"
     ),

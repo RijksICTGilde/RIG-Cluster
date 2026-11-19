@@ -286,6 +286,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [No-mail-records op onze eigen DNS-namen](no-mail-dns-records.md)
 - [Publish-on-web: TLS modes (certificate handling)](publish-on-web-tls-modes.md)
 - [Registratie van een Fundament-installatie](fundament-registratie.md)
+- [Routing per clustertype: Ingress of Gateway API](gateway-api-routing.md)
 
 ## Resources en monitoring
 

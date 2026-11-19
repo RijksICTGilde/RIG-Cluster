@@ -13,6 +13,18 @@ spec:
     privateKeySecretRef:
       name: {{ issuer_secret_name }}
     solvers:
+{% if gateway %}
+    {# Gateway routing: the challenge route hangs on the shared HTTP listener of the
+       cluster Gateway, which carries the redirect-to-https route for everything else. #}
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs:
+            - group: gateway.networking.k8s.io
+              kind: Gateway
+              name: {{ gateway.name | yaml_scalar }}
+              namespace: {{ gateway.namespace | yaml_scalar }}
+              sectionName: {{ gateway.http_listener.name | yaml_scalar }}
+{% else %}
     - http01:
         ingress:
           serviceType: ClusterIP
@@ -20,3 +32,4 @@ spec:
             metadata:
               annotations:
                 haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
+{% endif %}

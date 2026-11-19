@@ -297,6 +297,125 @@ SCENARIOS: list[tuple[str, str, dict[str, object]]] = [
             "tls_secret_name": "prod-web-tls",
         },
     ),
+    # --- httproute/tlsroute/listenerset.yaml.jinja (gateway routing) -----------
+    (
+        # A hostname in the cluster zone: straight onto the shared listener of the Gateway.
+        "httproute-shared-listener",
+        "httproute.yaml.jinja",
+        {
+            "name": "prod-web",
+            "hostname": "web.example.com",
+            "service_name": "prod-web",
+            "service_port": 8080,
+            "path": "/api",
+            "rewrite": "/",
+            "enable_tls": True,
+            "external_dns_target": "lb.example.com",
+            "parent": {
+                "kind": "Gateway",
+                "name": "rig-gateway",
+                "namespace": "rig-gateway",
+                "section_name": "https",
+            },
+        },
+    ),
+    (
+        # A hostname with a certificate of its own: onto a listener of the project.
+        "httproute-own-listener",
+        "httproute.yaml.jinja",
+        {
+            "name": "prod-web",
+            "hostname": "app.example.nl",
+            "service_name": "prod-web",
+            "service_port": 8080,
+            "path": "/",
+            "enable_tls": True,
+            "parent": {
+                "kind": "ListenerSet",
+                "name": "prod-listeners",
+                "namespace": None,
+                "section_name": "app-example-nl",
+            },
+        },
+    ),
+    (
+        "tlsroute-passthrough",
+        "tlsroute.yaml.jinja",
+        {
+            "name": "prod-web",
+            "hostname": "app.example.nl",
+            "service_name": "prod-web",
+            "service_port": 8443,
+            "parent": {
+                "kind": "ListenerSet",
+                "name": "prod-own-listeners",
+                "namespace": None,
+                "section_name": "app-example-nl",
+            },
+        },
+    ),
+    (
+        # Both sets: cert-manager issues for the one, the customer brought the other.
+        "listenerset-both-sets",
+        "listenerset.yaml.jinja",
+        {
+            "namespace": "rig-myproject",
+            "gateway": {"name": "rig-gateway", "namespace": "rig-gateway"},
+            "listener_sets": [
+                {
+                    "name": "prod-listeners",
+                    "issuer_name": "letsencrypt-example-nl-prod",
+                    "cluster_issuer": None,
+                    "listeners": [
+                        {
+                            "name": "app-example-nl",
+                            "hostname": "app.example.nl",
+                            "port": 443,
+                            "tls_secret_name": "prod-web-tls",
+                            "passthrough": False,
+                        }
+                    ],
+                },
+                {
+                    "name": "prod-own-listeners",
+                    "issuer_name": None,
+                    "cluster_issuer": None,
+                    "listeners": [
+                        {
+                            "name": "eigen-example-nl",
+                            "hostname": "eigen.example.nl",
+                            "port": 443,
+                            "tls_secret_name": "prod-api-provided-tls",
+                            "passthrough": False,
+                        },
+                        {
+                            "name": "door-example-nl",
+                            "hostname": "door.example.nl",
+                            "port": 443,
+                            "passthrough": True,
+                        },
+                    ],
+                },
+            ],
+        },
+    ),
+    (
+        # The Let's Encrypt Issuer with the gateway solver instead of the ingress solver.
+        "issuer-letsencrypt-gateway",
+        "issuer-letsencrypt.yaml.jinja",
+        {
+            "issuer_name": "letsencrypt-example-nl-prod",
+            "issuer_secret_name": "letsencrypt-example-nl-prod-key",
+            "contact_email": "rig-platform@rijksoverheid.nl",
+            "staging": False,
+            "namespace": "rig-myproject",
+            "gateway": {
+                "name": "rig-gateway",
+                "namespace": "rig-gateway",
+                "http_listener": {"name": "http", "port": 80},
+            },
+        },
+    ),
     # --- pvc.yaml.jinja (persistent-storage) -----------------------------------
     (
         "pvc-persistent",

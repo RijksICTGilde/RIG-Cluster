@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "acme-http-productie-network-policy"
+  namespace: "rig-golden-kaal"
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  ingress:
+    # from_selector is verplicht: een policy zonder from-blok laat elke bron in het
+    # cluster toe, en dat is nooit de bedoeling van een aanroeper die hem vergeet.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "envoy-gateway-system"
+          podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-name: "rig-gateway"
+              gateway.envoyproxy.io/owning-gateway-namespace: "rig-gateway"
+      ports:
+        - port: 8089
+          protocol: TCP
+  policyTypes:
+    - Ingress

@@ -232,6 +232,39 @@ async def test_get_namespaced_resource_is_none_when_the_result_is_not_an_object(
         )
 
 
+async def test_get_cluster_resources_returns_the_parsed_items(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ('{"items": [{"metadata": {"name": "nginx"}}]}', "", 0)
+
+        resources = await connector.get_cluster_resources("ingressclass")
+
+        assert resources == [{"metadata": {"name": "nginx"}}]
+        args = mock_run_cmd.call_args[0][0]
+        assert args == ["get", "ingressclass", "-o", "json"]
+
+
+async def test_get_cluster_resources_is_none_on_a_failed_read(connector):
+    """None and not an empty list: a failed read may never pass as 'there are none'."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): ingressclasses is forbidden", 1)
+
+        assert await connector.get_cluster_resources("ingressclass") is None
+
+
+async def test_get_cluster_resources_is_none_on_unparseable_json(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("not json", "", 0)
+
+        assert await connector.get_cluster_resources("ingressclass") is None
+
+
+async def test_get_cluster_resources_drops_non_object_items(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ('{"items": [{"metadata": {"name": "nginx"}}, "not-an-object"]}', "", 0)
+
+        assert await connector.get_cluster_resources("ingressclass") == [{"metadata": {"name": "nginx"}}]
+
+
 async def test_apply_labels_to_resource_sets_all_labels_in_one_call(connector):
     """RC-316: namespace creation sets managed-by and Pod Security labels together."""
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:

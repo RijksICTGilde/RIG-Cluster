@@ -1600,6 +1600,23 @@ class KubectlConnector:
             return None
         return resource if isinstance(resource, dict) else None
 
+    async def get_cluster_resources(self, resource_type: str) -> list[dict[str, Any]] | None:
+        """Every resource of a cluster-scoped type, or ``None`` when the read itself failed.
+
+        None and not an empty list: 'could not look' must never read as 'there are none'.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(["get", resource_type, "-o", "json"])
+        if code != 0:
+            logger.warning(f"Could not list {resource_type}: {stderr}")
+            return None
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse the {resource_type} listing: {e}")
+            return None
+        items = parsed.get("items", []) if isinstance(parsed, dict) else []
+        return [item for item in items if isinstance(item, dict)]
+
     async def get_resources_by_label(
         self, resource_type: str, namespace: str, label_selector: str
     ) -> list[dict[str, Any]]:
