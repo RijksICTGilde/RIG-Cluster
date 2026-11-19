@@ -78,6 +78,16 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingressclasses]
     verbs: [get, list]
+  # Dezelfde console in gateway-stand, plus de routes die OPI per deployment uitrolt.
+  # Alleen op dit clustertype: ODCN blijft op Ingress.
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes, tlsroutes, listenersets]
+    verbs: [create, get, list, delete, patch]
+  # Lezen, niet schrijven: de gedeelde Gateway komt van de Taskfile. De guard van
+  # POST /api/v2/admin/projects/:reprocess-all leest zijn conditie.
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gateways]
+    verbs: [get]
   # Lezen, niet schrijven: ArgoCD beheert het netwerkbeleid. De verwijderroute telt een
   # namespace ermee leeg voordat hij hem weghaalt; zonder deze regel bleef die inventaris
   # onvolledig ("1 of 4 types could not be listed"). Op productie geeft Capsule dit al.

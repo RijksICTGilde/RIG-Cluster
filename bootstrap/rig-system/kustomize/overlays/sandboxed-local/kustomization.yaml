@@ -27,6 +27,12 @@ resources:
 
 components:
 - ../../components/sops-plugin
+# DE STAND VAN DE ROUTING op dit cluster, voor het portaal en ArgoCD: een van de twee
+# componenten, nooit beide. De andere twee regels van de wissel staan in
+# infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml en in
+# CLUSTER_CONFIG["sandboxed-local"]["ingress"]["routing"]; task sandbox:routing-apply
+# brengt een draaiend cluster naar deze stand. Zie docs/sandbox/routing-wisselen.md.
+- ../../components/sandbox-routing/ingress
 
 patches:
   # NB: de sops-plugin component doet `op: replace` op /spec/repo — repo-instellingen

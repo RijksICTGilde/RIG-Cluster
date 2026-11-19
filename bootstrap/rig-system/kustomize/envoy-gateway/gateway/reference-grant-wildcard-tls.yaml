@@ -1,0 +1,14 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: rig-gateway-wildcard-tls
+  namespace: rig-system
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: rig-gateway
+  to:
+    - group: ""
+      kind: Secret
+      name: sandbox-wildcard-tls

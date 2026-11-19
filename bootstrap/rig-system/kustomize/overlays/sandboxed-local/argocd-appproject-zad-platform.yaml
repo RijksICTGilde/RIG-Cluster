@@ -9,6 +9,11 @@
 # "resource :ServiceAccount is not permitted in project zad-platform".
 # Beide lijsten volgen hun eigen cluster; een nieuwe soort laat de sync hierop vallen met
 # een duidelijke melding.
+#
+# HTTPRoute staat er in beide standen van de routing in (RC-510): in gateway-stand rendert
+# de clusterbuild HTTPRoutes in plaats van Ingresses, en een soort die hier ontbreekt
+# weigert de HELE sync. In ingress-stand staat de soort hier dus zonder dat er een
+# HTTPRoute is, en dat laat niets extra toe.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -45,6 +50,8 @@ spec:
       kind: Ingress
     - group: networking.k8s.io
       kind: NetworkPolicy
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
     - group: monitoring.coreos.com
       kind: PodMonitor
     - group: postgresql.cnpg.io

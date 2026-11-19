@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De gateway-stand van de platformdiensten in rig-system: een HTTPRoute aan de listener
+# https van de gedeelde Gateway in plaats van een Ingress.
+resources:
+- httproute-keycloak.yaml
+- httproute-forgejo.yaml
+- httproute-minio.yaml
+- httproute-prometheus.yaml
+- httproute-registry.yaml
+
+# De Ingresses van dezelfde diensten eruit, zodat de stand ook echt een keuze is en er
+# geen twee ingangen naast elkaar staan.
+patches:
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: keycloak
+      namespace: rig-system
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: forgejo
+      namespace: rig-system
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: minio
+      namespace: rig-system
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: prometheus
+      namespace: rig-system
+- patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: rig-registry
+      namespace: rig-system

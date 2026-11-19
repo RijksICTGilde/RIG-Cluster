@@ -90,7 +90,7 @@ spec:
       kinds: [Ingress, NetworkPolicy]
       clusters: ["*"]
     - apiGroups: [gateway.networking.k8s.io]
-      kinds: [Gateway, HTTPRoute]
+      kinds: [Gateway, HTTPRoute, TLSRoute, ListenerSet, ReferenceGrant]
       clusters: ["*"]
     - apiGroups: [policy]
       kinds: [PodDisruptionBudget]

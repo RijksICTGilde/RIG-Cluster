@@ -1,0 +1,19 @@
+# De platformdiensten hebben verzoeken die lang stil kunnen liggen: een git push naar
+# Forgejo, een image push naar de registry, de log-streams van OPI. Envoy kapt een stream
+# standaard na 5 minuten zonder activiteit af; nginx stond hier op 600 s.
+#
+# Een vendor-policy van Envoy Gateway in plaats van iets uit de Gateway API zelf: die kent
+# geen idle-timeout. Op de Gateway en niet per route, zodat er een plek is waar dit staat.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: rig-gateway-timeouts
+  namespace: rig-gateway
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: rig-gateway
+  timeout:
+    http:
+      streamIdleTimeout: 1h

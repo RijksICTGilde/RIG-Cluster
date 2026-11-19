@@ -26,6 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
 CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
+# De globale var SANDBOX_ROUTING leest de routing-stand hieruit, zie
+# docs/sandbox/routing-wisselen.md.
+SANDBOX_OVERLAY_KUSTOMIZATION = Path("bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml")
 
 STUB_TOOLS = (
     "docker",
@@ -55,7 +58,8 @@ def boom(tmp_path: Path) -> Path:
     Git hoort erbij: de globale var SANDBOX_OM_TAG leest de commit, en zonder repo valt elke
     taak om voordat hij aan zijn eigen weigering komt. Hij rekent dat uit in
     `scripts/bron-tag.sh`, en de CalVer-tag van een image in `scripts/calver-tag.sh`, dus
-    die twee gaan om dezelfde reden mee.
+    die twee gaan om dezelfde reden mee. SANDBOX_ROUTING leest de kustomization van de
+    sandbox-overlay, dus die gaat ook mee.
     """
     if shutil.which("bash") is None or shutil.which("git") is None:
         pytest.skip("bash of git ontbreekt")
@@ -63,6 +67,8 @@ def boom(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
     for script in (BRON_TAG, CALVER_TAG):
         shutil.copy(script, tmp_path / "scripts" / script.name)
+    (tmp_path / SANDBOX_OVERLAY_KUSTOMIZATION.parent).mkdir(parents=True)
+    shutil.copy(REPO_ROOT / SANDBOX_OVERLAY_KUSTOMIZATION, tmp_path / SANDBOX_OVERLAY_KUSTOMIZATION)
     # De env-bestanden van de twee clusters die er nog zijn, zodat select-cluster een
     # geldige keuze echt kan afmaken. Niet .env-taskfile-current: die hoort te ontbreken.
     for naam in (".env-taskfile-odcn-production", ".env-taskfile-sandboxed-local"):

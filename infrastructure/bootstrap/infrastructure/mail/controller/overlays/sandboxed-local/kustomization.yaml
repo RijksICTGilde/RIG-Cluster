@@ -17,6 +17,9 @@ resources:
 # upstream de mailserver van de Rijksoverheid en heeft een sink niets te zoeken.
 components:
   - ../../../sink/as-upstream
+  # DE STAND VAN DE ROUTING voor de mailsink: een van de twee, nooit beide. Zie
+  # docs/sandbox/routing-wisselen.md.
+  - ../../../../routing/mailsink-ingress
 
 patches:
   # Op dit cluster draait de gedeelde PostgreSQL in rig-system, niet in

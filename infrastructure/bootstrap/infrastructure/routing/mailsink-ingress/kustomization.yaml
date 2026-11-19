@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De ingress-stand van de mailsink in rig-ron. Leeg om dezelfde reden als
+# ../ingress/kustomization.yaml: de Ingress staat al in de mail-overlay.
+
+# Geen resources: zie hierboven.
+resources: []

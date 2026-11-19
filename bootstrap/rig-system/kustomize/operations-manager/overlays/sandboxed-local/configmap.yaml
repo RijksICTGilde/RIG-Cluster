@@ -85,12 +85,15 @@ data:
 
     PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
 
-    # ingress-nginx is hier de enige ingang en zet X-Forwarded-For op $remote_addr
-    # (nergens een use-forwarded-headers, dus de default), dus er is precies een
-    # vertrouwde hop en de inkomende header telt niet mee. Zonder dit telt de rem op het
-    # peer-adres, en dat is bij elk extern verzoek de ingress-pod: een emmer voor alle
-    # clients samen. Gemeten op de sandbox: hops=0 gaf 10.244.0.247 (de ingress-pod),
-    # hops=1 geeft het adres dat de ingress ziet.
+    # De ingang van dit cluster (ingress-nginx of de Envoy-proxy van de gedeelde Gateway,
+    # zie docs/sandbox/routing-wisselen.md) is de enige, en voegt een hop aan
+    # X-Forwarded-For toe: nginx zet de header op $remote_addr (nergens een
+    # use-forwarded-headers, dus de default), Envoy hangt het peer-adres achter een
+    # eventuele inkomende header. In beide standen is er dus precies een vertrouwde hop en
+    # telt de inkomende header niet mee. Zonder dit telt de rem op het peer-adres, en dat
+    # is bij elk extern verzoek de proxy-pod: een emmer voor alle clients samen. Gemeten op
+    # de sandbox in ingress-stand: hops=0 gaf 10.244.0.247 (de ingress-pod), hops=1 geeft
+    # het adres dat de ingress ziet.
     TRUSTED_PROXY_HOPS=1
 
     LOG_TO_FILE=false

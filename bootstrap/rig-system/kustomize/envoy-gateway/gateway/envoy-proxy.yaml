@@ -1,0 +1,42 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: rig-gateway
+  namespace: rig-gateway
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      # Vaste naam: de CoreDNS-rewrite van sandbox:configure-coredns heeft een vast doel
+      # nodig, en de naam die Envoy Gateway zelf kiest draagt een hash van de Gateway.
+      # ClusterIP in plaats van de default LoadBalancer: kind heeft geen loadbalancer, en
+      # het verkeer komt binnen via de hostPort hieronder.
+      envoyService:
+        name: rig-gateway
+        type: ClusterIP
+      envoyDeployment:
+        pod:
+          nodeSelector:
+            ingress-ready: "true"
+        # kind mapt poort 80 en 443 van de node met label ingress-ready naar de host
+        # (bootstrap/sandbox/kind-config.yaml), dus de proxy moet daar met een hostPort
+        # op zitten, net als de nginx-controller. 10080 en 10443 zijn de containerpoorten
+        # die Envoy Gateway voor een listener op 80 en 443 kiest: het schuift een
+        # privileged poort met 10000 op, zodat de container geen CAP_NET_BIND_SERVICE nodig heeft.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: envoy
+                      ports:
+                        - name: http
+                          containerPort: 10080
+                          hostPort: 80
+                          protocol: TCP
+                        - name: https
+                          containerPort: 10443
+                          hostPort: 443
+                          protocol: TCP
