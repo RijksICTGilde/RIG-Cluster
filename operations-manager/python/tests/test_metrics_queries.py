@@ -103,14 +103,17 @@ class TestTimeseriesPerWorkload:
 class VolumeBackend(FakeBackend):
     """A backend that answers the two volume queries from fixed series."""
 
-    def __init__(self, used: list[dict[str, Any]], capacity: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, used: list[dict[str, Any]], capacity: list[dict[str, Any]], last_known: list[dict[str, Any]] | None = None
+    ) -> None:
         super().__init__()
         self._used = used
         self._capacity = capacity
+        self._last_known = last_known or []
 
     async def query_batch(self, queries: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
         self.queries.append(queries)
-        return {"capacity": self._capacity}
+        return {"capacity": self._capacity, "last_known": self._last_known}
 
     async def query_range_batch(
         self, queries: dict[str, str], start_time: Any, end_time: Any, step: str
@@ -155,6 +158,42 @@ class TestPvcStorage:
 
         assert result["data"]["capacity_gb"] == 0.0
         assert result["data"]["critical_threshold_gb"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_an_unmounted_claim_is_flat_at_its_last_known_usage(self) -> None:
+        gb = 1024 * 1024 * 1024
+        backend = VolumeBackend(
+            used=[],
+            capacity=[{"metric": {"persistentvolumeclaim": "asleep"}, "value": [1000, str(10 * gb)]}],
+            last_known=[{"metric": {"persistentvolumeclaim": "asleep"}, "value": [1000, str(2 * gb)]}],
+        )
+
+        result = await pvc_storage(backend, "rig-demo", TimeWindow())
+
+        assert [point["value"] for point in result["asleep"]["values"]] == [2.0, 2.0]
+        assert result["asleep"]["capacity_gb"] == 10.0
+
+    @pytest.mark.asyncio
+    async def test_a_measured_claim_ignores_its_last_known_usage(self) -> None:
+        backend = VolumeBackend(
+            used=[{"metric": {"persistentvolumeclaim": "data"}, "values": [[1000, "0"]]}],
+            capacity=[],
+            last_known=[{"metric": {"persistentvolumeclaim": "data"}, "value": [1000, "999"]}],
+        )
+
+        result = await pvc_storage(backend, "rig-demo", TimeWindow())
+
+        assert result["data"]["timestamps"] == [1000]
+
+    @pytest.mark.asyncio
+    async def test_the_capacity_comes_from_the_claim_not_from_kubelet(self) -> None:
+        backend = VolumeBackend(used=[], capacity=[])
+
+        await pvc_storage(backend, "rig-demo", TimeWindow())
+
+        assert backend.queries[1]["capacity"] == (
+            'kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="rig-demo"}'
+        )
 
     @pytest.mark.asyncio
     async def test_an_unavailable_backend_measures_nothing(self) -> None:
