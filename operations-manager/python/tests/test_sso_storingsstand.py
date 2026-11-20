@@ -95,7 +95,7 @@ def test_the_feature_flag_hides_the_routes_before_any_login(method: str, path: s
     with patch.object(settings, "SSO_OUTAGE_ENABLED", enabled):
         response = _client().request(method, path)
 
-    assert (response.status_code == 404) is not enabled
+    assert response.status_code in ((401, 403) if enabled else (404,))
 
 
 @pytest.mark.parametrize("enabled", [False, True])

@@ -14,8 +14,9 @@ extends: sso-support
 #
 # verifyEmail is hier expres WEL anders dan in sso-support, en dat is het besluit:
 #
-#   - Op productie draagt deze realm geen lokale accounts. Iedereen komt binnen via SSO
-#     Rijk en is via trustEmail al geverifieerd, dus verifieren zou daar niets doen.
+#   - Op productie komt bijna iedereen binnen via SSO Rijk en is via trustEmail al
+#     geverifieerd. De paar lokale beheeraccounts (de terugval als SSO Rijk uitvalt) worden
+#     met de hand en al bevestigd aangemaakt, dus verifieren zou daar niets doen.
 #   - Op de sandbox draagt hij er precies EEN: de beheerder uit
 #     opi/configs/projects/operations-manager-local.yaml. Die komt bij aanmaak al bevestigd
 #     binnen, omdat zijn adres geen postbus is (setup_operations_realm geeft
@@ -26,7 +27,7 @@ extends: sso-support
 realms:
   - name: "{{ project_realm_name }}"
     # De uitsluiting na te veel mislukte inlogpogingen. Sinds RC-496 schrijft OPI dit veld
-    # ook op een BESTAANDE realm, en de noodweg van de platformbeheerder leunt erop.
+    # ook op een BESTAANDE realm, en de lokale beheeraccounts in deze realm leunen erop.
     bruteForceProtected: true
     # De mails van deze realm komen uit Keycloaks eigen mailthema. Het thema
     # `nl-design-system` levert er ook een, maar daarin staat alleen de magic-link-mail van

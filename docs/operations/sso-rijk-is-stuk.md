@@ -57,6 +57,8 @@ blijven doorlopen: een browser-flow bepaalt alleen wat een NIEUWE login doet.
   Het inlogscherm zegt niets over een onbekend adres, dus "ik krijg niets" kan ook betekenen
   dat het adres geen account heeft of geen gekoppelde SSO Rijk-identiteit.
 - **Je hebt geen lokaal account in `operations-manager`.** Dat is een handstap per omgeving en
-  geen onderdeel van een release: maak het in de beheerconsole van Keycloak aan, met een
-  geverifieerd mailadres dat in ZAD platformbeheerder is. Richt het in voordat je het nodig
-  hebt.
+  geen onderdeel van een release; richt het in voordat je het nodig hebt. Maak het in de
+  beheerconsole van Keycloak aan met **een ander mailadres dan je SSO Rijk-account**: dat
+  adres bestaat al als gebruiker in deze realm, en een wachtwoord op die gebruiker geeft hem
+  een vaste inlogweg buiten SSO Rijk om. Zet het nieuwe adres in ZAD als platformbeheerder,
+  zet Email verified aan en richt een OTP in.
