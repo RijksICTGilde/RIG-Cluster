@@ -115,7 +115,8 @@ def _usage_expressions(selector: str) -> dict[str, str]:
         "memory_limit_bytes": _reserved(selector, "limits", "memory"),
         "memory_request_bytes": _reserved(selector, "requests", "memory"),
         "storage_used_bytes": f"kubelet_volume_stats_used_bytes{{{selector}}}",
-        "storage_capacity_bytes": f"kubelet_volume_stats_capacity_bytes{{{selector}}}",
+        # Not kubelet_volume_stats_capacity_bytes: kubelet only reports PVCs a running pod mounts.
+        "storage_capacity_bytes": f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}",
     }
 
 

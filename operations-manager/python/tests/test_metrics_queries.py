@@ -261,6 +261,9 @@ class TestNamespaceQueries:
             f" * on (namespace, pod) group_left () {phase})"
         )
         assert queries["storage_used_bytes"] == f"sum(kubelet_volume_stats_used_bytes{{{selector}}})"
+        assert queries["storage_capacity_bytes"] == (
+            f"sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}})"
+        )
         assert queries["pod_count"] == f"count(kube_pod_info{{{selector}}})"
 
     def test_the_per_namespace_variant_only_adds_the_grouping(self) -> None:
