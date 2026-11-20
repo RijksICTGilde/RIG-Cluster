@@ -260,7 +260,12 @@ class TestNamespaceQueries:
             f'sum(kube_pod_container_resource_limits{{{selector},resource="memory"}}'
             f" * on (namespace, pod) group_left () {phase})"
         )
-        assert queries["storage_used_bytes"] == f"sum(kubelet_volume_stats_used_bytes{{{selector}}})"
+        assert queries["storage_used_bytes"] == (
+            "sum(max by (namespace, persistentvolumeclaim) "
+            f"(last_over_time(kubelet_volume_stats_used_bytes{{{selector}}}[30d]))"
+            " and on (namespace, persistentvolumeclaim) "
+            f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}})"
+        )
         assert queries["storage_capacity_bytes"] == (
             f"sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}})"
         )

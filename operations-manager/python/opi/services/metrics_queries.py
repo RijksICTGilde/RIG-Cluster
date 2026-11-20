@@ -114,10 +114,17 @@ def _usage_expressions(selector: str) -> dict[str, str]:
         "memory_bytes": f'container_memory_working_set_bytes{{{selector},container!=""}}',
         "memory_limit_bytes": _reserved(selector, "limits", "memory"),
         "memory_request_bytes": _reserved(selector, "requests", "memory"),
-        "storage_used_bytes": f"kubelet_volume_stats_used_bytes{{{selector}}}",
+        "storage_used_bytes": _last_known_volume_usage(selector),
         # Not kubelet_volume_stats_capacity_bytes: kubelet only reports PVCs a running pod mounts.
         "storage_capacity_bytes": f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}",
     }
+
+
+def _last_known_volume_usage(selector: str) -> str:
+    """Usage per existing PVC, also while unmounted: kubelet only measures mounted volumes."""
+    usage = f"last_over_time(kubelet_volume_stats_used_bytes{{{selector}}}[30d])"
+    existing = f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}"
+    return f"max by (namespace, persistentvolumeclaim) ({usage}) and on (namespace, persistentvolumeclaim) {existing}"
 
 
 def _reserved(selector: str, kind: str, resource: str) -> str:
