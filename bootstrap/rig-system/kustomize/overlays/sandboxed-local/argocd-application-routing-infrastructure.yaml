@@ -1,0 +1,41 @@
+# De ingang van de sandbox, in de stand die in git staat. Een wissel is een regel in
+# infrastructure/bootstrap/routing/sandboxed-local/kustomization.yaml plus task
+# sandbox:sync; deze Application zet de nieuwe stand neer en prunet de oude.
+#
+# Alleen namespaced resources: de routes, de Gateway van dit cluster en de controller die
+# hostPort 80 en 443 vasthoudt. De CRD's, de cluster-RBAC, de IngressClass, de GatewayClass
+# en de webhooks van de twee controllers zijn platform en komen niet via ArgoCD; het
+# AppProject zad-routing heeft daarom clusterResourceWhitelist: [].
+#
+# De ingebouwde kustomize en niet de CMP-plugin: die forceert `namespace: <destination>` op
+# zijn hele build, en deze stand raakt vier namespaces. De build zet overal zelf een
+# namespace, dus de destination hieronder verandert niets.
+#
+# ServerSideApply: dezelfde vorm als de eenmalige apply van task sandbox:setup, die de stand
+# op een vers cluster neerzet voordat ArgoCD bestaat.
+#
+# GEEN PruneLast: beide standen binden hostPort 80 en 443 van de kind-node, dus de pod van
+# de nieuwe stand blijft Pending tot de oude weg is. ArgoCD voert binnen een sync eerst de
+# prunes uit en daarna de applies, en met PruneLast zou dat omdraaien: dan wacht de prune
+# op een gezonde nieuwe stand die nooit gezond wordt.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: routing-infrastructure
+  namespace: rig-system
+spec:
+  project: zad-routing
+  source:
+    repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+    path: bootstrap/routing/sandboxed-local
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

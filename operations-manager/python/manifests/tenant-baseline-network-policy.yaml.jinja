@@ -3,6 +3,12 @@ apiVersion: networking.k8s.io/v1
 metadata:
   name: {{ name | yaml_scalar }}
   namespace: {{ namespace | yaml_scalar }}
+{% if prune_disabled %}
+  annotations:
+    {# Namespace-breed en dus van de project-applicatie: zonder dit verwijdert de
+       deployment-applicatie ze zodra ze uit haar eigen map verdwijnen (RC-503). #}
+    argocd.argoproj.io/sync-options: Prune=false
+{% endif %}
 spec:
   # Per-deployment policy: selects only pods of this deployment so that
   # multiple deployments in the same project namespace stay isolated from

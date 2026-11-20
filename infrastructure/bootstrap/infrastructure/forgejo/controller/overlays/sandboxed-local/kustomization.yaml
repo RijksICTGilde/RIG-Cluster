@@ -10,7 +10,13 @@ patches:
     target:
       kind: StatefulSet
       name: forgejo
-  - path: ingress-patch.yaml
-    target:
+  # De Ingress uit de basis gaat eruit: de ingang van de sandbox staat in een stand, en
+  # alle Ingresses van die stand staan bij elkaar in
+  # infrastructure/bootstrap/routing/base/ingress. Zie docs/sandbox/routing-wisselen.md.
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
       kind: Ingress
-      name: forgejo
+      metadata:
+        name: forgejo
+        namespace: rig-system

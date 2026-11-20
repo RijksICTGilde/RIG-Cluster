@@ -296,6 +296,23 @@ class StatusError(BaseModel):
     timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 
+class StatusWarning(BaseModel):
+    """A resource ArgoCD does not roll out because its kind is not on the allowlist.
+
+    Not an error: the rest of the deployment is rolled out and ArgoCD keeps the app Synced
+    and Healthy. See ``features/argocd-resource-allowlist.md``.
+    """
+
+    type: str = Field(..., description="The ArgoCD condition type, e.g. 'ExcludedResourceWarning'")
+    severity: str = Field(..., description="Always 'warning': the rest of the deployment is rolled out")
+    category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
+    group: str = Field(..., description="API group of the excluded resource; empty for a core kind")
+    kind: str = Field(..., description="Kubernetes kind of the excluded resource, e.g. 'HTTPRoute'")
+    name: str = Field(..., description="Name of the excluded resource")
+    message: str = Field(..., description="Nederlandse melding voor de gebruiker")
+    raw_message: str = Field(..., description="Raw ArgoCD condition message, for automation and correlation")
+
+
 class StatusDeviation(BaseModel):
     """A resource that keeps the deployment away from Synced/Healthy, with the reason.
 
@@ -509,6 +526,14 @@ class DeploymentDetail(BaseModel):
         description=(
             "Cluster-side error entries; populated only when status indicates a problem "
             "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
+        ),
+    )
+    warnings: list[StatusWarning] = Field(
+        default_factory=list,
+        description=(
+            "Resources die het cluster niet uitrolt omdat hun kind niet op de allowlist staat. "
+            "Gevuld bij elke status, ook een gezonde: ArgoCD houdt de app Synced en Healthy "
+            "terwijl het object ontbreekt."
         ),
     )
     deviations: list[StatusDeviation] = Field(

@@ -89,6 +89,7 @@ from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
 from .router_otp import otp_router
+from .router_platform_admin import platform_admin_router
 from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
@@ -124,6 +125,7 @@ web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
+web_router.include_router(platform_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(shared_services_router)
 web_router.include_router(rolmatrix_router)
@@ -1648,12 +1650,19 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The ungranted approvals per deployment, asked of the catalog, where each service
         # writes its own notice, so this page holds no domain knowledge.
         from opi.services.approvals import collect_deployment_approval_notices
+        from opi.services.catalog.publish_on_web.urls import address_approval_notices
 
         approval_notices: dict[str, list[dict[str, Any]]] = {}
+        # The subset about the web ADDRESS, for the notice under the public links; the
+        # service that owns the address decides which notices those are.
+        address_notices: dict[str, list[dict[str, Any]]] = {}
         for deployment in project_details["deployments"]:
             notices = collect_deployment_approval_notices(project_data_decrypted, deployment)
             if notices:
                 approval_notices[deployment.get("name", "")] = notices
+                address = address_approval_notices(notices)
+                if address:
+                    address_notices[deployment.get("name", "")] = address
 
         backups_available = False
         if not map_tab:
@@ -1848,6 +1857,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
                 "approval_notices": approval_notices,
+                "address_approval_notices": address_notices,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
@@ -1953,6 +1963,7 @@ async def _fetch_argocd_deployment_status(
         conditions_to_errors,
         describe_image_pull_failures,
         gather_deployment_errors,
+        gather_excluded_resources,
         gather_sync_deviations,
         summarize_component_pods,
     )
@@ -2056,6 +2067,9 @@ async def _fetch_argocd_deployment_status(
             "operation_duration": operation_duration,
             "operation_is_stuck": is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS),
             "errors": errors,
+            # A resource ArgoCD does not roll out, while it keeps the app Synced and Healthy.
+            # Read on both branches, at no extra API call.
+            "excluded_resources": gather_excluded_resources(status_data),
             "deviations": deviations,
             "pods": pod_summaries,
             # Costs no cluster call: the observer counted this cluster at most a minute ago.

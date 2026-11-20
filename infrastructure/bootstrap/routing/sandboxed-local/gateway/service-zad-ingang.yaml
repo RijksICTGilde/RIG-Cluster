@@ -1,0 +1,11 @@
+# De vaste naam van de ingang, waar de CoreDNS-rewrite van *.sandbox.rijksapp.dev naar
+# wijst. Elke stand zet hem naar zijn eigen controller-Service, zodat de rewrite zelf
+# nooit meer verandert.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zad-ingang
+  namespace: rig-system
+spec:
+  type: ExternalName
+  externalName: rig-gateway.envoy-gateway-system.svc.cluster.local

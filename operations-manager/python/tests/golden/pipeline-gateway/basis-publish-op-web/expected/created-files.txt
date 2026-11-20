@@ -1,0 +1,6 @@
+web-deployment.yaml
+web-service.yaml
+web-httproute.yaml
+web-httproute-api.yaml
+web-platform-secret.yaml
+productie-tenant-baseline-network-policy.yaml

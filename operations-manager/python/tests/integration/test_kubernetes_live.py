@@ -368,6 +368,19 @@ async def test_get_resources_by_label_selects_only_what_matches(
     assert await connector.get_resources_by_label("configmap", namespace, "zadlive/kies=nee") == []
 
 
+async def test_get_cluster_resources_lists_every_resource_of_a_cluster_scoped_type(
+    connector: KubectlConnector, namespaces: tuple[str, str]
+) -> None:
+    """Cluster-scoped and not read through get_resources_by_label: a namespace has no owning
+    namespace of its own. This is the read the reprocess-all guard uses for IngressClass."""
+    namespace, other_namespace = namespaces
+
+    found = await connector.get_cluster_resources("namespace")
+
+    names = {item["metadata"]["name"] for item in found}
+    assert {namespace, other_namespace} <= names
+
+
 async def test_delete_resource_and_wait_for_resource_absence_confirm_the_resource_is_gone(
     connector: KubectlConnector, kubectl: Kubectl, namespaces: tuple[str, str]
 ) -> None:

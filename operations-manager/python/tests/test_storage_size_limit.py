@@ -1,17 +1,20 @@
-"""De bovengrens op opslag: wat er binnenkomt wordt begrensd, wat er staat niet.
+"""Het bereik van een opslagmaat: wat er binnenkomt wordt begrensd, wat er staat niet.
 
 Tot nu toe was de keuzelijst van het formulier de enige rem, en een keuzelijst is geen
 regel: het size-editable had een ``values_provider`` en geen validator, het JSON-schema
-typeerde ``size`` als een kale string, en de config-API keek er niet naar. Een mount van
-10Gi liep zo door naar een PVC.
+typeerde ``size`` als een kale string, en de config-API keek er niet naar.
 
 Deze test legt de twee kanten van het besluit vast:
 
-1. Wat een client of formulier INSTUURT wordt begrensd op de grootste maat die we
-   aanbieden (``STORAGE_SIZES``).
+1. Wat een client of formulier INSTUURT moet tussen ``MIN_STORAGE_SIZE`` en
+   ``MAX_STORAGE_SIZE`` liggen. De reeks ``STORAGE_SIZES`` is wat het formulier aanbiedt,
+   niet de regel: een maat ertussenin mag ook.
 2. Wat AL IN een projectbestand staat wordt met rust gelaten. Anders wordt een ouder
    project met een grotere mount een bestand dat niet meer op te slaan is, en krimpen
    kan een PVC niet, dus de eigenaar zou er niet eens aan kunnen voldoen.
+
+Of een maat boven 2Gi ook ECHT gerenderd wordt, hangt aan de goedkeuring; dat staat in
+``tests/test_storage_size_approval.py``.
 """
 
 from __future__ import annotations
@@ -26,6 +29,8 @@ from opi.manager.pvc_manager import PVCManager
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SIZE_EDITABLE
 from opi.services.catalog.shared.storage import (
     DEFAULT_STORAGE_SIZE,
+    MAX_STORAGE_SIZE,
+    MIN_STORAGE_SIZE,
     STORAGE_SIZES,
     StorageConfig,
     StorageEntry,
@@ -35,6 +40,7 @@ from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SIZE_EDITAB
 from opi.services.project_validation import STORED_PROJECT_CONTEXT
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -55,14 +61,15 @@ class TestDeRegelZelf:
         formulier iets dat de API weigert."""
         assert check_storage_size(size) == size
 
-    def test_een_maat_onder_het_plafond_mag_ook_als_hij_niet_in_de_lijst_staat(self) -> None:
-        """De regel is een plafond, geen opsomming: 512Mi schaadt niets en een bestaand
-        project dat het gebruikt moet gewoon door de API bewerkt kunnen worden."""
-        assert check_storage_size("512Mi") == "512Mi"
+    @pytest.mark.parametrize("size", ["512Mi", "3Gi", "750Mi", MIN_STORAGE_SIZE, MAX_STORAGE_SIZE])
+    def test_elke_maat_binnen_het_bereik_mag_ook_buiten_de_reeks(self, size: str) -> None:
+        """The rule is a range, not an enumeration: 3Gi and 750Mi harm nothing, and an
+        existing project using one of them has to stay editable over the API."""
+        assert check_storage_size(size) == size
 
-    @pytest.mark.parametrize("size", ["10Gi", "2Gi", "1025Mi", "1T"])
-    def test_boven_het_plafond_wordt_geweigerd(self, size: str) -> None:
-        with pytest.raises(ValueError, match="groter dan het maximum"):
+    @pytest.mark.parametrize("size", ["40Mi", "0Mi", "51Gi", "1T"])
+    def test_buiten_het_bereik_wordt_geweigerd(self, size: str) -> None:
+        with pytest.raises(ValueError, match="buiten het bereik"):
             check_storage_size(size)
 
     @pytest.mark.parametrize("size", ["banaan", "", "1 gigabyte", "-5Mi"])
@@ -70,34 +77,31 @@ class TestDeRegelZelf:
         with pytest.raises(ValueError, match="Ongeldige opslaggrootte"):
             check_storage_size(size)
 
-    def test_nul_is_geen_maat(self) -> None:
-        with pytest.raises(ValueError, match="groter zijn dan nul"):
-            check_storage_size("0Mi")
-
 
 class TestDeApiWeg:
     """Het configmodel typeert de request-bodies van de config-endpoints, dus dit is de
     API-weg: de weigering valt op de grens, voordat er iets is opgeslagen."""
 
     def test_het_model_weigert_een_te_grote_mount(self) -> None:
-        with pytest.raises(ValidationError, match="groter dan het maximum"):
-            StorageEntry.model_validate(_entry("10Gi"))
+        with pytest.raises(ValidationError, match="buiten het bereik"):
+            StorageEntry.model_validate(_entry("60Gi"))
 
-    def test_het_model_noemt_de_beschikbare_maten(self) -> None:
-        with pytest.raises(ValidationError, match="50Mi, 100Mi, 250Mi, 500Mi, 1Gi"):
-            StorageEntry.model_validate(_entry("20Gi"))
+    def test_het_model_noemt_het_bereik(self) -> None:
+        with pytest.raises(ValidationError, match=f"{MIN_STORAGE_SIZE} tot en met {MAX_STORAGE_SIZE}"):
+            StorageEntry.model_validate(_entry("200Gi"))
 
     @pytest.mark.parametrize("service", [ServiceType.PERSISTENT_STORAGE, ServiceType.TEMP_STORAGE])
     def test_beide_opslagdiensten_zitten_achter_dezelfde_grens(self, service: ServiceType) -> None:
-        with pytest.raises(ValidationError, match="groter dan het maximum"):
-            get_service(service).validate_config([_entry("5Gi")])
+        with pytest.raises(ValidationError, match="buiten het bereik"):
+            get_service(service).validate_config([_entry("51Gi")])
 
-    def test_de_grens_staat_in_het_gepubliceerde_schema(self) -> None:
+    def test_het_bereik_staat_in_het_gepubliceerde_schema(self) -> None:
         """Een client leest het schemafragment; daar hoort de grens in te staan in plaats
         van dat hij hem uit een 422 moet afleiden."""
         beschrijving = StorageConfig.model_json_schema()["$defs"]["StorageEntry"]["properties"]["size"]["description"]
-        assert "1Gi" in beschrijving
-        assert all(size in beschrijving for size in STORAGE_SIZES)
+        assert MIN_STORAGE_SIZE in beschrijving
+        assert MAX_STORAGE_SIZE in beschrijving
+        assert "2Gi" in beschrijving
 
 
 class TestDeFormulierWeg:
@@ -108,9 +112,9 @@ class TestDeFormulierWeg:
         assert isinstance(editable.validator, StorageSizeValidator)
 
     def test_een_te_grote_waarde_levert_een_veldfout(self) -> None:
-        fouten = StorageSizeValidator().validate("10Gi")
+        fouten = StorageSizeValidator().validate("60Gi")
         assert len(fouten) == 1
-        assert "groter dan het maximum" in fouten[0]
+        assert "buiten het bereik" in fouten[0]
 
     def test_een_lege_waarde_is_niet_de_taak_van_deze_validator(self) -> None:
         assert StorageSizeValidator().validate("") == []
@@ -122,13 +126,13 @@ class TestBestaandeProjecten:
         """De poort die op elke opslag en elke reprocess draait mag een bestaand bestand
         niet alsnog afkeuren -- dat is de dp-bn7-fout: een validatiegat dat elke deploy
         van een project stil laat stranden."""
-        entry = StorageEntry.model_validate(_entry("10Gi"), context=STORED_PROJECT_CONTEXT)
-        assert entry.size == "10Gi"
+        entry = StorageEntry.model_validate(_entry("60Gi"), context=STORED_PROJECT_CONTEXT)
+        assert entry.size == "60Gi"
 
     @pytest.mark.parametrize("service", [ServiceType.PERSISTENT_STORAGE, ServiceType.TEMP_STORAGE])
     def test_de_bestandspoort_laat_bestaande_maten_staan(self, service: ServiceType) -> None:
-        config = get_service(service).validate_config([_entry("10Gi")], context=STORED_PROJECT_CONTEXT)
-        assert config.root[0].size == "10Gi"
+        config = get_service(service).validate_config([_entry("20Mi")], context=STORED_PROJECT_CONTEXT)
+        assert config.root[0].size == "20Mi"
 
     def test_de_vorm_wordt_ook_bij_bestaande_data_nog_gecontroleerd(self) -> None:
         """Meegeven dat iets al bestaat zet alleen het plafond opzij, niet de rest."""
@@ -139,11 +143,20 @@ class TestBestaandeProjecten:
 
 
 class TestEenLijst:
-    def test_de_keuzelijst_en_de_grens_komen_uit_dezelfde_bron(self) -> None:
-        """Twee lijsten die uit elkaar lopen is precies hoe een keuzelijst iets anders
-        gaat beloven dan de API accepteert."""
+    def test_de_keuzelijst_biedt_de_reeks_aan(self) -> None:
+        """Every size in the list has to pass the rule, or the form promises something the
+        API refuses."""
         keuzes = [str(option["value"]) for option in StorageSizeOptionsProvider().get_options()]
         assert keuzes == list(STORAGE_SIZES)
+
+    @pytest.mark.parametrize("opgeslagen", ["3Gi", MIN_STORAGE_SIZE])
+    def test_een_opgeslagen_maat_buiten_de_reeks_staat_als_eigen_waarde_in_de_lijst(self, opgeslagen: str) -> None:
+        """Without that choice the select offers a project on 3Gi nothing but shrinking, and
+        the save then refuses the form's own proposal."""
+        opties = StorageSizeOptionsProvider(opgeslagen).get_options()
+        assert opgeslagen in [str(optie["value"]) for optie in opties]
+        maten = [parse_k8s_memory_to_mi(str(optie["value"])) for optie in opties]
+        assert maten == sorted(maten)
 
     def test_elke_keuze_heeft_een_leesbaar_label(self) -> None:
         for option in StorageSizeOptionsProvider().get_options():

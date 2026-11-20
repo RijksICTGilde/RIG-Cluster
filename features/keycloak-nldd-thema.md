@@ -74,8 +74,9 @@ helften van `login.ftl`, die er wel op staat.
 
 ### Wat het thema NIET dekt
 
-- **Geen mailthema.** `emailTheme` blijft leeg; Keycloak levert zelf een `base/email` met
-  een Nederlandse bundel. Zie `keycloak-mail.md`.
+- **Bijna geen mailthema.** Het type `email` bestaat sinds RC-496, met een enkele mail erin:
+  de magic link van de storingsstand (`sso-rijk-uitwijk.md`). Alle andere post komt uit
+  Keycloaks eigen `base/email`, met zijn Nederlandse bundel. Zie `keycloak-mail.md`.
 - **Geen admin-thema.** De admin-console blijft die van Keycloak.
 - **De account-console** is de React-console van Keycloak. Het type `account` bestaat alleen
   omdat realms er met `accountTheme` naar wijzen, en is een dunne laag op `base`.

@@ -1,1 +1,2 @@
 nl.minbzk.rig.keycloak.authenticator.RequireClientRoleAuthenticatorFactory
+nl.minbzk.rig.keycloak.magiclink.MagicLinkAuthenticatorFactory

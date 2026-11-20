@@ -16,6 +16,8 @@ from opi.services.services_enums import ServiceType
 
 _SVC = ServiceType.IMAGE_REGISTRIES.value
 _REGISTRY = {"name": "code-overheid", "upstream": "code.overheid.nl/team"}
+_NAMESPACE_POSTGRES = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+_POSTGRES = ServiceType.POSTGRESQL_DATABASE.value
 
 
 def _project(registries: list[dict[str, Any]], *, component_registry: str | None = "code-overheid") -> dict[str, Any]:
@@ -96,6 +98,50 @@ class TestDeGrendel:
         voor = str(project)
         validate_registry_references(project)
         assert str(project) == voor
+
+
+class TestTheDatabaseCounts:
+    """The database points at a registry too, and fell outside the guard (RC-498).
+
+    Without counting it the project saves and only the processing breaks: ``infrastructure.py``
+    then raises a ``ValueError`` about a registry that is not there, and the whole project
+    falls over. Both services that ask for a cluster of their own come past the same route
+    (``get_dedicated_postgres_config``), so both are counted here.
+    """
+
+    def _with_database(self, registries: list[dict[str, Any]], service: str, **config: Any) -> dict[str, Any]:
+        project = _project(registries, component_registry=None)
+        project.setdefault("services", []).append({"name": service, "config": config})
+        return project
+
+    def test_only_the_database_still_points_at_it(self) -> None:
+        errors = validate_registry_references(
+            self._with_database([], _NAMESPACE_POSTGRES, image="ghcr.io/org/pg:17", registry="code-overheid")
+        )
+        assert len(errors) == 1
+        assert f"database ({_NAMESPACE_POSTGRES})" in errors[0]
+
+    def test_the_scope_project_variant_just_as_much(self) -> None:
+        errors = validate_registry_references(
+            self._with_database([], _POSTGRES, scope="project", registry="code-overheid")
+        )
+        assert len(errors) == 1
+        assert f"database ({_POSTGRES})" in errors[0]
+
+    def test_with_the_registry_present_nothing_is_wrong(self) -> None:
+        project = self._with_database([_REGISTRY], _NAMESPACE_POSTGRES, registry="code-overheid")
+        assert validate_registry_references(project) == []
+
+    def test_a_database_without_a_registry_holds_nothing_back(self) -> None:
+        project = self._with_database([], _NAMESPACE_POSTGRES, image="ghcr.io/org/pg:17")
+        assert validate_registry_references(project) == []
+
+    def test_the_save_route_refuses_it_too(self) -> None:
+        """After the example of ``test_de_laatste_registry_weghalen_overleeft_de_save_route_ook``:
+        the strip of the services section runs before the guard."""
+        project = self._with_database([], _NAMESPACE_POSTGRES, registry="code-overheid")
+        _strip_removed_services_from_components(project, {})
+        assert len(validate_registry_references(project)) == 1
 
 
 def test_de_grendel_hangt_aan_de_dienst() -> None:

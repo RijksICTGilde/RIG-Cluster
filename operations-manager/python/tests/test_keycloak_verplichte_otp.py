@@ -604,3 +604,33 @@ async def test_de_uitnodigingspagina_ziet_een_lokaal_account_achter_de_otp_flow(
 
     assert methoden["sso"] is True
     assert methoden["local"] is verwacht_lokaal
+
+
+# --- the realm of the operations manager --------------------------------------------
+
+PROJECT_FILES = Path(__file__).parent.parent / "opi" / "configs" / "projects"
+
+
+def _realm_template(project_file: str) -> str:
+    project = YAML().load((PROJECT_FILES / project_file).read_text())
+    return project["services"][0]["keycloak"]["config"]["template"]
+
+
+def test_production_and_staging_require_otp_on_the_operations_manager_realm() -> None:
+    """A local account there makes a platform administrator; the sandbox keeps its dev admin."""
+    assert _realm_template("operations-manager.yaml") == "operations-manager-realm-otp"
+    assert _realm_template("operations-manager-local.yaml") == "operations-manager-realm"
+
+
+def test_the_otp_variant_of_the_operations_manager_realm_binds_the_required_otp_flow() -> None:
+    handler = KeycloakYamlHandler(AsyncMock())
+    config = handler._load_yaml_resolving_extends(BLAUWDRUK_MAP / "operations-manager-realm-otp.yaml", ())
+
+    assert config["browserFlow"] == REQUIRED_OTP_BROWSER_FLOW
+    assert [flow["alias"] for flow in config["authenticationFlows"] if flow.get("requireOtp")] == [
+        REQUIRED_OTP_BROWSER_FLOW
+    ]
+    invite = next(c for c in config["clients"] if c["clientId"] == "{{ invite_client_id }}")
+    assert invite["browserFlowOverride"] == REQUIRED_OTP_BROWSER_FLOW
+    assert any(c["clientId"] == "{{ cli_client_id }}" for c in config["clients"])
+    assert config["realms"][0]["requiredActionDefaults"] == {CONFIGURE_TOTP: False}

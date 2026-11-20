@@ -49,9 +49,10 @@ PG_START_SCRIPT = "scripts/postgres-standalone-start.sh"
 #: dit pad, een verwijzing in commentaar niet.
 PG_START_IN_CONTAINER = "/zad/postgres-standalone-start.sh"
 #: Every place that runs the platform PostgreSQL startup script, with the proof per place:
-#: a mount path in docker-compose and Taskfile, a bash -c argument in conftest.
+#: a mount path in docker-compose, the script text as a bash -c argument in Taskfile and
+#: conftest. A bind mount cannot work from a session, which talks to the host's daemon.
 STARTS_PLATFORM_POSTGRES = {
-    "Taskfile.yaml": PG_START_IN_CONTAINER,
+    "Taskfile.yaml": f'bash -c "$(cat {{{{.ROOT_DIR}}}}/{PG_START_SCRIPT})"',
     "docker-compose.dev.yaml": PG_START_IN_CONTAINER,
     "operations-manager/python/tests/conftest.py": "ZAD_TEST_PG_START.read_text()",
 }
@@ -148,6 +149,29 @@ def test_the_platform_postgres_gets_the_opstart_it_needs() -> None:
     assert not zonder, (
         f"Deze plekken starten de PostgreSQL van het platform zonder {PG_START_SCRIPT}: {zonder}. "
         "De CNPG-image heeft geen ENTRYPOINT, dus hij start dan bash en eindigt direct."
+    )
+
+
+#: The Taskfile tasks that start the platform PostgreSQL with PG_START_SCRIPT. A session
+#: talks to the HOST's docker daemon, which does not know {{.ROOT_DIR}} as a mount source;
+#: a bind mount there becomes an empty directory instead of a failure (RC-492).
+TASKS_THAT_RUN_THE_PLATFORM_POSTGRES = ("_postgres-live-group", "_live-opstelling", "_keycloak-container")
+
+
+def test_the_platform_postgres_container_gets_no_bind_mount() -> None:
+    """A bind mount to {{.ROOT_DIR}} cannot work from a session; the script travels as an argument."""
+    document = yaml.safe_load(TASKFILE.read_text())
+    with_mount = {
+        name: line
+        for name in TASKS_THAT_RUN_THE_PLATFORM_POSTGRES
+        for cmd in document["tasks"][name]["cmds"]
+        if isinstance(cmd, str) and PG_START_SCRIPT in cmd
+        for line in cmd.splitlines()
+        if "-v" in line and "{{.ROOT_DIR}}" in line
+    }
+    assert not with_mount, (
+        f"These tasks still mount {PG_START_SCRIPT} with -v: {with_mount}. That does not work from a "
+        "session, because the docker daemon is the host's and does not know {{.ROOT_DIR}} as a source path."
     )
 
 

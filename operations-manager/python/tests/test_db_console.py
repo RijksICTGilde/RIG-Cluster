@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from opi.core.cluster_config import CLUSTER_CONFIG, RoutingApi
 from opi.generation.manifests import render_template
 from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.db_console_manager import (
@@ -134,6 +135,87 @@ def test_pod_oauth2_upstream_matches_tool_port(tool, port):
     doc = _render_pod(tool, port, [])
     wall = next(c for c in doc["spec"]["containers"] if c["name"] == "authorization-wall")
     assert f"--upstream=http://localhost:{port}" in wall["args"]
+
+
+# ----------------------------------------------------------- bundle: route per routing API
+
+
+@pytest.fixture
+def gateway_routing_cluster(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Put the sandbox cluster in gateway routing for the duration of one test."""
+    ingress = {**CLUSTER_CONFIG["sandboxed-local"]["ingress"], "routing": RoutingApi.GATEWAY}
+    monkeypatch.setitem(CLUSTER_CONFIG["sandboxed-local"], "ingress", ingress)
+    return "sandboxed-local"
+
+
+def _bundle_kwargs(cluster: str) -> dict:
+    return {
+        "namespace": "rig-proj",
+        "common": {
+            "name": "dbconsole-proj-dep-abcd1234",
+            "namespace": "rig-proj",
+            "project": {"name": "proj"},
+            "cluster": cluster,
+            "extra_labels": {"rig.zad/db-console": "abcd1234"},
+            "extra_annotations": {"rig.zad/expires-at": "2026-06-26T22:00:00+00:00"},
+            "service_account_name": "proj-serviceaccount",
+        },
+        "secret_data": {"cookie-secret": "x"},
+        "emails": ["a@b.nl"],
+        "authorization_wall": {
+            "issuer_url": "https://kc/realms/operations-manager",
+            "client_id": "dbconsole-abcd1234",
+            "keycloak_secret_name": "dbconsole-proj-dep-abcd1234",
+            "cookie_secret_name": "dbconsole-proj-dep-abcd1234",
+            "authenticated_emails_configmap": "dbconsole-proj-dep-abcd1234-emails",
+            "banner": "Tijdelijke databaseconsole",
+        },
+        "target_deployment": "dep",
+        "tool_image": "image:pgweb",
+        "image_pull_policy": "IfNotPresent",
+        "application_port": 8081,
+        "tool_args": [],
+        "hostname": "dbconsole-abcd1234.sandbox.rijksapp.dev",
+        "cluster": cluster,
+    }
+
+
+async def _render_bundle(cluster: str) -> dict:
+    """Render the full bundle through the real code path and return the route document.
+
+    ``apply_bundle`` is the only thing stubbed out: it is the kubectl call, and everything
+    up to it (the template choice included) runs for real.
+    """
+    with patch("opi.manager.db_console_manager.create_kubectl_connector", return_value=MagicMock()):
+        manager = DbConsoleManager()
+    with patch("opi.manager.db_console_manager.apply_bundle", new=AsyncMock(return_value=(True, ""))) as apply_mock:
+        await manager._apply_bundle(**_bundle_kwargs(cluster))
+    manifests = apply_mock.call_args[0][2]
+    return yaml.safe_load(manifests[-1])  # "route" is the last entry of `order`
+
+
+@pytest.mark.asyncio
+async def test_the_bundle_route_is_an_ingress_in_ingress_routing() -> None:
+    route = await _render_bundle("sandboxed-local")
+    assert route["kind"] == "Ingress"
+    assert route["spec"]["rules"][0]["host"] == "dbconsole-abcd1234.sandbox.rijksapp.dev"
+
+
+@pytest.mark.asyncio
+async def test_the_bundle_route_is_an_httproute_on_the_shared_listener_in_gateway_routing(
+    gateway_routing_cluster: str,
+) -> None:
+    """The console hostname sits in the cluster zone, so it rides the Gateway's own
+    certificate and claims no ListenerSet of its own."""
+    route = await _render_bundle(gateway_routing_cluster)
+    assert route["kind"] == "HTTPRoute"
+    assert route["spec"]["parentRefs"][0] == {
+        "group": "gateway.networking.k8s.io",
+        "kind": "Gateway",
+        "name": "rig-gateway",
+        "namespace": "rig-gateway",
+        "sectionName": "https",
+    }
 
 
 # ------------------------------------------------------------------ tool config

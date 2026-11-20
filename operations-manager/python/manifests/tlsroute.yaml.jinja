@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: {{ name | yaml_scalar }}
+{% if extra_labels %}
+  labels:
+{% for k, v in extra_labels.items() %}
+    {{ k | yaml_scalar }}: {{ v | yaml_scalar }}
+{% endfor %}
+{% endif %}
+{% if external_dns_target %}
+  annotations:
+    external-dns.alpha.kubernetes.io/target: {{ external_dns_target | yaml_scalar }}
+{% endif %}
+spec:
+  # Passthrough: the stream reaches the pod encrypted and the pod terminates TLS with its
+  # own certificate, so no filters and no header modification are possible here.
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: {{ parent.kind | yaml_scalar }}
+      name: {{ parent.name | yaml_scalar }}
+{% if parent.namespace %}
+      namespace: {{ parent.namespace | yaml_scalar }}
+{% endif %}
+      sectionName: {{ parent.section_name | yaml_scalar }}
+  hostnames:
+    - {{ hostname | yaml_scalar }}
+  rules:
+    - backendRefs:
+        - name: {{ (service_name if service_name is defined and service_name else name) | yaml_scalar }}
+          port: {{ service_port | default(443) }}

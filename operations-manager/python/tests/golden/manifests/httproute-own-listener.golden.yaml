@@ -1,0 +1,41 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: "prod-web"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: "ListenerSet"
+      name: "prod-listeners"
+      sectionName: "app-example-nl"
+  hostnames:
+    - "app.example.nl"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: "/"
+      filters:
+        # The four headers the nginx configuration-snippet set with more_set_headers,
+        # for internet.nl compliance. See https://internet.nl/faqs/appsecpriv/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: X-Content-Type-Options
+                value: "nosniff"
+              - name: X-Frame-Options
+                value: "DENY"
+              - name: Referrer-Policy
+                value: "strict-origin-when-cross-origin"
+              - name: Permissions-Policy
+                value: "geolocation=(), microphone=(), camera=()"
+              - name: Strict-Transport-Security
+                value: "max-age=31536000;includeSubDomains;preload"
+      backendRefs:
+        - name: "prod-web"
+          port: 8080
+      # Off: timeouts.request bounds the WHOLE request, and Envoy falls back to a hard 15s
+      # without it, which breaks downloads, uploads, SSE and websockets. The idle bound stays
+      # with the controller (Envoy: a 5 minute stream idle timeout, as nginx had 300s).
+      timeouts:
+        request: "0s"

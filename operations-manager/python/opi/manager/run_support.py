@@ -57,9 +57,27 @@ ANNOT_EXPIRES = "rig.zad/expires-at"
 ANNOT_OPENED_BY = "rig.zad/opened-by"
 ANNOT_HOSTNAME = "rig.zad/console-hostname"
 
-# Every k8s kind a run bundle can contain; the label-scoped delete targets all of
-# them so one command removes any bundle (extra kinds simply match nothing).
-BUNDLE_KINDS = "pod,service,ingress,secret,configmap"
+# Every k8s kind a run bundle can contain on every cluster; the label-scoped delete targets
+# all of them so one command removes any bundle (extra kinds simply match nothing).
+BUNDLE_KIND_LIST: tuple[str, ...] = ("pod", "service", "ingress", "secret", "configmap")
+BUNDLE_KINDS = ",".join(BUNDLE_KIND_LIST)
+
+#: The kind a bundle publishes with in gateway routing. Swept whatever the cluster is
+#: configured for, so a console started before a switch is torn down as well.
+HTTPROUTE_KIND = "HTTPRoute.gateway.networking.k8s.io"
+
+
+async def bundle_kinds(kubectl: KubectlConnector, *, exclude: frozenset[str] = frozenset()) -> str:
+    """The bundle kinds for a label-scoped query, plus HTTPRoute where the cluster serves it.
+
+    HTTPRoute is not unconditional: naming a type the cluster does not have makes kubectl
+    refuse the whole command, and a cluster in ingress routing has no Gateway API.
+    """
+    kinds = [kind for kind in BUNDLE_KIND_LIST if kind not in exclude]
+    httproute = (await kubectl.list_namespaced_kinds() or {}).get(HTTPROUTE_KIND)
+    if httproute:
+        kinds.append(httproute)
+    return ",".join(kinds)
 
 
 async def apply_bundle(
@@ -94,4 +112,5 @@ async def apply_bundle(
 async def delete_bundle(kubectl: KubectlConnector, namespace: str, session_id: str) -> None:
     """Remove an entire run bundle in one action, by its shared label. Idempotent."""
     selector = f"{LABEL_RUN}={session_id}"
-    await kubectl.run_command(["delete", BUNDLE_KINDS, "-l", selector, "-n", namespace, "--ignore-not-found=true"])
+    kinds = await bundle_kinds(kubectl)
+    await kubectl.run_command(["delete", kinds, "-l", selector, "-n", namespace, "--ignore-not-found=true"])

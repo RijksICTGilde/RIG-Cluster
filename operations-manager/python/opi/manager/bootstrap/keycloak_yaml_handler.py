@@ -13,6 +13,7 @@ from keycloak.exceptions import KeycloakError
 
 from opi.connectors.keycloak import (
     AUTO_LINK_FIRST_BROKER_LOGIN_FLOW,
+    DEFAULT_BROWSER_FLOW,
     KeycloakConnector,
     RealmType,
     role_gate_flow_alias,
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 #: picks a default. ``supportedLocales`` keeps ``en`` alongside ``nl`` so a user can switch,
 #: and Keycloak's own Dutch translation is incomplete, so a sentence falls back to English.
 _BLUEPRINT_REALM_FIELDS = (
+    "bruteForceProtected",
+    "emailTheme",
     "registrationAllowed",
     "loginWithEmailAllowed",
     "resetPasswordAllowed",
@@ -45,10 +48,9 @@ _BLUEPRINT_REALM_FIELDS = (
 #: The fields a blueprint sets on an EXISTING realm as protection: lockout, password policy
 #: and event retention.
 #:
-#: Apart from ``_BLUEPRINT_REALM_FIELDS``, which runs over every project realm, because
-#: ``configure_sso_redirect_flow`` turns ``bruteForceProtected`` OFF on a realm with SSO
-#: redirect: the two would fight over that field on every reconcile. Only
-#: ``master-realm.yaml`` names these fields.
+#: ``bruteForceProtected`` sits in ``_BLUEPRINT_REALM_FIELDS`` as well, because every
+#: blueprint names it and the master realm is not the only realm that needs the lockout. The
+#: rest of these only ``master-realm.yaml`` names.
 _HARDENING_REALM_FIELDS = (
     "bruteForceProtected",
     "failureFactor",
@@ -730,6 +732,12 @@ class KeycloakYamlHandler:
                 await self.keycloak.ensure_required_otp_browser_flow(realm_name, item["alias"])
                 continue
 
+            if item.get("magicLink"):
+                # The return value says whether the image carries the authenticator; the
+                # connector logs what to do when it does not.
+                await self.keycloak.ensure_magic_link_browser_flow(realm_name, item["alias"])
+                continue
+
             if item.get("setAsBrowserFlow"):
                 provider_alias = None
                 executions = item.get("executions", [])
@@ -753,8 +761,30 @@ class KeycloakYamlHandler:
                     provider_alias = variables.get("provider_alias", "sso-rijk")
                     logger.warning(f"Could not find defaultProvider in flow config, using fallback: {provider_alias}")
 
+                bind = await self._may_bind_browser_flow(realm_name, item)
                 logger.info(f"Configuring SSO redirect flow for realm {realm_name} with provider {provider_alias}")
-                await self.keycloak.configure_sso_redirect_flow(realm_name, provider_alias)
+                await self.keycloak.configure_sso_redirect_flow(realm_name, provider_alias, bind_browser_flow=bind)
+
+    async def _may_bind_browser_flow(self, realm_name: str, item: dict[str, Any]) -> bool:
+        """Whether this reconcile may point the realm's ``browserFlow`` at this flow.
+
+        ``bindOnlyIfDefault`` makes the binding a once-only act: a realm that still carries
+        Keycloak's own flow has never been bound and gets bound, and a realm that was bound
+        before keeps whatever it carries now. That is what lets a platform administrator
+        switch the platform realm to the outage flow without the next reconcile putting it
+        back (``features/sso-rijk-uitwijk.md``). A blueprint that does not ask for it binds on
+        every reconcile, as it always did.
+        """
+        if not item.get("bindOnlyIfDefault"):
+            return True
+
+        realm = await self.keycloak.get_realm(realm_name)
+        current = (realm or {}).get("browserFlow")
+        if current in (None, DEFAULT_BROWSER_FLOW):
+            return True
+
+        logger.info(f"Realm {realm_name} keeps its browser flow '{current}'")
+        return False
 
     async def _process_browser_flow(self, flow_alias: str | None, variables: dict[str, Any]) -> None:
         """Args:

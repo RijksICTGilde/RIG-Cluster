@@ -27,6 +27,7 @@ from opi.services.catalog.cross_domain_access.merge import (
     to_merged_rule,
 )
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
+from opi.services.catalog.shared.storage_size import component_mounts, effective_component_size
 from opi.services.catalog.sleep_mode import config as sleep_mode_config
 from opi.services.help_text import render_service_help
 from opi.services.project import Project
@@ -156,7 +157,7 @@ _BARS: tuple[tuple[Literal["mem", "cpu"], str, Callable[[Any], float | None]], .
 )
 
 
-def _component_rows(component: dict[str, Any], scale: dict[str, float]) -> list[Row]:
+def _component_rows(project_data: dict[str, Any], component: dict[str, Any], scale: dict[str, float]) -> list[Row]:
     """What a component DOES, apart from where it runs.
 
     A bar shows only what the component names itself: the platform default the handler fills
@@ -178,9 +179,10 @@ def _component_rows(component: dict[str, Any], scale: dict[str, float]) -> list[
         path = (health or {}).get("liveness-path") if isinstance(health, dict) else None
         rows.append(Row(icon=Glyph.HEALTH, text=path or "health-check"))
 
-    for disk in extract_storage_from_component_services(component):
-        temporary = "tijdelijk " if disk.get("type") == "temp" else ""
-        rows.append(Row(icon=Glyph.DISK, text=f"{temporary}{disk.get('size')} op {disk.get('mount-path')}"))
+    for key, service, disk in component_mounts(component):
+        temporary = "tijdelijk " if service is ServiceType.TEMP_STORAGE else ""
+        size = effective_component_size(project_data, service, str(component.get("name") or ""), key)
+        rows.append(Row(icon=Glyph.DISK, text=f"{temporary}{size} op {disk.get('mount-path')}"))
 
     metrics = _component_service_config(component, ServiceType.METRICS_SCRAPER)
     if metrics is not None:
@@ -361,7 +363,7 @@ def _component_nodes(data: dict[str, Any], per_column: int) -> list[Node]:
                 color="component",
                 eyebrow=str(component.get("type") or "component"),
                 title=name,
-                rows=_component_rows(component, scale),
+                rows=_component_rows(data, component, scale),
                 click="focus",
                 info=Info(
                     eyebrow=f"Component · {component.get('type') or 'component'}",

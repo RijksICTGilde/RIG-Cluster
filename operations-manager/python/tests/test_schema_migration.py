@@ -2,8 +2,10 @@
 
 import copy
 import logging
+from typing import Any
 
 import pytest
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.subdomain import get_domains_config
 from opi.services.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
@@ -11,6 +13,7 @@ from opi.services.project_validation import STORED_PROJECT_CONTEXT, validate_ser
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,
+    approve_existing_storage_above_the_free_size,
     component_description,
     detect_schema_version,
     encrypt_plain_secrets,
@@ -25,6 +28,7 @@ from opi.services.schema_migration import (
     roles_as_a_list,
     source_code_links,
 )
+from opi.services.services import service_entry_config
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1985,3 +1989,123 @@ class TestEncryptPlainSecretsMigration:
         assert was_migrated is True
         assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert not result["repositories"][0]["password"].startswith("plain:")
+
+
+class TestApproveExistingStorageAboveTheFreeSize:
+    """2.18 -> 2.19: a volume that already stood above the free size keeps its size.
+
+    Measured on the data of pocpl-0g8, the project this rule came from: component
+    ``loep-service`` with ``data`` on 5Gi persistent, ``tmp`` on 5Gi temporary and
+    ``gesprekken`` on 1Gi. The ceiling the migration writes is per service, so the two
+    services get 5Gi each and ``gesprekken`` is covered by the same decision.
+    """
+
+    @staticmethod
+    def _project() -> dict[str, Any]:
+        return {
+            "name": "pocpl-0g8",
+            "schema-version": "2.18",
+            "services": ["persistent-storage", "temp-storage"],
+            "components": [
+                {
+                    "name": "loep-service",
+                    "type": "single",
+                    "services": [
+                        {
+                            "reference": "persistent-storage",
+                            "config": [
+                                {"name": "data", "size": "5Gi", "mount-path": "/data"},
+                                {"name": "gesprekken", "size": "1Gi", "mount-path": "/gesprekken"},
+                            ],
+                        },
+                        {
+                            "reference": "temp-storage",
+                            "config": [{"name": "tmp", "size": "5Gi", "mount-path": "/tmp"}],
+                        },
+                    ],
+                }
+            ],
+            "deployments": [{"name": "meten", "cluster": "local", "components": [{"reference": "loep-service"}]}],
+        }
+
+    @staticmethod
+    def _sizes(data: dict[str, Any]) -> dict[str, str]:
+        from opi.services.catalog.shared.storage_size import resolve_component_storage
+
+        return {entry["name"]: entry["size"] for entry in resolve_component_storage(data, "meten", "loep-service")}
+
+    def test_a_volume_above_the_free_size_keeps_its_size(self) -> None:
+        data = self._project()
+
+        assert approve_existing_storage_above_the_free_size(data) is True
+
+        assert self._sizes(data) == {"data": "5Gi", "gesprekken": "1Gi", "tmp": "5Gi"}
+
+    def test_one_ceiling_per_service_covers_every_volume(self) -> None:
+        data = self._project()
+        approve_existing_storage_above_the_free_size(data)
+
+        assert service_entry_config(data["services"][0])["size-approval"]["approved-value"] == "5Gi"
+        assert service_entry_config(data["services"][1])["size-approval"]["approved-value"] == "5Gi"
+
+    def test_a_project_within_the_free_size_gets_no_block(self) -> None:
+        data = self._project()
+        for entry in data["components"][0]["services"]:
+            for mount in entry["config"]:
+                mount["size"] = "1Gi"
+
+        assert approve_existing_storage_above_the_free_size(data) is False
+        assert data["services"] == ["persistent-storage", "temp-storage"]
+
+    def test_the_block_records_the_migration(self) -> None:
+        data = self._project()
+        approve_existing_storage_above_the_free_size(data)
+
+        block = service_entry_config(data["services"][0])["size-approval"]
+
+        assert block["status"] == ApprovalStatus.APPROVED.value
+        assert block["approved-value"] == "5Gi"
+        assert block["history"][0]["by"] == "schema-migration"
+        assert "2.19" in block["history"][0]["message"]
+
+    def test_an_existing_override_above_the_project_ceiling_is_carried_over(self) -> None:
+        data = self._project()
+        data["deployments"][0]["components"][0]["services"] = {
+            "persistent-storage": [{"reference": "data", "config": {"size": "20Gi"}}]
+        }
+
+        approve_existing_storage_above_the_free_size(data)
+
+        assert self._sizes(data)["data"] == "20Gi"
+        block = service_entry_config(data["deployments"][0]["services"][0])["size-approval"]
+        assert block["approved-value"] == "20Gi"
+
+    def test_an_override_within_the_project_ceiling_gets_no_block(self) -> None:
+        data = self._project()
+        data["deployments"][0]["components"][0]["services"] = {
+            "persistent-storage": [{"reference": "data", "config": {"size": "3Gi"}}]
+        }
+
+        approve_existing_storage_above_the_free_size(data)
+
+        assert "services" not in data["deployments"][0]
+
+    def test_running_twice_changes_nothing(self) -> None:
+        data = self._project()
+        approve_existing_storage_above_the_free_size(data)
+        snapshot = copy.deepcopy(data)
+
+        assert approve_existing_storage_above_the_free_size(data) is False
+        assert data == snapshot
+
+    def test_a_project_without_storage_changes_nothing(self) -> None:
+        data = {"name": "p", "services": ["publish-on-web"]}
+
+        assert approve_existing_storage_above_the_free_size(data) is False
+
+    def test_a_2_18_file_reaches_the_latest_version(self) -> None:
+        result, was_migrated = migrate_to_latest(self._project())
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert self._sizes(result)["data"] == "5Gi"

@@ -134,7 +134,7 @@ def noncurrent_deployment_section(
     suffix = "" if deployment_index is None else f"-{deployment_index}"
     return FormSection(
         section_id=f"{section_prefix}{suffix}",
-        title="Oude versies van deze bucket",
+        title="Versiebeheer van deze bucket",
         icon="wolk",
         description="Geldt alleen voor een bucket met versiebeheer.",
         post_save_action="process_project",

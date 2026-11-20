@@ -43,6 +43,7 @@ Each deployment includes:
 | `rolled_out_revision` | Git revision (full SHA) the last sync actually rolled out (`operationState.syncResult.revision`). Not the same as `sync_revision`, which is what the cluster compares against: when the two differ, a commit is in git that has not been applied |
 | `running_sync` | The sync ArgoCD is executing right now, or the last one that never finished; `null` when neither applies. Fields: `phase` (`Running` or `Terminating`), `started_at`, `revision` (what this sync is rolling out; it is stuck to the revision it started with and does not see newer commits), `message` (what ArgoCD is waiting for), and `blocks_next_sync` |
 | `errors` | List of cluster-side error entries — empty when `status` is `Healthy`, `Pending`, `Unavailable`, or `Unknown` |
+| `warnings` | Resources the cluster does not roll out because their kind is not on the allowlist. Filled for every status, a healthy one included: ArgoCD keeps the app Synced and Healthy while the object is missing. See `features/argocd-resource-allowlist.md` |
 | `approvals` | Goedkeuringen die deze deployment nog niet heeft — leeg wanneer alles is goedgekeurd. Zie hieronder |
 
 `status` values:
@@ -66,9 +67,22 @@ Each `errors` entry has:
 |---|---|
 | `resource` | `Kind/name` (e.g. `Pod/frontend-abc`) for cluster resources, `Event/<obj>` for namespace events, or a condition type name |
 | `message` | The raw cluster message — for automation, regex matching, correlation |
-| `category` | Programmatic category for filtering / grouping / colorizing. One of: `ImagePull`, `CrashLoop`, `OutOfMemory`, `HealthCheck`, `SyncFailed`, `ComparisonError`, `Unknown` |
+| `category` | Programmatic category for filtering / grouping / colorizing. One of: `ImagePull`, `CrashLoop`, `OutOfMemory`, `HealthCheck`, `SyncFailed`, `ComparisonError`, `ExcludedResource`, `Unknown` |
 | `explanation` | Human-friendly description of the category and what to do next; `null` for `Unknown` |
 | `timestamp` | ISO timestamp if known |
+
+Each `warnings` entry has:
+
+| Field | Description |
+|---|---|
+| `type` | The ArgoCD condition type, `ExcludedResourceWarning` |
+| `severity` | Always `warning`: the rest of the deployment is rolled out |
+| `category` | `ExcludedResource` |
+| `group` | API group of the excluded resource; empty for a core kind |
+| `kind` | Kubernetes kind, e.g. `HTTPRoute` |
+| `name` | Name of the excluded resource |
+| `message` | The Dutch message the portal shows |
+| `raw_message` | The raw ArgoCD condition message, for automation and correlation |
 
 Each `approvals` entry has:
 

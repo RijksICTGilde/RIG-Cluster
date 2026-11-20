@@ -18,6 +18,7 @@ from opi.forms.visualizers.providers import (
     RepositoryOptionsProvider,
     ServiceOptionsProvider,
     StorageSizeOptionsProvider,
+    StorageSizeOverrideOptionsProvider,
     StorageTypeOptionsProvider,
     UserRoleOptionsProvider,
 )
@@ -45,6 +46,24 @@ class TestStorageSizeOptionsProvider:
         values = [o["value"] for o in options]
         assert "250Mi" in values
         assert "1Gi" in values
+
+
+class TestStorageSizeOverrideOptionsProvider:
+    """The deployment-component override select: the series plus the inherit option."""
+
+    def test_the_first_option_is_inherit_from_the_component(self):
+        options = StorageSizeOverrideOptionsProvider().get_options()
+        assert options[0] == {"value": "", "label": "Zelfde als het component"}
+
+    def test_the_rest_of_the_options_is_the_same_series_as_the_component(self):
+        inherit, *rest = StorageSizeOverrideOptionsProvider().get_options()
+        assert rest == StorageSizeOptionsProvider().get_options()
+
+    def test_an_override_outside_the_series_is_offered_as_its_own_value(self):
+        """A stored 3Gi override must stay selectable, or the save refuses the form's own
+        current value."""
+        values = [o["value"] for o in StorageSizeOverrideOptionsProvider("3Gi").get_options()]
+        assert "3Gi" in values
 
 
 class TestKeycloakTemplateOptionsProvider:

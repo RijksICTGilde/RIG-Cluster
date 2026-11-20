@@ -1,0 +1,8 @@
+# De namespace van de gedeelde Gateway. Het managed-by-label laat de namespaced ArgoCD van
+# rig-system de Gateway en de EnvoyProxy hier beheren.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rig-gateway
+  labels:
+    argocd.argoproj.io/managed-by: rig-system

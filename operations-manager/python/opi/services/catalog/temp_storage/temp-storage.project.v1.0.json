@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "description": "The project-layer config of both storage services: the size ceiling, nothing else.\n\nThe mounts live on the component; the project layer carries only the verdict on the\nlargest volume this service may have in this project. A model of its own rather than\n``StorageConfig`` (the mount list), because a project that could write its own verdict\nhas no approval: the field is ``PLATFORM_MANAGED``, and that marking only covers a\ntop-level field of a config block.",
+  "properties": {
+    "size-approval": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Approval state of the largest volume this service may have in this project. Written by the platform.",
+      "title": "Size-Approval",
+      "x-platform-managed": true
+    }
+  },
+  "title": "StorageApprovalConfig",
+  "type": "object"
+}

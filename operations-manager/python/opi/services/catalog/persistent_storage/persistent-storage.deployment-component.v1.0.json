@@ -86,7 +86,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Per-mount clone state, carried on the deployment-component layer.\n\nA deployment records which PVC generation each mount points at, as a list of\n``{reference, config}`` items keyed by the mount name. The content is the shared clone\nstate, so this only exists to give the storage services something to return from\n``config_model_for(DEPLOYMENT_COMPONENT)``; their ``config_model`` describes the mount\nspecs on the component layer and cannot describe both.",
+  "description": "Per-mount state a DEPLOYMENT carries, as a list of ``{reference, config}`` items.\n\nTwo things live here: the PVC generation each mount points at (the shared clone state),\nand this deployment's own size for that mount. A deployment that sets no ``size`` follows\nthe component. The verdict is not here: it is one ceiling per deployment, on the\ndeployment layer.",
   "properties": {
     "generation": {
       "anyOf": [
@@ -111,6 +111,19 @@
       "title": "Revisions",
       "type": "array",
       "x-platform-managed": true
+    },
+    "size": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "This deployment's own size for this volume, overriding the component's. Same range as the component (50Mi up to and including 50Gi); above the project's ceiling (at least 2Gi) this deployment needs a ceiling of its own. Absent means: follow the component.",
+      "title": "Size"
     }
   },
   "title": "StorageCloneState",

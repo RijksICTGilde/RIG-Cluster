@@ -428,6 +428,22 @@
                 </c-alert>
             {% endif %}
 
+            {# Een waarschuwing (niet fout): de rest van de app draait wel, ArgoCD houdt
+               Synced/Healthy. Zie features/argocd-resource-allowlist.md. #}
+            {% set excluded = status.get('excluded_resources', []) %}
+            {% if excluded %}
+                {% set excluded_kop = (excluded|length ~ ' resource wordt niet uitgerold') if excluded|length == 1 else (excluded|length ~ ' resources worden niet uitgerold') %}
+                <c-alert type="warning" heading="{{ excluded_kop }}">
+                    <c-stack gap="xs">
+                        {% for resource in excluded %}
+                            <c-span>{{ resource.message }}</c-span>
+                        {% endfor %}
+                        <c-span>Vraag het platformteam om dit type toe te voegen aan de lijst, of
+                            gebruik een type dat het platform wel uitrolt.</c-span>
+                    </c-stack>
+                </c-alert>
+            {% endif %}
+
             {% if has_errors %}
                 {% set real_errors = errors | rejectattr('orphaned') | list %}
                 {% set orphan_errors = errors | selectattr('orphaned') | list %}

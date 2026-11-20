@@ -12,6 +12,7 @@ from opi.core.config import settings
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.catalog.image_registries.resolution import component_registry_name
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.keycloak.account_link import account_link_mode
 from opi.services.catalog.keycloak.templates import allows_local_accounts, allows_sso
@@ -410,41 +411,41 @@ class StorageTypeOptionsProvider:
 
 
 class StorageSizeOptionsProvider:
-    """Provides storage size options for persistent volumes."""
+    """The sizes the platform offers, plus the stored value when that is not among them.
+
+    The series is a convenience and not the rule: ``check_storage_size`` accepts every
+    quantity in the range, and a volume may not shrink. Without the stored value the select
+    would offer a volume on ``3Gi`` nothing but shrinking, and the save then refuses the
+    form's own proposal.
+    """
 
     # The list is fixed: every project gets these choices.
     options_source: ClassVar[OptionsSource | None] = None
 
-    #: Only the label per size. The sizes themselves live in ``STORAGE_SIZES``, which also
-    #: carries the upper bound the config model enforces; two lists drifting apart is exactly
-    #: how a list of choices starts promising something the API does not accept.
+    #: Only the label per size. The sizes themselves live in ``SIZES``, so a list of choices
+    #: cannot start promising something the API does not accept.
     LABELS: ClassVar[dict[str, str]] = {
         "50Mi": "50 MB",
         "100Mi": "100 MB",
         "250Mi": "250 MB",
         "500Mi": "500 MB",
         "1Gi": "1 GB",
+        "2Gi": "2 GB",
+        "5Gi": "5 GB",
+        "10Gi": "10 GB",
+        "20Gi": "20 GB",
+        "50Gi": "50 GB",
     }
 
-    def get_options(self) -> list[dict[str, Any]]:
-        return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
-
-
-class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
-    """The platform sizes, plus the stored value when that is not among them.
-
-    A PostgreSQL cluster of its own may go up to 20Gi (``POSTGRES_STORAGE``) and its volume
-    may not shrink, so without the stored value the select offers a project on 2Gi nothing
-    but shrinking and the save then refuses its own proposal. A class of its own and not the
-    parent, because for persistent-storage and temp-storage ``check_storage_size`` does cap
-    at 1Gi.
-    """
+    #: The series this select offers. A subclass narrows it where the field has bounds of
+    #: its own (see ``PostgresStorageSizeOptionsProvider``).
+    SIZES: ClassVar[tuple[str, ...]] = STORAGE_SIZES
 
     def __init__(self, current_value: str | None = None) -> None:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        options = super().get_options()
+        options = [{"value": size, "label": self.LABELS.get(size, size)} for size in self.SIZES]
         stored = (self.current_value or "").strip()
         if not stored or any(option["value"] == stored for option in options):
             return options
@@ -455,6 +456,28 @@ class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
             # A stored size that cannot be read has no place in the series, but it does have
             # to stay selectable: otherwise the form submits a shrink.
             return options
+
+
+class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
+    """The same select for a PostgreSQL volume, on the series that field's bounds allow.
+
+    ``POSTGRES_STORAGE`` runs to 20Gi while the storage services now run to 50Gi, so the
+    series is a subclass rather than the shared one: a select must not offer a size the
+    declaration refuses.
+    """
+
+    SIZES: ClassVar[tuple[str, ...]] = ("50Mi", "100Mi", "250Mi", "500Mi", "1Gi")
+
+
+class StorageSizeOverrideOptionsProvider(StorageSizeOptionsProvider):
+    """The same select for ONE deployment's override, led by the inherit option.
+
+    Empty means: follow the component. The size the component says is the placeholder the
+    form shows, so the list itself does not have to name it.
+    """
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": "", "label": "Zelfde als het component"}, *super().get_options()]
 
 
 class IntegerStepOptionsProvider:
@@ -1351,14 +1374,7 @@ class ImageRegistryOptionsProvider:
         self._current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        registries = (
-            smart_get_value(
-                self._yaml_data,
-                config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES, "config", "registries"),
-            )
-            or []
-        )
-        entries = [r for r in registries if isinstance(r, dict) and r.get("name")]
+        entries = self._entries()
 
         # Pre-selected as soon as the image prefix matches exactly ONE registry; with two
         # matches the choice is the point.
@@ -1374,31 +1390,76 @@ class ImageRegistryOptionsProvider:
             if len(matching) == 1:
                 entries = [matching[0], *(e for e in entries if e is not matching[0])]
 
-        # The LABEL on the screen and the slug as the value: a team that called its registry
-        # "Code Overheid" should see that back, even though the file refers to it by slug.
-        labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
         names = [entry["name"] for entry in entries]
         if not names and not self._current_value:
             return []
 
+        # The LABEL on the screen and the slug as the value: a team that called its registry
+        # "Code Overheid" should see that back, even though the file refers to it by slug.
         options = [{"value": "", "label": self._empty_label()}]
-        options.extend({"value": name, "label": labels[name]} for name in names)
+        options.extend({"value": name, "label": self._label_for(name)} for name in names)
         if self._current_value and self._current_value not in names:
             options.append({"value": self._current_value, "label": f"{self._current_value} (bestaat niet meer)"})
         return options
 
+    def _entries(self) -> list[dict[str, Any]]:
+        """The registries this project declared, in file order."""
+        registries = (
+            smart_get_value(
+                self._yaml_data,
+                config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES, "config", "registries"),
+            )
+            or []
+        )
+        return [r for r in registries if isinstance(r, dict) and r.get("name")]
+
     def _empty_label(self) -> str:
         """What "nothing chosen" means on this layer, derived from the rendered path."""
-        return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else AUTOMATIC_REGISTRY_LABEL
+        if (self._yaml_path or "").startswith("deployments"):
+            return INHERIT_REGISTRY_LABEL
+        deviations = self._deployment_deviations()
+        if not deviations:
+            return AUTOMATIC_REGISTRY_LABEL
+        plural = "deployments" if len(deviations) > 1 else "deployment"
+        return f"{AUTOMATIC_REGISTRY_LABEL}. Let op: {', '.join(deviations)}. Pas die aan in de betreffende {plural}"
 
-    def _component_image(self) -> str:
-        """The image of the component this field sits on, or "".
+    def _deployment_deviations(self) -> list[str]:
+        """Which deployments pick a registry for THIS component themselves.
 
-        From ``row_data``, else through the index in ``yaml_path``.
+        The component form does not show the deployment layer, so a choice made there leaves
+        this field on "Automatisch" while the image does come from a registry, and the
+        consumer sees nothing to change here.
         """
-        image = self._row_data.get("image")
-        if isinstance(image, str) and image:
-            return image
+        component = self._component_name()
+        if self._current_value or not component:
+            return []
+        deviations: list[str] = []
+        for deployment in self._yaml_data.get("deployments") or []:
+            if not isinstance(deployment, dict):
+                continue
+            for entry in deployment.get("components") or []:
+                if not isinstance(entry, dict) or entry.get("reference") != component:
+                    continue
+                name = component_registry_name(entry)
+                if name:
+                    deviations.append(
+                        f"deployment '{deployment.get('name', 'onbekend')}' gebruikt voor dit "
+                        f"component registry '{self._label_for(name)}'"
+                    )
+        return deviations
+
+    def _label_for(self, name: str) -> str:
+        """The registry as the team named it, or its slug when there is no label."""
+        for entry in self._entries():
+            if entry.get("name") == name:
+                return str(entry.get("display-name") or name)
+        return name
+
+    def _component_name(self) -> str:
+        """The component this field sits on, or "", the same two ways as the image."""
+        name = self._row_data.get("name")
+        if isinstance(name, str) and name:
+            return name
         match = re.search(r"components\[(\d+)\]", self._yaml_path or "")
         if not match:
             return ""
@@ -1406,8 +1467,30 @@ class ImageRegistryOptionsProvider:
         index = int(match.group(1))
         if index >= len(components) or not isinstance(components[index], dict):
             return ""
-        found = components[index].get("image")
+        found = components[index].get("name")
         return found if isinstance(found, str) else ""
+
+    def _component_image(self) -> str:
+        """The image this field's registry is about, or "".
+
+        From ``row_data``, else through the index in ``yaml_path``, else from the ``image``
+        next to this field in the same config block (the dedicated database).
+        """
+        image = self._row_data.get("image")
+        if isinstance(image, str) and image:
+            return image
+        match = re.search(r"components\[(\d+)\]", self._yaml_path or "")
+        if match:
+            components = self._yaml_data.get("components") or []
+            index = int(match.group(1))
+            if index >= len(components) or not isinstance(components[index], dict):
+                return ""
+            found = components[index].get("image")
+            return found if isinstance(found, str) else ""
+        if not self._yaml_path:
+            return ""
+        sibling = smart_get_value(self._yaml_data, self._yaml_path.rsplit("/", 1)[0] + "/image")
+        return sibling if isinstance(sibling, str) else ""
 
 
 def _cross_domain_peer_side(yaml_path: str | None) -> str:
@@ -2170,6 +2253,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "PostgresStorageSizeOptionsProvider": PostgresStorageSizeOptionsProvider,
+    "StorageSizeOverrideOptionsProvider": StorageSizeOverrideOptionsProvider,
     "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
     "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
     "MaxNoncurrentVersionsOptionsProvider": MaxNoncurrentVersionsOptionsProvider,

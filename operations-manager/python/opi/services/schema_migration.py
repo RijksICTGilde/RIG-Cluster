@@ -16,6 +16,7 @@ from opi.core.config import settings
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
+from opi.services.catalog.shared.storage_size import STORAGE_SERVICES
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.project_schema import SchemaVersion, parse_schema_version, version_key
@@ -33,6 +34,7 @@ from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.16",
         "2.17",
         "2.18",
+        "2.19",
     )
 )
 
@@ -1632,6 +1635,51 @@ def encrypt_plain_secrets(project_data: dict[str, Any]) -> bool:
     return changed
 
 
+#: What the 2.19 migration writes in the history of every block it carries over. THIS step's
+#: version and not the latest: the line records which migration carried the size over, and
+#: that stays 2.19 when a version is added.
+_STORAGE_MIGRATION_MESSAGE = "Bestaande opslaggrootte overgenomen bij de migratie naar 2.19"
+
+
+def approve_existing_storage_above_the_free_size(project_data: dict[str, Any]) -> bool:
+    """Carry an existing volume above the free size over as approved (v2.18 -> 2.19).
+
+    A size above ``FREE_MAX_STORAGE_SIZE`` has needed a platform administrator's decision
+    since this version. The volumes that already stood larger are the reason the rule exists
+    (project pocpl-0g8 ran out of disk and a beheerder set 5Gi by hand), so the ceiling that
+    covers them is carried over instead of every volume being lowered to the free maximum on
+    the next render. A migration runs once per file, so an enlargement after this goes through
+    the ordinary request.
+
+    Both layers: the project's ceiling, and the ceiling of a deployment whose override stands
+    above it.
+
+    Idempotent. Returns True when something changed.
+    """
+    from opi.services.catalog.shared.storage_size import (
+        DEPLOYMENT_SIZE_APPROVALS,
+        PROJECT_SIZE_APPROVALS,
+        migration_ceilings,
+    )
+
+    changed = False
+    for service in STORAGE_SERVICES:
+        project_ceiling, deployment_ceilings = migration_ceilings(project_data, service)
+        project_approval = PROJECT_SIZE_APPROVALS[service]
+        if project_ceiling and project_approval.last_approved_value(project_data) != project_ceiling:
+            project_approval.record_migration_approval(project_data, project_ceiling, _STORAGE_MIGRATION_MESSAGE)
+            changed = True
+        deployment_approval = DEPLOYMENT_SIZE_APPROVALS[service]
+        for deployment_name, ceiling in deployment_ceilings.items():
+            if deployment_approval.last_approved_value(project_data, deployment_name) == ceiling:
+                continue
+            deployment_approval.record_migration_approval(
+                project_data, deployment_name, ceiling, _STORAGE_MIGRATION_MESSAGE
+            )
+            changed = True
+    return changed
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1655,6 +1703,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.16"), restore_run_reference),
     (parse_schema_version("2.17"), source_code_links),
     (parse_schema_version("2.18"), encrypt_plain_secrets),
+    (parse_schema_version("2.19"), approve_existing_storage_above_the_free_size),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

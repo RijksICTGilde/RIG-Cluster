@@ -13,6 +13,7 @@ lives in the project's ``domains:`` block and its rules are the predicates in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -198,7 +199,7 @@ class _ApprovalState:
         """
         if not create:
             return self.service_config(project_data)
-        entry = self.entry(project_data) or self._promote_bare_entry(project_data)
+        entry = self._entry_for_write(project_data)
         if entry is None:
             return None
         config = self._config_holder(entry, self.service).setdefault("config", {})
@@ -243,6 +244,26 @@ class _ApprovalState:
                 return record
         return None
 
+    def _entry_for_write(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """The service entry the block goes into, created when a SUB-holder has none.
+
+        A deployment never picks the service itself, so it carries no entry until the
+        platform records a verdict there. At project level an absent entry means the service
+        is not selected, and writing one would enrol the project in it.
+        """
+        entry = self.entry(project_data) or self._promote_bare_entry(project_data)
+        if entry is not None:
+            return entry
+        holder = self._holder(project_data)
+        if holder is project_data or not holder:
+            return None
+        services = holder.setdefault("services", [])
+        if not isinstance(services, list):
+            return None
+        record: dict[str, Any] = {"name": self.service}
+        services.append(record)
+        return record
+
     @staticmethod
     def _config_holder(entry: dict[str, Any], service: str) -> dict[str, Any]:
         """The dict the CONFIG of this service lives in.
@@ -277,8 +298,48 @@ class _ApprovalState:
             history.append(history_entry)
 
     def clear(self, project_data: dict[str, Any]) -> None:
-        """Remove the block so a next request starts from zero."""
+        """Remove the block so a next request starts from zero.
+
+        In a sub-holder the entry goes with it once it holds nothing else: the deployment
+        never picked the service, so an entry without config is a leftover.
+        """
         (self._block_holder(project_data, create=False) or {}).pop(self.config_key, None)
+        holder = self._holder(project_data)
+        entry = self.entry(project_data)
+        services = holder.get("services")
+        if holder is project_data or entry is None or not isinstance(services, list):
+            return
+        if entry.get("config") == {}:
+            entry.pop("config", None)
+        if set(entry) <= {"name", "reference"}:
+            services.remove(entry)
+        if not services:
+            holder.pop("services", None)
+
+
+def record_migration_approval(
+    state: _ApprovalState,
+    project_data: dict[str, Any],
+    value: Any,  # noqa: ANN401  # a project-file value
+    message: str,
+) -> None:
+    """Write an APPROVED block for ``value`` as a schema migration, with its own history line.
+
+    A state that has been legal until now and needs a decision from this version on is carried
+    over rather than withdrawn: the alternative is that every project that already had it sees
+    its value silently drop on the next render. The only writer besides the approval route, and
+    only from a migration step, which runs once per file.
+    """
+    state.write(
+        project_data,
+        {"status": ApprovalStatus.APPROVED.value, "value": value, LAST_APPROVED_KEY: value},
+        {
+            "date": datetime.now(UTC).isoformat(),
+            "status": ApprovalStatus.APPROVED.value,
+            "by": "schema-migration",
+            "message": message,
+        },
+    )
 
 
 def _notice_text(activity: str, consequence: str, status: ApprovalStatus) -> str:
@@ -582,6 +643,8 @@ class ConfigValueApproval:
             project asked for something else afterwards. Empty when nothing was ever approved.
         ensure_requested: setting the value IS the request; this records it. State shaped and
             therefore idempotent.
+        record_migration_approval: writes an approved block for a value as a schema
+            migration; see :func:`record_migration_approval`.
     """
 
     spec: ApprovalSpec
@@ -589,6 +652,7 @@ class ConfigValueApproval:
     approved_value: Callable[[dict[str, Any]], str]
     last_approved_value: Callable[[dict[str, Any]], str]
     ensure_requested: Callable[[dict[str, Any]], None]
+    record_migration_approval: Callable[[dict[str, Any], Any, str], None]
 
 
 def config_value_approval(
@@ -734,16 +798,22 @@ def config_value_approval(
             record=_record,
             notices_for=_notices,
             approved_values=_approved_values,
+            # With ``required_when`` the config as it stands says whether enabling the service
+            # is itself a request; with ``requested_value`` it never is, because only a VALUE
+            # asks for a decision. Same answer as ``config_item_value_approval``.
             requires_approval_for=(
                 (lambda config: required_when(config if isinstance(config, dict) else {}))
                 if required_when is not None
-                else None
+                else lambda _config: False
             ),
         ),
         is_approved=_is_approved,
         approved_value=_approved_value,
         last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
+        record_migration_approval=lambda project_data, value, message: record_migration_approval(
+            state, project_data, value, message
+        ),
     )
 
 
@@ -784,6 +854,8 @@ class DeploymentValueApproval:
         last_approved_value: the last value an administrator said "yes" to for this deployment,
             also when it asked for something else afterwards.
         ensure_requested: records every deployment's request. State shaped.
+        record_migration_approval: writes an approved block for ONE deployment as a schema
+            migration; see :func:`record_migration_approval`.
     """
 
     spec: ApprovalSpec
@@ -791,6 +863,7 @@ class DeploymentValueApproval:
     approved_value: Callable[[dict[str, Any], str], str]
     last_approved_value: Callable[[dict[str, Any], str], str]
     ensure_requested: Callable[[dict[str, Any]], None]
+    record_migration_approval: Callable[[dict[str, Any], str, Any, str], None]
 
 
 def deployment_value_approval(
@@ -963,11 +1036,16 @@ def deployment_value_approval(
             record=_record,
             notices_for=_notices,
             approved_values=_approved_values,
+            # Enabling the service asks nothing; only a deployment's own value does.
+            requires_approval_for=lambda _config: False,
         ),
         is_approved=_is_approved,
         approved_value=_approved_value,
         last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
+        record_migration_approval=lambda project_data, deployment_name, value, message: record_migration_approval(
+            _state(deployment_name), project_data, value, message
+        ),
     )
 
 
@@ -1010,12 +1088,15 @@ class ConfigItemValueApproval:
         last_approved_value: the last value an administrator approved for this item.
         ensure_requested: records the request of every item and removes the blocks of
             items that no longer exist. State-shaped, so idempotent.
+        record_migration_approval: writes an approved block for this item as a schema
+            migration; see :func:`record_migration_approval`.
     """
 
     spec: ApprovalSpec
     is_approved: Callable[[dict[str, Any], str], bool]
     last_approved_value: Callable[[dict[str, Any], str], str]
     ensure_requested: Callable[[dict[str, Any]], None]
+    record_migration_approval: Callable[[dict[str, Any], str, Any, str], None]
 
 
 def config_item_value_approval(
@@ -1162,4 +1243,7 @@ def config_item_value_approval(
         is_approved=_is_approved,
         last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
+        record_migration_approval=lambda project_data, item, value, message: record_migration_approval(
+            _state(item), project_data, value, message
+        ),
     )

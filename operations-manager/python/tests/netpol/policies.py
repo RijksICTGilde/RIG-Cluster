@@ -22,7 +22,6 @@ from typing import Any
 from opi.core.cluster_config import (
     get_backup_namespace,
     get_cluster_cidrs,
-    get_database_operator_namespace,
     get_ingress_controller_selector,
     get_namespace,
     get_ops_egress,
@@ -32,6 +31,11 @@ from opi.core.cluster_config import (
 from opi.generation.manifests import render_template
 from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.catalog.platform.network_policies import (
+    NAMESPACE_POLICY_PURPOSES,
+    NAMESPACE_POLICY_TEMPLATES,
+    namespace_network_policy_values,
+)
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_network_policy_name, get_infrastructure_namespace
@@ -165,40 +169,14 @@ def tenant_baseline(
 
 
 def namespace_policies(*, namespace: str, project_name: str) -> list[dict[str, Any]]:
-    """De namespace-brede policies, met de variabelen van ``emit_namespace_network_policies``.
+    """De namespace-brede policies, met de variabelen van het projectniveau.
 
     Een default-deny, de baseline voor pods zonder deployment-label en de toegang tot
     een toegewijd databasecluster in dezelfde namespace.
     """
+    values = namespace_network_policy_values(cluster=CLUSTER, project_name=project_name, namespace=namespace)
     rendered = [
-        render_template(
-            "default-deny-network-policy.yaml.jinja",
-            {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
-        ),
-        render_template(
-            "tenant-baseline-network-policy.yaml.jinja",
-            {
-                "name": generate_network_policy_name("unlabeled-baseline"),
-                "namespace": namespace,
-                "deployment_selector": None,
-                "unlabeled_selector": True,
-                "ops_namespace": OPS_NAMESPACE,
-                "backup_namespace": BACKUP_NAMESPACE,
-                "ingress_controller_selector": get_ingress_controller_selector(CLUSTER),
-                "ops_egress": get_ops_egress(CLUSTER),
-                "cluster_cidrs": get_cluster_cidrs(CLUSTER),
-                "database_operator_namespace": None,
-                "project_infra_namespace": get_infrastructure_namespace(CLUSTER, project_name),
-            },
-        ),
-        render_template(
-            "dedicated-database-network-policy.yaml.jinja",
-            {
-                "name": generate_network_policy_name("dedicated-database"),
-                "namespace": namespace,
-                "database_operator_namespace": get_database_operator_namespace(CLUSTER),
-            },
-        ),
+        render_template(NAMESPACE_POLICY_TEMPLATES[purpose], values[purpose]) for purpose in NAMESPACE_POLICY_PURPOSES
     ]
     return [_load_documents(text)[0] for text in rendered]
 

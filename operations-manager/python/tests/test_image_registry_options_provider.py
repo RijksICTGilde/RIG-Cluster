@@ -151,3 +151,19 @@ class TestVooruitInvullen:
         docker = {"name": "hub", "upstream": "docker.io/library"}
         provider = ImageRegistryOptionsProvider(yaml_data=_yaml([GHCR, docker]), row_data={"image": "nginx:alpine"})
         assert _registries(provider)[0] == "hub"
+
+    def test_the_database_field_reads_the_image_next_to_it(self) -> None:
+        """No component and no ``row_data``: the database form only gives the path, so the
+        image comes from the ``image`` field in the same config block (RC-498)."""
+        yaml_data = _yaml([GHCR, CODE])
+        yaml_data["services"].append(
+            {
+                "name": "namespace-postgresql-database",
+                "config": {"image": "code.overheid.nl/team/postgres:17"},
+            }
+        )
+        provider = ImageRegistryOptionsProvider(
+            yaml_data=yaml_data,
+            yaml_path="services/namespace-postgresql-database/config/registry",
+        )
+        assert _registries(provider)[0] == "code-overheid"

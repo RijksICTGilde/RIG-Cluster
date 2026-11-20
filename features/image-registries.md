@@ -140,9 +140,9 @@ project geen registries, dan blijft de componentvorm zoals hij was: de toestand 
 
 Het keuzeveld verdwijnt als de laatste registry weggaat OF als de dienst op projectniveau
 wordt uitgezet, maar de verwijzing in het projectbestand niet. `validate_registry_references`
-(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de
-componenten erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert
-stilletjes waar een image vandaan komt.
+(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de plekken
+erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert stilletjes waar
+een image vandaan komt.
 
 Voor de tweede route slaat `_strip_removed_services_from_components` (`wizard_sections.py`,
 de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
@@ -150,6 +150,28 @@ de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
 projectniveau staat, waarna de grendel niets meer ziet. Zonder de uitzondering deed dezelfde
 handeling bovendien twee dingen: de lijstvorm op een component werd gestript, de dict-vorm op
 een deployment-component niet, en die laatste werd dan wel geweigerd.
+
+Een registry weghalen kan dus pas als geen component, geen deployment en ook de database er
+niet meer naar wijst. Waar je elke verwijzing aanpast:
+
+| Verwijzing | Waar je hem aanpast |
+|---|---|
+| `components[].services{image-registries}.config.registry` | de component-wizard, veld Registry bij de image |
+| `deployments[].components[].services.image-registries.config.registry` | de deployment-wizard, fieldset "Eigen registry (alleen voor deze deployment)" |
+| `services[namespace-postgresql-database].config.registry` | het databaseformulier, veld Registry |
+| `services[postgresql-database].config.registry` met `scope: project` | alleen via de API of het projectbestand: dit veld heeft geen formulier, net als de andere clustervelden van die service |
+
+Staat de keuze van een component leeg terwijl een deployment er zelf een registry koos, dan
+noemt de lege optie van het componentveld die deployment bij naam
+(`ImageRegistryOptionsProvider._deployment_deviations`). Zonder die melding leest het veld als
+"Automatisch" terwijl de image wel uit een registry komt, en is er in dat formulier niets te
+zien om aan te passen.
+
+De database viel tot RC-498 buiten de grendel. Het opslaan slaagde dan, en pas de verwerking
+viel om: `infrastructure.py` gooit een `ValueError` over een registry die er niet is, en
+daarmee valt het hele project om. Beide diensten die een eigen cluster vragen
+(`namespace-postgresql-database` en `postgresql-database` met `scope: project`) komen langs
+dezelfde route, dus de grendel telt ze allebei.
 
 Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
 keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.
@@ -359,6 +381,20 @@ Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
         quota-gib: 15
 ```
 
+Hetzelfde veld staat in het formulier van de dienst (`Opslagquota (GiB)` in
+`modal-edit-image-registries-config`), dus een afnemer hoeft er de API niet voor. Leeg laten
+betekent de clusterstandaard en haalt `quota-gib` uit het projectbestand.
+
+De projectpagina toont per registry de effectieve quota, met "15 GiB aangevraagd" ernaast zolang
+een aanvraag openstaat.
+
+Het statusfragment toont het gebruik uit `status.quota` van de operator, in GiB en als percentage.
+Bij 80% of meer geeft het fragment een waarschuwing. Meldt de operator geen `status.quota`, dan
+staat er niets over gebruik, en dat is geen fout.
+
+Die quotaregel staat er alleen bij registries met een organisatie op de proxy-cluster; niet bij
+rijen die een bestaand secret gebruiken.
+
 Tot en met 10 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
 die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 10,
 of de laatst goedgekeurde waarde; een afwijzing houdt hem daar. Verlagen binnen een goedgekeurde
@@ -380,6 +416,24 @@ afzenderadres en het dagbudget van send-email.
 
 De grens van 20 staat als `le` op het model en niet als `IntegerSetting`, omdat
 `config_settings` niet in een lijst kijkt.
+
+### De time machine staat uit
+
+Het sjabloon zet `spec.timeMachineSeconds: 0`. Weggelaten houdt Quay zijn eigen venster aan
+(volgens het CRD twee weken); een tag die verloopt gaat dan niet weg maar blijft herstelbaar,
+en telt maanden mee voor de quota. Zo liep de proxy-cache van verge-jdv vol (november 2026).
+Voor een proxy-cache heeft herstel geen waarde: de upstream heeft het image nog, en de cache
+haalt het bij de volgende pull opnieuw op. Quay accepteert hier alleen de waarden 0, 86400,
+604800, 1209600 of 2419200 seconden.
+
+`proxyCache.defaultTagExpirationSeconds` blijft juist weg. Weggelaten geldt al 86400 seconden
+(een dag), wat we willen. Zet je dit veld expliciet, bouwt de operator de proxy-cacheconfiguratie
+opnieuw op, zonder dat er iets verandert. Beide velden zijn platformbeslissingen, niet bedoeld
+voor de afnemer.
+
+Wat het cluster accepteert staat in `opi/schemas/external/quay-organization.v1alpha1.json`, en
+`tests/test_quay_organization_contract.py` legt het sjabloon daarnaast. Dat bestand ververs je
+met `kubectl get --raw /openapi/v3/apis/quay.k8s.rijksapps.nl/v1alpha1`.
 
 ### Wie tags mag verwijderen
 

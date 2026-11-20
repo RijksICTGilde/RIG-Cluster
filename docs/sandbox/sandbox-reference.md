@@ -32,6 +32,10 @@ COMMON TASK COMMANDS
   Destroy the cluster:
     task sandbox:destroy
 
+  Wissel de routing-stand (ingress-nginx of de Gateway API):
+    een regel in infrastructure/bootstrap/routing/sandboxed-local, dan task sandbox:sync
+    (zie docs/sandbox/routing-wisselen.md)
+
 USEFUL KUBECTL COMMANDS
 
   View all pods:

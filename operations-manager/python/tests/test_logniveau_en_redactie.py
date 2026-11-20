@@ -206,3 +206,24 @@ class TestDeTracebackEnDeSqlSamenvatting:
         duur = time.perf_counter() - begin
         assert resultaat == tekst
         assert duur < 0.5, f"redact_text deed {duur:.2f}s over {len(tekst)} tekens"
+
+
+class TestLineBreaks:
+    """A value from outside must not be able to start a new, forged log line."""
+
+    def test_a_line_break_in_an_argument_is_escaped(self, logstroom) -> None:
+        buffer = logstroom("DEBUG")
+        logging.getLogger("opi.x").info("Project %s requested", "demo\r\n2026-01-01 - opi - INFO - forged")
+        lines = buffer.getvalue().splitlines()
+        assert len(lines) == 1
+        assert "demo\\r\\n2026-01-01 - opi - INFO - forged requested" in lines[0]
+
+    def test_a_traceback_keeps_its_lines(self, logstroom) -> None:
+        buffer = logstroom("DEBUG")
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            logging.getLogger("opi.x").exception("Failed for %s", "a\nb")
+        output = buffer.getvalue()
+        assert "Failed for a\\nb" in output
+        assert "Traceback (most recent call last):\n" in output

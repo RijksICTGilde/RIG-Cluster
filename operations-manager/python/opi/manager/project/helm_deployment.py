@@ -465,7 +465,6 @@ class HelmDeployment:
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """Render a helm-charts deployment into ``target_path``.
 
@@ -547,9 +546,7 @@ class HelmDeployment:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
 
-        # The namespace-wide policies are already on disk; they only still have to reach the
-        # kustomization, which is built here from a list and not from a directory scan.
-        regular_files: list[str] = list(namespace_policy_files or [])
+        regular_files: list[str] = []
 
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
@@ -609,7 +606,6 @@ class HelmDeployment:
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """Render a helmfile deployment into ``target_path``.
 
@@ -769,9 +765,7 @@ class HelmDeployment:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helmfile deployment")
 
-        # The namespace-wide policies are already on disk; they only still have to reach the
-        # kustomization, which is built here from a list and not from a directory scan.
-        regular_files: list[str] = list(namespace_policy_files or [])
+        regular_files: list[str] = []
 
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)

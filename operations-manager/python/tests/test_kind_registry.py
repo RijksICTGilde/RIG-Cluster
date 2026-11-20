@@ -602,7 +602,7 @@ class TestTaskfile:
         cmds = taskfile["tasks"]["sandbox:setup"]["cmds"]
         registry_index = cmds.index({"task": REGISTRY_TASK})
 
-        for later in ("sandbox:build-local-images-if-dev", "install-ingress-nginx", "sandbox:sync"):
+        for later in ("sandbox:build-local-images-if-dev", "sandbox:routing-bootstrap", "sandbox:sync"):
             assert cmds.index({"task": later}) > registry_index
 
     def test_prune_task_calls_the_script_with_two_days_by_default(self, taskfile: dict) -> None:

@@ -39,3 +39,31 @@ PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
         PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
     ],
 )
+
+
+# Deployment-component layer: per-volume size override.
+# Override and clone state sit in the same record, keyed by volume's render name.
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services/persistent-storage[*]/reference",
+    validator=KubernetesNameValidator("Volumenaam"),
+    required=True,
+)
+
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services/persistent-storage[*]/config/size",
+    values_provider="StorageSizeOverrideOptionsProvider",
+    validator=StorageSizeValidator(),
+    # No default: empty means "follow the component", and a default would write an override
+    # the moment a deployment form is saved.
+    remove_when_none=True,
+)
+
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services/persistent-storage",
+    min_items=0,
+    remove_when_none=True,
+    children=[
+        DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE_EDITABLE,
+        DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE_EDITABLE,
+    ],
+)

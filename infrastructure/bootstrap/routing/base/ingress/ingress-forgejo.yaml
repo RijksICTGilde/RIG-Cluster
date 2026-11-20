@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: forgejo
+  namespace: rig-system
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  labels:
+    app: forgejo
+    app.kubernetes.io/component: git-server
+    app.kubernetes.io/name: forgejo
+    app.kubernetes.io/part-of: rig-platform
+    component: git-server
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: forgejo.sandbox.rijksapp.dev
+      http:
+        paths:
+          - backend:
+              service:
+                name: forgejo
+                port:
+                  number: 3000
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - forgejo.sandbox.rijksapp.dev
+      secretName: sandbox-wildcard-tls

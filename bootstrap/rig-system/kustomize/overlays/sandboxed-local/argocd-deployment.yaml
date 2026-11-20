@@ -9,7 +9,7 @@ spec:
   # RIG-eigen image: upstream v3.5.6 + fixes, alle componenten volgen dit (inclusief repo-server).
   # Uit ghcr.io voor GitOps-pull; task load-kind geeft IMAGE_TAG=<anders> voor lokale builds.
   image: ghcr.io/minbzk/base-images/argocd-rig
-  version: v3.5.6-rig2
+  version: v3.5.6-rig3
   # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
   # cmd-params-keys die hier stonden kwamen nooit bij een component aan (RC-250);
   # tests/test_argocd_extra_config_keys.py houdt dit blok daarvan vrij.
@@ -31,20 +31,16 @@ spec:
     server.rbac.log.enforce.enable: "true"
   server:
     logLevel: debug
-    # TLS met certificaat uit het secret argocd-server-tls (van `task sandbox:generate-argocd-tls`).
-    insecure: false
+    # Plain HTTP achter de ingang, in beide standen van de routing: TLS eindigt altijd op
+    # de ingang, en dan hangen de ARGOCD_*-instellingen van OPI niet aan de stand. Alleen
+    # de sandbox; ODCN laat argocd-server zelf TLS serveren.
+    insecure: true
     host: argo.sandbox.rijksapp.dev
+    # De Ingress van ArgoCD staat in het routing-component, niet hier: hij hoort bij de
+    # stand van de ingang, en de operator kent die stand niet
+    # (infrastructure/bootstrap/routing/base/ingress/ingress-argocd.yaml).
     ingress:
-      enabled: true
-      path: /
-      ingressClassName: nginx
-      annotations:
-        # insecure: false zegt nginx om TLS te verwachten; anders krijgt de UI een 502.
-        nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-      tls:
-      - hosts:
-        - argo.sandbox.rijksapp.dev
-        secretName: sandbox-wildcard-tls
+      enabled: false
   # Least privilege per rol (RC-345). Welke RBAC-actie elke aanroep van OPI vraagt:
   #
   #   GET  /api/v1/applications                         applications, get
@@ -83,6 +79,64 @@ spec:
       enabled: false
     route:
       enabled: false
+  # Alleen de kinds die ZAD uitrolt, plus Pod en ReplicaSet voor de diagnose van OPI. Een
+  # namespace-scoped controller watcht elk type in elke namespace apart; zonder deze lijst
+  # zijn dat op ODCN 589 types per namespace en blijft de client-limiter verzadigd. Een
+  # kind die hier ontbreekt, rolt ArgoCD niet uit. Dezelfde lijst als odcn-production, op de
+  # twee CRD's van Envoy Gateway na die alleen de sandbox heeft.
+  resourceInclusions: |
+    - apiGroups: [""]
+      kinds: [ConfigMap, Secret, Service, ServiceAccount, PersistentVolumeClaim, Pod]
+      clusters: ["*"]
+    - apiGroups: [apps]
+      kinds: [Deployment, ReplicaSet, StatefulSet, DaemonSet]
+      clusters: ["*"]
+    - apiGroups: [batch]
+      kinds: [Job, CronJob]
+      clusters: ["*"]
+    - apiGroups: [networking.k8s.io]
+      kinds: [Ingress, NetworkPolicy]
+      clusters: ["*"]
+    - apiGroups: [gateway.networking.k8s.io]
+      kinds: [Gateway, HTTPRoute, TLSRoute, ListenerSet, ReferenceGrant]
+      clusters: ["*"]
+    # De twee CRD's van Envoy Gateway die de gateway-stand van de sandbox meebrengt. Een
+    # soort die hier ontbreekt rolt ArgoCD niet uit, en meldt dat niet
+    # (features/argocd-resource-allowlist.md). De controllers zelf en hun cluster-scoped
+    # soorten staan hier niet: die zijn platform en komen niet via ArgoCD.
+    - apiGroups: [gateway.envoyproxy.io]
+      kinds: [EnvoyProxy, BackendTrafficPolicy]
+      clusters: ["*"]
+    - apiGroups: [policy]
+      kinds: [PodDisruptionBudget]
+      clusters: ["*"]
+    - apiGroups: [autoscaling]
+      kinds: [HorizontalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [autoscaling.k8s.io]
+      kinds: [VerticalPodAutoscaler]
+      clusters: ["*"]
+    - apiGroups: [rbac.authorization.k8s.io]
+      kinds: [Role, RoleBinding]
+      clusters: ["*"]
+    - apiGroups: [cert-manager.io]
+      kinds: [Issuer, Certificate]
+      clusters: ["*"]
+    - apiGroups: [postgresql.cnpg.io]
+      kinds: [Cluster, Database, Pooler, ScheduledBackup, ImageCatalog]
+      clusters: ["*"]
+    - apiGroups: [quay.k8s.rijksapps.nl]
+      kinds: [Organization]
+      clusters: ["*"]
+    - apiGroups: [monitoring.coreos.com]
+      kinds: [PodMonitor, ServiceMonitor, PrometheusRule]
+      clusters: ["*"]
+    - apiGroups: [grafana.integreatly.org]
+      kinds: [GrafanaDashboard]
+      clusters: ["*"]
+    - apiGroups: [argoproj.io]
+      kinds: [Application, AppProject]
+      clusters: ["*"]
   controller:
     extraCommandArgs:
       # De bovengrens op een sync-operation; de default 0 is nooit. Als flag en niet als

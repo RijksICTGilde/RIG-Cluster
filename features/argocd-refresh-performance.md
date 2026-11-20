@@ -83,6 +83,9 @@ De verloren-refresh-detectie is gebleven en is te meten: `opi_argocd_umbrella_re
 telt elke ronde waarin `user-applications` nog op een oudere revisie stond dan de onze, en de
 fase `argo_umbrella` van [rollout-metingen](./rollout-metingen.md) zegt wat de wacht erop kostte.
 
+`user-applications` is een multi-source Application; ArgoCD zet de vergeleken revisie in
+`status.sync.revisions` (niet in `revision`). De bewaker leest daarom beide velden (RC-500).
+
 De ondergrens tussen twee refreshes is van 5 naar 1 seconde gegaan. De refresh zelf blijft
 hangen tot een reconcile klaar is, dus die grens is er alleen voor het geval de call meteen
 terugkomt; vier van die vijf seconden waren wachten zonder dat er iets gebeurde. Een gemeten

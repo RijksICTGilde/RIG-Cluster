@@ -13,33 +13,17 @@
 
 nuclei: []
 
-kube-linter:
-  - id: no-read-only-root-fs
-    statement: >-
-      De tenant-deployments draaien een image van het project zelf. Een read-only rootfs
-      afdwingen breekt elke applicatie die naar /tmp of een cache schrijft, en ZAD kent die
-      images niet. Dezelfde keuze staat als CKV_K8S_22 in de checkov-sectie. De
-      Kyverno-policy zad-securitycontext rapporteert hem in audit-modus, zodat de omvang
-      zichtbaar blijft; afdwingen vraagt per component een beslissing.
-    expired_at: 2027-04-01
-  - id: non-isolated-pod
-    statement: >-
-      De golden-snapshots bevatten per scenario alleen de workload, niet de NetworkPolicy
-      die ZAD er in hetzelfde proces bij genereert (features/restrictive-network-policies.md). De
-      bevinding gaat over de omvang van de snapshot, niet over wat er op het cluster staat.
-      Dezelfde keuze staat als CKV2_K8S_6 in de checkov-sectie.
-    expired_at: 2027-04-01
+kube-linter: []
 
 checkov:
   - id: CKV_K8S_22
     statement: >-
-      Zie no-read-only-root-fs in de kube-linter-sectie: het image van de tenant is niet van
-      ons, en read-only rootfs is niet generiek af te dwingen.
-    expired_at: 2027-04-01
-  - id: CKV2_K8S_6
-    statement: >-
-      Zie non-isolated-pod in de kube-linter-sectie: de NetworkPolicy zit niet in de
-      golden-snapshot van de workload.
+      De tenant-deployments draaien een image van het project zelf. Een read-only rootfs
+      afdwingen breekt elke applicatie die naar /tmp of een cache schrijft, en ZAD kent die
+      images niet. kube-linter meet deze check daarom niet (aanvalsproef/kube-linter.yaml);
+      de afweging en de vervaldatum staan hier. De Kyverno-policy zad-securitycontext
+      rapporteert hem in audit-modus, zodat de omvang zichtbaar blijft; afdwingen vraagt per
+      component een beslissing.
     expired_at: 2027-04-01
   - id: CKV_K8S_153
     statement: >-

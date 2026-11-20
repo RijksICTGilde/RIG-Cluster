@@ -23,6 +23,7 @@ from opi.core.cluster_config import (
     get_namespace,
     get_ops_egress,
     get_prefixed_namespace,
+    renders_gateway_api,
     supports_vpa,
 )
 from opi.core.config import settings
@@ -35,6 +36,13 @@ from opi.manager.project.aliases import (
 )
 from opi.manager.project.emitters import emit_letsencrypt_issuer
 from opi.manager.project.manifests.contributions import apply_manifest_contributions, collect_manifest_contributions
+from opi.manager.project.manifests.routing import (
+    ROUTE_MANIFEST_TYPES,
+    ListenerSetBuilder,
+    PublicationRequest,
+    publication_for,
+    remove_listener_set,
+)
 from opi.manager.project.manifests.secrets import (
     attachment_secret_prefix,
     existing_secret_pairs,
@@ -65,6 +73,7 @@ from opi.services.catalog.publish_on_web.subdomain import (
     validate_bare_domain_allowed,
 )
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
+from opi.services.catalog.shared.storage_size import resolve_component_storage
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project_file_handler import extract_service_names_from_component
 from opi.services.registry import deployment_manifest_services
@@ -158,6 +167,28 @@ def _issuer_for(settings: ComponentSettings, cluster: str, deployment_name: str)
             return generate_issuer_name(settings.base_domain, settings.issuer_config, deployment_name), None
         return settings.issuer_config, None
     return None, get_ingress_cluster_issuer(cluster)
+
+
+def _path_manifest_type(manifest_type: str, path: str) -> str:
+    """The manifest-file type for one publication path; the root path carries no suffix."""
+    if path == "/" or not path:
+        return manifest_type
+    return f"{manifest_type}-{path.lstrip('/').replace('/', '').lower()}"
+
+
+def _remove_stale_route_manifests(output_dir: str, component_name: str, suffix: str, reason: str) -> None:
+    """Remove this component's fixed-name publication file in every routing API.
+
+    Called when another component took over the root or the bare-domain address. Both
+    routing APIs have a file under that name, and only the one of the current API would be
+    regenerated, so both are removed here.
+    """
+    for route_type in ROUTE_MANIFEST_TYPES:
+        filename = f"{generate_manifest_name(component_name, f'{route_type}-{suffix}')}.yaml"
+        stale = os.path.join(output_dir, filename)
+        if os.path.exists(stale):
+            os.remove(stale)
+            logger.info(f"Removed stale publication manifest '{filename}' ({reason})")
 
 
 def _resolve_component_images(
@@ -504,6 +535,14 @@ class ApplicationManifests:
 
         created_issuers: set[str] = set()
 
+        # Gateway routing: the listeners this deployment claims are collected over all its
+        # components and written as one ListenerSet after the loop.
+        listeners = (
+            ListenerSetBuilder(cluster=cluster, deployment_name=deployment_name, namespace=namespace)
+            if renders_gateway_api(cluster)
+            else None
+        )
+
         for component in components:
             await self._emit_component(
                 project_data,
@@ -521,9 +560,14 @@ class ApplicationManifests:
                 root_component_name=root_component_name,
                 created_issuers=created_issuers,
                 created_files=created_files,
+                listeners=listeners,
             )
 
         output_dir = deployment_output_dir(working_dir, target_dir, project_name, deployment_name)
+        if listeners is None:
+            remove_listener_set(output_dir)
+        else:
+            listeners.emit(self._host._manifest_generator, output_dir, created_files)
         self._emit_tenant_baseline_policy(
             deployment_name=deployment_name,
             namespace=namespace,
@@ -564,6 +608,7 @@ class ApplicationManifests:
         root_component_name: str | None,
         created_issuers: set[str],
         created_files: list[str],
+        listeners: ListenerSetBuilder | None,
     ) -> None:
         """One component of a deployment, from its settings to its secrets.
 
@@ -663,6 +708,7 @@ class ApplicationManifests:
             root_component_name=root_component_name,
             output_dir=full_output_dir,
             created_files=created_files,
+            listeners=listeners,
         )
 
         await self.emit_waker_manifests(
@@ -773,7 +819,10 @@ class ApplicationManifests:
         # the database console and jobs.
         image_url, image_pull_policy = resolve_image(image_url, component.get("imagePullPolicy", "Always"))
 
-        storage_configs = self._host._project_file_handler.extract_component_storage(project_data, component_reference)
+        # The EFFECTIVE size per volume, so the PVC and the sizeLimit both get what this
+        # deployment is actually allowed: the resolver applies the component's size, this
+        # deployment's override and the approval each needs (catalog/shared/storage_size.py).
+        storage_configs = resolve_component_storage(project_data, deployment_name, component_reference)
 
         publish_on_web = self._host._project_file_handler.extract_component_publish_on_web(
             project_data, component_reference
@@ -1218,11 +1267,13 @@ class ApplicationManifests:
         root_component_name: str | None,
         output_dir: str,
         created_files: list[str],
+        listeners: ListenerSetBuilder | None,
     ) -> None:
-        """Render this component's Deployment, Service, ingresses and VerticalPodAutoscaler.
+        """Render this component's Deployment, Service, routes and VerticalPodAutoscaler.
 
-        Every template but the ingress renders once; the ingress renders per publication
-        path, plus a root and a bare-domain ingress where the layout asks for them.
+        Every template but the publication renders once; the publication renders per path,
+        plus a root and a bare-domain one where the layout asks for them. ``listeners`` is
+        None in ingress routing and the ListenerSet collector in gateway routing.
         """
         # tenant-baseline-network-policy.yaml.jinja is deliberately absent here: it is
         # rendered once per deployment, in _emit_tenant_baseline_policy.
@@ -1263,9 +1314,9 @@ class ApplicationManifests:
                     deployment_name=deployment_name,
                     namespace=namespace,
                     cluster=cluster,
-                    manifest_path=manifest_path,
                     output_dir=output_dir,
                     created_files=created_files,
+                    listeners=listeners,
                 )
                 self._emit_root_ingress(
                     project_data,
@@ -1274,10 +1325,10 @@ class ApplicationManifests:
                     component_name=component_name,
                     deployment_name=deployment_name,
                     cluster=cluster,
-                    manifest_path=manifest_path,
                     output_dir=output_dir,
                     created_files=created_files,
                     root_component_name=root_component_name,
+                    listeners=listeners,
                 )
                 self._emit_bare_domain_ingress(
                     project_data,
@@ -1286,9 +1337,9 @@ class ApplicationManifests:
                     component_name=component_name,
                     deployment_name=deployment_name,
                     cluster=cluster,
-                    manifest_path=manifest_path,
                     output_dir=output_dir,
                     created_files=created_files,
+                    listeners=listeners,
                 )
 
             else:
@@ -1317,31 +1368,23 @@ class ApplicationManifests:
         deployment_name: str,
         namespace: str,
         cluster: str,
-        manifest_path: str,
         output_dir: str,
         created_files: list[str],
+        listeners: ListenerSetBuilder | None,
     ) -> None:
-        """One ingress per publication path, for every hostname this component answers on.
+        """One publication per path, for every hostname this component answers on.
 
         The TLS mode decides who issues the certificate: ``passthrough`` leaves it to the
         pod, ``provided`` renders the customer's own certificate as a Secret, and otherwise
-        cert-manager issues it.
+        cert-manager issues it. In gateway routing the same matrix yields an HTTPRoute or a
+        TLSRoute plus a listener in the deployment's ListenerSet.
         """
-        manifest_name = "ingress"
-        manifest_file = "ingress.yaml.jinja"
         for ingress_base_name, ingress_hostname in settings.ingress_map.items():
             for path_config in settings.component_paths:
                 path_value = path_config["match"] or "/"
                 rewrite_value = path_config.get("rewrite")
 
                 ingress_name = generate_ingress_name_from_path(ingress_base_name, path_value)
-
-                if path_value == "/" or not path_value:
-                    unique_manifest_name = generate_manifest_name(component_name, manifest_name)
-                else:
-                    path_suffix = path_value.lstrip("/").replace("/", "").lower()
-                    unique_manifest_name = generate_manifest_name(component_name, f"{manifest_name}-{path_suffix}")
-
                 ingress_variables = variables.copy()
 
                 # Resolve the publish-on-web TLS mode for this component.
@@ -1427,8 +1470,29 @@ class ApplicationManifests:
                     }
                 )
 
+                # The Secret of the root path: the listener is per hostname, so the path
+                # suffix has no place in the certificate it serves.
+                publication = publication_for(
+                    listeners,
+                    PublicationRequest(
+                        cluster=cluster,
+                        hostname=ingress_hostname,
+                        tls_secret_name=generate_tls_secret_name(
+                            generate_ingress_name_from_path(ingress_base_name, "/")
+                        ),
+                        issuer_name=ingress_issuer_name,
+                        cluster_issuer=ingress_cluster_issuer,
+                        provided_tls_secret=provided_tls_secret_name,
+                        passthrough=ingress_passthrough,
+                    ),
+                )
+                ingress_variables["parent"] = publication.parent
+                unique_manifest_name = generate_manifest_name(
+                    component_name, _path_manifest_type(publication.manifest_type, path_value)
+                )
+
                 manifest_file_path = self._host._manifest_generator.create_manifest_file(
-                    template_path=manifest_path,
+                    template_path=os.path.join(MANIFEST_TEMPLATES_DIR, publication.template),
                     values=ingress_variables,
                     output_dir=output_dir,
                     output_filename=unique_manifest_name,
@@ -1436,7 +1500,7 @@ class ApplicationManifests:
                 )
                 created_files.append(f"{unique_manifest_name}.yaml")
                 logger.info(
-                    f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
+                    f"Successfully created {publication.template} for {ingress_hostname}{path_value}: {manifest_file_path}"
                 )
 
     def _emit_root_ingress(
@@ -1448,10 +1512,10 @@ class ApplicationManifests:
         component_name: str,
         deployment_name: str,
         cluster: str,
-        manifest_path: str,
         output_dir: str,
         created_files: list[str],
         root_component_name: str | None,
+        listeners: ListenerSetBuilder | None,
     ) -> None:
         """The root address ``subdomain.base-domain`` of a dotted component-per-subdomain layout.
 
@@ -1481,7 +1545,6 @@ class ApplicationManifests:
         ):
             root_hostname = generate_root_hostname(settings.subdomain, settings.base_domain)
             root_ingress_name = f"{deployment_name}-root"
-            root_manifest_name = generate_manifest_name(component_name, "ingress-root")
 
             root_ingress_variables = variables.copy()
 
@@ -1500,8 +1563,21 @@ class ApplicationManifests:
                 }
             )
 
+            publication = publication_for(
+                listeners,
+                PublicationRequest(
+                    cluster=cluster,
+                    hostname=root_hostname,
+                    tls_secret_name=generate_tls_secret_name(root_ingress_name),
+                    issuer_name=root_issuer_name,
+                    cluster_issuer=root_cluster_issuer,
+                ),
+            )
+            root_ingress_variables["parent"] = publication.parent
+            root_manifest_name = generate_manifest_name(component_name, f"{publication.manifest_type}-root")
+
             root_manifest_file_path = self._host._manifest_generator.create_manifest_file(
-                template_path=manifest_path,
+                template_path=os.path.join(MANIFEST_TEMPLATES_DIR, publication.template),
                 values=root_ingress_variables,
                 output_dir=output_dir,
                 output_filename=root_manifest_name,
@@ -1518,14 +1594,12 @@ class ApplicationManifests:
             if previous_dep:
                 old_root = get_domain_setting(previous_dep, DomainSetting.ROOT_COMPONENT)
                 if old_root and old_root != root_component_name:
-                    old_manifest = f"{generate_manifest_name(old_root, 'ingress-root')}.yaml"
-                    old_manifest_path = os.path.join(output_dir, old_manifest)
-                    if os.path.exists(old_manifest_path):
-                        os.remove(old_manifest_path)
-                        logger.info(
-                            f"Removed stale root ingress manifest '{old_manifest}' "
-                            f"(root-component changed from '{old_root}' to '{root_component_name}')"
-                        )
+                    _remove_stale_route_manifests(
+                        output_dir,
+                        old_root,
+                        "root",
+                        f"root-component changed from '{old_root}' to '{root_component_name}'",
+                    )
 
     def _emit_bare_domain_ingress(
         self,
@@ -1536,9 +1610,9 @@ class ApplicationManifests:
         component_name: str,
         deployment_name: str,
         cluster: str,
-        manifest_path: str,
         output_dir: str,
         created_files: list[str],
+        listeners: ListenerSetBuilder | None,
     ) -> None:
         """The apex address of the project's own domain, for the component that serves it."""
         # Create bare domain ingress for expose-component-on-bare-domain mode.
@@ -1555,7 +1629,6 @@ class ApplicationManifests:
             validate_bare_domain_allowed(settings.base_domain, get_supported_base_domains(cluster), project_data)
             bare_hostname = generate_bare_domain_hostname(settings.base_domain)
             bare_ingress_name = f"{deployment_name}-bare-domain"
-            bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
 
             bare_ingress_variables = variables.copy()
 
@@ -1574,8 +1647,21 @@ class ApplicationManifests:
                 }
             )
 
+            publication = publication_for(
+                listeners,
+                PublicationRequest(
+                    cluster=cluster,
+                    hostname=bare_hostname,
+                    tls_secret_name=generate_tls_secret_name(bare_ingress_name),
+                    issuer_name=bare_issuer_name,
+                    cluster_issuer=bare_cluster_issuer,
+                ),
+            )
+            bare_ingress_variables["parent"] = publication.parent
+            bare_manifest_name = generate_manifest_name(component_name, f"{publication.manifest_type}-bare-domain")
+
             bare_manifest_file_path = self._host._manifest_generator.create_manifest_file(
-                template_path=manifest_path,
+                template_path=os.path.join(MANIFEST_TEMPLATES_DIR, publication.template),
                 values=bare_ingress_variables,
                 output_dir=output_dir,
                 output_filename=bare_manifest_name,
@@ -1594,14 +1680,13 @@ class ApplicationManifests:
             if previous_dep:
                 old_bare = get_domain_setting(previous_dep, DomainSetting.BARE_DOMAIN_COMPONENT)
                 if old_bare and old_bare != settings.expose_on_bare_domain:
-                    old_manifest = f"{generate_manifest_name(old_bare, 'ingress-bare-domain')}.yaml"
-                    old_manifest_path = os.path.join(output_dir, old_manifest)
-                    if os.path.exists(old_manifest_path):
-                        os.remove(old_manifest_path)
-                        logger.info(
-                            f"Removed stale bare domain ingress manifest '{old_manifest}' "
-                            f"(expose-component-on-bare-domain changed from '{old_bare}' to '{settings.expose_on_bare_domain}')"
-                        )
+                    _remove_stale_route_manifests(
+                        output_dir,
+                        old_bare,
+                        "bare-domain",
+                        f"expose-component-on-bare-domain changed from '{old_bare}' "
+                        f"to '{settings.expose_on_bare_domain}'",
+                    )
 
     async def _emit_component_pvcs(
         self,

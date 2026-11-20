@@ -374,7 +374,7 @@ def test_een_step_up_route_noemt_daarmee_geen_auditvelden() -> None:
 def test_alleen_deze_routes_noemen_velden_in_de_audit() -> None:
     """Een nieuwe route komt hier bewust bij: ``fields`` overleeft de pseudonimisering.
 
-    Alle vier noemen een waarde die NIET in het projectbestand landt, dus waar de
+    Alle vijf noemen een waarde die NIET in het projectbestand landt, dus waar de
     commit-SHA van de rij niets aanwijst. Elke andere schrijfroute laat de velden weg.
     """
     gevonden = {
@@ -388,6 +388,7 @@ def test_alleen_deze_routes_noemen_velden_in_de_audit() -> None:
         "push_image": ("image_name", "tag"),
         "restore_backup_run": ("backup_run_id",),
         "job_start": ("deployment", "image"),
+        "set_sso_outage": ("storingsstand",),
     }
 
 

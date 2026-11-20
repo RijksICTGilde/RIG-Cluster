@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import os
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from fastapi.responses import HTMLResponse
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.generation.manifests import ManifestGenerator
 from opi.services.approvals import apply_approval_verdicts, collect_approval_items
@@ -308,24 +310,115 @@ class TestTheVerdictReachesTheCluster:
         assert deployments_touched(copy.deepcopy(project), project) == []
 
 
-class TestTheFormLeavesTheQuotaAlone:
-    async def test_editing_a_registry_row_keeps_a_quota_the_form_does_not_show(self) -> None:
-        """``quota-gib`` is not a form field, and a row is merged onto its original."""
-        project = _project(_registry("nldd", 15))
-        submitted = {
-            "services": {
-                "image-registries": {
-                    "config": {"registries": [{"name": "nldd", "upstream": "ghcr.io/other", "username": "u"}]}
-                }
-            }
-        }
+class TestTheFormWritesTheQuota:
+    """RC-497: the field is on the form, so a consumer can set the quota without the API."""
+
+    @staticmethod
+    async def _submit(row: dict[str, Any], *, stored: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        project = _project(_registry("nldd", stored))
+        submitted = {"services": {"image-registries": {"config": {"registries": [row]}}}}
         result, errors = await EditableFormProcessor().process_json_submission(
             submitted, [REGISTRIES_SEQUENCE], project, edit_mode=True
         )
+        return result, errors
+
+    @staticmethod
+    def _row(**extra: Any) -> dict[str, Any]:
+        return {"name": "nldd", "upstream": "ghcr.io/other", "username": "u", **extra}
+
+    async def test_a_submitted_quota_lands_as_an_integer(self) -> None:
+        result, errors = await self._submit(self._row(**{"quota-gib": "15"}))
         assert errors == {}
         (registry,) = _config(result)["registries"]
         assert registry["quota-gib"] == 15
         assert registry["upstream"] == "ghcr.io/other"
+
+    @pytest.mark.parametrize("quota", ["0", str(QUOTA_MAX_GIB + 5)])
+    async def test_a_quota_out_of_bounds_is_a_field_error(self, quota: str) -> None:
+        _result, errors = await self._submit(self._row(**{"quota-gib": quota}))
+        assert list(errors) == ["services/image-registries/config/registries[0]/quota-gib"]
+
+    async def test_an_empty_quota_falls_back_to_the_cluster_default(self) -> None:
+        """The field is on screen now, so clearing it means "the standard", not "unchanged"."""
+        result, errors = await self._submit(self._row(**{"quota-gib": ""}), stored=15)
+        assert errors == {}
+        (registry,) = _config(result)["registries"]
+        assert "quota-gib" not in registry
+        assert _quota(result) == CLUSTER_DEFAULT
+
+    async def test_a_row_without_the_field_drops_the_quota_as_well(self) -> None:
+        """Measured, and the same outcome as an empty field: ``remove_when_none`` on a
+        sequence child does not tell an absent key from a cleared one, and the form always
+        submits the field it shows."""
+        result, errors = await self._submit(self._row(), stored=15)
+        assert errors == {}
+        (registry,) = _config(result)["registries"]
+        assert "quota-gib" not in registry
+
+    async def test_the_approval_the_platform_wrote_survives_the_form(self) -> None:
+        """The form gets no editable on ``quota-gib-approval``, so saving may not touch it."""
+        project = _project(_registry("nldd", 15))
+        QUOTA_APPROVAL.ensure_requested(project)
+        _decide(project, "approved")
+        submitted = {"services": {"image-registries": {"config": {"registries": [self._row(**{"quota-gib": "15"})]}}}}
+        result, errors = await EditableFormProcessor().process_json_submission(
+            submitted, [REGISTRIES_SEQUENCE], project, edit_mode=True
+        )
+        assert errors == {}
+        assert _config(result)["quota-gib-approval"]["nldd"]["status"] == "approved"
+        assert _quota(result) == 15
+
+
+class TestTheModalPathRecordsTheRequest:
+    """The request has to arise on the form path too, not just through the API.
+
+    ``modal-edit-image-registries-config`` saves through ``update_project`` with
+    ``ALL_GUARDS - {HIDDEN_MEMBERS}``, so ``EditGuard.APPROVAL_REQUESTS`` and with it
+    ``ensure_approval_requests`` is the step between the merge and the store. This holds
+    that wiring: without it a quota set in the dialog never reaches the approval page.
+    """
+
+    @staticmethod
+    async def _modal_save(project: dict[str, Any]) -> dict[str, Any]:
+        from opi.web.router_detail_edit import _process_and_save_modal_edit
+
+        flow = MagicMock()
+        flow.flow_id = "modal-edit-image-registries-config"
+        manager = MagicMock()
+        manager.get_contents = AsyncMock(return_value=copy.deepcopy(project))
+        manager.save_and_commit_project = AsyncMock()
+
+        with (
+            patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=copy.deepcopy(project))),
+            patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
+        ):
+            result = await _process_and_save_modal_edit(
+                request=MagicMock(),
+                project_manager=manager,
+                project_name="demo",
+                flow=flow,
+                wizard_token="token",
+                merged_data={},
+                active_sections=[],
+                state=MagicMock(),
+            )
+        assert not isinstance(result, HTMLResponse)
+        manager.save_and_commit_project.assert_awaited_once()
+        return result.after
+
+    async def test_a_quota_above_the_free_range_lands_on_the_approval_page(self) -> None:
+        saved = await self._modal_save(_project(_registry("nldd", 15)))
+
+        items = [item for item in collect_approval_items(saved) if item["type"] == "quota-gib"]
+        assert len(items) == 1
+        assert items[0]["current_status"] == "requested"
+        assert _quota(saved) == QUOTA_FREE_MAX_GIB
+
+    async def test_a_quota_within_the_free_range_asks_nothing(self) -> None:
+        saved = await self._modal_save(_project(_registry("nldd", 8)))
+
+        assert [item for item in collect_approval_items(saved) if item["type"] == "quota-gib"] == []
+        assert _quota(saved) == 8
 
 
 class TestRenderedOrganization:
@@ -352,6 +445,19 @@ class TestRenderedOrganization:
 
     def test_without_a_quota_the_limit_is_the_cluster_default(self, tmp_path: Any) -> None:
         assert self._render(tmp_path, _project(_registry("nldd")))["spec"]["quota"]["limitGiB"] == CLUSTER_DEFAULT
+
+    def test_the_time_machine_is_off(self, tmp_path: Any) -> None:
+        """Omitted, Quay keeps its own window and an expired tag counts towards the quota
+        for weeks. A proxy cache simply fetches the image again."""
+        assert self._render(tmp_path, _project(_registry("nldd")))["spec"]["timeMachineSeconds"] == 0
+
+    def test_the_tag_expiration_stays_on_the_quay_default(self, tmp_path: Any) -> None:
+        """Setting it explicitly rebuilds the proxy cache config of every organization, and
+        the default (one day) is what we want anyway."""
+        assert (
+            "defaultTagExpirationSeconds"
+            not in self._render(tmp_path, _project(_registry("nldd")))["spec"]["proxyCache"]
+        )
 
     def test_the_admin_team_can_manage_the_organization(self, tmp_path: Any) -> None:
         levels = self._render(tmp_path, _project(_registry("nldd")))["spec"]["authorization"]["teamSync"]["authLevels"]

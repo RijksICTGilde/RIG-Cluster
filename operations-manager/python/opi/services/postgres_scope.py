@@ -120,3 +120,21 @@ def get_dedicated_postgres_config(project_data: dict[str, Any]) -> dict[str, Any
     config.pop("schemas", None)
     config.pop("connection_limit", None)
     return config
+
+
+def dedicated_postgres_registry_reference(project_data: dict[str, Any]) -> tuple[str, str] | None:
+    """The service that declares the dedicated PostgreSQL cluster and the registry it pulls
+    its image from, or None when there is no such reference.
+
+    A raw read and not :func:`get_dedicated_postgres_config`: this feeds a save-time guard,
+    which must not fail on an unrelated config error elsewhere in the block. Same source
+    order as that function, so both name the same registry.
+    """
+    view = Project(project_data)
+    for service_type in (ServiceType.NAMESPACE_POSTGRESQL_DATABASE, ServiceType.POSTGRESQL_DATABASE):
+        if not view.uses_service(service_type.value):
+            continue
+        config = view.service_config(service_type.value)
+        name = config.get("registry") if isinstance(config, dict) else None
+        return (service_type.value, name) if isinstance(name, str) and name else None
+    return None

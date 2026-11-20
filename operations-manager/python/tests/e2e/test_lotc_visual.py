@@ -246,6 +246,7 @@ REDESIGNED_PAGES = [
     "router",
     "platform",
     "admin-rolmatrix",
+    "admin-platform",
 ]
 
 

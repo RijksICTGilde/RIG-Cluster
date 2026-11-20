@@ -83,6 +83,13 @@ sleutel-secret. OPI zet die bij elke verwerking en bij het opstarten, dus een he
 verwerking van dat project herstelt het; wie en wanneer staat in
 `docs/development/sops-sleutel-in-het-cluster.md`.
 
+## Een conditie die GEEN fout is
+
+Naast de `*Error`-condities zet ArgoCD een `ExcludedResourceWarning` wanneer een resource niet
+uitrolt omdat zijn kind niet op de allowlist van het cluster staat. Die reist niet als fout
+maar als waarschuwing, want de rest van de app draait wel en de Application blijft Synced en
+Healthy. Zie `features/argocd-resource-allowlist.md`.
+
 ## Files
 
 | File | Purpose |

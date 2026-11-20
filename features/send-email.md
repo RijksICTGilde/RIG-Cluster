@@ -79,6 +79,12 @@ Een component dat de dienst aanvinkt krijgt vijf variabelen uit de projectsecret
 
 Elke variabele heeft ook een `APP_`-alias, net als bij de andere diensten.
 
+Verbind **zonder TLS**: geen STARTTLS en geen implicit TLS. Bij Django is dat
+`EMAIL_USE_TLS = False` en `EMAIL_USE_SSL = False`. De relay biedt wel STARTTLS aan, maar
+met een self-signed certificaat, dus een client die het certificaat controleert breekt af
+met `certificate verify failed: self-signed certificate`. Een geldig certificaat staat op
+issue #439.
+
 ## Wat je instelt
 
 Op projectniveau, in de wizard of via de API:
@@ -673,8 +679,10 @@ En twee dingen die de relay vandaag niet dichtzet, met de reden erbij:
   beheerderswachtwoord gaat base64 over het podnetwerk. Wat het inperkt is het
   NetworkPolicy: alleen de OPI-namespace mag poort 8080 aan. Echt dicht vraagt een
   certificaat op de listener.
-- **Submission heeft geen TLS** terwijl er PLAIN/LOGIN overheen gaat. Zelfde inperking en
-  hetzelfde certificaat lost beide op.
+- **Submission heeft geen bruikbare TLS** terwijl er PLAIN/LOGIN overheen gaat. Zonder
+  `[certificate]` in de config biedt Stalwart STARTTLS aan met een zelf gemaakt
+  self-signed certificaat, dat geen client vertrouwt; apps verbinden daarom plat. Zelfde
+  inperking, en een geldig certificaat (issue #439) lost beide op.
 
 Verder nog niet gebouwd, en bewust:
 

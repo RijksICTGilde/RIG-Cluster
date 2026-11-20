@@ -35,9 +35,6 @@ data:
     OWN_DOMAIN=zad.rijksapp.nl
     ADDITIONAL_DOMAINS="operations-manager.rig.prd1.gn2.quattro.rijksapps.nl"
 
-    OIDC_CLIENT_ID=rig-platform-operations-manager
-    OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
-
     KEYCLOAK_URL=https://keycloak.rijksapp.nl
 
     # Gedeelde OTP voor de realm-adminaccounts van projecten. Stond sinds de bouw alleen in

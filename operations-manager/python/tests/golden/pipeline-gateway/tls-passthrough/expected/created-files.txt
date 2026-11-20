@@ -1,0 +1,8 @@
+web-deployment.yaml
+web-service.yaml
+web-tlsroute.yaml
+web-platform-secret.yaml
+issuer-letsencrypt-voorbeeld-nl-productie.yaml
+acme-http-productie-network-policy.yaml
+listenerset.yaml
+productie-tenant-baseline-network-policy.yaml

@@ -9,6 +9,9 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.persistent_storage.editables import (
+    DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE_EDITABLE,
+    DEPLOYMENT_COMP_PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
+    DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE_EDITABLE,
     PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
     PERSISTENT_STORAGE_NAME_EDITABLE,
     PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
@@ -42,4 +45,27 @@ PERSISTENT_STORAGE_SEQUENCE = EditableVisualizer(
     label="Persistente opslag",
     help_text="Persistente opslagvolumes die in de container worden gemount",
     children=[PERSISTENT_STORAGE_NAME, PERSISTENT_STORAGE_SIZE, PERSISTENT_STORAGE_MOUNT_PATH],
+)
+
+
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Volume",
+    help_text="De naam van het volume zoals het component het mount (afgeleid van het mount-pad).",
+)
+
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Grootte",
+    help_text="Laat leeg om de grootte van het component te volgen.",
+)
+
+DEPLOYMENT_COMP_PERSISTENT_STORAGE_SEQUENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Permanente opslag per volume",
+    help_text="Een eigen grootte voor deze deployment, per volume. Boven 2Gi keurt een platformbeheerder de aanvraag goed.",
+    children=[DEPLOYMENT_COMP_PERSISTENT_STORAGE_REFERENCE, DEPLOYMENT_COMP_PERSISTENT_STORAGE_SIZE],
 )

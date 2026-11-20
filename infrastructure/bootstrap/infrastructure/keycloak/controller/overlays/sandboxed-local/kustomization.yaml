@@ -15,7 +15,7 @@ resources:
 # bouw-eerst en geen tag.
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
-    newTag: "2026.11.11.0743-c4f5fb50"
+    newTag: "2026.11.17.1237-9b7a5486"
 
 patches:
   - target:
@@ -55,21 +55,16 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/4/value
         value: "https://keycloak.sandbox.rijksapp.dev"
-  - target:
+  # De Ingress uit de basis gaat eruit: de ingang van de sandbox staat in een stand, en
+  # alle Ingresses van die stand staan bij elkaar in
+  # infrastructure/bootstrap/routing/base/ingress. Zie docs/sandbox/routing-wisselen.md.
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
       kind: Ingress
-      name: keycloak
-    patch: |-
-      - op: replace
-        path: /spec/rules/0/host
-        value: keycloak.sandbox.rijksapp.dev
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: keycloak.sandbox.rijksapp.dev
-      - op: replace
-        path: /spec/tls/0/secretName
-        value: sandbox-wildcard-tls
-      - op: remove
-        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+      metadata:
+        name: keycloak
+        namespace: rig-system
   # Add management port (9000) to service for metrics endpoint
   - target:
       kind: Service

@@ -1,0 +1,40 @@
+# Realm of the operations manager on production and staging: operations-manager-realm, plus
+# a mandatory OTP for every password login. A local account here makes a platform
+# administrator (features/sso-rijk-uitwijk.md), so it gets the second factor that
+# sso-support-otp gives a project realm. The sandbox keeps operations-manager-realm.
+#
+# An SSO user never meets the OTP step: it sits in the forms subflow, and the SSO Rijk
+# button goes past it.
+extends: operations-manager-realm
+
+# Repeated from operations-manager-realm: a blueprint that does not name a realm field
+# inherits it unseen (test_geen_blauwdruk_erft_zijn_realmvelden).
+realms:
+  - name: "{{ project_realm_name }}"
+    bruteForceProtected: true
+    emailTheme: "keycloak"
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    resetPasswordAllowed: false
+    verifyEmail: false
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
+    # Off on purpose, as in sso-support-otp: a default action also lands on a user who
+    # arrives through SSO. The mandatory OTP step sets CONFIGURE_TOTP itself for a local
+    # account without an OTP credential.
+    requiredActionDefaults:
+      CONFIGURE_TOTP: false
+
+# Built by KeycloakConnector.ensure_required_otp_browser_flow; see sso-support-otp.yaml.
+authenticationFlows:
+  - alias: "Browser with required OTP"
+    description: "Browser flow where a local account must give an OTP"
+    requireOtp: true
+
+browserFlow: "Browser with required OTP"
+
+# The invite client overrides the realm flow with "browser" in sso-support.
+clients:
+  - clientId: "{{ invite_client_id }}"
+    browserFlowOverride: "Browser with required OTP"

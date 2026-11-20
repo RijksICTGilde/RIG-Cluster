@@ -465,6 +465,19 @@ def deployment_status_tags(
             }
         )
 
+    # A resource that is not rolled out because its kind is not on the allowlist. ArgoCD
+    # keeps the app Synced and Healthy, so without this tag the row reads as plain green.
+    excluded = argocd.get("excluded_resources") or 0
+    if excluded:
+        tags.append(
+            {
+                "label": f"{excluded} resource niet uitgerold"
+                if excluded == 1
+                else f"{excluded} resources niet uitgerold",
+                "type": "warning",
+            }
+        )
+
     # Unknown means ArgoCD cannot compare desired and actual state (often a render or CMP
     # error), so red and not neutral grey, which would read as "still working on it".
     tags.append(

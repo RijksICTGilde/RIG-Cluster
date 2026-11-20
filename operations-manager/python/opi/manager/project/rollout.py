@@ -16,6 +16,7 @@ from opi.core.config import settings
 from opi.core.metrics import PHASE_AFTER_SYNC, rollout_phase
 from opi.manager.argo_manager import APPLICATION_CREATION_TIMEOUT_SECONDS, ApplicationGoneError
 from opi.services.argocd_operation import describe_sync_waiting
+from opi.services.deployment_diagnostics import gather_excluded_resources
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.event_interpreter import _interpret_by_reason, condense_render_error
 from opi.services.project_file_handler import image_is_confirmed_absent
@@ -442,7 +443,7 @@ class DeploymentRollout:
             )
             logger.info(f"Application '{app_name}' is synced and healthy")
             if app_subtask and progress_manager:
-                progress_manager.update_task(app_subtask, dep_name, subject="uitgerold en gezond")
+                progress_manager.update_task(app_subtask, dep_name, subject=await self._sync_outcome(round_, app_name))
                 progress_manager.complete_subtask(app_subtask)
             return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
         except DeploymentHealthError as e:
@@ -479,6 +480,34 @@ class DeploymentRollout:
             if app_subtask and progress_manager:
                 progress_manager.fail_subtask(app_subtask, str(e))
             return {"app_name": app_name, "dep_name": dep_name, "status": "error", "error": e}
+
+    async def _sync_outcome(self, round_: RolloutRound, app_name: str) -> str:
+        """What the subtask of a synced and healthy deployment reports.
+
+        ArgoCD keeps an application Synced and Healthy while leaving a resource whose kind is
+        not on the allowlist out of the rollout, so "uitgerold en gezond" would hide that.
+        The task itself still succeeds: the rest of the application does run.
+
+        This read is informative only. It runs inside the try of the caller, where
+        ``ArgoTransportError`` (a ``RuntimeError``) would turn a succeeded deployment into a
+        sync failure, so a failing read falls back to the plain outcome.
+        """
+        try:
+            status_data = await round_.argo_connector.get_application_status(app_name)
+        except RuntimeError as e:
+            logger.warning("Kon na synced en healthy de status van '%s' niet lezen: %s", app_name, e)
+            return "uitgerold en gezond"
+        excluded = gather_excluded_resources(status_data or {})
+        if not excluded:
+            return "uitgerold en gezond"
+        logger.warning(
+            "Application '%s' is synced and healthy, but %d resource(s) are excluded: %s",
+            app_name,
+            len(excluded),
+            ", ".join(resource.label for resource in excluded),
+        )
+        noun = "resource niet" if len(excluded) == 1 else "resources niet"
+        return f"uitgerold, maar {len(excluded)} {noun} ({', '.join(resource.label for resource in excluded)})"
 
     async def _prove_render(self, round_: RolloutRound, app_name: str, reconciled_at: str | None) -> None:
         """Fetch the render right after our push, so a broken kustomization fails fast.

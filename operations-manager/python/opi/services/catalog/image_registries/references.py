@@ -13,8 +13,11 @@ from opi.services.catalog.image_registries.resolution import component_registry_
 
 
 def validate_registry_references(project_data: dict[str, Any]) -> list[str]:
-    """Refuse a project file in which a component points at a registry that is no longer
-    there, naming the places that mention it."""
+    """Refuse a project file in which a component, a deployment or the dedicated database
+    points at a registry that is no longer there, naming the places that mention it."""
+    # Lazy: ``postgres_scope`` reads the service registry, which imports this module.
+    from opi.services.postgres_scope import dedicated_postgres_registry_reference
+
     available = {registry["name"] for registry in project_registries(project_data)}
     used: dict[str, list[str]] = {}
 
@@ -31,6 +34,10 @@ def validate_registry_references(project_data: dict[str, Any]) -> list[str]:
             if name and name not in available:
                 place = f"deployment '{deployment.get('name', 'onbekend')}', component '{component.get('reference', 'onbekend')}'"
                 used.setdefault(name, []).append(place)
+
+    reference = dedicated_postgres_registry_reference(project_data)
+    if reference is not None and reference[1] not in available:
+        used.setdefault(reference[1], []).append(f"database ({reference[0]})")
 
     return [
         f"Registry '{name}' bestaat niet (meer) in dit project, maar wordt nog gebruikt door: "

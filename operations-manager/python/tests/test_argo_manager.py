@@ -592,6 +592,63 @@ class TestRefreshApplicationReturnsReconciledAt:
         assert result == "2026-03-17T10:00:00Z"
         assert any("ComparisonError" in rec.message for rec in caplog.records)
 
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_excluded_resource_condition(self, connector: ArgoConnector, caplog):
+        """A resource ArgoCD leaves out of the rollout (RC-501) is logged at WARNING too,
+        not only an *Error condition -- the app stays Synced/Healthy and nothing else
+        would put this in the OPI logs."""
+        response_body = json.dumps(
+            {
+                "status": {
+                    "reconciledAt": "2026-03-17T10:00:00Z",
+                    "conditions": [
+                        {
+                            "type": "ExcludedResourceWarning",
+                            "message": "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+                        }
+                    ],
+                }
+            }
+        )
+
+        import logging
+
+        with (
+            patch.object(
+                connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            result = await connector.refresh_application("my-app")
+
+        assert result == "2026-03-17T10:00:00Z"
+        assert any("ExcludedResourceWarning" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_condition_that_is_neither_error_nor_warning_is_not_logged(self, connector: ArgoConnector, caplog):
+        """Only a type ending in Error or Warning is logged; anything else (e.g. a plain
+        informational condition) would be noise."""
+        response_body = json.dumps(
+            {
+                "status": {
+                    "reconciledAt": "2026-03-17T10:00:00Z",
+                    "conditions": [{"type": "SomeOtherCondition", "message": "just fyi"}],
+                }
+            }
+        )
+
+        import logging
+
+        with (
+            patch.object(
+                connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            await connector.refresh_application("my-app")
+
+        assert not any("SomeOtherCondition" in rec.message for rec in caplog.records)
+
 
 class TestTerminalConditionMessage:
     """Tests for the module-level terminal_condition_message helper."""

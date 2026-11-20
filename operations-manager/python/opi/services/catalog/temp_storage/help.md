@@ -16,4 +16,4 @@ Bij een herstart of een nieuwe uitrol is deze schijf leeg. Moet de inhoud een he
 
 Er wordt een vluchtig volume in je pod gekoppeld. Per volume geef je een naam, een grootte en een koppelpad op; standaard is dat 100Mi op **/tmp**. Je component krijgt de variabele **TEMP_PATH**.
 
-Je kunt kiezen uit 50Mi, 100Mi, 250Mi, 500Mi en 1Gi; 1Gi is het maximum per volume. Schrijft je applicatie meer weg dan de opgegeven maat, dan wordt de pod herstart, dus geef op wat je werkelijk nodig hebt.
+Kies een maat van 50Mi tot en met 50Gi. Tot en met 2Gi stel je zelf in; daarboven keurt een platformbeheerder de aanvraag goed, en tot die goedkeuring blijft gelden wat al gold. Schrijft je applicatie meer weg dan de opgegeven maat, dan wordt de pod herstart, dus geef op wat je werkelijk nodig hebt.

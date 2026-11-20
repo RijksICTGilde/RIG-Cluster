@@ -30,6 +30,30 @@ class HealthEndpointFilter(logging.Filter):
         return not any(f'"GET {path}' in message or f'"HEAD {path}' in message for path in self.EXCLUDED_PATHS)
 
 
+class LineBreakEscapeFilter(logging.Filter):
+    """Escapes CR and LF in the message, so a value from outside cannot forge a log line.
+
+    Only the message: a traceback sits in ``exc_text`` and keeps its line breaks.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except TypeError, ValueError:
+            # Message and args do not fit together; the formatter reports that error.
+            return True
+        escaped = message.replace("\r", "\\r").replace("\n", "\\n")
+        if escaped != message:
+            record.msg = escaped
+            record.args = None
+        return True
+
+
+def _add_filters(handler: logging.Handler, filters: tuple[logging.Filter, ...]) -> None:
+    for log_filter in filters:
+        handler.addFilter(log_filter)
+
+
 def _resolve_level(level: str) -> tuple[int, str | None]:
     """Return the numeric level for ``level``, plus a warning when the name is unusable."""
     resolved = logging.getLevelNamesMapping().get(level.strip().upper())
@@ -87,8 +111,8 @@ def setup_logging(
     opi_logger.setLevel(opi_level)
 
     # A second line of defence next to redact_sensitive_headers: masks a secret that ends up
-    # in a message anyway, in a library's message too.
-    redaction_filter = SecretRedactionFilter()
+    # in a message anyway, in a library's message too. Then the line breaks get escaped.
+    handler_filters = (SecretRedactionFilter(), LineBreakEscapeFilter())
 
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthEndpointFilter())
@@ -97,7 +121,7 @@ def setup_logging(
     stdout_handler = logging.StreamHandler()
     stdout_handler.setLevel(logging.DEBUG)
     stdout_handler.setFormatter(logging.Formatter(log_format))
-    stdout_handler.addFilter(redaction_filter)
+    _add_filters(stdout_handler, handler_filters)
     root_logger.addHandler(stdout_handler)
 
     if level_warning:
@@ -115,7 +139,7 @@ def setup_logging(
             )
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(logging.Formatter(log_format))
-            file_handler.addFilter(redaction_filter)
+            _add_filters(file_handler, handler_filters)
             root_logger.addHandler(file_handler)
 
             logging.info(f"File logging enabled: {log_file_path}")  # noqa: LOG015  # this function configures the root logger itself
@@ -140,7 +164,7 @@ def setup_logging(
             )
             error_file_handler.setLevel(logging.WARNING)
             error_file_handler.setFormatter(logging.Formatter(log_format))
-            error_file_handler.addFilter(redaction_filter)
+            _add_filters(error_file_handler, handler_filters)
             root_logger.addHandler(error_file_handler)
 
             logging.info(f"Error file logging enabled: {log_errors_file_path}")  # noqa: LOG015  # this function configures the root logger itself

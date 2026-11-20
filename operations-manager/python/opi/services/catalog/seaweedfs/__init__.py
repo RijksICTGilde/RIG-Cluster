@@ -186,7 +186,7 @@ class SeaweedfsStorageService(BackupsPageMixin, Service):
                 layout=[
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "enable-versioning"),
                     Fieldset(
-                        legend="Oude versies",
+                        legend="Versiebeheer voor objectstorage",
                         description=(
                             "Geldt alleen voor een bucket met versiebeheer. Oude versies boven het aantal "
                             "worden opgeruimd, en met een leeftijdsgrens ook de versies die ouder zijn. "

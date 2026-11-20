@@ -48,6 +48,8 @@ UNREACHABLE_BY_SCHEMA_WALK = {
     "components[*]/services{persistent-storage}/config",
     "components[*]/services{temp-storage}/config",
     "deployments[*]/components[*]/services/attachments/config",
+    "deployments[*]/components[*]/services/persistent-storage",
+    "deployments[*]/components[*]/services/temp-storage",
     "resource_types",
     "services/cross-domain-access/config/inbound",
     "services/cross-domain-access/config/outbound",

@@ -698,8 +698,8 @@ def test_auth_wall_owns_its_config_section():
 
 
 def test_namespace_postgres_owns_its_config_section():
-    """namespace-postgres owns its project-level config section (instances + storage).
-    Its API surface is the FULL config model (broader than the 2 UI fields) - the
+    """namespace-postgres owns its project-level config section (instances, storage and
+    registry). Its API surface is the FULL config model (broader than the 3 UI fields) - the
     UI/API split the design calls for."""
     provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
 
@@ -710,12 +710,13 @@ def test_namespace_postgres_owns_its_config_section():
     assert section.visible({"services": []}) is False
     assert provider.config_form_section(ConfigLayer.PROJECT) is section
 
-    # UI section exposes 2 fields; their paths are enum-built.
+    # UI section exposes 3 fields; their paths are enum-built.
     assert [e.yaml_path for e in provider.config_editables(ConfigLayer.PROJECT)] == [
         "services/namespace-postgresql-database/config/instances",
         "services/namespace-postgresql-database/config/storage",
+        "services/namespace-postgresql-database/config/registry",
     ]
-    # API surface = the whole model (image/registry/privileges/... are API/YAML-only).
+    # API surface = the whole model (image/privileges/... are API/YAML-only).
     api_fields = provider.config_api_fields(ConfigLayer.PROJECT)
     assert api_fields == provider.config_model_field_names()
     assert set(api_fields) >= {"instances", "storage", "image", "privileges"}

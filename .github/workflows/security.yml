@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 env:
   # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
@@ -159,6 +158,10 @@ jobs:
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -232,6 +235,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-${{ matrix.image.name }}.sarif'
           severity: 'HIGH,CRITICAL'
+          # Zonder deze vlag zet trivy-action de severity voor SARIF terug op alles.
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           # Dezelfde uitzonderingen als de gate, zodat een afgewogen bevinding niet meetelt in
           # het Security-tabblad. Na zijn vervaldatum komt hij daar terug.
@@ -270,6 +275,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-config-${{ matrix.image.name }}.sarif'
           severity: 'HIGH,CRITICAL'
+          limit-severities-for-sarif: true
 
       - name: Fail on Dockerfile misconfiguration
         if: ${{ !matrix.image.pin }}
@@ -290,14 +296,18 @@ jobs:
           sarif_file: 'trivy-config-${{ matrix.image.name }}.sarif'
           category: 'trivy-config-${{ matrix.image.name }}'
 
-  # De Kubernetes-manifesten die het platform zelf uitrolt. Deze job RAPPORTEERT en gatet
-  # niet: de 65 bevindingen die hier nu uit komen zijn platformbesluiten (OPI beheert
-  # secrets en namespaces, dat is zijn taak) en readOnlyRootFilesystem per component. Elk
-  # daarvan afwegen is een eigen taak; ze tegenhouden zou de poort met 65 uitzonderingen
-  # moeten openzetten, en dan meet hij niets meer.
+  # De Kubernetes-manifesten die het platform zelf uitrolt. De gate faalt op een nieuwe
+  # HIGH of CRITICAL; de bestaande staan per regel en per bestand in .trivyignore.yaml
+  # (issue #433), zodat een nieuw bestand of een nieuwe regel wel meetelt. De SARIF krijgt
+  # die lijst niet mee: die bevindingen zijn nog niet afgewogen en blijven zichtbaar in het
+  # Security-tabblad. De sandbox-overlays vallen af, die draaien alleen in een lokaal kind.
   manifest-scan:
     name: Manifest config scan - ${{ matrix.map }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -319,6 +329,20 @@ jobs:
           format: 'sarif'
           output: 'trivy-config-${{ matrix.map }}.sarif'
           severity: 'HIGH,CRITICAL'
+          limit-severities-for-sarif: true
+          skip-dirs: '**/sandboxed-local*,sandbox'
+
+      - name: Fail on ${{ matrix.map }} misconfiguration
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.map }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          skip-dirs: '**/sandboxed-local*,sandbox'
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
 
       - name: Upload Trivy config results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
@@ -378,6 +402,10 @@ jobs:
   sast-semgrep:
     name: SAST - Semgrep
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     defaults:
       run:
@@ -448,6 +476,10 @@ jobs:
   manifest-posture:
     name: Manifest posture
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # De SARIF-upload naar het Security-tabblad.
+      security-events: write
     timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3

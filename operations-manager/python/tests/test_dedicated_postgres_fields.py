@@ -17,9 +17,9 @@ from opi.forms.visualizers.providers import PostgresStorageSizeOptionsProvider
 from opi.services.catalog.namespace_postgres.visualizers import POSTGRESQL_STORAGE
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.catalog.shared.postgres_settings import POSTGRES_RESOURCES, POSTGRES_STORAGE
-from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_validation import validate_project_structure, validate_service_configs
+from opi.utils.k8s_quantity import parse_k8s_memory_to_mi
 from pydantic import ValidationError
 
 _PG = "postgresql-database"
@@ -147,9 +147,14 @@ def _ns_project(storage: str) -> dict[str, Any]:
     }
 
 
-def test_de_keuzelijst_toont_de_maten_van_het_platform() -> None:
+def test_de_keuzelijst_toont_de_maten_die_het_veld_toestaat() -> None:
+    """A series of its own rather than ``STORAGE_SIZES``: that one runs to 50Gi while
+    ``POSTGRES_STORAGE`` stops at 20Gi, and a select may not offer a size the declaration
+    refuses."""
     opties = PostgresStorageSizeOptionsProvider().get_options()
-    assert [optie["value"] for optie in opties] == list(STORAGE_SIZES)
+    assert [optie["value"] for optie in opties] == list(PostgresStorageSizeOptionsProvider.SIZES)
+    maximum = parse_k8s_memory_to_mi(str(POSTGRES_STORAGE.maximum))
+    assert all(parse_k8s_memory_to_mi(str(optie["value"])) <= maximum for optie in opties)
 
 
 def test_een_opgeslagen_maat_boven_de_lijst_blijft_te_kiezen() -> None:

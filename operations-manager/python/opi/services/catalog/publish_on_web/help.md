@@ -12,7 +12,7 @@ Sla dit over voor een component dat alleen door andere componenten in hetzelfde 
 
 ## Wat wordt er ingesteld?
 
-Er komt een ingress met een hostnaam en een geldig certificaat. Het webadres stel je per deployment in bij Webadres; het platform regelt standaard zelf het certificaat. Je kunt ook je eigen certificaat op de ingress laten aanbieden of het verkeer ongemoeid naar je pod laten doorlopen (passthrough), bijvoorbeeld voor mTLS.
+Er komt een route met een hostnaam en een certificaat. Het webadres stel je per deployment in bij Webadres; het platform regelt standaard zelf het certificaat. Je kunt ook je eigen certificaat instellen of het verkeer direct naar je pod laten doorlopen (passthrough), bijvoorbeeld voor mTLS.
 
 Je component krijgt de variabelen **PUBLIC_HOST** en **PUBLIC_HOSTNAME** met het adres waarop het bereikbaar is.
 

@@ -18,7 +18,7 @@ def minio_storage_actions(project_data: dict[str, Any], deployment_name: str) ->
         deployment_name,
         service=ServiceType.MINIO_STORAGE,
         modal_prefix="modal-edit-minio-deployment-",
-        label="Oude versies",
+        label="Versiebeheer voor objectstorage",
         icon="wolk",
     )
     return [action] if action else []

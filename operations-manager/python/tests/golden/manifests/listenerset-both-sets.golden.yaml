@@ -1,0 +1,58 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: "prod-listeners"
+  namespace: "rig-myproject"
+  annotations:
+    cert-manager.io/issuer: "letsencrypt-example-nl-prod"
+    # Modern key material: ECDSA P-384, fresh key on every renewal (no RSA-2048 default).
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+    # Hangs the HTTP-01 challenge route on the shared HTTP listener of the Gateway instead
+    # of on a listener of this set.
+    acme.cert-manager.io/http01-parentreffallback: "true"
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: "rig-gateway"
+    namespace: "rig-gateway"
+  listeners:
+    - name: "app-example-nl"
+      hostname: "app.example.nl"
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: "prod-web-tls"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: "prod-own-listeners"
+  namespace: "rig-myproject"
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: "rig-gateway"
+    namespace: "rig-gateway"
+  listeners:
+    - name: "eigen-example-nl"
+      hostname: "eigen.example.nl"
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: "prod-api-provided-tls"
+    - name: "door-example-nl"
+      hostname: "door.example.nl"
+      protocol: TLS
+      port: 443
+      tls:
+        mode: Passthrough

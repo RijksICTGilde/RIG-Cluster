@@ -46,6 +46,15 @@ _EXEC_RESOURCES = frozenset({"pods/exec", "pods/attach", "pods/portforward"})
 #: eigen pod, en dat is juist de weg die deze grendel beschermt.
 _EXEC_IN_CODE = re.compile(r"kubectl\s+exec|[\"']exec[\"']|connect_get_namespaced_pod_exec|pods/exec")
 
+#: (file, line) -> why this hit is not a pod exec. The line is the literal hit, so a change
+#: around it does not silently widen the exception.
+TOEGESTAAN: dict[tuple[str, str], str] = {
+    (
+        "operations-manager/python/opi/fundament_registration/certificate.py",
+        '"exec",',
+    ): "DNS-providernaam van lego's eigen --dns-vlag, geen kubectl-subcommando",
+}
+
 
 def _documents(path: Path) -> list[dict]:
     """De YAML-documenten in een bestand; wat niet als YAML leest, levert niets op.
@@ -133,16 +142,40 @@ def test_rollen_met_exec_slaat_een_niet_dict_regel_over(monkeypatch: pytest.Monk
     assert gevonden == {"met-rommelregel": ["role.yaml"]}
 
 
+def _treffers_in_opi() -> list[tuple[str, str]]:
+    """(file, line) for every hit of `_EXEC_IN_CODE` in `opi/`."""
+    opi = _REPO_ROOT / "operations-manager/python/opi"
+    return [
+        (str(path.relative_to(_REPO_ROOT)), line.strip())
+        for path in sorted(opi.rglob("*.py"))
+        for line in path.read_text().splitlines()
+        if _EXEC_IN_CODE.search(line)
+    ]
+
+
 def test_opi_execcet_niet_in_een_pod() -> None:
     """Geen aanroep in `opi/` die een commando in een andere pod draait."""
-    opi = _REPO_ROOT / "operations-manager/python/opi"
-    treffers = [
-        f"{pad.relative_to(_REPO_ROOT)}:{nummer}: {regel.strip()}"
-        for pad in sorted(opi.rglob("*.py"))
-        for nummer, regel in enumerate(pad.read_text().splitlines(), start=1)
-        if _EXEC_IN_CODE.search(regel)
-    ]
-    assert not treffers, (
-        f"OPI draait een commando in een andere pod: {treffers}. "
+    unlisted = [f"{path}: {line}" for path, line in _treffers_in_opi() if (path, line) not in TOEGESTAAN]
+    assert not unlisted, (
+        f"OPI draait een commando in een andere pod: {unlisted}. "
         "Een subprocess in de eigen pod heeft dat recht niet nodig."
     )
+
+
+def test_every_allowed_hit_still_exists() -> None:
+    """An exception that disappeared has to leave the list, or it covers something that is gone."""
+    assert set(TOEGESTAAN) <= set(_treffers_in_opi())
+
+
+def test_the_guard_fires_on_a_real_kubectl_exec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shape this guard has to stop (a bare 'exec' string) must still make it red."""
+    opi = tmp_path / "operations-manager/python/opi"
+    opi.mkdir(parents=True)
+    (opi / "probe.py").write_text('cmd = ["kubectl", "exec", pod_name, "--", "cat", "/etc/passwd"]\n')
+    monkeypatch.setattr("test_opi_geen_pod_exec._REPO_ROOT", tmp_path)
+
+    hits = _treffers_in_opi()
+
+    line = 'cmd = ["kubectl", "exec", pod_name, "--", "cat", "/etc/passwd"]'
+    assert hits == [("operations-manager/python/opi/probe.py", line)]
+    assert ("operations-manager/python/opi/probe.py", line) not in TOEGESTAAN

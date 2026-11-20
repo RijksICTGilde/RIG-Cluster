@@ -40,9 +40,10 @@ class TestDePlatformDienstDraagtHem:
         """Bij het platform en niet bij image-registries: een dienst die alleen bijdraagt
         als er registries in staan zou hem juist daar laten ontbreken."""
         specs = PlatformService().contribute_project_manifests(_ctx())
-        assert len(specs) == 1
-        assert specs[0].values["name"] == "demo-sa"
-        assert specs[0].values["namespace"] == "rig-prd-demo"
+        service_accounts = [spec for spec in specs if spec.template_path == "project-serviceaccount.yaml.jinja"]
+        assert len(service_accounts) == 1
+        assert service_accounts[0].values["name"] == "demo-sa"
+        assert service_accounts[0].values["namespace"] == "rig-prd-demo"
 
     def test_de_bestandsnaam_is_weer_op_te_ruimen(self) -> None:
         spec = PlatformService().contribute_project_manifests(_ctx())[0]

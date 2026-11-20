@@ -1104,6 +1104,8 @@ async def validate_project_structure(
     # replaces nothing has nothing stored, so every value in it is new.
     change_errors: list[str] = []
     for service in change_validating_services():
-        change_errors.extend(service.validate_project_change(previous or {}, project_data))
+        change_errors.extend(
+            service.validate_project_change(previous or {}, project_data, approval_decision=approval_decision)
+        )
     if change_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(change_errors)}")

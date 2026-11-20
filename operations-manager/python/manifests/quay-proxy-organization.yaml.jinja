@@ -20,6 +20,9 @@ spec:
   suffix: "{{ suffix }}"
   quota:
     limitGiB: {{ quota_limit_gib }}
+  # Left out, Quay keeps its own window, and then an expired tag counts towards the quota
+  # for weeks. A proxy cache simply pulls the image again.
+  timeMachineSeconds: 0
   # authLevels explicitly: left out, the operator gives all three teams the role Member,
   # and then nobody can delete a tag when the cache runs into its quota. The admin team is
   # the cluster-wide tenant group rig-prd-admin-group (platform management only, not a group

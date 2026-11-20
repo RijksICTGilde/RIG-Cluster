@@ -10,6 +10,10 @@ binnenkomt. Deze feature voegt die 2-factor toe op twee plekken:
 2. de **master-realm**, waar de platformbeheerders en de beheeraccounts van de
    projectrealms staan. Daar is de OTP altijd verplicht.
 
+De realm van ZAD zelf, `operations-manager`, krijgt op productie en staging dezelfde verplichte
+OTP via de blauwdruk `operations-manager-realm-otp` (gekozen in
+`opi/configs/projects/operations-manager.yaml`). De sandbox houdt `operations-manager-realm`.
+
 Wie via SSO Rijk inlogt merkt er niets van: die komt langs de Identity Provider Redirector
 en bereikt het wachtwoordformulier, waar de OTP-stap achter hangt, nooit. De 2-factor
 hoort daar bij SSO Rijk.

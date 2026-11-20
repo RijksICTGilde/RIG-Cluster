@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from opi.connectors.keycloak import SSO_REDIRECT_BROWSER_FLOW
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
 from opi.http.render.lotc_switch import PROJECT_TABS
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
@@ -26,6 +27,7 @@ from opi.services.project_file_handler import extract_attachment_catalog, extrac
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.services.shared_services import Threshold, UnmeasuredService
+from opi.services.sso_outage import SsoOutageStatus
 from opi.services.user_otp_service import OtpStatus
 from opi.utils.qr import qr_svg
 from opi.utils.yaml_util import load_yaml_safe
@@ -129,6 +131,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         # approvals not yet granted. The example data has to have the SHAPE of the real data,
         # or the preview proves nothing about the real page.
         "approval_notices": {},
+        "address_approval_notices": {},
         "backups_available": False,
         "current_cluster": "odcn-production",
         "cluster_base_domains": {},
@@ -181,14 +184,13 @@ def _voorbeeld_otp_status() -> OtpStatus:
     return OtpStatus(registered=True, confirmed_at=datetime(2026, 9, 4, 10, 12, tzinfo=UTC))
 
 
-def page_data(slug: str) -> dict[str, Any]:
-    """The data a redesigned page needs.
+def _voorbeeld_sso_status() -> SsoOutageStatus:
+    """The normal state of the platform realm; the preview has no Keycloak to read."""
+    return SsoOutageStatus(realm="rig-platform", browser_flow=SSO_REDIRECT_BROWSER_FLOW, outage_active=False)
 
-    A plain table and no clever mechanism: every page needs other data. An unknown name yields
-    an empty context, and then the page itself shows what is missing.
-    """
-    projects = all_projects()
 
+def _account_page_data(slug: str) -> dict[str, Any] | None:
+    """The three account pages, which need no project at all."""
     if slug == "account":
         # The account page shows what is in the session, and this preview has no login
         # service, so an example user stands here.
@@ -215,6 +217,21 @@ def page_data(slug: str) -> dict[str, Any]:
             "pending": "VOORBEELDWAARDE-geen-echt-geheim",
             "pending_field": "pending",
         }
+
+    return None
+
+
+def page_data(slug: str) -> dict[str, Any]:
+    """The data a redesigned page needs.
+
+    A plain table and no clever mechanism: every page needs other data. An unknown name yields
+    an empty context, and then the page itself shows what is missing.
+    """
+    projects = all_projects()
+
+    account_page = _account_page_data(slug)
+    if account_page is not None:
+        return account_page
 
     if slug == "security":
         # The REAL policy, the way the introduction page shows the real catalog: a made-up
@@ -389,6 +406,9 @@ def page_data(slug: str) -> dict[str, Any]:
             "csrf_token": "",
             "success_message": "",
         }
+
+    if slug == "admin-platform":
+        return {"sso_status": _voorbeeld_sso_status(), "csrf_token": ""}
 
     if slug == "admin-user-form":
         # The fields come from the same editables as the real route, through the same adapter.
