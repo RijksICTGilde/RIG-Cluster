@@ -13,9 +13,9 @@ ZAD zelf logt in via zijn eigen realm `operations-manager` (blauwdruk
 naar SSO Rijk een wachtwoordformulier voor lokale accounts. Een platformbeheerder met een
 lokaal account komt daarmee bij de beheerpagina, ook als SSO Rijk plat ligt. Dat account heeft
 een geverifieerd mailadres nodig dat in ZAD platformbeheerder is, en dat niet het adres van een
-SSO Rijk-account is (dat bestaat al als gebruiker in de realm). Een OTP is op deze realm
-optioneel, niet verplicht; het draaiboek (`docs/operations/sso-rijk-is-stuk.md`) zegt hoe je
-zo'n account inricht.
+SSO Rijk-account is (dat bestaat al als gebruiker in de realm). Op productie en staging is
+een OTP verplicht (blauwdruk `operations-manager-realm-otp`); in de sandbox niet. Het draaiboek
+(`docs/operations/sso-rijk-is-stuk.md`) zegt hoe je zo'n account inricht.
 
 Het is een tijdelijke workaround voor een storing, geen tweede manier van inloggen die altijd
 openstaat.
@@ -140,7 +140,7 @@ heeft die koppeling niet en kan dus nooit met een magic link zijn wachtwoord en 
 | Nieuw | Guard |
 |---|---|
 | Inloggen zonder SSO Rijk, via een mailbox (storingsstand) | Alleen aan na een actie van een platformbeheerder met verse step-up. Alleen voor gebruikers met een gekoppelde `sso-rijk`-identiteit. 5 minuten geldig, eenmalig, 2 pogingen per code, gebonden aan de inlogpoging, verzendlimiet per gebruiker. |
-| Inloggen op ZAD met een lokaal account in `operations-manager`, altijd open | Wachtwoord, OTP alleen als het account er een heeft ingericht, brute force-bescherming van de realm, daarna `is_platform_admin` en de step-up van ZAD. |
+| Inloggen op ZAD met een lokaal account in `operations-manager`, altijd open | Wachtwoord plus verplichte OTP van Keycloak (op productie en staging), brute force-bescherming van de realm, daarna `is_platform_admin` en de step-up van ZAD. |
 | `browserFlow` van `rig-platform` schrijfbaar vanuit OPI | Alleen vanaf `/admin/platform`, achter `require_platform_admin`. Alleen de twee bekende flows; een flow-alias komt nooit uit een verzoek. |
 | De meldtekst op het inlogscherm | Vaste tekst in de berichtenbundel van het thema, in het Nederlands en het Engels. Er is dus niets schrijfbaar en niets te escapen. |
 | De reconcile laat `browserFlow` van `rig-platform` staan | Wie `manage-realm` op `rig-platform` heeft kan de binding zelf omzetten en de reconcile repareert dat niet meer. Dat recht hebben alleen OPI (het service-account `operations-manager`) en de master-beheerders. |

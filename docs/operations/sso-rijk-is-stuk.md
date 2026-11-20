@@ -61,4 +61,5 @@ blijven doorlopen: een browser-flow bepaalt alleen wat een NIEUWE login doet.
   beheerconsole van Keycloak aan met **een ander mailadres dan je SSO Rijk-account**: dat
   adres bestaat al als gebruiker in deze realm, en een wachtwoord op die gebruiker geeft hem
   een vaste inlogweg buiten SSO Rijk om. Zet het nieuwe adres in ZAD als platformbeheerder,
-  zet Email verified aan en richt een OTP in.
+  zet Email verified aan. Bij de eerste login vraagt Keycloak om een authenticator-app; op
+  productie en staging is die OTP verplicht.
