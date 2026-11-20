@@ -287,6 +287,8 @@ De toetsen in de suite:
 5. Een migratie die `fundament_registrations` en `fundament_acme_accounts` dropt.
 6. De A-records van de teams in de zone, en de Keycloak-client van het fieldlab.
 7. De zeven toetsbestanden uit de tabel hierboven, en dit document.
+8. De exclude van `certificate.py` bij `zad-subprocess-buiten-connector` in
+   `aanvalsproef/semgrep-zad.yaml`.
 
 De twee toevoegingen aan `opi/connectors/transip.py` (inloggen met een access-token en
 `delete_dns_entry`) mogen blijven: die staan op zichzelf.
