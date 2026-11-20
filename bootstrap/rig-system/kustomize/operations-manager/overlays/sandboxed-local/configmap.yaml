@@ -41,11 +41,11 @@ data:
     SEAWEEDFS_MASTER_ADDRESS=seaweedfs.rig-system.svc.cluster.local:9333
 
     ARGOCD_HOST=argocd-server
-    # TLS: certificaat en bundel van `task sandbox:generate-argocd-tls`.
-    ARGOCD_PORT=443
-    ARGOCD_USE_TLS=true
-    ARGOCD_VERIFY_SSL=true
-    ARGOCD_CA_BUNDLE=/etc/ssl/argocd/ca.crt
+    # Plain HTTP: argocd-server staat op de sandbox altijd op server.insecure, in beide
+    # standen van de routing, en TLS eindigt op de ingang. ARGOCD_VERIFY_SSL en
+    # ARGOCD_CA_BUNDLE staan er daarom niet meer: zonder TLS doen ze niets.
+    ARGOCD_PORT=80
+    ARGOCD_USE_TLS=false
 
     # Hier aan en op productie nog niet: de sandbox is waar de afsluiting gemeten wordt
     # (tests/e2e/test_sandbox_database_isolatie.py). Standaard is dry-run.

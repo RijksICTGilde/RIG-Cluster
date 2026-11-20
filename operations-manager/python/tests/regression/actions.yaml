@@ -165,6 +165,11 @@ startup:
     where: lifespan
     dependencies:
       mail: {status: planned, phase: later}
+  - step: RoutingModeWatcher
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: later}
+      postgres: {status: planned, phase: later}
   - step: ImagePullObserver
     where: lifespan
     dependencies:

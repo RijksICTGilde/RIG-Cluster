@@ -18,21 +18,17 @@ resources:
 - ../../appprojects
 - argocd-appproject-zad-app-of-apps.yaml
 - argocd-appproject-zad-platform.yaml
+- argocd-appproject-zad-routing.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - argocd-application-ron-infrastructure.yaml
+- argocd-application-routing-infrastructure.yaml
 - ../../operations-manager/overlays/sandboxed-local
 # Backup destination MinIO for local development/testing
 - ../../backup-destination/base
 
 components:
 - ../../components/sops-plugin
-# DE STAND VAN DE ROUTING op dit cluster, voor het portaal en ArgoCD: een van de twee
-# componenten, nooit beide. De andere twee regels van de wissel staan in
-# infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml en in
-# CLUSTER_CONFIG["sandboxed-local"]["ingress"]["routing"]; task sandbox:routing-apply
-# brengt een draaiend cluster naar deze stand. Zie docs/sandbox/routing-wisselen.md.
-- ../../components/sandbox-routing/ingress
 
 patches:
   # NB: de sops-plugin component doet `op: replace` op /spec/repo — repo-instellingen

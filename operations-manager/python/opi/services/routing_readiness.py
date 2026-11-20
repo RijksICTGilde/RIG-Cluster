@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.core.cluster_config import get_gateway_config, renders_gateway_api
+from opi.core.cluster_config import RoutingApi, get_declared_gateway_config, get_routing_api
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,9 @@ def _is_programmed(gateway: dict[str, Any]) -> bool:
 
 
 async def _verify_gateway(kubectl: KubectlConnector, cluster: str) -> str:
-    gateway_config = get_gateway_config(cluster)
+    """Reads the gateway block without the stand guard: the watcher measures this entrypoint
+    while OPI still renders Ingress, and ``get_gateway_config`` refuses exactly then."""
+    gateway_config = get_declared_gateway_config(cluster)
     name, namespace = gateway_config["name"], gateway_config["namespace"]
 
     exists = await kubectl.resource_exists(GATEWAY_TYPE, name, namespace)
@@ -57,9 +59,10 @@ async def _verify_gateway(kubectl: KubectlConnector, cluster: str) -> str:
 async def _verify_ingress_class(kubectl: KubectlConnector, cluster: str) -> str:
     """At least one IngressClass, which is as much as an Ingress on this platform needs.
 
-    Not "one that is default": the generated Ingresses carry no ``ingressClassName`` and the
-    controller picks up a class-less Ingress. Measured on the sandbox, whose only
-    IngressClass carries no default annotation while publishing works there.
+    Not "one that is default": the generated Ingresses carry no ``ingressClassName``, and the
+    controller of the sandbox runs with ``--watch-ingress-without-class=true``, so it picks up
+    a class-less Ingress. That coupling is measured in
+    tests/test_sandbox_routing_contract.py.
     """
     classes = await kubectl.get_cluster_resources("ingressclass")
     if classes is None:
@@ -72,14 +75,19 @@ async def _verify_ingress_class(kubectl: KubectlConnector, cluster: str) -> str:
     return f"IngressClass {names[0]} bestaat"
 
 
-async def verify_routing_entrypoint(cluster: str) -> str:
+async def verify_routing_entrypoint(cluster: str, routing: RoutingApi | None = None) -> str:
     """One line describing the entrypoint that was found, for the answer and the log.
+
+    ``routing`` names the stand to measure; ``None`` is the stand the cluster renders in.
+    The watcher passes a stand OPI does not render in yet.
 
     Raises:
         RoutingEntrypointMissingError: the entrypoint is definitively not usable.
         RoutingEntrypointUnknownError: the check could not be performed.
     """
+    if routing is None:
+        routing = get_routing_api(cluster)
     kubectl = create_kubectl_connector()
-    if renders_gateway_api(cluster):
+    if routing is RoutingApi.GATEWAY:
         return await _verify_gateway(kubectl, cluster)
     return await _verify_ingress_class(kubectl, cluster)

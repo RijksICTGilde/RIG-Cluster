@@ -740,16 +740,25 @@ def get_ingress_ip_whitelist(cluster_name: str) -> str:
     return ingress_config["ip_whitelist"]
 
 
-def get_routing_api(cluster_name: str) -> RoutingApi:
-    """Whether this cluster gets Ingress resources or Gateway API resources.
+#: The stand OPI renders in right now, per cluster, when it differs from the configuration.
+#: Set by ``RoutingModeWatcher`` once the ConfigMap ``zad-routing`` asks for another stand and
+#: the entrypoint of that stand is ready. Absent means the stand of ``CLUSTER_CONFIG``, which
+#: is what every cluster without that ConfigMap keeps.
+_rendered_routing_api: dict[str, RoutingApi] = {}
 
-    Raises:
-        ValueError: the cluster restricts ``ip_whitelist`` while asking for gateway. That
-            whitelist is an OpenShift Router annotation with no Gateway API equivalent, so
-            honouring the switch would silently drop the restriction.
+
+def set_rendered_routing_api(cluster_name: str, routing: RoutingApi) -> None:
+    """Switch the stand OPI renders in, after the entrypoint of that stand was found ready.
+
+    Raises ``ValueError`` when the combination with ``ip_whitelist`` is not allowed, the same
+    as the configured stand.
     """
+    _guard_gateway_against_ip_whitelist(cluster_name, routing)
+    _rendered_routing_api[cluster_name] = routing
+
+
+def _guard_gateway_against_ip_whitelist(cluster_name: str, routing: RoutingApi) -> None:
     ingress_config = get_ingress_config(cluster_name)
-    routing = RoutingApi(ingress_config.get("routing", RoutingApi.INGRESS))
     if routing is RoutingApi.GATEWAY and ingress_config.get("ip_whitelist") not in OPEN_IP_WHITELISTS:
         raise ValueError(
             f"Cluster '{cluster_name}' combines routing '{RoutingApi.GATEWAY}' with ip_whitelist "
@@ -757,12 +766,51 @@ def get_routing_api(cluster_name: str) -> RoutingApi:
             f"HAProxy whitelist annotation, so the restriction would fall away unnoticed. Open the "
             f"whitelist deliberately, or keep this cluster on '{RoutingApi.INGRESS}'."
         )
+
+
+def get_configured_routing_api(cluster_name: str) -> RoutingApi:
+    """The stand of ``CLUSTER_CONFIG``, ignoring a stand adopted at runtime.
+
+    Raises:
+        ValueError: the cluster restricts ``ip_whitelist`` while asking for gateway. That
+            whitelist is an OpenShift Router annotation with no Gateway API equivalent, so
+            honouring the switch would silently drop the restriction.
+    """
+    routing = RoutingApi(get_ingress_config(cluster_name).get("routing", RoutingApi.INGRESS))
+    _guard_gateway_against_ip_whitelist(cluster_name, routing)
     return routing
+
+
+def get_routing_api(cluster_name: str) -> RoutingApi:
+    """Whether this cluster gets Ingress resources or Gateway API resources.
+
+    Raises:
+        ValueError: see ``get_configured_routing_api``.
+    """
+    rendered = _rendered_routing_api.get(cluster_name)
+    if rendered is not None:
+        return rendered
+    return get_configured_routing_api(cluster_name)
 
 
 def renders_gateway_api(cluster_name: str) -> bool:
     """Shorthand for the many callers that only need the branch."""
     return get_routing_api(cluster_name) is RoutingApi.GATEWAY
+
+
+def get_declared_gateway_config(cluster_name: str) -> dict:
+    """The gateway block of this cluster, whatever stand OPI renders in right now.
+
+    For measuring the entrypoint of the gateway stand BEFORE OPI switches to it, which is
+    what ``RoutingModeWatcher`` does. Every other caller wants ``get_gateway_config``.
+
+    Raises:
+        ValueError: the cluster configures no gateway block.
+    """
+    gateway = get_ingress_config(cluster_name).get("gateway")
+    if not gateway:
+        raise ValueError(f"Cluster '{cluster_name}' asks for gateway routing without an ingress.gateway block")
+    return gateway
 
 
 def get_gateway_config(cluster_name: str) -> dict:
@@ -773,10 +821,7 @@ def get_gateway_config(cluster_name: str) -> dict:
     """
     if not renders_gateway_api(cluster_name):
         raise ValueError(f"Cluster '{cluster_name}' renders Ingress resources and so has no Gateway")
-    gateway = get_ingress_config(cluster_name).get("gateway")
-    if not gateway:
-        raise ValueError(f"Cluster '{cluster_name}' asks for gateway routing without an ingress.gateway block")
-    return gateway
+    return get_declared_gateway_config(cluster_name)
 
 
 def get_ingress_cluster_issuer(cluster_name: str) -> str | None:

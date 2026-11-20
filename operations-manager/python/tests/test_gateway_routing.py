@@ -409,6 +409,15 @@ class TestTheEntrypointForABulkReprocess:
             await verify_routing_entrypoint(gateway_routing)
 
     @pytest.mark.asyncio
+    async def test_the_gateway_stand_is_measurable_before_opi_renders_in_it(self) -> None:
+        """The watcher measures the Gateway while OPI still renders Ingress, so this check
+        may not go through the stand guard of ``get_gateway_config``. No fixture here on
+        purpose: the cluster is on ingress, as it is in git."""
+        kubectl = self._kubectl(True, {"status": {"conditions": [{"type": "Programmed", "status": "True"}]}})
+        with patch("opi.services.routing_readiness.create_kubectl_connector", return_value=kubectl):
+            assert "Programmed" in await verify_routing_entrypoint(GATEWAY_CLUSTER, RoutingApi.GATEWAY)
+
+    @pytest.mark.asyncio
     async def test_ingress_routing_wants_an_ingressclass(self) -> None:
         """Not a default one: an Ingress without ingressClassName is served anyway, which is
         what the sandbox does, and its only IngressClass carries no default annotation."""

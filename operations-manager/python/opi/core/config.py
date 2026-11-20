@@ -528,6 +528,10 @@ class Settings(BaseSettings):
     MAIL_RELAY_CHECK_INTERVAL_SECONDS: int = 60
     MAIL_RELAY_DOWN_ALERT_SECONDS: int = 300  # only report after five minutes, a rollout may take a while
 
+    # How often the ConfigMap zad-routing is read (RC-513). Switching the entrypoint takes
+    # minutes, so a minute of delay is plenty, and the read is one kubectl get.
+    ROUTING_MODE_CHECK_INTERVAL_SECONDS: int = 60
+
     # Temporary capacity watch on the tenant quota (opi/runtime/periodic/capacity_watcher.py); reports
     # through the ntfy topic of the log_watcher. The tenant is explicit: the cluster does not
     # know which one it serves.

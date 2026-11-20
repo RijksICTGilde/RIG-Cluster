@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# DE STAND VAN DE ROUTING op de sandbox. Deze ene regel is de hele wissel: zet hem op
+# ./gateway of ./ingress, push, en draai task sandbox:sync. ArgoCD zet de nieuwe stand neer
+# en ruimt de oude op, en OPI ziet de nieuwe stand via de ConfigMap zad-routing die het
+# component meebrengt. Zie docs/sandbox/routing-wisselen.md.
+components:
+  - ./ingress

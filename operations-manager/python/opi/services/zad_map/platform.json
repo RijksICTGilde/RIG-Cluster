@@ -20,7 +20,7 @@
     {
      "name": "kubectl",
      "file": "opi/connectors/kubectl.py",
-     "uses": 43
+     "uses": 44
     }
    ],
    "services": [

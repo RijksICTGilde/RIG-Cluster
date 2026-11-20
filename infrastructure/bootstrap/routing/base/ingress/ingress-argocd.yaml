@@ -1,0 +1,28 @@
+# De Ingress van ArgoCD staat hier en wordt niet meer door de operator gemaakt
+# (server.ingress.enabled: false): de ingang van de sandbox hoort in een stand te staan,
+# en de operator kent die stand niet.
+#
+# Geen backend-protocol-annotatie: argocd-server staat op de sandbox altijd op
+# server.insecure, dus de backend praat plain HTTP.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: rig-system
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: argo.sandbox.rijksapp.dev
+      http:
+        paths:
+          - backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - argo.sandbox.rijksapp.dev
+      secretName: sandbox-wildcard-tls

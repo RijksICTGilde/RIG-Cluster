@@ -18,6 +18,7 @@ from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.auth.user_token_auth import validate_platform_admin_token
 from opi.http.task_helpers import get_task_service
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
+from opi.services.project_reprocess import queue_reprocess_of_every_project
 from opi.services.project_store import get_project_store
 from opi.services.routing_readiness import (
     RoutingEntrypointMissingError,
@@ -25,7 +26,6 @@ from opi.services.routing_readiness import (
     verify_routing_entrypoint,
 )
 from opi.services.step_up import StepUpAction
-from opi.services.tasks.async_task_service import TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -376,20 +376,8 @@ async def reprocess_all_projects(request: Request) -> JSONResponse:
             detail="De ingang van dit cluster kon niet worden vastgesteld. Probeer het over een minuut opnieuw.",
         ) from unknown
 
-    task_service = get_task_service(request)
-    projects = get_project_store().get_all()
-    task_ids: dict[str, str] = {}
-    for project in projects:
-        task = await task_service.create_task(
-            task_type=TaskType.REFRESH_PROJECT,
-            project_name=project.name,
-            deployment_name=None,
-            cluster=settings.CLUSTER_MANAGER,
-            payload={"project_name": project.name, "force_clone": False, "reset_running_sync": False},
-        )
-        task_ids[project.name] = task["task_id"]
-
-    logger.info(f"Admin reprocess-all queued {len(task_ids)} project(s); entrypoint: {entrypoint}")
+    task_ids = await queue_reprocess_of_every_project(get_task_service(request), settings.CLUSTER_MANAGER)
+    logger.info(f"Admin reprocess-all used entrypoint: {entrypoint}")
     return JSONResponse(
         content={
             "message": f"{len(task_ids)} project(s) scheduled for reprocessing",

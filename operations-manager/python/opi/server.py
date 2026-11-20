@@ -275,6 +275,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
             logger.error("Failed to start mail relay watcher: %s", e)
 
+    # Follow the routing stand of this cluster. Only with a task service: the switch queues a
+    # reprocess of every project, and without a worker there is nothing to queue it on.
+    _routing_task_service = getattr(app.state, "task_service", None)
+    if _routing_task_service is not None:
+        try:
+            from opi.runtime.periodic.routing_mode_watcher import RoutingModeWatcher
+
+            _routing_mode_watcher = RoutingModeWatcher(_routing_task_service, settings.CLUSTER_MANAGER)
+            await _routing_mode_watcher.start()
+            app.state.routing_mode_watcher = _routing_mode_watcher
+        except Exception as e:  # noqa: BLE001  # the app lifecycle must not stop on one component
+            logger.error("Failed to start routing mode watcher: %s", e)
+
     if settings.CAPACITY_WATCH_ENABLED and settings.CAPACITY_WATCH_TENANT:
         try:
             from opi.runtime.periodic.capacity_watcher import CapacityWatcher
@@ -389,6 +402,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     mail_relay_watcher = getattr(app.state, "mail_relay_watcher", None)
     if mail_relay_watcher is not None:
         await mail_relay_watcher.stop()
+
+    routing_mode_watcher = getattr(app.state, "routing_mode_watcher", None)
+    if routing_mode_watcher is not None:
+        await routing_mode_watcher.stop()
 
     capacity_watcher = getattr(app.state, "capacity_watcher", None)
     if capacity_watcher is not None:

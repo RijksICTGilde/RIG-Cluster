@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import opi.core.config
+import opi.services.project_reprocess as reprocess_module
 import pytest
 from fastapi import HTTPException
 from opi.api import admin_router as admin_module
@@ -52,7 +53,7 @@ async def test_every_project_gets_a_task(live_settings, platformbeheerder_token,
     task_service = _task_service()
 
     with (
-        patch.object(admin_module, "get_project_store", return_value=_store("alpha", "beta")),
+        patch.object(reprocess_module, "get_project_store", return_value=_store("alpha", "beta")),
         patch.object(admin_module, "get_task_service", return_value=task_service),
         patch.object(admin_module, "verify_routing_entrypoint", AsyncMock(return_value="Gateway is Programmed")),
     ):
@@ -74,7 +75,7 @@ async def test_an_absent_entrypoint_gives_409_and_queues_nothing(
     missing = RoutingEntrypointMissingError("Gateway 'rig-gateway/rig-gateway' bestaat niet")
 
     with (
-        patch.object(admin_module, "get_project_store", return_value=_store("alpha")),
+        patch.object(reprocess_module, "get_project_store", return_value=_store("alpha")),
         patch.object(admin_module, "get_task_service", return_value=task_service),
         patch.object(admin_module, "verify_routing_entrypoint", AsyncMock(side_effect=missing)),
         pytest.raises(HTTPException) as exc,
@@ -93,7 +94,7 @@ async def test_a_failed_check_gives_503_and_never_409(live_settings, platformbeh
     unknown = RoutingEntrypointUnknownError("Kon niet vaststellen of Gateway bestaat")
 
     with (
-        patch.object(admin_module, "get_project_store", return_value=_store("alpha")),
+        patch.object(reprocess_module, "get_project_store", return_value=_store("alpha")),
         patch.object(admin_module, "get_task_service", return_value=task_service),
         patch.object(admin_module, "verify_routing_entrypoint", AsyncMock(side_effect=unknown)),
         pytest.raises(HTTPException) as exc,

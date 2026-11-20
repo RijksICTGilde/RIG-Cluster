@@ -1,6 +1,9 @@
-"""RC-510: sandbox:configure-coredns picks its rewrite target from the routing stand in git,
-and must replace a rewrite rule that points at the other stand's target instead of leaving it
-in place or duplicating it.
+"""RC-513: sandbox:configure-coredns rewrites to the fixed entrypoint zad-ingang.
+
+The target no longer depends on the routing stand: every stand brings an ExternalName Service
+``zad-ingang`` pointing at its own controller, so this rewrite is written once and never
+changes again. A cluster that still carries the old rule, straight at a controller Service,
+must be moved over instead of keeping or duplicating it.
 
 A previous version of the idempotency check (``grep "name regex.*\\.sandbox\\.rijksapp\\.dev"``)
 never matched: the Corefile carries real backslashes in that regex, so every run added a
@@ -27,10 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 SOURCE_TAG_SCRIPT = REPO_ROOT / "scripts/bron-tag.sh"
 CALVER_TAG_SCRIPT = REPO_ROOT / "scripts/calver-tag.sh"
-SANDBOX_OVERLAY_KUSTOMIZATION = Path("bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml")
-
-INGRESS_TARGET = "ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-GATEWAY_TARGET = "rig-gateway.envoy-gateway-system.svc.cluster.local"
+INGANG_TARGET = "zad-ingang.rig-system.svc.cluster.local"
+#: The rule a sandbox from before RC-513 carries: straight at the nginx controller.
+FORMER_TARGET = "ingress-nginx-controller.ingress-nginx.svc.cluster.local"
 
 COREFILE_WITHOUT_RULE = """.:53 {
     errors
@@ -97,10 +99,10 @@ exit 0
 
 @pytest.fixture
 def repo_copy(tmp_path: Path) -> Path:
-    """A git repo with the Taskfile and a sandbox overlay on the requested routing stand.
+    """A git repo with the Taskfile and the scripts its global vars read.
 
-    SANDBOX_OM_TAG and SANDBOX_ROUTING are global vars that need a repo and the overlay
-    kustomization before any task even reaches its own body.
+    SANDBOX_OM_TAG is a global var that needs a repo before any task even reaches its own
+    body.
     """
     if shutil.which("bash") is None or shutil.which("git") is None:
         pytest.skip("bash or git is missing")
@@ -108,8 +110,6 @@ def repo_copy(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
     for script in (SOURCE_TAG_SCRIPT, CALVER_TAG_SCRIPT):
         shutil.copy(script, tmp_path / "scripts" / script.name)
-    (tmp_path / SANDBOX_OVERLAY_KUSTOMIZATION.parent).mkdir(parents=True)
-    shutil.copy(REPO_ROOT / SANDBOX_OVERLAY_KUSTOMIZATION, tmp_path / SANDBOX_OVERLAY_KUSTOMIZATION)
     for args in (("init", "-q"), ("add", "."), ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     stubs = tmp_path / "stubs"
@@ -119,14 +119,8 @@ def repo_copy(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _configure_coredns(repo_copy: Path, *, stand: str, corefile: str) -> subprocess.CompletedProcess[str]:
-    """Set the stand in the sandbox overlay and run sandbox:configure-coredns for real."""
-    kustomization = repo_copy / SANDBOX_OVERLAY_KUSTOMIZATION
-    text = kustomization.read_text()
-    for other in ("ingress", "gateway"):
-        text = text.replace(f"sandbox-routing/{other}", f"sandbox-routing/{stand}")
-    kustomization.write_text(text)
-
+def _configure_coredns(repo_copy: Path, *, corefile: str) -> subprocess.CompletedProcess[str]:
+    """Run sandbox:configure-coredns for real, against a stub kubectl."""
     env = dict(os.environ)
     env["PATH"] = f"{repo_copy / 'stubs'}{os.pathsep}{env['PATH']}"
     env["STUB_LOG"] = str(repo_copy / "stub.log")
@@ -148,29 +142,30 @@ def _patched_corefile(repo_copy: Path) -> str:
 
 
 def test_without_existing_rule_the_rewrite_block_is_added(repo_copy: Path) -> None:
-    result = _configure_coredns(repo_copy, stand="ingress", corefile=COREFILE_WITHOUT_RULE)
+    result = _configure_coredns(repo_copy, corefile=COREFILE_WITHOUT_RULE)
 
     assert result.returncode == 0, result.stderr + result.stdout
     corefile = _patched_corefile(repo_copy)
     assert corefile.count("rewrite stop") == 1
-    assert f"name regex (.+)\\.sandbox\\.rijksapp\\.dev {INGRESS_TARGET}" in corefile
+    assert f"name regex (.+)\\.sandbox\\.rijksapp\\.dev {INGANG_TARGET}" in corefile
 
 
-def test_a_rule_to_the_current_target_is_idempotent(repo_copy: Path) -> None:
+def test_a_rule_to_the_fixed_entrypoint_is_idempotent(repo_copy: Path) -> None:
     """No kubectl patch at all: the previous version of this check never matched and so added
     a second rewrite block on every run."""
-    result = _configure_coredns(repo_copy, stand="ingress", corefile=_corefile_with_rule(INGRESS_TARGET))
+    result = _configure_coredns(repo_copy, corefile=_corefile_with_rule(INGANG_TARGET))
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "already points at" in result.stdout
     assert not (repo_copy / "patch.json").exists()
 
 
-def test_a_rule_to_the_other_stand_is_replaced(repo_copy: Path) -> None:
-    result = _configure_coredns(repo_copy, stand="gateway", corefile=_corefile_with_rule(INGRESS_TARGET))
+def test_an_old_rule_straight_at_a_controller_is_replaced(repo_copy: Path) -> None:
+    """What an existing sandbox carries: the rewrite must move to zad-ingang."""
+    result = _configure_coredns(repo_copy, corefile=_corefile_with_rule(FORMER_TARGET))
 
     assert result.returncode == 0, result.stderr + result.stdout
     corefile = _patched_corefile(repo_copy)
     assert corefile.count("rewrite stop") == 1
-    assert GATEWAY_TARGET in corefile
-    assert INGRESS_TARGET not in corefile
+    assert INGANG_TARGET in corefile
+    assert FORMER_TARGET not in corefile

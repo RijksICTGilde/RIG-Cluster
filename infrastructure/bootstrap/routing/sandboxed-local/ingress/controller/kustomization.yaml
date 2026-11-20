@@ -1,0 +1,125 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# NAMESPACED HELFT van ingress-nginx: de controller zelf. Deze helft hoort bij de stand, dus
+# ArgoCD zet hem neer en prunet hem bij een wissel; daarmee laat hij hostPort 80 en 443 van
+# de kind-node los voor de andere stand. De cluster-scoped helft (de namespace, de
+# cluster-RBAC, de IngressClass en de admission-webhook) is platform en staat er altijd, in
+# ../../../platform/sandboxed-local/ingress-nginx.
+#
+# DE SPLITSING is de lijst met deletes onderaan, de omgekeerde van die in de platformhelft.
+# tests/test_sandbox_routing_contract.py meet beide helften tegen het manifest en tegen hun
+# scope.
+#
+# Gepind op een release-tag, en niet op main: anders verandert de controllerversie zonder
+# dat iemand iets wijzigt, en verdwijnt het pad zodra upstream opruimt, precies wat de
+# hostpath-driver in csi-snapshot/base overkwam. Ophogen is een bewuste stap: check de
+# patches hieronder tegen de nieuwe versie.
+resources:
+- https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+
+patches:
+# Enable configuration-snippet annotations (disabled by default since v1.9.0)
+# Required for setting security headers like Permissions-Policy via ingress annotations
+- target:
+    kind: ConfigMap
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    data:
+      allow-snippet-annotations: "true"
+      annotations-risk-level: "Critical"
+      # OPI praat met Keycloak via deze ingress, en zijn admin-token draagt een
+      # resource_access-entry per realm (~337 bytes). Bij 15 realms was de
+      # Authorization-header 8446 bytes en gaf nginx "400 Request Header Or Cookie
+      # Too Large" op de standaard 8k, waardoor een verse OPI-pod niet meer kon
+      # opstarten. Dit is een noodverband: het token blijft groeien met het aantal
+      # projecten (~19KB bij 47), dus de echte oplossing is dat admin-verkeer niet
+      # door deze ingress loopt of dat het token kleiner wordt.
+      large-client-header-buffers: "4 16k"
+
+# Ensure ingress controller runs on control-plane node with ingress-ready=true label
+# KIND clusters have port mappings (80/443) only on the control-plane node
+- target:
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/nodeSelector
+      value:
+        ingress-ready: "true"
+        kubernetes.io/os: linux
+
+# Enable SSL passthrough so the publish-on-web passthrough TLS mode works on nginx.
+# Without this controller flag the nginx.ingress.kubernetes.io/ssl-passthrough
+# annotation is ignored. (ODCN's OpenShift Router does passthrough natively.)
+- target:
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --enable-ssl-passthrough
+
+# Het wildcard-certificaat als default, zodat een Ingress in een tenant-namespace (die het
+# secret in rig-system niet mag noemen) een vertrouwd certificaat serveert in plaats van de
+# self-signed fallback van nginx. Ook de Ingress van de mailsink in rig-ron hangt hieraan.
+- target:
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --default-ssl-certificate=rig-system/sandbox-wildcard-tls
+
+# De cluster-scoped helft, die in ../../../platform/sandboxed-local/ingress-nginx staat.
+- patch: |-
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: ingress-nginx
+    $patch: delete
+- patch: |-
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: ingress-nginx
+    $patch: delete
+- patch: |-
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: ingress-nginx-admission
+    $patch: delete
+- patch: |-
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: ingress-nginx
+    $patch: delete
+- patch: |-
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: ingress-nginx-admission
+    $patch: delete
+- patch: |-
+    apiVersion: networking.k8s.io/v1
+    kind: IngressClass
+    metadata:
+      name: nginx
+    $patch: delete
+- patch: |-
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingWebhookConfiguration
+    metadata:
+      name: ingress-nginx-admission
+    $patch: delete

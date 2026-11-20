@@ -31,20 +31,16 @@ spec:
     server.rbac.log.enforce.enable: "true"
   server:
     logLevel: debug
-    # TLS met certificaat uit het secret argocd-server-tls (van `task sandbox:generate-argocd-tls`).
-    insecure: false
+    # Plain HTTP achter de ingang, in beide standen van de routing: TLS eindigt altijd op
+    # de ingang, en dan hangen de ARGOCD_*-instellingen van OPI niet aan de stand. Alleen
+    # de sandbox; ODCN laat argocd-server zelf TLS serveren.
+    insecure: true
     host: argo.sandbox.rijksapp.dev
+    # De Ingress van ArgoCD staat in het routing-component, niet hier: hij hoort bij de
+    # stand van de ingang, en de operator kent die stand niet
+    # (infrastructure/bootstrap/routing/base/ingress/ingress-argocd.yaml).
     ingress:
-      enabled: true
-      path: /
-      ingressClassName: nginx
-      annotations:
-        # insecure: false zegt nginx om TLS te verwachten; anders krijgt de UI een 502.
-        nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-      tls:
-      - hosts:
-        - argo.sandbox.rijksapp.dev
-        secretName: sandbox-wildcard-tls
+      enabled: false
   # Least privilege per rol (RC-345). Welke RBAC-actie elke aanroep van OPI vraagt:
   #
   #   GET  /api/v1/applications                         applications, get
@@ -86,7 +82,8 @@ spec:
   # Alleen de kinds die ZAD uitrolt, plus Pod en ReplicaSet voor de diagnose van OPI. Een
   # namespace-scoped controller watcht elk type in elke namespace apart; zonder deze lijst
   # zijn dat op ODCN 589 types per namespace en blijft de client-limiter verzadigd. Een
-  # kind die hier ontbreekt, rolt ArgoCD niet uit. Zelfde lijst als odcn-production.
+  # kind die hier ontbreekt, rolt ArgoCD niet uit. Dezelfde lijst als odcn-production, op de
+  # twee CRD's van Envoy Gateway na die alleen de sandbox heeft.
   resourceInclusions: |
     - apiGroups: [""]
       kinds: [ConfigMap, Secret, Service, ServiceAccount, PersistentVolumeClaim, Pod]
@@ -102,6 +99,13 @@ spec:
       clusters: ["*"]
     - apiGroups: [gateway.networking.k8s.io]
       kinds: [Gateway, HTTPRoute, TLSRoute, ListenerSet, ReferenceGrant]
+      clusters: ["*"]
+    # De twee CRD's van Envoy Gateway die de gateway-stand van de sandbox meebrengt. Een
+    # soort die hier ontbreekt rolt ArgoCD niet uit, en meldt dat niet
+    # (features/argocd-resource-allowlist.md). De controllers zelf en hun cluster-scoped
+    # soorten staan hier niet: die zijn platform en komen niet via ArgoCD.
+    - apiGroups: [gateway.envoyproxy.io]
+      kinds: [EnvoyProxy, BackendTrafficPolicy]
       clusters: ["*"]
     - apiGroups: [policy]
       kinds: [PodDisruptionBudget]
