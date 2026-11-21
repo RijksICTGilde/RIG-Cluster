@@ -1939,7 +1939,7 @@ tasks:
                 if [ -n "{{.FIXED_PASSWORD}}" ]; then
                   password="{{.FIXED_PASSWORD}}"
                 else
-                  password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
+                  password=$(openssl rand -base64 $password_length | tr -d "=+/\n" | cut -c1-$password_length)
                 fi
                 ;;
               "bcrypt")
