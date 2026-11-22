@@ -749,3 +749,62 @@ class TestUrlPreviewComponentFiltering:
         component_names = [u["component"] for u in result["urls"]]
         assert "frontend" in component_names
         assert "api" in component_names
+
+
+# ---------------------------------------------------------------------------
+# URL preview approval flag (needs_approval)
+# ---------------------------------------------------------------------------
+
+
+class TestUrlPreviewNeedsApproval:
+    """The test cluster's own domain (``kind``) is itself a restricted domain.
+
+    So a chosen subdomain on the cluster default needs an approval here too, the same
+    rule ``is_deployment_domain_approved`` applies at publish time.
+    """
+
+    def test_unapproved_subdomain_on_cluster_default_needs_approval(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
+            "deployments": [{"name": "productie", "domain-format": "subdomain", "subdomain": "nginx"}],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        assert result["needs_approval"] is True
+
+    def test_approved_subdomain_on_cluster_default_needs_no_approval(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
+            "deployments": [{"name": "productie", "domain-format": "subdomain", "subdomain": "nginx"}],
+            "services": [
+                {
+                    "name": "publish-on-web",
+                    "config": {
+                        "domains": {
+                            "allowed-subdomains": [
+                                {"domain": "kind", "subdomains": [{"name": "nginx", "status": "approved"}]}
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        assert result["needs_approval"] is False
+
+    def test_stored_subdomain_the_format_does_not_use_needs_no_approval(self):
+        """``deployment-project`` renders no subdomain, so a leftover value asks nothing."""
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
+            "deployments": [{"name": "productie", "domain-format": "deployment-project", "subdomain": "nginx"}],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        assert result["needs_approval"] is False

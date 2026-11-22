@@ -125,6 +125,11 @@ async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857", **req
     return next(d for d in project_data["deployments"] if d["name"] == clone_name)
 
 
+def _approved_subdomain(domain: str, name: str) -> dict[str, Any]:
+    entry = {"domain": domain, "subdomains": [{"name": name, "status": "approved"}]}
+    return {"name": "publish-on-web", "config": {"domains": {"allowed-subdomains": [entry]}}}
+
+
 def _hostnames(project_data: dict[str, Any], deployment: dict[str, Any]) -> set[str]:
     """De hostnamen die deze deployment publiceert, zoals de portal en de API ze lezen."""
     urls = public_url_map_for_deployment(project_data, deployment, PROJECT, ProjectFileHandler())
@@ -251,8 +256,18 @@ class TestDeEigenVraagVanDeBellerWint:
     async def test_een_gevraagde_vorm_die_op_de_naam_leunt_blijft_staan(self) -> None:
         """Hij leunt op een naam die de beller er zelf bij levert, dus er valt niets weg."""
         project_data = _project({"domain-format": "deployment-project"})
+        project_data["services"] = [_approved_subdomain("kind", "pr-857")]
 
         clone = await _clone(project_data, domain_format="component-subdomain", subdomain="pr-857")
 
         assert get_domain_setting(clone, DomainSetting.DOMAIN_FORMAT) == "component-subdomain"
         assert _hostnames(project_data, clone) == {"spa-pr-857.kind", "api-pr-857.kind"}
+
+    async def test_an_unapproved_subdomain_on_a_restricted_cluster_domain_falls_back(self) -> None:
+        """The requested form stays in the file, but the address is the safe one until approval."""
+        project_data = _project({"domain-format": "deployment-project"})
+
+        clone = await _clone(project_data, domain_format="component-subdomain", subdomain="pr-857")
+
+        assert get_domain_setting(clone, DomainSetting.DOMAIN_FORMAT) == "component-subdomain"
+        assert _hostnames(project_data, clone) == {f"spa-pr-857-{PROJECT}.kind", f"api-pr-857-{PROJECT}.kind"}

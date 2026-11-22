@@ -14,6 +14,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     SAFE_FALLBACK_FORMAT,
     DomainSetting,
     get_domain_setting,
+    subdomain_used_by_format,
 )
 from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
 from opi.utils.naming import (
@@ -127,7 +128,8 @@ def apply_domain_approval_fallback(
         project_data: Project YAML data (for approval check)
         cluster: Cluster name (for approval check)
     """
-    if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
+    used_subdomain = subdomain_used_by_format(subdomain, domain_format)
+    if is_deployment_domain_approved(project_data, base_domain, used_subdomain, cluster):
         return domain_format, base_domain
 
     # Not approved: fall back to safe format on cluster domain. The log names the address

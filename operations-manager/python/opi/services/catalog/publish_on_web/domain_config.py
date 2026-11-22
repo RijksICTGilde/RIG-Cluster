@@ -85,6 +85,22 @@ assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
 
+
+def subdomain_used_by_format(subdomain: str | None, domain_format: str | None) -> str | None:
+    """The subdomain *domain_format* actually puts in the hostname, None when it uses none.
+
+    A format without ``{subdomain}`` leaves a stored value unused, so it neither needs an
+    approval nor gets one. An unnamed or unknown format falls through to the legacy dispatch,
+    which does use the value.
+    """
+    if not subdomain or not domain_format:
+        return subdomain
+    template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
+    if template is None or "{subdomain}" in template:
+        return subdomain
+    return None
+
+
 # Computed sets derived from templates for use by editables and enforcers.
 SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
 ROOT_COMPONENT_FORMAT_IDS: list[str] = [

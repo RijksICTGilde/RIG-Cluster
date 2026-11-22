@@ -17,7 +17,11 @@ from opi.core.cluster_config import (
     is_domain_subdomain_restricted,
     is_platform_domain,
 )
-from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES, DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    subdomain_used_by_format,
+)
 
 logger = logging.getLogger(__name__)
 # Dedicated audit logger for subdomain operations
@@ -283,10 +287,11 @@ def is_deployment_domain_approved(
     """Check if a deployment's domain+subdomain combination is approved for use.
 
     Unified approval check — no distinction between custom and predefined domains.
-    The only domain that's always allowed without approval is the cluster default.
+    The only domain that's allowed without approval is the cluster default.
 
     Rules:
-    1. Cluster default domain (ingress_postfix) → always True
+    1. Cluster default domain (ingress_postfix) → True, unless a chosen subdomain lands on a
+       cluster domain whose subdomains the catalog restricts: then it must be approved too
     2. Any other domain → must be in the project's domains section with status approved
     3. If the domain has restricted subdomains → subdomain must also be approved
 
@@ -296,14 +301,11 @@ def is_deployment_domain_approved(
         subdomain: The subdomain (e.g., "wies"), or None if not used
         cluster: Cluster name for config lookup
     """
-    if not base_domain:
-        return True  # No domain specified, using cluster default
-
-    # Check if this is the cluster default domain
-    ingress_postfix = get_ingress_postfix(cluster)
-    cluster_domain = ingress_postfix.lstrip(".")
-    if base_domain == cluster_domain:
-        return True
+    cluster_domain = get_ingress_postfix(cluster).lstrip(".")
+    if not base_domain or base_domain == cluster_domain:
+        if not subdomain or not is_domain_subdomain_restricted(cluster, cluster_domain):
+            return True
+        return get_subdomain_status(project_data, cluster_domain, subdomain) == "approved"
 
     # Check domain approval in allowed-domains (applies to ALL non-default domains)
     domain_config = get_project_allowed_domain_config(project_data, base_domain)
@@ -498,8 +500,7 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         # case, so every subdomain request on the cluster domain vanished silently.
         base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN) or cluster_domain
         subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
-        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT, "")
-        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
 
         if base_domain == "__custom__":
             continue
@@ -523,7 +524,9 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
                 logger.info("Domain request created: %s", base_domain)
 
         # --- Subdomain-level request ---
-        if not subdomain or "{subdomain}" not in template:
+        # The same rule the publication path judges on, so an address that falls back always
+        # has a request an admin can approve.
+        if not subdomain_used_by_format(subdomain, domain_format):
             continue
 
         # Check if domain restricts subdomains

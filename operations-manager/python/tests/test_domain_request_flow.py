@@ -5,6 +5,8 @@ Same pattern as subdomain requests: condition shows checkbox, hook creates
 the allowed-domains entry on PRE_SAVE.
 """
 
+from unittest.mock import ANY
+
 import pytest
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.editable import FormState
@@ -171,6 +173,34 @@ class TestSubdomainRequestOnClusterDefaultDomain:
         assert len(subdomains) == 1
         assert subdomains[0]["name"] == "vlam"
         assert subdomains[0]["status"] == "requested"
+
+    def test_creates_a_request_for_a_subdomain_without_a_domain_format(self) -> None:
+        """Without a format the legacy dispatch still uses the subdomain, so it needs a request.
+
+        The publication path refuses it (``is_deployment_domain_approved``), and a refusal
+        nobody can approve leaves the deployment on the fallback address forever.
+        """
+        project_data = {"deployments": [{"name": "productie", "subdomain": "vlam"}]}
+        ensure_domain_requests(project_data, "sandboxed-local")
+
+        domains = get_domains_config(project_data)
+        assert domains is not None, "no domains section was created"
+        assert domains["allowed-subdomains"][0]["subdomains"][0] == {
+            "name": "vlam",
+            "status": "requested",
+            "history": [{"date": ANY, "status": "requested"}],
+        }
+
+    def test_creates_no_request_for_a_subdomain_the_format_does_not_use(self) -> None:
+        """``deployment-project`` renders no subdomain, so a stored value asks for nothing."""
+        project_data = {
+            "deployments": [
+                {"name": "productie", "domain-format": "deployment-project", "subdomain": "vlam"},
+            ],
+        }
+        ensure_domain_requests(project_data, "sandboxed-local")
+
+        assert get_domains_config(project_data) is None
 
     def test_does_not_create_a_domain_request_for_the_cluster_domain(self) -> None:
         """The cluster's own domain needs no approval; only the subdomain does."""
