@@ -1,9 +1,10 @@
 """Een database op de gedeelde PostgreSQL is alleen te openen door zijn eigen rollen (RC-285).
 
-Vijf plekken waar dat iets doet: de connectorhelper (de statements en de drie standen van
+Zes plekken waar dat iets doet: de connectorhelper (de statements en de drie standen van
 ``DATABASE_RESTRICT_PUBLIC_CONNECT``), de manager (beide rollen van een deployment, ook bij
-een database die al bestond), de kloon van een externe bron, de platformdatabases bij de
-start van OPI, en de database-console die niet meer op de read-write gebruiker terugvalt.
+een database die al bestond), de kloon van een externe bron, de platformdatabases en de
+bestaande projectdatabases bij de start van OPI, en de database-console die niet meer op de
+read-write gebruiker terugvalt.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from opi.runtime.startup.platform_database_access import (
     PLATFORM_BACKUP_ROLE,
     PLATFORM_DATABASE_ROLES,
     restrict_platform_databases,
+    restrict_tenant_databases,
 )
 
 #: ``operations-manager/python/tests/`` -> repo root.
@@ -187,6 +189,7 @@ def _manager(server: _Server) -> DatabaseManager:
         update_user_privileges=server.noop,
         create_schema=server.noop,
         set_role_search_path=server.noop,
+        set_role_setting=server.noop,
         grant_readonly_on_schema=server.noop,
         restrict_database_to_roles=server.restrict_database_to_roles,
     )
@@ -371,6 +374,149 @@ async def test_een_fout_op_de_ene_database_slaat_de_andere_niet_over() -> None:
     assert afgesloten == ["forgejo", "mailrelay", "operations_manager"]
 
 
+# --- the project databases that already exist -------------------------------------
+
+
+def _tenant_server(
+    databases: list[dict[str, Any]],
+    roles: list[str],
+    *,
+    failing: str | None = None,
+) -> tuple[SimpleNamespace, list[tuple[str, list[str]]]]:
+    """A server with these databases and login roles; ``failing`` refuses that one database."""
+    restrictions: list[tuple[str, list[str]]] = []
+
+    async def restrict(database: str, roles: list[str]) -> dict[str, Any]:
+        if database == failing:
+            raise PostgresExecutionError(f"{database} refuses")
+        restrictions.append((database, roles))
+        return {"status": "restricted"}
+
+    connector = SimpleNamespace(
+        list_databases=AsyncMock(return_value=databases),
+        list_users=AsyncMock(return_value=[{"username": name} for name in roles]),
+        restrict_database_to_roles=restrict,
+        close=AsyncMock(),
+    )
+    return connector, restrictions
+
+
+def _database(name: str, owner: str, *, superuser: bool = False, allows_connections: bool = True) -> dict[str, Any]:
+    return {
+        "name": name,
+        "owner": owner,
+        "owner_is_superuser": superuser,
+        "allows_connections": allows_connections,
+    }
+
+
+async def _tenant_round(connector: SimpleNamespace) -> None:
+    with patch("opi.runtime.startup.platform_database_access.create_postgres_connector", return_value=connector):
+        await restrict_tenant_databases()
+
+
+@pytest.mark.asyncio
+async def test_a_project_database_gets_its_read_only_role_when_that_role_exists() -> None:
+    connector, restrictions = _tenant_server([_database("proj_test", "proj_test")], ["proj_test", "proj_test_ro"])
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_test", ["proj_test_ro"])]
+    connector.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_without_a_read_only_role_the_list_stays_empty() -> None:
+    """The owner keeps its rights independently of the GRANT, so an empty list locks nobody out."""
+    connector, restrictions = _tenant_server([_database("proj_test", "proj_test")], ["proj_test"])
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_test", [])]
+
+
+@pytest.mark.asyncio
+async def test_the_round_skips_the_platform_and_maintenance_databases() -> None:
+    """Only the databases of a project: the platform round does the others, with their own roles."""
+    databases = [
+        _database("postgres", "postgres", superuser=True),
+        _database("keycloak", "keycloak"),
+        _database("forgejo", "forgejo"),
+        _database("mailrelay", "mailrelay"),
+        _database(settings.DATABASE_NAME, settings.DATABASE_APP_USER),
+        _database("owned_by_a_superuser", "postgres", superuser=True),
+        _database("sleeping", "proj_sleeping", allows_connections=False),
+        _database("proj_test", "proj_test"),
+    ]
+    connector, restrictions = _tenant_server(databases, ["proj_test_ro"])
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_test", ["proj_test_ro"])]
+
+
+@pytest.mark.asyncio
+async def test_the_round_never_grants_connect_to_a_role_that_is_not_the_owners() -> None:
+    """The GRANT only goes to ``<owner>_ro``, never to a role that merely looks like it."""
+    connector, restrictions = _tenant_server(
+        [_database("proj_test", "proj_test")],
+        ["proj_test_readonly", "proj_other_ro", "proj_test_ro_old"],
+    )
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_test", [])]
+
+
+@pytest.mark.asyncio
+async def test_an_error_on_one_project_database_does_not_skip_the_others() -> None:
+    connector, restrictions = _tenant_server(
+        [_database("proj_one", "proj_one"), _database("proj_two", "proj_two")],
+        ["proj_one_ro", "proj_two_ro"],
+        failing="proj_one",
+    )
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_two", ["proj_two_ro"])]
+    connector.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_name_the_identifier_check_refuses_does_not_block_the_boot() -> None:
+    """The round walks every name on the server, so a database OPI did not create itself (a
+    hyphen, a reserved word) reaches the identifier check. That raises a validation error and
+    not an execution error, and startup.py awaits this round without a guard.
+    """
+    restrictions: list[tuple[str, list[str]]] = []
+
+    async def restrict(database: str, roles: list[str]) -> dict[str, Any]:
+        if database == "rig-test":
+            raise PostgresValidationError(f"database '{database}' contains invalid characters")
+        restrictions.append((database, roles))
+        return {"status": "restricted"}
+
+    connector = SimpleNamespace(
+        list_databases=AsyncMock(return_value=[_database("rig-test", "proj_test"), _database("proj_two", "proj_two")]),
+        list_users=AsyncMock(return_value=[{"username": "proj_two_ro"}]),
+        restrict_database_to_roles=restrict,
+        close=AsyncMock(),
+    )
+    await _tenant_round(connector)
+
+    assert restrictions == [("proj_two", ["proj_two_ro"])]
+    connector.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_inventory_does_not_block_the_boot() -> None:
+    connector = SimpleNamespace(
+        list_databases=AsyncMock(side_effect=PostgresExecutionError("server gone")),
+        list_users=AsyncMock(return_value=[]),
+        restrict_database_to_roles=AsyncMock(),
+        close=AsyncMock(),
+    )
+    await _tenant_round(connector)
+
+    connector.restrict_database_to_roles.assert_not_awaited()
+    connector.close.assert_awaited_once()
+
+
 def test_de_lijst_spiegelt_databases_yaml() -> None:
     """Tegen het echte bestand, niet tegen een tweede kopie van de lijst in deze toets.
 
@@ -395,10 +541,10 @@ def test_the_backup_role_exists_as_a_managed_role() -> None:
     assert PLATFORM_BACKUP_ROLE in roles
 
 
-def test_de_standaard_is_dry_run() -> None:
-    """De REVOKE raakt elke database op de server; dry-run moet de eerste stand blijven
-    tot een beheerder hem bewust omzet (zie DATABASE_RESTRICT_PUBLIC_CONNECT in config.py)."""
-    assert Settings().DATABASE_RESTRICT_PUBLIC_CONNECT == "dry-run"
+def test_de_standaard_is_on() -> None:
+    """Sinds RC-519 sluit elk cluster zijn databases af zonder dat zijn overlay iets zet;
+    dry-run en off blijven als bewuste opt-out (zie config.py)."""
+    assert Settings().DATABASE_RESTRICT_PUBLIC_CONNECT == "on"
 
 
 # --- de console -------------------------------------------------------------------

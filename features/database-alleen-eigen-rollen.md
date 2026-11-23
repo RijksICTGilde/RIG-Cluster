@@ -1,7 +1,7 @@
 # Een database is alleen te openen door zijn eigen rollen
 
-**Status**: geimplementeerd, standaard in `dry-run`
-**Taak**: RC-285
+**Status**: geimplementeerd, standaard `on`
+**Taak**: RC-285, RC-519
 
 ## Wat het is
 
@@ -26,7 +26,7 @@ GRANT CONNECT ON DATABASE "<db>" TO "<rol>";   -- per rol
 Beide zijn in PostgreSQL idempotent, dus elke verwerking mag dit opnieuw doen. De eigenaar
 houdt zijn rechten los van de GRANT-lijst: een REVOKE van `PUBLIC` raakt hem niet.
 
-Vier aanroepers:
+Vijf aanroepers:
 
 * **Een projectdatabase**: `DatabaseManager.create_resources_for_deployment` roept de helper
   aan met de twee rollen die OPI voor die database provisioneert, de eigenaar
@@ -46,12 +46,25 @@ Vier aanroepers:
   zonder die regel zou deze afsluiting OPI buiten zijn eigen database zetten. Dit kan niet
   declaratief: de `Database`-resource van CNPG beschrijft naam, eigenaar, encoding, locale,
   `allowConnections`, `connectionLimit`, schemas en extensies, en geen rechten per rol.
+* **De bestaande projectdatabases bij de start van OPI**:
+  `restrict_tenant_databases` in `opi/runtime/startup/platform_database_access.py` loopt na de
+  platformronde langs elke projectdatabase op de gedeelde server. Zonder die ronde blijft een
+  database open tot zijn project een keer verwerkt wordt, en dat kan weken duren. De rollen
+  komen uit PostgreSQL zelf en niet uit de projectbestanden: de eigenaar (`pg_database.datdba`)
+  houdt zijn rechten los van de GRANT, en `<eigenaar>_ro` krijgt `CONNECT` als die rol bestaat.
+  Zo werkt het ook voor generaties (`_vN`), PR-databases, klonen en wezen. Overgeslagen worden
+  de database `postgres`, de platformdatabases, de eigen database van OPI, een database die
+  geen verbindingen toestaat en een database waarvan de eigenaar superuser is. Een fout op een
+  database wordt gelogd en stopt de ronde niet; aan het eind staat er een regel met de
+  tellingen per status. Op `dry-run` logt de ronde per database wie er nu verbonden is en wie
+  de toegang zou verliezen, en dat is precies de meting die een beheerder voor het omzetten
+  wil zien.
 
 ## Configuratie
 
 | Instelling | Waarden | Standaard |
 |---|---|---|
-| `DATABASE_RESTRICT_PUBLIC_CONNECT` | `off`, `dry-run`, `on` | `dry-run` |
+| `DATABASE_RESTRICT_PUBLIC_CONNECT` | `off`, `dry-run`, `on` | `on` |
 
 * `off`: de helper raakt de server niet aan.
 * `dry-run`: logt per database welke `REVOKE` en welke `GRANT` hij zou doen, welke rollen op
@@ -59,16 +72,18 @@ Vier aanroepers:
   verliezen. Er wordt niets uitgevoerd.
 * `on`: voert de statements uit.
 
-`dry-run` is de standaard om dezelfde reden als bij `RECONCILIATION_DRY_RUN`: de REVOKE
-raakt elke database op de server, en een rol die nu stil op `PUBLIC` leunt valt dan om. Zet
-hem per cluster aan in de configmap van de operations-manager, nadat de logregels van een
-volledige nachtelijke reconciliatie laten zien welke rol toegang verliest. De sandbox staat
-al op `on`, want daar wordt het gedrag gemeten
-(`tests/e2e/test_sandbox_database_isolatie.py`).
+`on` is sinds RC-519 de standaard, dus elk cluster sluit zijn databases af zonder dat zijn
+overlay iets zet. `dry-run` was de eerste stand, om dezelfde reden als bij
+`RECONCILIATION_DRY_RUN`: de REVOKE raakt elke database op de server, en een rol die stil op
+`PUBLIC` leunt valt dan om. Die stand blijft als bewuste opt-out per cluster, in de configmap
+van de operations-manager:
 
 ```
-DATABASE_RESTRICT_PUBLIC_CONNECT=on
+DATABASE_RESTRICT_PUBLIC_CONNECT=dry-run
 ```
+
+De sandbox noemt `on` expliciet in zijn configmap, want de meting daar leest die regel
+(`tests/e2e/test_sandbox_database_isolatie.py`).
 
 ## Wat er nog meer verandert
 

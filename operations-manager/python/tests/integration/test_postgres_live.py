@@ -237,6 +237,32 @@ async def test_grant_readonly_on_schema_allows_select_and_refuses_insert(
         await live_connector.grant_readonly_on_schema(DATABASE, f"{PREFIX}_geen_schema", READER)
 
 
+async def test_set_role_setting_gives_the_reader_a_statement_timeout(
+    live_connector: PostgresConnector, schoon: None
+) -> None:
+    """The read-only role cancels a query; that is the bound on the shared server (RC-519)."""
+    await live_connector.create_user(OWNER, PASSWORD, connection_limit=5)
+    await live_connector.create_user(READER, OTHER_PASSWORD, connection_limit=5)
+    await live_connector.create_database(DATABASE, OWNER)
+
+    await live_connector.set_role_setting(READER, "statement_timeout", "5min")
+
+    reader = await connection_as(READER, OTHER_PASSWORD, DATABASE)
+    try:
+        assert await reader.fetchval("SHOW statement_timeout") == "5min"
+    finally:
+        await reader.close()
+
+    # The consequence, not the setting: a query that runs longer is cancelled.
+    await live_connector.set_role_setting(READER, "statement_timeout", "100ms")
+    reader = await connection_as(READER, OTHER_PASSWORD, DATABASE)
+    try:
+        with pytest.raises(asyncpg.QueryCanceledError):
+            await reader.execute("SELECT pg_sleep(1)")
+    finally:
+        await reader.close()
+
+
 async def test_describe_schemas_separates_an_extension_schema_from_the_rest(
     live_connector: PostgresConnector, schoon: None
 ) -> None:

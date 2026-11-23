@@ -219,6 +219,7 @@ def _manager(rollen: _Rollen, stappen: list[tuple[str, str | None]]) -> Database
         update_user_privileges=rollen.noop,
         create_schema=rollen.noop,
         set_role_search_path=rollen.noop,
+        set_role_setting=rollen.noop,
         grant_readonly_on_schema=rollen.noop,
         restrict_database_to_roles=rollen.noop,
     )

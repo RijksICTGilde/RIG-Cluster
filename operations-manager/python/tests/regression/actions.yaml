@@ -262,6 +262,10 @@ startup:
     where: run_startup_tasks
     dependencies:
       postgres: {status: measured, test: test_restrict_platform_databases_locks_every_database_to_its_own_role}
+  - step: restrict_tenant_databases
+    where: run_startup_tasks
+    dependencies:
+      postgres: {status: measured, test: test_restrict_tenant_databases_closes_a_database_that_already_existed}
   - step: ensure_cmp_key_readers
     where: run_startup_tasks
     dependencies:

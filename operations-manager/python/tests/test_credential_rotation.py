@@ -64,6 +64,7 @@ def _db_manager(rollen: _Rollen) -> DatabaseManager:
         update_user_privileges=rollen.noop,
         create_schema=rollen.noop,
         set_role_search_path=rollen.noop,
+        set_role_setting=rollen.noop,
         grant_readonly_on_schema=rollen.noop,
     )
     return mgr

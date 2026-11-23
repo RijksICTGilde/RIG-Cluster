@@ -49,6 +49,9 @@ Only one console can be active per deployment at a time.
   real boundary; the tool's own read-only flag is only a convenience hint.
 - Read-only reads the role's password from the deployment's database secret, so a
   deployment provisioned before RC-426 gets it at its next reprocess.
+- A query in read-only mode is cancelled after 5 minutes: the role carries a
+  `statement_timeout`, because an ad-hoc query in the console is the classic noisy
+  neighbour on the shared server. See `features/postgresql-connection-limits.md`.
 
 ## Lifecycle
 

@@ -43,7 +43,7 @@ from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
 from opi.runtime.periodic.no_mail_reconciler import reconcile_no_mail_records
 from opi.runtime.startup.keycloak_client_startup import ensure_keycloak_credentials
-from opi.runtime.startup.platform_database_access import restrict_platform_databases
+from opi.runtime.startup.platform_database_access import restrict_platform_databases, restrict_tenant_databases
 from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.services.project_schema import check_schema_versions
 from opi.services.project_service import initialize_project_service
@@ -756,8 +756,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     if readiness.database.ready:
         await _setup_projects(readiness, app, skip_checks)
 
-    # Phase 2b: the platform databases for their own role only
+    # Phase 2b: the platform databases for their own role only, and the project databases
+    # that already exist (provisioning only reaches those on their next processing round)
     await restrict_platform_databases()
+    await restrict_tenant_databases()
 
     # Phase 2c: the CMP key reader in existing namespaces, in the background so the
     # readiness does not wait on it.

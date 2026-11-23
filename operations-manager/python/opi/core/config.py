@@ -454,11 +454,12 @@ class Settings(BaseSettings):
     # PostgreSQL grants a new database CONNECT and TEMPORARY to PUBLIC, so on the shared
     # server every role can connect to every database. This closes that off.
     #
-    # ``dry-run`` is the default: the REVOKE touches every database on the server in one go,
-    # and a role that quietly leans on PUBLIC falls over. In this mode every run logs which
-    # REVOKE and GRANT it would do and who is connected at that moment, so a nightly
-    # reconciliation makes visible what ``on`` is going to close off.
-    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "dry-run"
+    # ``on`` is the default since RC-519, so every cluster closes its databases off. The two
+    # other modes stay available as an explicit opt-out in a cluster overlay: ``dry-run``
+    # executes nothing and logs per database which REVOKE and GRANT it would do, who is
+    # connected at that moment and who would lose access, and ``off`` leaves the server
+    # alone.
+    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "on"
 
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7

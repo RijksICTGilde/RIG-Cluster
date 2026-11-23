@@ -97,7 +97,33 @@ limit. Before rolling out:
 2. Put every value that must stay into the project file of that project (`connection-limit`
    on the project or the deployment).
 
-### 5. Shutdown timeouts (cluster.yaml)
+### 5. Twee tijdgrenzen tegen een noisy neighbour (RC-519)
+
+Op de gedeelde server kan een project met een transactie die open blijft staan of met een
+zware ad-hoc query de hele server belasten. Twee grenzen dekken dat:
+
+| Grens | Waar | Waarde | Waarom |
+|---|---|---|---|
+| `idle_in_transaction_session_timeout` | `spec.postgresql.parameters` in `base/cluster.yaml`, dus elk cluster | `10min` | Een open transactie houdt zijn snapshot vast, blokkeert de autovacuum op die rijen en kan een lock vasthouden die een andere tenant nodig heeft. Een reload-parameter: geen herstart, geen downtime. |
+| `statement_timeout` | `ALTER ROLE <deployment>_ro SET`, bij elke verwerking | `5min` | Die rol is voor mensen in de databaseconsole, en een ad-hoc query is de klassieke noisy neighbour. |
+
+De read-write rol van een deployment, die de applicatie en haar migraties gebruiken, krijgt
+geen `statement_timeout`: daar hoort een instelbare waarde bij zoals de connectielimiet,
+en dat is een eigen kaartje (#469). De waarde van de read-only rol is een constante
+(`READONLY_STATEMENT_TIMEOUT` in `opi/manager/database_manager.py`), geen platforminstelling.
+Een bestaande `_ro`-rol krijgt de instelling bij zijn eerstvolgende verwerking.
+
+Beide grenzen zijn standaarden, geen grendels: `statement_timeout` en
+`idle_in_transaction_session_timeout` hebben in PostgreSQL context `user`, dus een sessie zet
+ze met een enkele `SET` op `0`. De read-only credential zit als `DATABASE_PASSWORD_RO` in de
+container van de tenant, dus dat geldt ook voor een applicatie die via die rol leest. Ze
+dekken een vergeten open transactie en een te zware query, niet een tenant die er bewust
+onderuit gaat; daarvoor is een grens nodig die de rol niet zelf kan optillen.
+
+De dedicated clusters van `namespace-postgresql-database` (`scope: project`) vallen hierbuiten:
+daar is de tenant zijn eigen buur.
+
+### 6. Shutdown timeouts (cluster.yaml)
 
 ```yaml
 smartShutdownTimeout: 30
@@ -109,7 +135,7 @@ stopDelay: 60
 
 Previously these were 180s and 1800s respectively, causing a 30-minute hang when PostgreSQL needed to restart.
 
-### 6. Pool resilience (database_pool.py, database_pools.py)
+### 7. Pool resilience (database_pool.py, database_pools.py)
 
 ```python
 min_size=0
@@ -141,6 +167,6 @@ Previously `min_size=2` meant the pool always held 2 open connections. When Post
 - `features/pgbouncer-connection-pooling.md` - future PgBouncer integration for proper connection pooling
 - `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` - CNPG cluster configuration
 - `operations-manager/python/opi/services/catalog/postgresql_database/connection_limit.py` - the setting and the merge
-- `operations-manager/python/opi/connectors/postgres.py` - `create_user` and `set_connection_limit`
+- `operations-manager/python/opi/connectors/postgres.py` - `create_user`, `set_connection_limit` and `set_role_setting`
 - `operations-manager/python/opi/core/database_pool.py` - pool configuration
 - `operations-manager/python/opi/core/database_pools.py` - pool initialization
