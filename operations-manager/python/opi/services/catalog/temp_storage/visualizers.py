@@ -10,6 +10,9 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.temp_storage.editables import (
+    DEPLOYMENT_COMP_TEMP_STORAGE_REFERENCE_EDITABLE,
+    DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE_EDITABLE,
+    DEPLOYMENT_COMP_TEMP_STORAGE_SIZE_EDITABLE,
     TEMP_STORAGE_MOUNT_PATH_EDITABLE,
     TEMP_STORAGE_NAME_EDITABLE,
     TEMP_STORAGE_SEQUENCE_EDITABLE,
@@ -43,4 +46,27 @@ TEMP_STORAGE_SEQUENCE = EditableVisualizer(
     label="Tijdelijke opslag",
     help_text="Tijdelijke opslagvolumes die in de container worden gemount (worden gewist bij herstart)",
     children=[TEMP_STORAGE_NAME, TEMP_STORAGE_SIZE, TEMP_STORAGE_MOUNT_PATH],
+)
+
+
+DEPLOYMENT_COMP_TEMP_STORAGE_REFERENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_TEMP_STORAGE_REFERENCE_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Volume",
+    help_text="De naam van het volume zoals het component het mount (afgeleid van het mount-pad).",
+)
+
+DEPLOYMENT_COMP_TEMP_STORAGE_SIZE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_TEMP_STORAGE_SIZE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Grootte",
+    help_text="Laat leeg om de grootte van het component te volgen.",
+)
+
+DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_TEMP_STORAGE_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Tijdelijke opslag per volume",
+    help_text="Een eigen grootte voor deze deployment, per volume. Boven 2Gi keurt een platformbeheerder de aanvraag goed.",
+    children=[DEPLOYMENT_COMP_TEMP_STORAGE_REFERENCE, DEPLOYMENT_COMP_TEMP_STORAGE_SIZE],
 )

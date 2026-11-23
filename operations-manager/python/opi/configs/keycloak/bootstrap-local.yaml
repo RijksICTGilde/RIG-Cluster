@@ -34,6 +34,13 @@ realms:
     defaultLocale: "nl"
     bruteForceProtected: true
     loginTheme: "nl-design-system"
+    # Het mailthema van deze realm, en de enige reden dat het bestaat: de magic-link-mail
+    # van de storingsstand. EmailTemplateProvider zoekt zad-magic-link.ftl in het
+    # mailthema, en zonder dit veld blijft dat Keycloaks eigen `keycloak`-thema, waar dat
+    # sjabloon niet staat. De mails van Keycloak zelf houden hun teksten: ons mailthema
+    # erft van `base`, waar elke sleutel staat, en `keycloak/email` voegt niets toe dan
+    # zijn eigen themabeschrijving. Zie features/sso-rijk-uitwijk.md.
+    emailTheme: "nl-design-system"
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin
     # events so identity changes are traceable afterwards (see docs/post-mortems/
     # user-impersonation-oidc-email-claim.md). Expiration covers user events only;
@@ -149,6 +156,23 @@ authenticationFlows:
 
     # Set as browser flow for the realm
     setAsBrowserFlow: true
+
+    # De binding gebeurt EEN keer, op een realm die nog Keycloaks eigen flow draagt. Daarna
+    # laat elke verwerking staan wat er staat, zodat een platformbeheerder naar de
+    # storingsstand hieronder kan omzetten zonder dat de volgende reconcile hem terugzet.
+    # Zie features/sso-rijk-uitwijk.md.
+    bindOnlyIfDefault: true
+
+  # De storingsstand van SSO Rijk: permanent aanwezig, nooit automatisch gebonden. Een
+  # platformbeheerder zet hem aan op de beheerpagina van ZAD. De executions bouwt de
+  # connector (ensure_magic_link_browser_flow): deze lezer kan geen authenticator uit de
+  # image plaatsen.
+  - alias: "SSO Rijk storing"
+    description: "Browser flow voor een storing van SSO Rijk: inloggen met een magic link per mail"
+    providerId: "basic-flow"
+    topLevel: true
+    builtIn: false
+    magicLink: true
 
 clientScopes:
   - name: "custom_attributes_passthrough"

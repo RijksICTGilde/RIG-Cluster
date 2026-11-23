@@ -285,7 +285,8 @@ class TestNestedSequenceRendering:
         # the image-registries override: this project has no registries, so its own list
         # has nothing to offer and the field is not drawn (RC-187). user-env-vars telt
         # sinds RC-388 niet meer mee: die overschrijving gaat via het step-up-venster.
-        assert len(first_comp.children) == 5
+        # The two storage sequences of RC-499 do count.
+        assert len(first_comp.children) == 7
 
     def test_nested_sequence_item_gains_the_registry_override_with_a_registry(self):
         """De tegenproef bij de telling hierboven: de lijst IS de zichtbaarheid."""
@@ -304,7 +305,7 @@ class TestNestedSequenceRendering:
         fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
         first_dep = fields["deployments"].children[0]
         nested_seq = next(c for c in first_dep.children if c.widget_type == "sequence")
-        assert len(nested_seq.children[0].children) == 6
+        assert len(nested_seq.children[0].children) == 8
 
 
 class TestDisplayCardRendering:

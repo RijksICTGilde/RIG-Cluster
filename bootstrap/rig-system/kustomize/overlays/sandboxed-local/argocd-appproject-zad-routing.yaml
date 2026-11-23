@@ -1,0 +1,58 @@
+# Het AppProject van de ene routing-Application. Eigen project en niet zad-platform omdat de
+# routing in vier namespaces landt; cluster-scoped mag hij niets, net als zad-platform.
+#
+# clusterResourceWhitelist is LEEG en hoort leeg te blijven. De CRD's, de cluster-RBAC, de
+# IngressClass, de GatewayClass en de webhooks van de twee controllers zijn platform: op de
+# sandbox zet task sandbox:setup ze neer, op een ander cluster levert het platform ze. De
+# ArgoCD van de sandbox draait namespaced en zou een cluster-scoped resource ook weigeren.
+#
+# De lijst hieronder is wat de twee standen van infrastructure/bootstrap/routing/sandboxed-local
+# renderen, gemeten op de build van beide standen, en niets daarbuiten. Een soort die hier
+# ontbreekt laat ArgoCD de HELE sync van routing-infrastructure weigeren met "is not permitted
+# in project zad-routing", dus een nieuwe soort in een van de standen hoort hier ook bij.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: zad-routing
+  namespace: rig-system
+spec:
+  description: De ingang van de sandbox, in de stand die in git staat
+  sourceRepos:
+    - http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+  destinations:
+    - namespace: rig-system
+      server: https://kubernetes.default.svc
+    - namespace: rig-ron
+      server: https://kubernetes.default.svc
+    - namespace: rig-gateway
+      server: https://kubernetes.default.svc
+    - namespace: ingress-nginx
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+    - group: gateway.networking.k8s.io
+      kind: ReferenceGrant
+    - group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+    - group: gateway.envoyproxy.io
+      kind: BackendTrafficPolicy

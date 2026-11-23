@@ -5,4 +5,4 @@ description: RIG Platform Operations Manager
 services:
   - keycloak:
       config:
-        template: operations-manager-realm
+        template: operations-manager-realm-otp

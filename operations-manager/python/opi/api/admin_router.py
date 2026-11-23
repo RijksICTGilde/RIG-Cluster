@@ -16,8 +16,15 @@ from opi.core.config import settings
 from opi.http.auth.auth_decorators import requires_step_up
 from opi.http.auth.step_up_conditions import always_requires_step_up
 from opi.http.auth.user_token_auth import validate_platform_admin_token
+from opi.http.task_helpers import get_task_service
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
+from opi.services.project_reprocess import queue_reprocess_of_every_project
 from opi.services.project_store import get_project_store
+from opi.services.routing_readiness import (
+    RoutingEntrypointMissingError,
+    RoutingEntrypointUnknownError,
+    verify_routing_entrypoint,
+)
 from opi.services.step_up import StepUpAction
 
 logger = logging.getLogger(__name__)
@@ -334,4 +341,49 @@ async def reconcile_projects(request: Request) -> JSONResponse:
             "changed": head_before != head_after,
         },
         status_code=200,
+    )
+
+
+@admin_router.post("/projects/:reprocess-all")
+@action(Action.PLATFORM_RECONCILE)
+@validate_platform_admin_token
+@requires_step_up(always_requires_step_up, action=StepUpAction.PROJECTS_REPROCESS_ALL)
+async def reprocess_all_projects(request: Request) -> JSONResponse:
+    """Queue a reprocess for every project of this cluster, one at a time.
+
+    What a switch of the routing API needs: every deployment is rendered again, so the
+    publication of the new API is written and the files of the old one disappear from git,
+    after which ArgoCD prunes their resources.
+
+    Refuses before queueing anything when the entrypoint the cluster renders for is not
+    there (409), and when that cannot be determined (503). Otherwise one call could point
+    every project at an ingress that does not exist.
+
+    Example:
+        curl -X POST "http://localhost:9595/api/v2/admin/projects/:reprocess-all" \\
+          -H "Authorization: Bearer $ZAD_TOKEN"
+    """
+    try:
+        entrypoint = await verify_routing_entrypoint(settings.CLUSTER_MANAGER)
+    except RoutingEntrypointMissingError as missing:
+        raise HTTPException(status_code=409, detail=str(missing)) from missing
+    except RoutingEntrypointUnknownError as unknown:
+        # A 5xx carries no exception text: it comes from the infrastructure, and the caller
+        # has no business knowing that layer. The reason is in the log.
+        logger.warning(f"Could not determine the entrypoint of '{settings.CLUSTER_MANAGER}': {unknown}")
+        raise HTTPException(
+            status_code=503,
+            detail="De ingang van dit cluster kon niet worden vastgesteld. Probeer het over een minuut opnieuw.",
+        ) from unknown
+
+    task_ids = await queue_reprocess_of_every_project(get_task_service(request), settings.CLUSTER_MANAGER)
+    logger.info(f"Admin reprocess-all used entrypoint: {entrypoint}")
+    return JSONResponse(
+        content={
+            "message": f"{len(task_ids)} project(s) scheduled for reprocessing",
+            "entrypoint": entrypoint,
+            "scheduled": len(task_ids),
+            "tasks": task_ids,
+        },
+        status_code=202,
     )

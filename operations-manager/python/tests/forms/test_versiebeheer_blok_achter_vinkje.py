@@ -31,7 +31,7 @@ def _sectie(service_type: ServiceType) -> FormSection:
 
 def _veldset(sectie: FormSection) -> Fieldset:
     veldset = next(element for element in sectie.layout or [] if isinstance(element, Fieldset))
-    assert veldset.legend == "Oude versies"
+    assert veldset.legend == "Versiebeheer voor objectstorage"
     return veldset
 
 

@@ -17,6 +17,13 @@
                 {% elif registry.secretName %}
                     <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
                 {% endif %}
+                {% if registry.effective_quota_gib %}
+                    {% if registry.requested_quota_gib %}
+                        <c-paragraph size="sm">Opslagquota: {{ registry.effective_quota_gib }} GiB, {{ registry.requested_quota_gib }} GiB aangevraagd.</c-paragraph>
+                    {% else %}
+                        <c-paragraph size="sm">Opslagquota: {{ registry.effective_quota_gib }} GiB.</c-paragraph>
+                    {% endif %}
+                {% endif %}
             </c-stack>
         {% endfor %}
 

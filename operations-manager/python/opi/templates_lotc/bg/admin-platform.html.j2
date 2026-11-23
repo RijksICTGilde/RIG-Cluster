@@ -1,0 +1,26 @@
+{#
+  Platformacties. Voorlopig een sectie: de storingsstand van SSO Rijk.
+
+  De stand komt uit Keycloak en niet uit een kopie in ZAD, dus een omzetting in de
+  beheerconsole van Keycloak staat hier ook. Zie features/sso-rijk-uitwijk.md.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Platformacties - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Platformacties",
+        "Handelingen op het platform zelf. Elke wijziging komt in het auditlog."
+    ) }}
+
+    {% if success_message %}
+        <nldd-banner variant="success" text="{{ success_message }}"></nldd-banner>
+    {% endif %}
+
+    {% include "bg/_platform-sso-storing.html.j2" %}
+
+    {% include "bg/_bevestiging.html.j2" %}
+    {% include "bg/_step-up-venster.html.j2" %}
+{% endblock %}

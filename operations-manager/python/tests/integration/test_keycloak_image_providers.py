@@ -35,10 +35,18 @@ pytestmark = [pytest.mark.requires_infra, pytest.mark.keycloak_live]
 PROVIDERS = (
     ("identity-provider-mapper", "saml-unrestricted-xpath-idp-mapper"),
     ("authenticator", "require-client-role-authenticator"),
+    ("authenticator", "zad-magic-link-authenticator"),
+    ("actionTokenHandler", "zad-magic-link"),
     ("eventsListener", "rig-metrics-listener"),
     ("realm-restapi-extension", "rig-metrics"),
     ("realm-restapi-extension", "always-clear-session-logout"),
     ("emailSender", "zad-relay"),
+)
+
+#: RC-496. The image production pins can predate it, so these two are only required together.
+MAGIC_LINK_PROVIDERS = (
+    ("authenticator", "zad-magic-link-authenticator"),
+    ("actionTokenHandler", "zad-magic-link"),
 )
 
 #: Het thema dat de imagebouw uit `images/keycloak-zad/theme/` meeneemt.
@@ -115,6 +123,10 @@ def probe_idp(basis_url: str, admin_token: str) -> Iterator[str]:
 @pytest.mark.parametrize(("spi", "provider_id"), PROVIDERS)
 def test_elke_provider_is_geregistreerd(serverinfo: dict[str, Any], spi: str, provider_id: str) -> None:
     spis = serverinfo["providers"]
+    if (spi, provider_id) in MAGIC_LINK_PROVIDERS and not any(
+        pid in spis.get(name, {}).get("providers", {}) for name, pid in MAGIC_LINK_PROVIDERS
+    ):
+        pytest.skip("this image predates RC-496 and carries no magic-link providers")
     assert spi in spis, sorted(spis)
     geregistreerd = spis[spi]["providers"]
     assert provider_id in geregistreerd, (spi, sorted(geregistreerd))

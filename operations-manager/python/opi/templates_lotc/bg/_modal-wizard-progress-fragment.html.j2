@@ -34,7 +34,8 @@
      hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
      hx-trigger="every 2s"
      hx-target="#modal-progress-container"
-     hx-swap="outerHTML"
+     hx-ext="morph"
+     hx-swap="morph:outerHTML"
      hx-target-404="#modal-progress-container"
      {% endif %}>
 

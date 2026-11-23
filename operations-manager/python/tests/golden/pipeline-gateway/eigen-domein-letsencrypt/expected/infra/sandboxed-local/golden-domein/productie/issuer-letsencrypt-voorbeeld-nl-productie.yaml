@@ -1,0 +1,19 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-voorbeeld-nl-productie
+spec:
+  acme:
+    email: rig-platform@rijksoverheid.nl
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-voorbeeld-nl-productie-key
+    solvers:
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs:
+            - group: gateway.networking.k8s.io
+              kind: Gateway
+              name: "rig-gateway"
+              namespace: "rig-gateway"
+              sectionName: "http"

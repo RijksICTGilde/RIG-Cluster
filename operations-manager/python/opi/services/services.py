@@ -1061,6 +1061,17 @@ class ServiceAdapter:
         ``_keep_platform_fields``.
         """
         cls.parse_services_from_strings([service_name])  # rejects an unknown service name
+        if layer.value == "deployment-component":
+            cls.ensure_project_selection(project_data, service_name)
+            cls._set_deployment_component_config(
+                project_data,
+                service_name,
+                layer,
+                config,
+                component_name=component_name,
+                deployment_name=deployment_name,
+            )
+            return
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
         )
@@ -1087,7 +1098,216 @@ class ServiceAdapter:
                 target_list[index] = record
                 return
 
-        target_list.append({key: service_name, "config": config})
+        # Also on a FIRST write, where there is nothing stored to carry over: without this
+        # the write that CREATES the block can forge a platform-managed field, which is the
+        # very thing _keep_platform_fields exists to stop.
+        target_list.append({key: service_name, "config": cls._keep_platform_fields(service_name, layer, config, None)})
+
+    @classmethod
+    def _clear_deployment_component_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> bool:
+        """Clear a service's config on one component inside one deployment.
+
+        Keeps what the platform wrote, exactly as on the other layers: a clear means "reset
+        my settings", never "throw away the PVC generation". A record left with nothing but
+        its reference goes, and so does the service key once no record is left.
+        """
+        services = cls._deployment_component_services(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
+        )
+        if services is None or service_name not in services:
+            return False
+        stored = services[service_name]
+        if not isinstance(stored, list):
+            kept = cls._platform_fields_of(service_name, layer, (stored or {}).get("config"))
+            if kept:
+                services[service_name] = {"config": kept}
+            else:
+                services.pop(service_name)
+            return True
+        changed = False
+        for record in list(stored):
+            if isinstance(record, dict) and cls._reset_item_settings(service_name, layer, record, stored):
+                changed = True
+        if not stored:
+            services.pop(service_name)
+        return changed
+
+    @classmethod
+    def _reset_item_settings(
+        cls,
+        service_name: str,
+        layer: ConfigLayer,
+        record: dict[str, Any],
+        records: list[Any],
+    ) -> bool:
+        """Strip the user's settings from one item record, keeping what the platform wrote.
+
+        A record left with nothing but its reference goes from ``records``. Returns whether
+        anything changed.
+        """
+        kept = cls._platform_fields_of(service_name, layer, record.get("config"))
+        if record.get("config") == kept:
+            return False
+        if kept:
+            record["config"] = kept
+        else:
+            record.pop("config", None)
+        if set(record) == {"reference"}:
+            records.remove(record)
+        return True
+
+    @classmethod
+    def _drop_deployment_component_items(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        references: set[str],
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> int:
+        """Drop the settings of these items on the deployment-component layer.
+
+        The per-item merge of ``_set_deployment_component_config`` cannot express a removal,
+        so the patch says here which references to drop. What the platform wrote stays, like
+        a clear: withdrawing an override never throws away the PVC generation.
+        """
+        services = cls._deployment_component_services(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
+        )
+        stored = (services or {}).get(service_name)
+        if services is None or not isinstance(stored, list):
+            return 0
+        dropped = 0
+        for record in list(stored):
+            if not isinstance(record, dict) or record.get("reference") not in references:
+                continue
+            if cls._reset_item_settings(service_name, layer, record, stored):
+                dropped += 1
+        if not stored:
+            services.pop(service_name)
+        return dropped
+
+    @classmethod
+    def _stored_service_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> Any:  # noqa: ANN401  # a project-file value
+        """The config this service has at ``layer`` right now, or None.
+
+        Layer-aware, because the deployment-component layer carries a MAP of services and the
+        other three a list: walking that map as a list reads its keys and finds no config.
+        """
+        if layer.value == "deployment-component":
+            services = cls._deployment_component_services(
+                project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
+            )
+            stored = (services or {}).get(service_name)
+            if isinstance(stored, list):
+                return stored
+            return stored.get("config") if isinstance(stored, dict) else None
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        for entry in target_list:
+            if service_entry_name(entry) == service_name:
+                return service_entry_config(entry)
+        return None
+
+    @classmethod
+    def _deployment_component_services(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+        create: bool,
+    ) -> dict[str, Any] | None:
+        """The ``services`` MAP of one component inside one deployment.
+
+        A map and not a list on this layer (``$defs/deployment-component`` in
+        project_v2.json), so the services-list walk the other three layers share does not
+        apply here: it would iterate the keys and write a config beside the service.
+        """
+        container = cls._resolve_target_container(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name
+        )
+        services = container.get("services")
+        if create and (services is None or services == []):
+            # An empty LIST occurs in older files and in hand-written data, and the shape here
+            # is a map; promoting it beats writing into a list the schema refuses.
+            services = {}
+            container["services"] = services
+        return services if isinstance(services, dict) else None
+
+    @classmethod
+    def _set_deployment_component_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        config: dict[str, Any] | list[Any],
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> None:
+        """Upsert a service's config on one component inside one deployment.
+
+        Two shapes live under the service key, and the written config says which: a LIST
+        means a record per item (the storage pair, a PVC generation and this deployment's own
+        size per volume), anything else the single ``{config: ...}`` record.
+
+        A list is merged PER ITEM rather than replacing the lot: the platform's own fields
+        live in those same records, ``_keep_platform_fields`` does not reach into a list of
+        them, and an item the write leaves out keeps what it had.
+        """
+        services = cls._deployment_component_services(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        if services is None:
+            return
+        if not isinstance(config, list):
+            services[service_name] = {"config": config}
+            return
+        records = services.setdefault(service_name, [])
+        if not isinstance(records, list):
+            records = []
+            services[service_name] = records
+        stored = {item["reference"]: item for item in records if isinstance(item, dict) and item.get("reference")}
+        for item in config:
+            if not isinstance(item, dict) or not item.get("reference"):
+                continue
+            reference = item["reference"]
+            written = item.get("config")
+            merged = cls._keep_platform_fields(
+                service_name,
+                layer,
+                written if isinstance(written, dict) else {},
+                (stored.get(reference) or {}).get("config"),
+            )
+            record = stored.get(reference)
+            if record is None:
+                record = {"reference": reference}
+                records.append(record)
+            if merged:
+                record["config"] = merged
+            else:
+                record.pop("config", None)
 
     @classmethod
     def ensure_project_selection(cls, project_data: dict[str, Any], *service_names: str) -> None:
@@ -1261,6 +1481,10 @@ class ServiceAdapter:
         there the config IS the selection, so a demoted entry would say nothing at all.
         Clearing removes the entry, and the service is deselected by the same act.
         """
+        if layer.value == "deployment-component":
+            return cls._clear_deployment_component_config(
+                project_data, service_name, layer, component_name=component_name, deployment_name=deployment_name
+            )
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
         )
@@ -1405,7 +1629,9 @@ class ServiceAdapter:
         the service's own item model here, so a malformed entry fails before anything is
         written); an entry whose key already exists replaces it. ``remove`` takes keys
         only, and a key that is not there is a no-op -- removing twice is fine. Remove
-        runs first, so a key in both lists is replaced outright.
+        runs first, so a key in both lists is replaced outright. On the
+        deployment-component layer a remove drops the user's settings of that item and keeps
+        what the platform wrote there (the PVC generation), like a clear does.
 
         Which list, and what identifies one entry, comes from the config model itself
         (``opi/services/config_lists.py``). ``list_field`` is ``None`` for a config that
@@ -1430,7 +1656,11 @@ class ServiceAdapter:
         except ValueError:
             raise ServiceValidationError(f"Unknown service: {service_name}") from None
         service = get_service(service_type)
-        model = service.config_model_for(layer)
+        # The model a caller sends, the same one the route was registered from: a service may
+        # present its stored shape through a facade (the storage size override), and then the
+        # entries this validates are the facade's. Platform fields the body cannot carry are
+        # merged back in by ``set_service_config``.
+        model = service.config_api_body_model(layer)
         spec = find_patchable_list(model, list_field)
         if model is None or spec is None:
             named = f" list '{list_field}'" if list_field else ""
@@ -1451,14 +1681,9 @@ class ServiceAdapter:
             except ValidationError as e:
                 raise ServiceValidationError(f"Invalid '{service_name}' entry: {e.errors(include_url=False)}") from e
 
-        target_list = cls._resolve_target_services_list(
-            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        current_config = cls._stored_service_config(
+            project_data, service_name, layer, component_name=component_name, deployment_name=deployment_name
         )
-        current_config: Any = None
-        for entry in target_list:
-            if service_entry_name(entry) == service_name:
-                current_config = service_entry_config(entry)
-                break
         expected = dict if spec.name else list
         if current_config is not None and not isinstance(current_config, expected):
             raise ServiceValidationError(
@@ -1480,6 +1705,17 @@ class ServiceAdapter:
         removed_keys = set(remove)
         kept = [item for item in current if key_of(item) not in removed_keys]
         removed = len(current) - len(kept)
+        if removed_keys and layer.value == "deployment-component":
+            # The write below merges per item and cannot express a removal, so the drop
+            # happens here, on the records themselves.
+            removed = cls._drop_deployment_component_items(
+                project_data,
+                service_name,
+                layer,
+                removed_keys,
+                component_name=component_name,
+                deployment_name=deployment_name,
+            )
 
         merged: list[Any] = list(kept)
         positions = {key_of(item): index for index, item in enumerate(merged)}

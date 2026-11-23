@@ -10,7 +10,7 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
     image: ${TESTCLUSTER_NODE_IMAGE}
-    # Where the ingress-nginx of the sandbox runs (install-ingress-nginx selects on it).
+    # Where the routing controller of the sandbox runs; both stands select on this label.
     # Without a controller no Ingress gets an address, and ArgoCD keeps every app that
     # publishes on the web on Progressing.
     labels:

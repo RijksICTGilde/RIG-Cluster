@@ -55,6 +55,10 @@ rules:
         - "**/opi/utils/sops.py"
         - "**/opi/utils/git_signing.py"
         - "**/opi/core/cluster_config.py"
+        # Het Fundament-fieldlab 2026 houdt alles in een map, zodat weghalen een map
+        # verwijderen is; lego start daar met een vaste argumentenlijst. Gaat mee weg met de
+        # map, zie features/fundament-registratie.md.
+        - "**/opi/fundament_registration/certificate.py"
     pattern-either:
       - pattern: subprocess.$F(...)
       - pattern: asyncio.create_subprocess_exec(...)

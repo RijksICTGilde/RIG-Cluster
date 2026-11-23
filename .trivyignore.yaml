@@ -1,4 +1,4 @@
-# Uitzonderingen op de container-gate in .github/workflows/security.yml.
+# Uitzonderingen op de container-gate en de manifest-gate in .github/workflows/security.yml.
 #
 # Een regel hier zet een oplosbare HIGH of CRITICAL stil. Dat mag alleen met een reden
 # (statement) en een vervaldatum (expired_at): zo blijft de afweging vastgelegd zoals BIO2
@@ -1188,6 +1188,115 @@ vulnerabilities:
       laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
       laatste 2.14-patch.
     expired_at: 2027-01-12
+
+misconfigurations:
+  - id: KSV-0010
+    paths:
+      - bootstrap/infrastructure/falco/controller/base/daemonset.yaml
+    statement: >-
+      Access to host PID. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0014
+    paths:
+      - bootstrap/infrastructure/backup-destination/controller/base/deployment.yaml
+      - bootstrap/infrastructure/external-dns/controller/base/deployment.yaml
+      - bootstrap/infrastructure/falco/controller/base/daemonset.yaml
+      - bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml
+      - bootstrap/infrastructure/forgejo/controller/base/statefulset.yaml
+      - bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn-staging/patch-mail-relay-host.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn/patch-mail-relay-host.yaml
+      - bootstrap/infrastructure/minio/controller/base/deployment.yaml
+      - bootstrap/infrastructure/pgadmin/controller/base/deployment.yaml
+      - bootstrap/infrastructure/postgresql/database/base/platform-backup-cronjob.yaml
+      - bootstrap/infrastructure/prometheus/controller/base/deployment.yaml
+      - bootstrap/infrastructure/prometheus/controller/base/kube-state-metrics-deployment.yaml
+      - bootstrap/infrastructure/redis/controller/base/deployment.yaml
+      - bootstrap/infrastructure/registry/controller/base/deployment.yaml
+      - rig-system/kustomize/backup-destination/base/deployment.yaml
+      - rig-system/kustomize/operations-manager/base/deployment.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-staging/patches/deployment.yaml
+    statement: >-
+      Root file system is not read-only. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0041
+    paths:
+      - crd/operator/argocd-operator-install.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-production/_blueprint-cluster-role.yaml
+    statement: >-
+      Manage secrets. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0045
+    paths:
+      - crd/operator/argocd-operator-install.yaml
+    statement: >-
+      No wildcard verb roles. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0046
+    paths:
+      - crd/operator/argocd-operator-install.yaml
+    statement: >-
+      Manage all resources. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0047
+    paths:
+      - rig-system/kustomize/operations-manager/overlays/odcn-production/_blueprint-cluster-role.yaml
+    statement: >-
+      Do not allow privilege escalation from node proxy. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0056
+    paths:
+      - crd/operator/argocd-operator-install.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-production/_blueprint-cluster-role.yaml
+    statement: >-
+      Manage Kubernetes networking. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0109
+    paths:
+      - rig-system/kustomize/configmap-sops-plugin.yaml
+    statement: >-
+      ConfigMap with secrets. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0118
+    paths:
+      - bootstrap/infrastructure/backup-destination/controller/base/deployment.yaml
+      - bootstrap/infrastructure/external-dns/controller/base/deployment.yaml
+      - bootstrap/infrastructure/falco/controller/base/daemonset.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn-staging/patch-mail-relay-host.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn-staging/patch-pull-secret.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn/patch-mail-relay-host.yaml
+      - bootstrap/infrastructure/keycloak/controller/overlays/odcn/patch-pull-secret.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
+      - rig-system/kustomize/operations-manager/overlays/odcn-staging/patches/deployment.yaml
+    statement: >-
+      Default security context configured. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
+
+  - id: KSV-0121
+    paths:
+      - bootstrap/infrastructure/falco/controller/base/daemonset.yaml
+    statement: >-
+      Kubernetes resource with disallowed volumes mounted. Bestaande bevinding in de ODCN- en base-manifesten, vastgelegd toen de
+      manifest-scan een gate kreeg; oplossen of met reden uitzonderen staat op issue #433.
+    expired_at: 2027-02-13
 
 secrets:
   - id: private-key

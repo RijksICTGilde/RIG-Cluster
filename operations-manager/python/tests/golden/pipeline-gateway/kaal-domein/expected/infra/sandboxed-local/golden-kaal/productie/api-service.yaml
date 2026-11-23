@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "productie-api"
+  namespace: "rig-golden-kaal"
+  labels:
+    app: "productie-api"
+    project: "golden-kaal"
+spec:
+  selector:
+    app: "productie-api"
+    component: application
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  type: ClusterIP

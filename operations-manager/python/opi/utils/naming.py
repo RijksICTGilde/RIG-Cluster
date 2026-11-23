@@ -1476,6 +1476,20 @@ def generate_tls_secret_name(ingress_name: str) -> str:
     return f"{ingress_name}-tls"
 
 
+def generate_listener_name(hostname: str) -> str:
+    """The Gateway API listener name for a hostname.
+
+    Derived from the hostname and nothing else: several components can publish on one
+    hostname, and they must all attach to the SAME listener. A name per component would
+    give one hostname two listeners, which the Gateway refuses as a conflict.
+
+    Example:
+        >>> generate_listener_name("app.voorbeeld.nl")
+        'app-voorbeeld-nl'
+    """
+    return sanitize_kubernetes_name(hostname)
+
+
 def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     """
     Normalize a base domain for use in Kubernetes resource names.

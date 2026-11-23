@@ -14,7 +14,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: operations-manager
-        image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.11.11.0727-1b96ef77
+        image: localhost:5001/operations-manager:8b498b404
         # task sandbox:configure-operations-manager-image zet dit op
         # localhost:5001/operations-manager:<commit>.
         #

@@ -109,6 +109,12 @@
                 "type": "object",
                 "x-kubernetes-map-type": "atomic"
               },
+              "defaultTagExpirationSeconds": {
+                "description": "DefaultTagExpirationSeconds is the default expiration, in seconds, that\nQuay applies to cached tags in this proxy cache organisation. Each pull\nresets the expiration of the pulled tag to this value. When omitted the\noperator does not manage the value and Quay applies its own default\n(86400, one day). Changing it recreates the Quay proxy cache\nconfiguration (Quay has no update endpoint).",
+                "format": "int64",
+                "minimum": 1,
+                "type": "integer"
+              },
               "enabled": {
                 "default": false,
                 "description": "Enabled controls whether this proxy cache configuration is applied.",
@@ -247,6 +253,12 @@
             },
             "minItems": 1,
             "type": "array"
+          },
+          "timeMachineSeconds": {
+            "description": "TimeMachineSeconds is the time machine window of the organisation in\nseconds: how long after a tag is deleted or expires it stays recoverable\nbefore garbage collection may remove it. 0 disables recovery. When\nomitted the operator does not manage the value and Quay keeps its current\nsetting (default two weeks). Requires FEATURE_CHANGE_TAG_EXPIRATION to be\nenabled in Quay. Quay only accepts values listed in its\nTAG_EXPIRATION_OPTIONS setting (default 0s, 1d, 1w, 2w, 4w, i.e. 0,\n86400, 604800, 1209600 or 2419200); other values are rejected.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -379,6 +391,31 @@
           "quayOrgName": {
             "description": "QuayOrgName is the actual organisation name in Quay (may differ from\ncustomerName when a proxy cache is enabled).",
             "type": "string"
+          },
+          "quota": {
+            "description": "Quota reports the current storage usage against the quota. It is\nrefreshed on every reconcile (at least hourly).",
+            "properties": {
+              "limitBytes": {
+                "description": "LimitBytes is the configured storage quota in bytes.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "usagePercent": {
+                "description": "UsagePercent is UsedBytes as a percentage of LimitBytes, formatted with\ntwo decimals (for example \"12.34\").",
+                "type": "string"
+              },
+              "usedBytes": {
+                "description": "UsedBytes is the storage currently consumed by the organisation.",
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "limitBytes",
+              "usagePercent",
+              "usedBytes"
+            ],
+            "type": "object"
           },
           "robotAccountName": {
             "description": "RobotAccountName is the fully-qualified Quay robot account name.",

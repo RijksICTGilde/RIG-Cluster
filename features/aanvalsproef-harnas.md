@@ -141,16 +141,21 @@ overlay-patches naast de bases, en een patch is geen volledig manifest: de gate 
 meten en niet de uitkomst. Een scan van die map geeft 58 bevindingen die bijna allemaal
 daarover gaan. Die kant dekken de Kyverno-policies bij admission, op de echte pod.
 
-Twee bevindingen staan structureel in de uitzonderingslijst:
+Een bevinding staat structureel in de uitzonderingslijst:
 
-- **read-only rootfs** (`no-read-only-root-fs`, `CKV_K8S_22`): het image van een tenant is
-  niet van ons, en een read-only rootfs afdwingen breekt elke applicatie die naar `/tmp`
-  schrijft. De Kyverno-policy rapporteert het in audit-modus, zodat de omvang zichtbaar is.
-- **een NetworkPolicy per pod** (`non-isolated-pod`, `CKV2_K8S_6`): ZAD genereert die wel,
-  maar in een ander bestand dan de golden-snapshot van de workload
-  (`features/restrictive-network-policies.md`).
+- **read-only rootfs** (`CKV_K8S_22`): het image van een tenant is niet van ons, en een
+  read-only rootfs afdwingen breekt elke applicatie die naar `/tmp` schrijft. De
+  Kyverno-policy rapporteert het in audit-modus, zodat de omvang zichtbaar is. kube-linter
+  meet deze check niet (`no-read-only-root-fs` staat niet in zijn selectie): zo staat de
+  afweging op een plek, en meldt kube-linter in de Security-tab geen bevinding die we toch
+  laten staan.
 
-De derde (`CKV_K8S_153`) is een echte bevinding met een kortere vervaldatum: de gegenereerde
+Een NetworkPolicy per pod (`non-isolated-pod`, `CKV2_K8S_6`) is geen uitzondering meer: de
+golden-snapshots bevatten ook de namespace-brede default-deny die ZAD genereert
+(`features/restrictive-network-policies.md`), dus beide scanners zien dat elke pod onder
+beleid valt.
+
+De tweede (`CKV_K8S_153`) is een echte bevinding met een kortere vervaldatum: de gegenereerde
 ingress zet de internet.nl-headers ook via een `nginx.ingress.kubernetes.io/configuration-snippet`.
 Het snippet zelf is ons sjabloon; de twee waarden die erin komen (het pad en de
 rewrite-basis van een component) komen wel van de tenant en worden aan de bron op charset

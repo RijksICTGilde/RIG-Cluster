@@ -1,0 +1,52 @@
+{#
+  De storingsstand van SSO Rijk: de stand zoals Keycloak hem draagt, plus de knop die hem
+  omzet. Zie features/sso-rijk-uitwijk.md.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{% call panel("Storingsstand SSO Rijk", "shield-check-mark") %}
+    {% if sso_status.outage_active %}
+        <nldd-banner variant="warning"
+                     text="De storingsstand staat AAN"
+                     supporting-text="Wie nu inlogt krijgt een keuzescherm en kan een code per e-mail aanvragen."></nldd-banner>
+    {% else %}
+        <nldd-banner variant="success"
+                     text="De storingsstand staat UIT"
+                     supporting-text="Inloggen gaat alleen via SSO Rijk."></nldd-banner>
+    {% endif %}
+
+    <nldd-rich-text><dl>
+        <dt>Realm</dt><dd>{{ sso_status.realm }}</dd>
+        <dt>Browser flow in Keycloak</dt><dd>{{ sso_status.browser_flow or 'onbekend' }}</dd>
+    </dl></nldd-rich-text>
+
+    {% if not sso_status.recognised %}
+        <nldd-banner variant="critical"
+                     text="Deze realm draagt een flow die het platform niet kent"
+                     supporting-text="Omzetten zet hem op een van de twee bekende flows. Kijk eerst in Keycloak wat hier staat."></nldd-banner>
+    {% endif %}
+
+    <nldd-text size="md">
+        Omzetten geldt alleen voor nieuwe logins. Sessies die nu lopen blijven doorlopen, ook nadat je de
+        storingsstand weer uitzet.
+    </nldd-text>
+
+    {% if sso_status.outage_active %}
+        {% set stand, knop = "uit", "Storingsstand uitzetten" %}
+        {% set uitleg = "Daarna kan niemand meer met een code per e-mail inloggen." %}
+    {% else %}
+        {% set stand, knop = "aan", "Storingsstand aanzetten" %}
+        {% set uitleg = "Iedereen met een gekoppeld SSO Rijk-account kan dan inloggen met een code per e-mail." %}
+    {% endif %}
+
+    <form autocomplete="off" method="post" action="/admin/platform/sso-storing"
+          hx-post="/admin/platform/sso-storing"
+          hx-target="#edit-section-inner" hx-swap="innerHTML"
+          data-bevestig="De storingsstand {{ stand }}zetten?"
+          data-bevestig-uitleg="{{ uitleg }}"
+          data-bevestig-knop="{{ knop }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="storingsstand" value="{{ stand }}" />
+        <nldd-button appearance="primary" type="submit" text="{{ knop }}"></nldd-button>
+    </form>
+{% endcall %}

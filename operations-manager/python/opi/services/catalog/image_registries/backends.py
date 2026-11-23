@@ -35,6 +35,11 @@ DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
 DEFAULT_QUOTA_LIMIT_GIB = 3
 
 
+def cluster_default_quota_gib(cluster: str) -> int:
+    """The quota a registry gets without one of its own, on this cluster."""
+    return int(get_image_registries_config(cluster).get("quota_limit_gib", DEFAULT_QUOTA_LIMIT_GIB))
+
+
 class MissingRegistryCredentialsError(ValueError):
     """A registry with neither a secretName nor a token."""
 
@@ -105,9 +110,7 @@ class QuayProxyOrganizationBackend:
         customer_name = cluster_config.get("customer_name", "")
         rotation_days = cluster_config.get("rotation_days", 90)
         quota_limit_gib = effective_quota_gib(
-            ctx.project_data,
-            str(registry.get("name", "")),
-            cluster_config.get("quota_limit_gib", DEFAULT_QUOTA_LIMIT_GIB),
+            ctx.project_data, str(registry.get("name", "")), cluster_default_quota_gib(ctx.cluster)
         )
         organization = organization_name(str(upstream), customer_name, ctx.project_name)
 

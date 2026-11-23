@@ -9,9 +9,11 @@ import pytest
 from opi.core.errors import ErrorCategory
 from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.deployment_diagnostics import (
+    EXCLUDED_RESOURCE_CONDITION,
     categorize_error,
     conditions_to_errors,
     gather_deployment_errors,
+    gather_excluded_resources,
     gather_sync_deviations,
     summarize_component_pods,
 )
@@ -67,6 +69,20 @@ class TestConditionsToErrors:
     def test_no_conditions_is_empty(self) -> None:
         assert conditions_to_errors({"status": {}}) == []
         assert conditions_to_errors({}) == []
+
+    def test_excluded_resource_warning_is_not_an_error(self) -> None:
+        """It travels as a warning through gather_excluded_resources instead (RC-501)."""
+        status_data = {
+            "status": {
+                "conditions": [
+                    {
+                        "type": EXCLUDED_RESOURCE_CONDITION,
+                        "message": "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+                    },
+                ],
+            }
+        }
+        assert conditions_to_errors(status_data) == []
 
 
 class TestGatherDeploymentErrors:
@@ -445,6 +461,32 @@ class TestGatherDeploymentErrors:
         assert {"resource": "ComparisonError", "message": "manifest invalid"} in errors
         assert not any(e["resource"] == "OK" for e in errors)
 
+    async def test_excluded_resource_condition_is_not_an_error(self) -> None:
+        """Synced and Healthy with a resource ArgoCD leaves out: no error, through
+        conditions_to_errors (RC-501)."""
+        status_data = {
+            "status": {
+                "health": {"status": "Healthy"},
+                "conditions": [
+                    {
+                        "type": EXCLUDED_RESOURCE_CONDITION,
+                        "message": "Resource /HTTPRoute web is excluded in the settings",
+                    },
+                ],
+            }
+        }
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(),
+                kubectl=_kubectl_mock(),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert not any(e["resource"] == EXCLUDED_RESOURCE_CONDITION for e in errors)
+
     async def test_failed_operation_phase_becomes_error(self) -> None:
         status_data = {
             "status": {
@@ -495,6 +537,11 @@ class TestCategorizeError:
             ("SyncOperation", "Sync operation failed", ErrorCategory.SyncFailed),
             ("Ingress/x", "SyncFailed: not allowed", ErrorCategory.SyncFailed),
             ("ComparisonError", "manifest invalid", ErrorCategory.ComparisonError),
+            (
+                EXCLUDED_RESOURCE_CONDITION,
+                "Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings",
+                ErrorCategory.ExcludedResource,
+            ),
             ("Pod/x", "some unrelated message", ErrorCategory.Unknown),
         ],
     )
@@ -510,6 +557,10 @@ class TestCategorizeError:
             ErrorCategory.HealthCheck: ("Pod/x", "Liveness probe failed"),
             ErrorCategory.SyncFailed: ("SyncOperation", "Sync operation failed"),
             ErrorCategory.ComparisonError: ("ComparisonError", "manifest invalid"),
+            ErrorCategory.ExcludedResource: (
+                EXCLUDED_RESOURCE_CONDITION,
+                "Resource /HTTPRoute web is excluded in the settings",
+            ),
             ErrorCategory.Unknown: ("Pod/x", "totally unrelated"),
         }
         for category, (resource, message) in representative.items():
@@ -520,6 +571,69 @@ class TestCategorizeError:
             else:
                 assert explanation is not None
                 assert len(explanation) > 0
+
+
+# ---------------------------------------------------------------------------
+# gather_excluded_resources
+# ---------------------------------------------------------------------------
+
+
+def _excluded_status(*messages: str) -> dict[str, Any]:
+    return {
+        "status": {
+            "conditions": [{"type": EXCLUDED_RESOURCE_CONDITION, "message": message} for message in messages],
+        }
+    }
+
+
+class TestGatherExcludedResources:
+    """A resource whose kind is not on ArgoCD's allowlist (RC-501)."""
+
+    def test_no_conditions_is_empty(self) -> None:
+        assert gather_excluded_resources({"status": {}}) == []
+        assert gather_excluded_resources({}) == []
+
+    def test_other_condition_types_are_ignored(self) -> None:
+        status_data = {"status": {"conditions": [{"type": "ComparisonError", "message": "manifest invalid"}]}}
+        assert gather_excluded_resources(status_data) == []
+
+    def test_a_namespaced_kind_is_parsed_into_group_kind_and_name(self) -> None:
+        status_data = _excluded_status("Resource gateway.networking.k8s.io/HTTPRoute web is excluded in the settings")
+        [excluded] = gather_excluded_resources(status_data)
+        assert excluded.group == "gateway.networking.k8s.io"
+        assert excluded.kind == "HTTPRoute"
+        assert excluded.name == "web"
+
+    def test_a_core_kind_has_an_empty_group(self) -> None:
+        status_data = _excluded_status("Resource /ConfigMap my-config is excluded in the settings")
+        [excluded] = gather_excluded_resources(status_data)
+        assert excluded.group == ""
+        assert excluded.kind == "ConfigMap"
+        assert excluded.name == "my-config"
+
+    def test_the_dutch_message_names_kind_and_name(self) -> None:
+        status_data = _excluded_status("Resource /HTTPRoute web is excluded in the settings")
+        [excluded] = gather_excluded_resources(status_data)
+        assert excluded.message == (
+            "HTTPRoute web wordt niet uitgerold: dit type staat niet op de lijst die het platform ondersteunt."
+        )
+
+    def test_an_unexpected_format_falls_back_to_the_raw_message_without_crashing(self) -> None:
+        status_data = _excluded_status("something ArgoCD never documented")
+        [excluded] = gather_excluded_resources(status_data)
+        assert excluded.kind == ""
+        assert excluded.raw_message == "something ArgoCD never documented"
+        # Without a parsed kind/name there is nothing to build a Dutch sentence around.
+        assert excluded.message == "something ArgoCD never documented"
+        assert excluded.label == EXCLUDED_RESOURCE_CONDITION
+
+    def test_multiple_excluded_resources_each_get_their_own_entry(self) -> None:
+        status_data = _excluded_status(
+            "Resource /HTTPRoute web is excluded in the settings",
+            "Resource /ConfigMap extra is excluded in the settings",
+        )
+        excluded = gather_excluded_resources(status_data)
+        assert [resource.label for resource in excluded] == ["HTTPRoute web", "ConfigMap extra"]
 
 
 # ---------------------------------------------------------------------------

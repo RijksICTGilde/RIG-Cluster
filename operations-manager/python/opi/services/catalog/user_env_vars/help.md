@@ -8,9 +8,9 @@ Je geeft je applicatie instellingen mee zonder je container-image aan te passen:
 
 ## Waar let je op?
 
-Je schrijft ze als **NAAM=waarde** of als YAML. Je kunt naar platformvariabelen verwijzen met **$DATABASE_SERVER_HOST**-achtige verwijzingen; een verwijzing die niet bestaat blijft hier gewoon staan, want een dollarteken in een wachtwoord is geen typefout.
+Je schrijft ze als **NAAM=waarde** of als YAML. Je kunt naar platformvariabelen verwijzen met **$DATABASE_SERVER_HOST**-achtige verwijzingen; een verwijzing die niet bestaat blijft gewoon staan.
 
-Je kunt ze per component instellen en per deployment overschrijven, zodat een testomgeving andere waarden kan hebben dan productie.
+Je kunt ze per component instellen en per deployment overschrijven.
 
 ## Waar staan deze variabelen in de API?
 

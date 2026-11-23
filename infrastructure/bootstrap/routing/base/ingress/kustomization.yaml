@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De CLUSTERONAFHANKELIJKE helft van de ingress-stand: een Ingress per platformdienst, en de
+# ConfigMap waar OPI zijn stand uit leest.
+#
+# Alleen gewone Ingress-resources, en geen CRD, controller of ander platformdeel. De
+# controller zelf hoort bij het cluster en staat in de overlay. De soorten zijn
+# clusteronafhankelijk, de hostnames nog niet: die zijn van de sandbox, de enige afnemer.
+resources:
+  - ingress-argocd.yaml
+  - ingress-forgejo.yaml
+  - ingress-keycloak.yaml
+  - ingress-mailsink.yaml
+  - ingress-minio.yaml
+  - ingress-operations-manager.yaml
+  - ingress-prometheus.yaml
+  - ingress-registry.yaml
+  - configmap-zad-routing.yaml

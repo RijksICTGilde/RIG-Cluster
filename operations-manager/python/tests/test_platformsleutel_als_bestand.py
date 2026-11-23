@@ -26,7 +26,6 @@ KUSTOMIZATIONS = sorted(KUSTOMIZE_ROOT.glob("overlays/*/kustomization.yaml"))
 # De manifesten achter de secretRef-namen in envFrom. Een envFrom die hier niet staat laat
 # de toets falen, zodat een nieuwe env-bron niet ongezien zijn geheimen laat erven.
 ENV_SOURCE_MANIFESTS = {
-    "operations-manager-access": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-access-secrets.yaml",
     "operations-manager-env-secrets": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-env-secrets.yaml",
 }
 # Dit secret staat niet in git: OPI schrijft het zelf bij het opstarten

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De CLUSTERONAFHANKELIJKE helft van de gateway-stand: een HTTPRoute per platformdienst, de
+# redirect van poort 80 naar https, en de ConfigMap waar OPI zijn stand uit leest.
+#
+# Alleen standaard Gateway API-soorten, en geen CRD, controller of ander platformdeel. Welke
+# controller de Gateway uitvoert verschilt per cluster: de sandbox draait Envoy Gateway,
+# Fundament draait Istio, en EnvoyProxy of BackendTrafficPolicy bestaan daar niet. Die horen
+# dus in de overlay van een cluster, net als de Gateway zelf: of ZAD die aanmaakt of het
+# platform hem levert, is een keuze per cluster. tests/test_sandbox_routing_contract.py meet
+# dat deze base bij de standaardsoorten blijft.
+#
+# De SOORTEN zijn clusteronafhankelijk, de WAARDEN nog niet: de hostnames, de namespace en de
+# parentRef naar rig-gateway zijn die van de sandbox, de enige afnemer vandaag. Een tweede
+# cluster vraagt die als patch in zijn eigen overlay.
+resources:
+  - httproute-argocd.yaml
+  - httproute-forgejo.yaml
+  - httproute-keycloak.yaml
+  - httproute-mailsink.yaml
+  - httproute-minio.yaml
+  - httproute-operations-manager.yaml
+  - httproute-prometheus.yaml
+  - httproute-registry.yaml
+  - httproute-https-redirect.yaml
+  - configmap-zad-routing.yaml

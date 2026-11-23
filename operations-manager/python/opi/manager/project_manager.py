@@ -1520,24 +1520,18 @@ class ProjectManager:
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """Render a helm-charts deployment; see :class:`HelmDeployment`."""
-        await HelmDeployment(self).process_helm_chart_deployment(
-            deployment, git_connector, target_path, namespace_policy_files
-        )
+        await HelmDeployment(self).process_helm_chart_deployment(deployment, git_connector, target_path)
 
     async def _process_helmfile_deployment(
         self,
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
         target_path: str,
-        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """Render a helmfile deployment; see :class:`HelmDeployment`."""
-        await HelmDeployment(self).process_helmfile_deployment(
-            deployment, git_connector, target_path, namespace_policy_files
-        )
+        await HelmDeployment(self).process_helmfile_deployment(deployment, git_connector, target_path)
 
     async def close(self) -> None:
         """Clean up resources. Safe to call multiple times.

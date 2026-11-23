@@ -22,7 +22,7 @@ import pytest
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.core.readiness import ReadinessState
-from opi.runtime.startup.platform_database_access import restrict_platform_databases
+from opi.runtime.startup.platform_database_access import restrict_platform_databases, restrict_tenant_databases
 from opi.runtime.startup.startup import _setup_database
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from tests.integration.postgres_live import (
@@ -100,9 +100,9 @@ async def schoon() -> AsyncIterator[None]:
 def shared_server(monkeypatch: pytest.MonkeyPatch, resolve_service_name: None) -> None:
     """Wijs de manager naar de wegwerpserver en zet de afsluiting aan.
 
-    ``DATABASE_RESTRICT_PUBLIC_CONNECT`` staat standaard op ``dry-run``; de stand die de
-    invariant hieronder meet is ``on``, want dat is de stand waarin een database alleen voor
-    zijn eigen rollen open is.
+    De stand die de invariant hieronder meet is ``on``, want dat is de stand waarin een
+    database alleen voor zijn eigen rollen open is. Deze fixture zet hem expliciet, zodat de
+    toets niet op de default van ``DATABASE_RESTRICT_PUBLIC_CONNECT`` leunt.
     """
     username, password = admin_credentials()
     monkeypatch.setattr("opi.manager.database_manager.get_database_server", lambda _cluster: SERVICE_NAME)
@@ -317,3 +317,40 @@ async def test_restrict_platform_databases_locks_every_database_to_its_own_role(
         await backup.close()
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await connection_as(f"{PREFIX}_vreemd", PASSWORD, database)
+
+
+async def test_restrict_tenant_databases_closes_a_database_that_already_existed(
+    live_connector: PostgresConnector, resolve_service_name: None, monkeypatch: pytest.MonkeyPatch, schoon: None
+) -> None:
+    """The startup round over the project databases that already exist (RC-519).
+
+    The roles come from PostgreSQL itself: the owner keeps its rights independently of the
+    GRANT and ``<owner>_ro`` gets CONNECT. A stranger role is locked out afterwards, and that
+    is the state this round reaches without the project being processed again.
+    """
+    username, password = admin_credentials()
+    owner = f"{PREFIX}_owner"
+    readonly = f"{owner}_ro"
+    stranger = f"{PREFIX}_vreemd"
+    database = f"{PREFIX}_bestaand"
+    monkeypatch.setattr(settings, "DATABASE_ADMIN_NAME", username)
+    monkeypatch.setattr(settings, "DATABASE_ADMIN_PASSWORD", password)
+    monkeypatch.setattr(settings, "DATABASE_RESTRICT_PUBLIC_CONNECT", "on")
+    monkeypatch.setattr(
+        "opi.runtime.startup.platform_database_access.get_database_server", lambda _cluster: SERVICE_NAME
+    )
+
+    for role in (owner, readonly, stranger):
+        await live_connector.create_user(role, PASSWORD, connection_limit=5)
+    await live_connector.create_database(database, owner)
+
+    conn = await connection_as(stranger, PASSWORD, database)
+    await conn.close()
+
+    await restrict_tenant_databases()
+
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await connection_as(stranger, PASSWORD, database)
+    for allowed in (owner, readonly):
+        own = await connection_as(allowed, PASSWORD, database)
+        await own.close()

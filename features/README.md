@@ -14,6 +14,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [De speelruimte van een dienst](speelruimte-van-een-dienst.md)
 - [Diensten die elkaars toestand kennen, en een gezondheidscheck die dat gebruikt](deployment-state-and-health.md)
 - [E-mail versturen (send-email)](send-email.md)
+- [Een container die niet start, is niet gecrasht](startfout-is-geen-crash.md)
 - [Een dienst beschrijven via de API](service-describe-api.md)
 - [Een dienst vervangen door een opvolger](dienst-vervangen-door-een-opvolger.md)
 - [Een dienst zegt zelf of je hem per component aanvinkt](dienst-per-component-aanvinken.md)
@@ -183,6 +184,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [PKCE op de OPI-login](pkce-op-de-opi-login.md)
 - [Sandbox SSO Setup](sandbox-sso-setup.md)
 - [Server-side sessies met een begrensde hot-cache](server-side-sessies.md)
+- [Uitwijk als SSO Rijk uitvalt](sso-rijk-uitwijk.md)
 - [Verplichte OTP voor lokale accounts](keycloak-verplichte-otp.md)
 - [ZAD External User Support with Local Accounts](zad-external-user-support.md)
 
@@ -227,6 +229,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [AppProjects: wat een Application mag uitrollen](argocd-appprojects.md)
 - [ArgoCD Refresh Performance Issue](argocd-refresh-performance.md)
 - [ArgoCD Render/Compare Error Surfacing](argocd-render-error-surfacing.md)
+- [ArgoCD rolt alleen soorten uit die op de allowlist staan](argocd-resource-allowlist.md)
 - [ArgoCD synct alleen ondertekende commits](ondertekende-gitops-commits.md)
 - [ArgoCD token-cache](argocd-token-cache.md)
 - [ArgoCD-rollen op least privilege, en ZAD op een eigen account](argocd-least-privilege.md)
@@ -259,6 +262,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Een database is alleen te openen door zijn eigen rollen](database-alleen-eigen-rollen.md)
 - [Namespace PostgreSQL Database Service](namespace-postgresql-database.md)
 - [OPI op een eigen databaserol](opi-op-een-eigen-databaserol.md)
+- [Opslag boven 2Gi op aanvraag](opslag-op-aanvraag.md)
 - [Oude versies in een bucket hebben een grens](oude-versies-in-een-bucket.md)
 - [PgBouncer Connection Pooling](pgbouncer-connection-pooling.md)
 - [Platformdatabase: één instance](platformdatabase-een-instance.md)
@@ -282,6 +286,8 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Het webadres hoort bij de dienst](webadres-onder-de-dienst.md)
 - [No-mail-records op onze eigen DNS-namen](no-mail-dns-records.md)
 - [Publish-on-web: TLS modes (certificate handling)](publish-on-web-tls-modes.md)
+- [Registratie van een Fundament-installatie](fundament-registratie.md)
+- [Routing per clustertype: Ingress of Gateway API](gateway-api-routing.md)
 
 ## Resources en monitoring
 

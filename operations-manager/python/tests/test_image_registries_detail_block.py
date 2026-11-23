@@ -12,11 +12,15 @@ import opi.services.catalog.image_registries.web as web
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
+from opi.core.config import settings
 from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries import web as route_module
+from opi.services.catalog.image_registries.backends import cluster_default_quota_gib
+from opi.services.catalog.image_registries.config_model import QUOTA_FREE_MAX_GIB
 from opi.services.catalog.image_registries.naming import organization_name
+from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
 from opi.services.catalog.image_registries.web import _expires_soon, _organization_status, registry_status_fragment
 from opi.services.services_enums import UIEvent
@@ -90,6 +94,64 @@ class TestHetBlok:
 
         paden = {getattr(route, "path", "") for route in web_router.routes}
         assert "/projects/details/{project_name}/image-registries/status" in paden
+
+
+#: The cluster with the quay proxy; the test environment runs on ``local``, a direct-secret one.
+PROXY_CLUSTER = "odcn-production"
+
+
+class TestTheQuotaLine:
+    """What applies and what was requested, next to the registry (RC-497)."""
+
+    @staticmethod
+    def _block(
+        monkeypatch: pytest.MonkeyPatch,
+        quota: int | None,
+        *,
+        requested: bool = False,
+        cluster: str = PROXY_CLUSTER,
+        registry_overrides: dict[str, Any] | None = None,
+    ) -> tuple[Any, str]:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", cluster)
+        registry = {**REGISTRY, **(registry_overrides or {})}
+        if quota is not None:
+            registry["quota-gib"] = quota
+        ctx = _ctx([registry])
+        if requested:
+            QUOTA_APPROVAL.ensure_requested(ctx.project_data)
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, ctx)
+        return section, templates_lotc.env.get_template(section.template).render(section=section)
+
+    def test_without_a_quota_of_its_own_the_cluster_default_shows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        section, html = self._block(monkeypatch, None)
+        default = cluster_default_quota_gib(PROXY_CLUSTER)
+        assert section.context["registries"][0]["effective_quota_gib"] == default
+        assert f"Opslagquota: {default} GiB." in html
+
+    def test_within_the_free_range_the_chosen_value_applies_at_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        section, html = self._block(monkeypatch, QUOTA_FREE_MAX_GIB, requested=True)
+        assert section.context["registries"][0]["requested_quota_gib"] is None
+        assert f"Opslagquota: {QUOTA_FREE_MAX_GIB} GiB." in html
+
+    def test_above_it_the_request_stands_next_to_what_applies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        section, html = self._block(monkeypatch, 15, requested=True)
+        assert section.context["registries"][0]["effective_quota_gib"] == QUOTA_FREE_MAX_GIB
+        assert section.context["registries"][0]["requested_quota_gib"] == 15
+        assert f"Opslagquota: {QUOTA_FREE_MAX_GIB} GiB, 15 GiB aangevraagd." in html
+
+    def test_a_cluster_without_a_proxy_shows_no_quota(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No Organization there, so no quota to report either."""
+        section, html = self._block(monkeypatch, None, cluster="sandboxed-local")
+        assert "effective_quota_gib" not in section.context["registries"][0]
+        assert "Opslagquota" not in html
+
+    def test_a_row_with_an_existing_secret_shows_no_quota(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Such a row gets no Organization even on a proxy cluster (``backends.py``)."""
+        section, html = self._block(
+            monkeypatch, None, registry_overrides={"secretName": "bestaand-pull-secret", "password": None}
+        )
+        assert "effective_quota_gib" not in section.context["registries"][0]
+        assert "Opslagquota" not in html
 
 
 def _kubectl(stdout: str, code: int = 0) -> Any:
@@ -284,3 +346,50 @@ class TestDeLeeswegVanHetStatusEndpoint:
 
         assert opgevangen.value.status_code == 403
         assert gerenderd == []
+
+
+class TestTheQuotaUsageFromTheCluster:
+    """``status.quota`` comes from the operator and is refreshed at least hourly."""
+
+    @staticmethod
+    def _fragment(statuses: list[dict[str, Any]]) -> str:
+        return templates_lotc.env.get_template(web.STATUS_TEMPLATE).render(applicable=True, statuses=statuses)
+
+    @staticmethod
+    async def _status(quota: dict[str, Any] | None) -> dict[str, Any]:
+        status: dict[str, Any] = {"proxyCache": {"ready": True}, "credentialsConfigured": True}
+        if quota is not None:
+            status["quota"] = quota
+        return await _organization_status(
+            _kubectl(json.dumps({"status": status})),
+            "rig-prd-demo",
+            "code-overheid",
+            "code.overheid.nl/x",
+            "rig",
+            "demo",
+        )
+
+    async def test_the_usage_travels_along_and_shows_in_the_fragment(self) -> None:
+        status = await self._status({"usedBytes": 3435973836, "limitBytes": 10 * 1024**3, "usagePercent": "32.00"})
+        assert status["quota_used_gib"] == "3,2"
+        assert status["quota_limit_gib"] == "10"
+        assert status["quota_percent"] == 32
+        assert status["quota_warning"] is False
+        assert "3,2 van 10 GiB gebruikt (32%)" in self._fragment([status])
+
+    async def test_without_quota_in_the_status_the_fragment_says_nothing(self) -> None:
+        """An older operator, or an organization before its first reconcile; not an error."""
+        status = await self._status(None)
+        assert "quota_percent" not in status
+        assert "gebruikt" not in self._fragment([status])
+
+    async def test_from_eighty_percent_on_it_warns(self) -> None:
+        status = await self._status({"usedBytes": 9 * 1024**3, "limitBytes": 10 * 1024**3, "usagePercent": "90.00"})
+        assert status["quota_warning"] is True
+        html = self._fragment([status])
+        assert 'variant="warning"' in html
+        assert "9 van 10 GiB gebruikt (90%)" in html
+
+    async def test_an_unreadable_quota_state_is_not_an_error(self) -> None:
+        status = await self._status({"usedBytes": "veel", "limitBytes": 10 * 1024**3, "usagePercent": "x"})
+        assert "quota_percent" not in status

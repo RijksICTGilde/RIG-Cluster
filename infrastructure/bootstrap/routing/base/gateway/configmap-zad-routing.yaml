@@ -1,0 +1,10 @@
+# De stand van de routing voor OPI. De RoutingModeWatcher in OPI leest deze sleutel en
+# gaat erin renderen zodra de ingang van die stand klaar is; zonder deze ConfigMap valt
+# OPI terug op CLUSTER_CONFIG.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zad-routing
+  namespace: rig-system
+data:
+  routing: gateway

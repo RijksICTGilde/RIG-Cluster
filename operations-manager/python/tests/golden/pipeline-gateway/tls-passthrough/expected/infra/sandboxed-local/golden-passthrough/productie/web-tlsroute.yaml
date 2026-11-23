@@ -1,0 +1,18 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: "productie-web"
+spec:
+  # Passthrough: the stream reaches the pod encrypted and the pod terminates TLS with its
+  # own certificate, so no filters and no header modification are possible here.
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: "ListenerSet"
+      name: "productie-own-listeners"
+      sectionName: "app-voorbeeld-nl"
+  hostnames:
+    - "app.voorbeeld.nl"
+  rules:
+    - backendRefs:
+        - name: "productie-web"
+          port: 8080

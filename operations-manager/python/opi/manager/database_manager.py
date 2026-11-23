@@ -44,6 +44,8 @@ from opi.utils.passwords import generate_secure_password
 
 logger = logging.getLogger(__name__)
 
+READONLY_STATEMENT_TIMEOUT = "5min"
+
 
 @dataclass
 class DatabaseStateResult:
@@ -433,11 +435,12 @@ class DatabaseManager:
         The role mirrors the main user's lifecycle: created alongside it, granted
         SELECT-only on every schema of the deployment (the default schema plus any
         extra schemas, RC-17 decision 10.4), with a default search_path over the same
-        list. The read-only database console (and read-only application use) connect as
-        this role, so writes are impossible server-side and the console can browse every
-        schema. Its password is kept stable across syncs by reusing the value already
-        stored in the deployment's database secret, and it is only set again when that
-        value no longer logs in, like the main user in ``_resolve_database_credentials``.
+        list and a statement_timeout of ``READONLY_STATEMENT_TIMEOUT``. The read-only
+        database console (and read-only application use) connect as this role, so writes
+        are impossible server-side and the console can browse every schema. Its password
+        is kept stable across syncs by reusing the value already stored in the deployment's
+        database secret, and it is only set again when that value no longer logs in, like
+        the main user in ``_resolve_database_credentials``.
 
         Args:
             schemas: The deployment's schemas, primary first; must be non-empty.
@@ -476,6 +479,7 @@ class DatabaseManager:
         for schema in schemas:
             await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
         await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schemas=schemas)
+        await self.postgres_connector.set_role_setting(ro_username, "statement_timeout", READONLY_STATEMENT_TIMEOUT)
 
         return ro_username, ro_password
 

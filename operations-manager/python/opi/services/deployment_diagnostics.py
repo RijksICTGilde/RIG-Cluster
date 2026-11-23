@@ -11,6 +11,7 @@ and logs at debug level. The returned shape is always valid.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -61,7 +62,72 @@ _CATEGORY_EXPLANATIONS: dict[ErrorCategory, str] = {
     ErrorCategory.ComparisonError: (
         "The cluster could not compare the desired and live state. Often a manifest validation error."
     ),
+    ErrorCategory.ExcludedResource: (
+        "The resource kind is not on the cluster's allowlist, so ArgoCD leaves this object out of the "
+        "rollout. The rest of the application is rolled out as usual."
+    ),
 }
+
+
+#: The ArgoCD condition type for a resource whose kind is not on the allowlist.
+EXCLUDED_RESOURCE_CONDITION = "ExcludedResourceWarning"
+
+#: A warning and not an error: the rest of the application does roll out (see
+#: features/argocd-resource-allowlist.md).
+EXCLUDED_RESOURCE_SEVERITY = "warning"
+
+# The message ArgoCD builds for that condition: "Resource <group>/<kind> <name> is excluded
+# in the settings", with an empty group for a core kind.
+_EXCLUDED_RESOURCE_RE = re.compile(r"^Resource (?P<group>[^/]*)/(?P<kind>\S+) (?P<name>.+) is excluded in the settings")
+
+
+@dataclass(frozen=True)
+class ExcludedResource:
+    """A resource ArgoCD does not roll out because its kind is not on the allowlist."""
+
+    group: str
+    kind: str
+    name: str
+    raw_message: str
+
+    @property
+    def label(self) -> str:
+        """Kind and name, as the card and the task name them."""
+        return f"{self.kind} {self.name}" if self.kind else EXCLUDED_RESOURCE_CONDITION
+
+    @property
+    def message(self) -> str:
+        """The message for the user (Dutch), or the raw text when the format is unexpected."""
+        if not self.kind:
+            return self.raw_message
+        return f"{self.label} wordt niet uitgerold: dit type staat niet op de lijst die het platform ondersteunt."
+
+
+def gather_excluded_resources(status_data: dict[str, Any]) -> list[ExcludedResource]:
+    """The resources ArgoCD left out of this application, one entry per condition.
+
+    Reads only ``status.conditions[]`` (no extra API calls), so it can run on every status,
+    also a Synced and Healthy one: ArgoCD keeps the app green and records the omission here.
+    """
+    excluded: list[ExcludedResource] = []
+    status = status_data.get("status", {}) or {}
+    for condition in status.get("conditions", []) or []:
+        if condition.get("type") != EXCLUDED_RESOURCE_CONDITION:
+            continue
+        message = condition.get("message", "") or ""
+        match = _EXCLUDED_RESOURCE_RE.match(message)
+        if not match:
+            excluded.append(ExcludedResource(group="", kind="", name="", raw_message=message))
+            continue
+        excluded.append(
+            ExcludedResource(
+                group=match.group("group"),
+                kind=match.group("kind"),
+                name=match.group("name"),
+                raw_message=message,
+            )
+        )
+    return excluded
 
 
 def categorize_error(resource: str, message: str) -> tuple[ErrorCategory, str | None]:
@@ -76,6 +142,8 @@ def categorize_error(resource: str, message: str) -> tuple[ErrorCategory, str | 
         category = ErrorCategory.SyncFailed
     elif resource == "ComparisonError":
         category = ErrorCategory.ComparisonError
+    elif resource == EXCLUDED_RESOURCE_CONDITION:
+        category = ErrorCategory.ExcludedResource
     elif "imagepullbackoff" in msg_lower or "errimagepull" in msg_lower or "back-off pulling image" in msg_lower:
         category = ErrorCategory.ImagePull
     elif "oomkilled" in msg_lower or "out of memory" in msg_lower or "outofmemory" in msg_lower:
@@ -106,6 +174,10 @@ def conditions_to_errors(status_data: dict[str, Any]) -> list[dict[str, str]]:
     for condition in status.get("conditions", []) or []:
         condition_msg = condition.get("message", "")
         if not condition_msg:
+            continue
+        # Not an error: a resource that is not rolled out travels as a warning, through
+        # ``gather_excluded_resources``.
+        if condition.get("type") == EXCLUDED_RESOURCE_CONDITION:
             continue
         errors.append({"resource": condition.get("type", "Unknown"), "message": condition_msg})
     return errors
@@ -241,11 +313,7 @@ async def gather_deployment_errors(
             }
         )
 
-    for condition in status.get("conditions", []) or []:
-        condition_msg = condition.get("message", "")
-        if not condition_msg:
-            continue
-        errors.append({"resource": condition.get("type", "Unknown"), "message": condition_msg})
+    errors.extend(conditions_to_errors(status_data))
 
     if operation_state.get("phase") in ("Failed", "Error"):
         op_entry: dict[str, str] = {

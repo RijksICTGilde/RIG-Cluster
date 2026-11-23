@@ -15,18 +15,18 @@ from typing import Final
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.config_settings import ConfigSetting, QuantityKind, QuantitySetting
 from opi.services.catalog.shared.postgres import DatabaseResources
-from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.catalog.shared.storage import MIN_STORAGE_SIZE
 
 #: ``grow_only``, because a PVC does not shrink: a smaller value either does nothing or jams
-#: the rollout. The lower bound is the smallest size the platform offers. The upper bound is
-#: NOT that list: it runs to 1Gi, while a database volume in practice already carries 2Gi.
-#: 20Gi is the largest size written down for this field anywhere, in
-#: features/namespace-postgresql-database.md.
+#: the rollout. The lower bound is the smallest volume the platform accepts anywhere
+#: (``MIN_STORAGE_SIZE``). The upper bound is a number of its own and not the top of the
+#: series the storage services offer: 20Gi is the largest size written down for this field
+#: anywhere, in features/namespace-postgresql-database.md.
 POSTGRES_STORAGE: Final = QuantitySetting(
     path="storage",
     layers=(ConfigLayer.PROJECT,),
     default="1Gi",
-    minimum=STORAGE_SIZES[0],
+    minimum=MIN_STORAGE_SIZE,
     maximum="20Gi",
     kind=QuantityKind.MEMORY,
     grow_only=True,

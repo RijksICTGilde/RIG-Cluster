@@ -1,0 +1,35 @@
+{#
+  De resources van EEN component: per veld de waarde en wie hem beheert.
+
+  Vastgezet betekent dat de gebruiker die waarde zelf heeft gezet; de tuner laat zo'n
+  veld dan staan tot het vastzetten wordt opgeheven. Zonder dat teken is op het scherm
+  niet te zien waarom een waarde niet meebeweegt met het gebruik.
+
+  De regel over de tuner staat EEN keer boven de lijst en niet per veld: vier keer
+  dezelfde zin onder elkaar leest als ruis en duwt de vastgezette regel weg.
+
+  Verwacht: project, component (met resource_rows uit build_component_resource_rows) en
+  request.state.csrf_token. De knop vraagt hetzelfde recht als de route erachter.
+#}
+<c-paragraph size="sm">Het platform stelt deze waarden bij op het werkelijke gebruik, behalve wat je zelf vastzet.</c-paragraph>
+<nldd-list appearance="simple" dividers="never" aria-label="Resources van {{ component.name }}"
+           hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    {% for rij in component.resource_rows %}
+        <nldd-list-item>
+            <nldd-text-cell
+                text="{{ rij.label }}: {{ rij.value }}"
+                {% if rij.pinned %}supporting-text="Vastgezet{% if rij.set_at %} op {{ rij.set_at | dutch_date(include_time=False) }}{% endif %}"{% endif %}></nldd-text-cell>
+            {% if rij.pinned and can('component.update') %}
+                <nldd-list-item-segment>
+                    <nldd-cell>
+                        <nldd-button
+                            size="sm"
+                            appearance="secondary"
+                            text="Laat de tuner dit weer regelen"
+                            hx-post="/projects/{{ project.name }}/componenten/{{ component.name | urlencode }}/resources/{{ rij.field }}/loslaten"></nldd-button>
+                    </nldd-cell>
+                </nldd-list-item-segment>
+            {% endif %}
+        </nldd-list-item>
+    {% endfor %}
+</nldd-list>

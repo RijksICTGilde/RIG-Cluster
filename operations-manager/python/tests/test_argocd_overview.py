@@ -38,13 +38,16 @@ class _ArgoDubbel:
         return self._applications
 
 
-def _applicatie(naam: str, health: str = "Healthy", sync: str = "Synced") -> dict[str, Any]:
+def _applicatie(
+    naam: str, health: str = "Healthy", sync: str = "Synced", conditions: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     return {
         "metadata": {"name": naam},
         "status": {
             "health": {"status": health},
             "sync": {"status": sync, "revision": "abcdef1234567890"},
             "operationState": {"finishedAt": "2026-08-12T10:00:00Z"},
+            "conditions": conditions or [],
         },
     }
 
@@ -94,6 +97,39 @@ async def test_de_stand_leest_gezondheid_sync_en_laatste_sync(monkeypatch) -> No
     assert standen["productie"]["sync"] == "OutOfSync"
     assert standen["productie"]["last_sync"] == "2026-08-12T10:00:00Z"
     assert standen["productie"]["revision"] == "abcdef1"
+
+
+async def test_an_excluded_resource_still_counts_while_healthy(monkeypatch) -> None:
+    """Healthy/Synced hides an excluded resource (RC-501); the row shows the count."""
+    dubbel = _ArgoDubbel(
+        [
+            _applicatie(
+                "demo-productie",
+                conditions=[
+                    {
+                        "type": "ExcludedResourceWarning",
+                        "message": "Resource /HTTPRoute web is excluded in the settings",
+                    }
+                ],
+            )
+        ]
+    )
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
+
+    standen = await argocd_overview.get_project_argocd_statuses("demo", ["productie"])
+
+    assert standen["productie"]["health"] == "Healthy"
+    assert standen["productie"]["sync"] == "Synced"
+    assert standen["productie"]["excluded_resources"] == 1
+
+
+async def test_without_that_condition_the_count_is_zero(monkeypatch) -> None:
+    dubbel = _ArgoDubbel([_applicatie("demo-productie")])
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
+
+    standen = await argocd_overview.get_project_argocd_statuses("demo", ["productie"])
+
+    assert standen["productie"]["excluded_resources"] == 0
 
 
 async def test_een_deployment_die_argocd_niet_kent_is_niet_beschikbaar(monkeypatch) -> None:

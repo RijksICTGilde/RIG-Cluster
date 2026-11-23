@@ -6,10 +6,13 @@ through ``ModelFieldValidator``.
 
 from __future__ import annotations
 
+from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import ModelFieldValidator
+from opi.forms.editables.validators import ModelFieldValidator, RangeValidator
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.image_registries.config_model import (
+    QUOTA_FIELD,
+    QUOTA_MAX_GIB,
     REGISTRY_NAME_MESSAGE,
     UPSTREAM_MESSAGE,
     RegistryEntry,
@@ -63,6 +66,15 @@ REGISTRY_PASSWORD_EDITABLE = Editable(
     remove_when_none=True,
 )
 
+# Schema ceiling, not QUOTA_FREE_MAX_GIB: a higher number is a request, not an error.
+# What reaches the cluster is decided by effective_quota_gib. Empty drops the key.
+REGISTRY_QUOTA_EDITABLE = Editable(
+    yaml_path=_project("registries[*]", QUOTA_FIELD),
+    converter=IntegerConverter(),
+    validator=RangeValidator(min_value=1, max_value=QUOTA_MAX_GIB),
+    remove_when_none=True,
+)
+
 REGISTRIES_SEQUENCE_EDITABLE = Editable(
     yaml_path=_project("registries"),
     virtualize=SERVICE_VIRTUALIZE,
@@ -72,6 +84,7 @@ REGISTRIES_SEQUENCE_EDITABLE = Editable(
         REGISTRY_UPSTREAM_EDITABLE,
         REGISTRY_USERNAME_EDITABLE,
         REGISTRY_PASSWORD_EDITABLE,
+        REGISTRY_QUOTA_EDITABLE,
     ],
 )
 

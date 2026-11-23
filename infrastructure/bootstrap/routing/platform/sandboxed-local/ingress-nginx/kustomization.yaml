@@ -1,0 +1,121 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PLATFORMHELFT van ingress-nginx: de cluster-scoped soorten uit het kind-manifest, plus de
+# namespace. Deze helft staat ALTIJD op het cluster, in beide standen van de routing, zodat
+# een wissel nooit een bootstrapstap vraagt. De namespaced helft, de controller zelf, staat
+# bij de stand en wordt door ArgoCD beheerd en bij een wissel geprunet.
+#
+# ingress-nginx gaat er op termijn uit. Dat is dan deze map, plus sandboxed-local/ingress en
+# base/ingress, plus de regel in task sandbox:routing-bootstrap die deze map toepast.
+#
+# DE SPLITSING is de lijst met deletes hieronder, en sandboxed-local/ingress/controller
+# draagt de omgekeerde lijst. tests/test_sandbox_routing_contract.py meet dat de twee samen
+# precies het manifest zijn, dat ze niet overlappen, en dat elke helft bij zijn scope
+# blijft: een versiebump die een soort toevoegt of verplaatst valt daarop om in plaats van
+# stil op het cluster.
+#
+# Gepind op een release-tag, en niet op main: anders verandert de controllerversie zonder
+# dat iemand iets wijzigt, en verdwijnt het pad zodra upstream opruimt.
+resources:
+  - https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+
+# Het managed-by-label laat de namespaced ArgoCD van rig-system de controller in deze
+# namespace beheren; de operator maakt daarvoor een Role en RoleBinding aan.
+patches:
+  - target:
+      kind: Namespace
+      name: ingress-nginx
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: ingress-nginx
+        labels:
+          argocd.argoproj.io/managed-by: rig-system
+
+  # De namespaced helft, die in ../../../sandboxed-local/ingress/controller staat.
+  - patch: |-
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: ingress-nginx
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: ingress-nginx-admission
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: ingress-nginx
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: ingress-nginx-admission
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: ingress-nginx
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: ingress-nginx-admission
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: ingress-nginx-controller
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ingress-nginx-controller
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ingress-nginx-controller-admission
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ingress-nginx-controller
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: ingress-nginx-admission-create
+        namespace: ingress-nginx
+      $patch: delete
+  - patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: ingress-nginx-admission-patch
+        namespace: ingress-nginx
+      $patch: delete

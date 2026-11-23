@@ -6,6 +6,7 @@ This module defines cluster-specific settings including ingress postfixes.
 
 import logging
 import subprocess
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,34 @@ SEAWEEDFS_OPS_EGRESS = {
     "endpoint": "seaweedfs_host",
     "pod_labels": {"app": "seaweedfs"},
     "ports": [SEAWEEDFS_S3_PORT],
+}
+
+
+class RoutingApi(StrEnum):
+    """Which API OPI renders the public entrypoint of a project with."""
+
+    INGRESS = "ingress"
+    GATEWAY = "gateway"
+
+
+#: ip_whitelist values that restrict nothing. The gateway routing API has no equivalent of
+#: the HAProxy whitelist annotation, so a cluster that restricts here may not switch over.
+OPEN_IP_WHITELISTS = frozenset({"0.0.0.0/0,::/0", "0.0.0.0"})
+
+# The shared Gateway of the sandbox, its two listeners and the Envoy proxies in front of it.
+# Owned by the infrastructure, never by OPI; OPI only hangs routes and a ListenerSet on it.
+SANDBOX_GATEWAY = {
+    "name": "rig-gateway",
+    "namespace": "rig-gateway",
+    "http_listener": {"name": "http", "port": 80},
+    "https_listener": {"name": "https", "port": 443, "hostname": "*.sandbox.rijksapp.dev"},
+    "controller_selector": {
+        "namespace": "envoy-gateway-system",
+        "pod_labels": {
+            "gateway.envoyproxy.io/owning-gateway-name": "rig-gateway",
+            "gateway.envoyproxy.io/owning-gateway-namespace": "rig-gateway",
+        },
+    },
 }
 
 CLUSTER_CONFIG = {
@@ -173,6 +202,10 @@ CLUSTER_CONFIG = {
         "ingress": {
             "enable_tls": True,
             "ip_whitelist": "0.0.0.0/0,::/0",
+            # Still "ingress": the gateway data below is here for the switch, which happens
+            # once the infrastructure task has put the Gateway on the cluster.
+            "routing": RoutingApi.INGRESS,
+            "gateway": SANDBOX_GATEWAY,
         },
         "storage": {
             "storage_class_name": "csi-hostpath-sc",
@@ -707,6 +740,90 @@ def get_ingress_ip_whitelist(cluster_name: str) -> str:
     return ingress_config["ip_whitelist"]
 
 
+#: The stand OPI renders in right now, per cluster, when it differs from the configuration.
+#: Set by ``RoutingModeWatcher`` once the ConfigMap ``zad-routing`` asks for another stand and
+#: the entrypoint of that stand is ready. Absent means the stand of ``CLUSTER_CONFIG``, which
+#: is what every cluster without that ConfigMap keeps.
+_rendered_routing_api: dict[str, RoutingApi] = {}
+
+
+def set_rendered_routing_api(cluster_name: str, routing: RoutingApi) -> None:
+    """Switch the stand OPI renders in, after the entrypoint of that stand was found ready.
+
+    Raises ``ValueError`` when the combination with ``ip_whitelist`` is not allowed, the same
+    as the configured stand.
+    """
+    _guard_gateway_against_ip_whitelist(cluster_name, routing)
+    _rendered_routing_api[cluster_name] = routing
+
+
+def _guard_gateway_against_ip_whitelist(cluster_name: str, routing: RoutingApi) -> None:
+    ingress_config = get_ingress_config(cluster_name)
+    if routing is RoutingApi.GATEWAY and ingress_config.get("ip_whitelist") not in OPEN_IP_WHITELISTS:
+        raise ValueError(
+            f"Cluster '{cluster_name}' combines routing '{RoutingApi.GATEWAY}' with ip_whitelist "
+            f"'{ingress_config.get('ip_whitelist')}'. The Gateway API has no equivalent of the "
+            f"HAProxy whitelist annotation, so the restriction would fall away unnoticed. Open the "
+            f"whitelist deliberately, or keep this cluster on '{RoutingApi.INGRESS}'."
+        )
+
+
+def get_configured_routing_api(cluster_name: str) -> RoutingApi:
+    """The stand of ``CLUSTER_CONFIG``, ignoring a stand adopted at runtime.
+
+    Raises:
+        ValueError: the cluster restricts ``ip_whitelist`` while asking for gateway. That
+            whitelist is an OpenShift Router annotation with no Gateway API equivalent, so
+            honouring the switch would silently drop the restriction.
+    """
+    routing = RoutingApi(get_ingress_config(cluster_name).get("routing", RoutingApi.INGRESS))
+    _guard_gateway_against_ip_whitelist(cluster_name, routing)
+    return routing
+
+
+def get_routing_api(cluster_name: str) -> RoutingApi:
+    """Whether this cluster gets Ingress resources or Gateway API resources.
+
+    Raises:
+        ValueError: see ``get_configured_routing_api``.
+    """
+    rendered = _rendered_routing_api.get(cluster_name)
+    if rendered is not None:
+        return rendered
+    return get_configured_routing_api(cluster_name)
+
+
+def renders_gateway_api(cluster_name: str) -> bool:
+    """Shorthand for the many callers that only need the branch."""
+    return get_routing_api(cluster_name) is RoutingApi.GATEWAY
+
+
+def get_declared_gateway_config(cluster_name: str) -> dict:
+    """The gateway block of this cluster, whatever stand OPI renders in right now.
+
+    For measuring the entrypoint of the gateway stand BEFORE OPI switches to it, which is
+    what ``RoutingModeWatcher`` does. Every other caller wants ``get_gateway_config``.
+
+    Raises:
+        ValueError: the cluster configures no gateway block.
+    """
+    gateway = get_ingress_config(cluster_name).get("gateway")
+    if not gateway:
+        raise ValueError(f"Cluster '{cluster_name}' asks for gateway routing without an ingress.gateway block")
+    return gateway
+
+
+def get_gateway_config(cluster_name: str) -> dict:
+    """The shared Gateway of this cluster: name, namespace, both listeners and the proxies.
+
+    Raises:
+        ValueError: the cluster is not in gateway routing, or configures no gateway block.
+    """
+    if not renders_gateway_api(cluster_name):
+        raise ValueError(f"Cluster '{cluster_name}' renders Ingress resources and so has no Gateway")
+    return get_declared_gateway_config(cluster_name)
+
+
 def get_ingress_cluster_issuer(cluster_name: str) -> str | None:
     """The cert-manager ClusterIssuer for TLS certificates, None when the cluster configures
     none.
@@ -867,7 +984,12 @@ def get_ingress_controller_selector(cluster_name: str) -> dict:
     ``ingresscontroller.operator.openshift.io/deployment-ingresscontroller`` label, so the
     NetworkPolicy admits the right customer router only. See
     docs/knowledge/odcn-ingress-controller.md.
+
+    On a cluster in gateway routing this is the Envoy proxy selector from the gateway block,
+    so every NetworkPolicy that admits the entrypoint follows the switch on its own.
     """
+    if renders_gateway_api(cluster_name):
+        return get_gateway_config(cluster_name)["controller_selector"]
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["ingress_controller_selector"]
 

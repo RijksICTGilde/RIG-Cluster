@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.approval import config_item_value_approval
+from opi.services.catalog.approval import ApprovalStatus, config_item_value_approval
 from opi.services.catalog.image_registries.config_model import QUOTA_FIELD, QUOTA_FREE_MAX_GIB
 from opi.services.catalog.image_registries.resolution import find_registry, project_registries
 from opi.services.services_enums import ServiceType
@@ -55,6 +55,15 @@ def effective_quota_gib(project_data: dict[str, Any], name: str, cluster_default
     if QUOTA_APPROVAL.spec.is_approved(project_data, (name, str(chosen))):
         return chosen
     return min(chosen, _granted(project_data, name))
+
+
+def pending_quota_gib(project_data: dict[str, Any], name: str) -> int | None:
+    """The quota this registry asked for and has not been granted; None when nothing is open."""
+    chosen = _chosen(project_data, name)
+    if chosen is None:
+        return None
+    status = QUOTA_APPROVAL.spec.status(project_data, (name, str(chosen)))
+    return chosen if status is ApprovalStatus.REQUESTED else None
 
 
 QUOTA_APPROVAL = config_item_value_approval(

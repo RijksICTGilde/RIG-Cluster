@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.hostnames import get_component_ingress_map
+from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_public_url
 
 if TYPE_CHECKING:
@@ -142,3 +143,16 @@ def public_urls_for_project(
             for link in public_urls_for_deployment(project_data, deployment, project_name, project_file_handler)
         )
     return urls
+
+
+def address_approval_notices(notices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The notices among ``notices`` that are about the public ADDRESS of a deployment.
+
+    The project page shows these under a component's public links: a link to an address the
+    deployment does not serve yet needs the request named next to it. Another service's
+    approval does not change the address, so it does not belong there.
+
+    Here and not in the template, because which service owns the address is this service's
+    knowledge; the general project page may not name a service.
+    """
+    return [notice for notice in notices if notice.get("service") == ServiceType.PUBLISH_ON_WEB.value]

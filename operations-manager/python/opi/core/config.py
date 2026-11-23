@@ -417,6 +417,11 @@ class Settings(BaseSettings):
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "ZAD"
 
+    # The admin page that switches the platform realm to the SSO Rijk outage flow
+    # (features/sso-rijk-uitwijk.md). Off: no menu item and the routes answer 404. The
+    # blueprint still creates the outage flow, unbound.
+    SSO_OUTAGE_ENABLED: bool = False
+
     # Bootstrap configuration type: "default", "local", "sandbox" or "staging"
     # - "default": Production setup with direct SSO-Rijk integration
     # - "local": Local Kind cluster using production Keycloak as upstream IDP
@@ -449,11 +454,12 @@ class Settings(BaseSettings):
     # PostgreSQL grants a new database CONNECT and TEMPORARY to PUBLIC, so on the shared
     # server every role can connect to every database. This closes that off.
     #
-    # ``dry-run`` is the default: the REVOKE touches every database on the server in one go,
-    # and a role that quietly leans on PUBLIC falls over. In this mode every run logs which
-    # REVOKE and GRANT it would do and who is connected at that moment, so a nightly
-    # reconciliation makes visible what ``on`` is going to close off.
-    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "dry-run"
+    # ``on`` is the default since RC-519, so every cluster closes its databases off. The two
+    # other modes stay available as an explicit opt-out in a cluster overlay: ``dry-run``
+    # executes nothing and logs per database which REVOKE and GRANT it would do, who is
+    # connected at that moment and who would lose access, and ``off`` leaves the server
+    # alone.
+    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "on"
 
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7
@@ -522,6 +528,10 @@ class Settings(BaseSettings):
     # measurement costs nothing; the message goes to the ntfy topic of the log_watcher.
     MAIL_RELAY_CHECK_INTERVAL_SECONDS: int = 60
     MAIL_RELAY_DOWN_ALERT_SECONDS: int = 300  # only report after five minutes, a rollout may take a while
+
+    # How often the ConfigMap zad-routing is read (RC-513). Switching the entrypoint takes
+    # minutes, so a minute of delay is plenty, and the read is one kubectl get.
+    ROUTING_MODE_CHECK_INTERVAL_SECONDS: int = 60
 
     # Temporary capacity watch on the tenant quota (opi/runtime/periodic/capacity_watcher.py); reports
     # through the ntfy topic of the log_watcher. The tenant is explicit: the cluster does not
@@ -741,6 +751,29 @@ class Settings(BaseSettings):
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.
     JOB_ENABLED: bool = True
     JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
+
+    # Fundament registration: the throwaway endpoint that hands a fieldlab installation its
+    # own domain, a wildcard certificate and the SSO details. Without the code the route does
+    # not exist. Removed after the fieldlab, see features/fundament-registratie.md.
+    FUNDAMENT_REGISTRATION_CODE: str | None = None
+    # Access token of the TransIP account that holds the zone below, NOT the key pair the CAA
+    # reconciler uses.
+    FUNDAMENT_REGISTRATION_TRANSIP_TOKEN: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_CLIENT_ID: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_CLIENT_SECRET: str | None = None
+    FUNDAMENT_REGISTRATION_SSO_DISCOVERY_URL: str | None = None
+    FUNDAMENT_REGISTRATION_ZONE: str = "zadlab.nl"
+    # The staging directory by default: a cluster that switches the endpoint on without
+    # thinking about it does not burn the issuance limit of the real one.
+    FUNDAMENT_REGISTRATION_ACME_DIRECTORY: str = "https://acme-staging-v02.api.letsencrypt.org/directory"
+    FUNDAMENT_REGISTRATION_ACME_EMAIL: str | None = None
+    # VLAM reaches the answer only when the pre-auth key is set; the other three then come
+    # along with their defaults. They are read fresh per answer, so a replaced pre-auth key
+    # travels with the next installation without a migration.
+    FUNDAMENT_REGISTRATION_VLAM_PREAUTH_KEY: str | None = None
+    FUNDAMENT_REGISTRATION_VLAM_LOGIN_SERVER: str = "https://vonk.rijksapp.dev"
+    FUNDAMENT_REGISTRATION_VLAM_GATEWAY: str = "100.80.0.1:443"
+    FUNDAMENT_REGISTRATION_VLAM_API_HOST: str = "vlam-api.overheid-i.nl"
 
     @property
     def database_app_password(self) -> str:

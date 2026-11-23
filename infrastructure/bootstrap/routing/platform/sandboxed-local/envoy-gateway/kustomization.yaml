@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# PLATFORMHELFT van de Gateway API: de controller van Envoy Gateway met zijn CRD's,
+# cluster-RBAC, webhooks en GatewayClass, plus de namespace rig-gateway waar de Gateway in
+# komt. Deze helft staat ALTIJD op het cluster, in beide standen van de routing, net zoals
+# een platform als ODCN of Fundament de operators zelf levert. task sandbox:setup zet hem
+# neer; ArgoCD raakt hem niet aan. De Gateway zelf en de routes staan in
+# ../../../sandboxed-local/gateway.
+#
+# Gepind op een release-tag, en niet op latest: anders verandert de controllerversie zonder
+# dat iemand iets wijzigt.
+#
+# Dit manifest brengt de CRD's van de Gateway API ZELF mee (bundle-version v1.6.1,
+# experimental channel, inclusief ListenerSet v1 en TLSRoute v1). Installeer ze daarom
+# niet een tweede keer: een losse standard-install zou de experimental-CRD's overschrijven.
+resources:
+  - https://github.com/envoyproxy/gateway/releases/download/v1.9.4/install.yaml
+  - namespace-rig-gateway.yaml
+  - gateway-class.yaml
+
+# Het managed-by-label laat de namespaced ArgoCD van rig-system resources in deze namespace
+# beheren; de operator maakt daarvoor een Role en RoleBinding aan.
+patches:
+  - target:
+      kind: Namespace
+      name: envoy-gateway-system
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: envoy-gateway-system
+        labels:
+          argocd.argoproj.io/managed-by: rig-system

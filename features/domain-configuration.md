@@ -254,7 +254,7 @@ The cluster's `ingress_postfix` (e.g., `.kind`, `.rig.prd1.gn2.quattro.rijksapps
 
 `GET /api/v2/projects/{p}/clusters` geeft per cluster `base-domains` (de lijst hierboven), `custom-domain-certificates` (wat een domein buiten die lijst hier oplevert) en `default-domain`.
 
-`default-domain` is de `ingress_postfix` zonder de punt ervoor, en het staat er omdat de lijst zelf niet verraadt welke keuze meteen in gebruik gaat. De regel zit in `is_deployment_domain_approved`: een leeg `base-domain` en het domein van het cluster zelf gaan zonder goedkeuring, elke andere waarde vraagt er een aan en draait tot dat moment op het clusteradres. En dat clusterdomein kan gewoon als gewone entry in `base-domains` staan -- op `sandboxed-local` is `sandbox.rijksapp.dev` allebei -- dus "alleen de lege waarde is gratis" is aantoonbaar fout. Zonder dit veld moest een client het clusterdomein uit het label van de lege optie parsen.
+`default-domain` is de `ingress_postfix` zonder de punt ervoor, en het staat er omdat de lijst zelf niet verraadt welke keuze meteen in gebruik gaat. De regel zit in `is_deployment_domain_approved`: een leeg `base-domain` en het domein van het cluster zelf gaan zonder goedkeuring zolang ZAD de hostnaam zelf samenstelt, een zelfgekozen subdomein daarop vraagt er een aan wanneer de catalogus dat clusterdomein met `restricted_subdomains` aanbiedt, en elke andere waarde vraagt er altijd een aan en draait tot dat moment op het clusteradres. En dat clusterdomein kan gewoon als gewone entry in `base-domains` staan -- op `sandboxed-local` is `sandbox.rijksapp.dev` allebei -- dus "alleen de lege waarde is gratis" is aantoonbaar fout. Zonder dit veld moest een client het clusterdomein uit het label van de lege optie parsen.
 
 Bewust het feit en niet het oordeel. Een veld dat per optie zegt of er goedkeuring nodig is, kan ook de stand van dit project meewegen (een domein dat dit project al goedgekeurd heeft vraagt niets meer), en dat is een keuze die nog niet gemaakt is; `default-domain` kan niet verkeerd zijn en sluit die rijkere variant niet uit.
 
@@ -315,6 +315,15 @@ Een domein dat het cluster niet zelf aanbiedt, en een subdomein onder een domein
 goedgekeurd. De status staat op PROJECTniveau, onder
 `services/[publish-on-web]/config/domains`, met per domein of subdomein een `status`
 (`requested` / `approved` / `denied`) en de volledige verdicthistorie.
+
+Een zelfgekozen subdomein op het clusterdomein vraagt goedkeuring als het beperkt is, zoals
+`sandbox.rijksapp.dev` op `sandboxed-local`: ZAD-gegenereerde namen gaan vrij, zelfgekozen
+niet. Het geldt alleen wanneer de gekozen `domain-format` dat subdomein daadwerkelijk in de hostnaam
+zet (`subdomain_used_by_format`); een subdomein onder `deployment-project` rendert niet,
+dus het vraagt niets aan.
+Hetzelfde antwoord bepaalt het oordeel (`apply_domain_approval_fallback`) en de aanvraag
+(`ensure_domain_requests`), zodat een adres dat terugvalt altijd een aanvraag heeft die een
+beheerder kan goedkeuren.
 
 Die status is van het platform. Een API-client kan hem niet zetten en niet wissen: het veld
 is als platform-eigendom gedeclareerd, de GET van het configblok laat het weg en een PUT
@@ -401,6 +410,6 @@ In de portal staat de melding uit `approvals` naast de publieke links, op het ta
 
 Deze drie stellen een deploymentbrede hostnaam zelf samen uit `subdomain` + `base-domain`, zonder de goedkeuringspoort en zonder `domain-format`:
 
-- `ProjectManager._get_deployment_alias_context` (`project_manager.py`) vult `PUBLIC_HOST`, `PUBLIC_HOSTNAME`, `HOSTNAME` en `BASE_DOMAIN` voor de aliassen, dus een applicatie krijgt het niet-goedgekeurde adres als omgevingsvariabele terwijl haar ingress op het clusteradres staat;
+- `HelmDeployment.get_helm_values_context` (`manager/project/helm_deployment.py`) vult `PUBLIC_HOST`, `PUBLIC_HOSTNAME` en `HOSTNAME` voor een helm- of helmfile-deployment, dus die krijgt het niet-goedgekeurde adres als waarde terwijl haar ingress op het clusteradres staat;
 - `BootstrapManager` bouwt `public_host` voor de bootstrapacties op dezelfde manier;
 - `KeycloakManager` voegt voor helm- en helmfile-deployments een `subdomain.base-domain`-hostnaam aan de redirect-URI's toe.

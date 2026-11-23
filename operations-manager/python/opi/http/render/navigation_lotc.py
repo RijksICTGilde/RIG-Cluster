@@ -40,7 +40,14 @@ GROUPS: list[tuple[str, list[str]]] = [
     # itself is already visible only to a platform admin (menu.py, behind is_admin).
     (
         "Beheer",
-        ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals", "/admin/diensten"],
+        [
+            "/metrics-explorer",
+            "/admin/users",
+            "/admin/usage",
+            "/admin/approvals",
+            "/admin/diensten",
+            "/admin/platform",
+        ],
     ),
 ]
 

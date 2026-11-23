@@ -52,6 +52,12 @@ def _platform_applications() -> list[tuple[Path, dict[str, Any]]]:
     return gevonden
 
 
+#: The platform Applications that render WITHOUT a plugin, on the built-in kustomize of
+#: ArgoCD. Allowed only for an app that has no secret to decrypt: the plugin also forces
+#: namespace: <destination> on its whole build, and the routing lands in four namespaces.
+_WITHOUT_PLUGIN = {"argocd-application-routing-infrastructure.yaml"}
+
+
 def _plugin_env(app: dict[str, Any]) -> tuple[str, dict[str, str]]:
     bron = app["spec"].get("source") or app["spec"]["sources"][0]
     plugin_spec = bron["plugin"]
@@ -115,14 +121,28 @@ class TestDePlugins:
         assert "kubectl get namespace" not in render_script()
 
 
+def _applications_with_plugin() -> list[tuple[Path, dict[str, Any]]]:
+    return [(pad, app) for pad, app in _platform_applications() if pad.name not in _WITHOUT_PLUGIN]
+
+
 class TestDePlatformApplications:
     def test_ze_renderen_allemaal_op_de_platform_plugin(self) -> None:
-        namen = {pad.name: _plugin_env(app)[0] for pad, app in _platform_applications()}
+        namen = {pad.name: _plugin_env(app)[0] for pad, app in _applications_with_plugin()}
         assert set(namen.values()) == {_PLATFORM_PLUGIN}, namen
+
+    def test_only_the_known_apps_render_without_a_plugin(self) -> None:
+        """A new app without a plugin may not slip in: without the plugin there is no
+        decryption, and an app that does render a secret would not notice."""
+        without = {
+            pad.name
+            for pad, app in _platform_applications()
+            if "plugin" not in (app["spec"].get("source") or app["spec"]["sources"][0])
+        }
+        assert without == _WITHOUT_PLUGIN
 
     def test_elke_sleutel_die_ze_noemen_staat_als_mount_in_de_platform_sidecar(self) -> None:
         gemount = {m["name"] for m in _sidecar("cmp-platform")["volumeMounts"]}
-        for pad, app in _platform_applications():
+        for pad, app in _applications_with_plugin():
             secret = _plugin_env(app)[1]["SOPS_KEY_SECRET"]
             assert secret in gemount, f"{pad.name} noemt {secret}, dat niet in cmp-platform gemount staat"
 

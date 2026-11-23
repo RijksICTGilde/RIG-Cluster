@@ -10,6 +10,15 @@
                     <c-icon :icon="('check-mark-circle' if status.state == 'ready' else 'timer') | nldd_icon" size="md" />
                     <c-span><strong>{{ status.registry }}</strong>: {{ status.message }}</c-span>
                 </c-cluster>
+                {% if status.quota_percent is defined %}
+                    {% set gebruik = status.quota_used_gib ~ " van " ~ status.quota_limit_gib ~ " GiB gebruikt (" ~ status.quota_percent ~ "%)" %}
+                    {% if status.quota_warning %}
+                        {% set vol = gebruik ~ ". Haalt de cache nog een image op, dan loopt hij vol. Vraag het platformteam om tags te verwijderen, of vraag een hogere quota aan." %}
+                        <c-alert type="warning" :heading="vol" />
+                    {% else %}
+                        <c-paragraph size="sm">{{ gebruik }}</c-paragraph>
+                    {% endif %}
+                {% endif %}
                 {# De datum als variabele en niet in het attribuut afgesneden: de
                    LOTC-voorbewerker struikelt over de plak in een :attribuut. #}
                 {% set verloopdag = status.expires_at[:10] if status.expires_at else "" %}

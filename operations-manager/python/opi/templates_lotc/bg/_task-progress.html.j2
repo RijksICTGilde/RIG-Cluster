@@ -43,7 +43,8 @@
      hx-get="{{ progress_url }}"
      hx-trigger="every 2s"
      hx-target="#{{ _container_id }}"
-     hx-swap="outerHTML"
+     hx-ext="morph"
+     hx-swap="morph:outerHTML"
      {% endif %}>
 
     <c-stack gap="md">

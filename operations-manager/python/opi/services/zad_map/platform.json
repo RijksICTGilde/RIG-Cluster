@@ -20,7 +20,7 @@
     {
      "name": "kubectl",
      "file": "opi/connectors/kubectl.py",
-     "uses": 42
+     "uses": 44
     }
    ],
    "services": [
@@ -92,6 +92,10 @@
      "title": "ArgoCD Render/Compare Error Surfacing"
     },
     {
+     "file": "features/argocd-resource-allowlist.md",
+     "title": "De allowlist van resource-soorten, en wat een tenant ziet van een type dat erbuiten valt"
+    },
+    {
      "file": "features/argocd-sjablonen-codering.md",
      "title": "De ArgoCD-sjablonen coderen elke waarde als YAML-scalar"
     },
@@ -102,10 +106,6 @@
     {
      "file": "features/argocd-tls.md",
      "title": "ZAD praat met ArgoCD over TLS"
-    },
-    {
-     "file": "features/argocd-token-cache.md",
-     "title": "ArgoCD token-cache"
     }
    ]
   },
@@ -124,7 +124,7 @@
     {
      "name": "git",
      "file": "opi/connectors/git.py",
-     "uses": 7
+     "uses": 9
     }
    ],
    "services": [],
@@ -174,7 +174,7 @@
     {
      "name": "keycloak",
      "file": "opi/connectors/keycloak.py",
-     "uses": 13
+     "uses": 15
     }
    ],
    "services": [
@@ -492,7 +492,7 @@
     {
      "name": "transip",
      "file": "opi/connectors/transip.py",
-     "uses": 2
+     "uses": 5
     }
    ],
    "services": [],

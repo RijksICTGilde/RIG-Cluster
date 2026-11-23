@@ -140,6 +140,10 @@ INVENTARIS: dict[str, Schrijver] = {
         "het projectbestand zoals een zelfbedieningsaanvraag het aanlevert",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),
+    "opi/web/router.py": Schrijver(
+        "haalt een veld uit een manual-item (release_component_resource_pin, RC-518)",
+        "test_releasing_a_resource_pin_stays_valid",
+    ),
     "opi/services/api_token_service.py": Schrijver(
         "leden onder users: een service account toevoegen of verwijderen, een rol wijzigen, "
         "en per lid een token uitgeven of intrekken",

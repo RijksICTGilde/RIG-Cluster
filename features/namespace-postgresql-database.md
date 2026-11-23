@@ -60,6 +60,7 @@ services:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `image` | string | `ghcr.io/cloudnative-pg/postgresql:17` | CNPG-compatible PostgreSQL image. Letters, digits and `. _ : / @ -` only |
+| `registry` | string | none | Registry from `image-registries` to pull the image from; empty means no registry of your own. Also a field in the database form, see `image-registries.md` |
 | `instances` | int | `1` | Number of PostgreSQL replicas |
 | `storage` | string | `1Gi` | Storage size for each instance. Between `50Mi` and `20Gi`, and it can only ever go UP: a PVC cannot shrink |
 | `privileges` | list | `[]` | PostgreSQL privileges for the app user |

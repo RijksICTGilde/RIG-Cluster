@@ -136,11 +136,14 @@ def config_path(layer: ConfigLayer, service: ServiceType, *segments: str) -> str
 #: The REST counterpart of ``_LAYER_PATH_PREFIX``: the path suffix of the generated
 #: config-write route, per layer. Two callers need the same string: the v2 router, which
 #: registers the route, and an error message that tells a caller which request to make
-#: instead. ``DEPLOYMENT_COMPONENT`` is absent on purpose: no write route is generated for it.
+#: instead. ``DEPLOYMENT_COMPONENT`` is in here but is OPT-IN per service
+#: (``Service.config_api_write_layers``): most config on that layer is not a caller's to
+#: write, and user-env-vars may only be written through the step-up window.
 _LAYER_ENDPOINT_SUFFIX: dict[ConfigLayer, str] = {
     ConfigLayer.PROJECT: "/config/project",
     ConfigLayer.COMPONENT: "/config/component/{component_name}",
     ConfigLayer.DEPLOYMENT: "/config/deployment/{deployment_name}",
+    ConfigLayer.DEPLOYMENT_COMPONENT: "/config/deployment/{deployment_name}/component/{component_name}",
 }
 
 
@@ -162,6 +165,21 @@ ServiceConfigData = dict[str, Any] | list[Any]
 
 #: One migration step: takes a config of the previous version and returns it on the version it is stamped with.
 ConfigMigrationStep = Callable[[ServiceConfigData], ServiceConfigData]
+
+
+@dataclass(frozen=True)
+class ConfigWrite:
+    """One config write, as the API received it, for ``Service.validate_config_write``.
+
+    A context object and not five parameters: the write is one thing, and a rule about it
+    needs the project it lands in as much as the body itself.
+    """
+
+    project_data: dict[str, Any]
+    layer: ConfigLayer
+    config: ServiceConfigData
+    component_name: str | None = None
+    deployment_name: str | None = None
 
 
 @dataclass
@@ -745,6 +763,13 @@ class Service(ABC):
     #: ``tests/test_service_config_layers.py`` holds every service to this.
     form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
 
+    #: Layers beyond the three standard ones whose generated config-write route this service
+    #: asks for. Only ``DEPLOYMENT_COMPONENT`` can be added: a route there writes one
+    #: component's override inside one deployment, and for most services with config on that
+    #: layer that is the platform's own state rather than a caller's setting. Opt-in and not
+    #: automatic, so adding config on that layer never publishes an endpoint by accident.
+    config_api_write_layers: ClassVar[frozenset[ConfigLayer]] = frozenset()
+
     #: For a SYSTEM service that owns a plain project-file property instead of a block
     #: in a ``services:`` list (``user-env-vars``, ``aliases``), the property key it
     #: owns. Generic validation walks the layers this service declares editables for and
@@ -860,6 +885,26 @@ class Service(ABC):
         a model gets.
         """
         return self.config_model
+
+    def config_api_body_model(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """The request body of the generated config-write route at ``layer``.
+
+        ``config_model_for`` by default: what you write is what is stored. A service whose
+        stored shape at a layer is not what a caller writes returns its own model, and the
+        storage pair does: on the deployment-component layer each record also carries the
+        state the platform keeps for that volume, and a caller sets only the size.
+        """
+        return self.config_model_for(layer)
+
+    def validate_config_write(self, write: ConfigWrite) -> list[str]:
+        """This service's rules on one config WRITE, as messages (none by default).
+
+        For a rule the config model cannot judge because it needs the project: a storage
+        override names a volume, and whether that volume exists is a fact about the
+        component. Messages turn into a 422 before anything is enqueued, so the caller is
+        told instead of the write landing as a setting that does nothing.
+        """
+        return []
 
     def data_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The model that validates this service's DEFINE-side payload at ``layer``.
@@ -1568,7 +1613,9 @@ class Service(ABC):
         """
         return []
 
-    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+    def validate_project_change(
+        self, previous: dict[str, Any], project_data: dict[str, Any], *, approval_decision: bool = False
+    ) -> list[str]:
         """This service's rules on what the save CHANGES, as messages (none by default).
 
         The sister of ``validate_project`` for a rule that can only judge with the version
@@ -1580,6 +1627,10 @@ class Service(ABC):
 
         ``previous`` is the recorded version, and ``{}`` on a create: a file replacing nothing
         has nothing stored, so every value in it is new.
+
+        ``approval_decision`` marks the save as an approver's verdict. A rule that bounds what
+        a PROJECT may change has to yield to it where the verdict itself is the change,
+        otherwise the approver can no longer withdraw a decision.
         """
         return []
 

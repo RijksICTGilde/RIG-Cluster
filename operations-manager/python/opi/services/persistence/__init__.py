@@ -7,6 +7,7 @@ from opi.services.persistence.async_tasks import AsyncTask  # noqa: F401  # regi
 from opi.services.persistence.marked_for_deletion import MarkedForDeletion  # noqa: F401  # registers the model
 from opi.services.persistence.notification_events import NotificationEvent  # noqa: F401  # registers the model
 from opi.services.persistence.project_reconciliation import ProjectReconciliation  # noqa: F401  # registers the model
+from opi.services.persistence.routing_mode import RoutingMode  # noqa: F401  # registers the model
 from opi.services.persistence.runs import Run  # noqa: F401  # registers the model
 from opi.services.persistence.session_revocations import SessionRevocation  # noqa: F401  # registers the model
 from opi.services.persistence.sessions import PortalSession  # noqa: F401  # registers the model

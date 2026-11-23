@@ -81,7 +81,8 @@
     "postgresql-config": {
       "editables": [
         "services/namespace-postgresql-database/config/instances",
-        "services/namespace-postgresql-database/config/storage"
+        "services/namespace-postgresql-database/config/storage",
+        "services/namespace-postgresql-database/config/registry"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-config",
@@ -425,7 +426,8 @@
     "namespace-postgresql-database": {
       "editables": [
         "services/namespace-postgresql-database/config/instances",
-        "services/namespace-postgresql-database/config/storage"
+        "services/namespace-postgresql-database/config/storage",
+        "services/namespace-postgresql-database/config/registry"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-config",

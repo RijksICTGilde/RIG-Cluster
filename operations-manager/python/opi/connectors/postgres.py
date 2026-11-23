@@ -713,8 +713,8 @@ class PostgresConnector:
         ``PUBLIC`` does not touch the owner.
 
         Repeatable: REVOKE and GRANT are idempotent in PostgreSQL, so every processing round
-        may do this again. The modes, and why ``dry-run`` is the default, are documented at
-        ``DATABASE_RESTRICT_PUBLIC_CONNECT`` in ``opi/core/config.py``.
+        may do this again. The modes are documented at ``DATABASE_RESTRICT_PUBLIC_CONNECT``
+        in ``opi/core/config.py``.
 
         Returns the mode, the statements, and on ``dry-run`` who is connected.
 
@@ -1001,7 +1001,8 @@ class PostgresConnector:
         return int(count or 0)
 
     async def list_databases(self) -> list[dict[str, Any]]:
-        """Every database on this server.
+        """Every database on this server, with its owner, that owner's superuser bit and
+        whether the database allows connections.
 
         Raises:
             PostgresExecutionError: the query failed.
@@ -1011,14 +1012,16 @@ class PostgresConnector:
             conn = await self._get_or_create_connection("postgres")
 
             databases = await conn.fetch("""
-                SELECT datname as name,
-                       pg_get_userbyid(datdba) as owner,
-                       encoding,
-                       datcollate as collate,
-                       datctype as ctype
-                FROM pg_database
-                WHERE datistemplate = false
-                ORDER BY datname
+                SELECT d.datname as name,
+                       o.rolname as owner,
+                       o.rolsuper as owner_is_superuser,
+                       d.datallowconn as allows_connections,
+                       d.encoding,
+                       d.datcollate as collate,
+                       d.datctype as ctype
+                FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba
+                WHERE d.datistemplate = false
+                ORDER BY d.datname
             """)
 
             database_list = [dict(database) for database in databases]
@@ -1102,6 +1105,38 @@ class PostgresConnector:
             f"Set default search_path for role {validated_username} "
             f"in database {validated_database} to {', '.join(validated_schemas)}"
         )
+
+    #: The role settings OPI may set. ``ALTER ROLE ... SET`` takes no bind parameter,
+    #: so only an allowlist pattern keeps SQL injection out.
+    _ROLE_SETTING_VALUES: ClassVar[dict[str, re.Pattern[str]]] = {
+        "statement_timeout": re.compile(r"^[1-9][0-9]*(ms|s|min|h)?$"),
+    }
+
+    async def set_role_setting(self, username: str, setting: str, value: str) -> None:
+        """Set one server-wide default for a role.
+
+        Runs: ALTER ROLE <user> SET <setting> = '<value>'. Idempotent, so every processing
+        round may do this again. Only the settings in ``_ROLE_SETTING_VALUES`` are accepted.
+
+        Raises:
+            PostgresExecutionError: the ALTER ROLE failed.
+            PostgresValidationError: the name, the setting or the value does not hold up.
+        """
+        validated_username = self._validate_identifier(username, "username")
+        pattern = self._ROLE_SETTING_VALUES.get(setting)
+        if pattern is None:
+            raise PostgresValidationError(f"role setting '{setting}' is not one OPI sets")
+        if not pattern.match(value):
+            raise PostgresValidationError(f"value '{value}' does not hold up for role setting '{setting}'")
+
+        quoted_username = self._quote_identifier(validated_username)
+        conn = await self._get_or_create_connection("postgres")
+        try:
+            await conn.execute(f"ALTER ROLE {quoted_username} SET {setting} = '{value}'")
+        except asyncpg.PostgresError as e:
+            logger.exception(f"Failed to set {setting} for {validated_username} on {self._host}")
+            raise PostgresExecutionError(f"Setting {setting} failed: {e}") from e
+        logger.info(f"Role {validated_username} on {self._host} has {setting} = {value}")
 
     async def delete_schema(self, schema_name: str, database: str, cascade: bool = False) -> dict[str, Any]:
         """Delete a schema; ``cascade`` takes the objects in it with it.

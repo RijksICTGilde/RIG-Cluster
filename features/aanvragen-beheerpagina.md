@@ -33,11 +33,18 @@ Elk `ApprovalItem` draagt een `subject`, geschreven door de dienst die het weet:
 | publish-on-web, domein | `example.nl` |
 | publish-on-web, subdomein | `foo.example.nl` (samengesteld) |
 | send-email | `Gebruik van de dienst` |
+| opslaggrootte, plafond van het project | `Opslag tot 5Gi per volume voor persistent-storage (nu 2Gi)` |
+| opslaggrootte, plafond van een deployment | `Opslag tot 20Gi per volume voor persistent-storage in deployment productie (nu 5Gi)` |
 
 Zonder dat veld moest de pagina de zin zelf samenstellen uit de velden die zij toevallig
 kende (`domain`, `name`), en dat is precies waarom een dienstaanvraag er als een lege
 domeinkolom op stond. `collect_approval_items` valt terug op `domain`, anders `name`, zodat
 een modalsessie die nog van voor deze wijziging loopt niet breekt.
+
+De twee opslagaanvragen zijn er sinds RC-499, en ze horen bij elkaar: het plafond van het
+project geldt voor elk volume van die dienst in elke deployment, en een deployment die meer
+nodig heeft vraagt een eigen plafond. Wat er geldt zolang er geen oordeel is, staat in
+`features/opslag-op-aanvraag.md`.
 
 `subject` is **alleen voor de weergave**: het reist niet mee terug door het formulier van
 het beoordelingsvenster. De routering van een oordeel gebeurt op `service` + `type`.

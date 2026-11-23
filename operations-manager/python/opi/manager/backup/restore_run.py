@@ -27,6 +27,7 @@ from opi.manager.backup.restore import (
 )
 from opi.manager.backup.run import ProjectNotFoundError, resolve_deployment_target
 from opi.manager.project_manager import ProjectManager
+from opi.services.catalog.shared.storage_size import effective_persistent_size_by_name
 from opi.services.clone_validation import build_restore_target_deployment
 from opi.services.project_file_handler import create_project_file_handler, find_persistent_storage
 from opi.services.project_store import get_project_store
@@ -493,7 +494,10 @@ async def pre_restore_pvcs(
             namespace=app_namespace,
             source_pvc_name=source_pvc_name,
             target_pvc_name=target_pvc_name,
-            storage_size=target_storage.get("size", "10Gi") if target_storage else "10Gi",
+            # The effective size of the TARGET deployment's volume; see restore.py.
+            storage_size=effective_persistent_size_by_name(
+                project_data, request.target_deployment, item.component_name, item.reference_name
+            ),
             storage_class=storage_class,
             access_modes=access_modes,
             snapshot_id=item.snapshot_id,

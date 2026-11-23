@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De ingress-stand VAN DE SANDBOX: de Ingresses uit de base, plus de controller van
+# ingress-nginx en de ExternalName naar zijn Service.
+#
+# De controller hoort hier en niet bij het platform omdat hij op kind hostPort 80 en 443 van
+# de node vasthoudt: hij moet weg voordat de proxy van de andere stand erop kan. Zijn
+# cluster-scoped helft (namespace, cluster-RBAC, IngressClass, admission-webhook) staat wel
+# bij het platform (../../platform/sandboxed-local/ingress-nginx).
+components:
+  - ../../base/ingress
+
+resources:
+  - controller
+  - service-zad-ingang.yaml

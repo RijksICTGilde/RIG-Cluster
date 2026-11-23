@@ -300,6 +300,7 @@ for _action, _label in (
     (Action.PLATFORM_FEDERATION, "Federatie met andere clusters"),
     (Action.PLATFORM_BACKUP, "De back-uptoestand van het platform"),
     (Action.PLATFORM_PROJECT_KEY, "De projectsleutel van een project vervangen"),
+    (Action.PLATFORM_SSO_OUTAGE, "De storingsstand van SSO Rijk aan- en uitzetten"),
 ):
     rule(_action, label=_label, section=PLATFORM, audience=Audience.PLATFORM_ADMIN)
 

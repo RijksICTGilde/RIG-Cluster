@@ -28,7 +28,7 @@ from opi.manager.db_console_manager import (
     client_recently_created,
     get_db_console_manager,
 )
-from opi.manager.run_support import ANNOT_EXPIRES, LABEL_RUN
+from opi.manager.run_support import ANNOT_EXPIRES, LABEL_RUN, bundle_kinds
 from opi.services.runs_service import RunStatus, get_runs_service
 from opi.utils.naming import DB_CONSOLE_PREFIX
 
@@ -136,7 +136,9 @@ class DbConsoleReaper:
         the rig.zad/db-console label; only swept once older than the grace window so a
         bundle mid-creation is never touched.
         """
-        items = await kubectl.get_resources_by_label("secret,configmap,service,ingress", namespace, LABEL_RUN)
+        # Both publication kinds, so a bundle from before a routing switch is found too.
+        kinds = await bundle_kinds(kubectl, exclude=frozenset({"pod"}))
+        items = await kubectl.get_resources_by_label(kinds, namespace, LABEL_RUN)
         oldest_by_session: dict[str, datetime] = {}
         for item in items:
             meta = item.get("metadata", {})

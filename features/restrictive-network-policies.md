@@ -669,6 +669,51 @@ default-allow (BIO2 8.22, defense in depth).
 | `unlabeled-baseline-network-policy` | `manifests/tenant-baseline-network-policy.yaml.jinja` (render met `unlabeled_selector`) | Dezelfde rechten als een deployment, voor pods ZONDER `deployment:`-label |
 | `dedicated-database-network-policy` | `manifests/dedicated-database-network-policy.yaml.jinja` | Een toegewijd PostgreSQL-cluster in deze namespace: 5432 vanuit de eigen namespace, plus de CNPG-operator |
 
+### Waar ze staan: bij het project (RC-503)
+
+De drie policies zijn namespace-breed en horen dus bij het project, niet bij een
+deployment. Ze staan sinds RC-503 in het projectniveau: de map `_project` van de
+deployments-repo, uitgerold door de ArgoCD-applicatie `<project>-project`, die leeft
+zolang het project leeft. De platform-dienst levert ze via
+`contribute_project_manifests` (`opi/services/catalog/platform/network_policies.py`),
+dus de bestandsnamen dragen het voorvoegsel `platform-`.
+
+Tot RC-503 schreef `emit_namespace_network_policies` ze in de map van de alfabetisch
+eerste deployment in de namespace, en de andere deployments haalden er een oude kopie
+weg. Daarmee leefden namespace-objecten mee met een deployment die toevallig vooraan
+stond. Dat kostte twee dingen:
+
+- stond er nog een oude kopie in de map van een tweede deployment, dan beheerden twee
+  ArgoCD-applicaties hetzelfde object (`SharedResourceWarning`) en lieten ze elkaar
+  steeds verversen. Gemeten op odcn-production, 17 november 2026, project `nd-1i5`;
+- werd de eigenaar verwijderd, dan ruimde ArgoCD de drie policies mee op bij het
+  verwijderen van zijn Application, en rolde niets ze opnieuw uit. De namespace stond
+  dan zonder `default-deny` tot de volgende verwerking van het project.
+
+### De overgang van een bestaand project
+
+Een project gaat over bij zijn eerstvolgende verwerking: in diezelfde commit verdwijnt
+de oude kopie uit de deployment-map (`remove_namespace_network_policies`) en komt het
+bestand in `_project`. De objectnamen blijven precies gelijk, dus ArgoCD neemt het
+bestaande object over en zet er geen tweede naast.
+
+De deployment-applicatie synct met `prune: true`, en raakt de policies in die commit
+kwijt uit haar eigen map. Twee dingen houden haar ervan af ze te verwijderen:
+
+- de drie policies dragen `argocd.argoproj.io/sync-options: Prune=false`. Na de eerste
+  sync van de project-applicatie wijst de tracking-annotatie naar `<project>-project`,
+  en dan telt het object voor de deployment-applicatie niet meer als te prunen. Zouden
+  ze toch aangemerkt worden als te verwijderen, dan slaat ArgoCD dat over en blijft
+  de applicatie Synced;
+- OPI drijft de project-applicatie zelf aan voordat het de deployment-applicaties
+  aanraakt: `create_argocd_resources` wacht op `wait_for_project_level_application`
+  (de ordening uit `docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`),
+  en de deployment-applicaties syncen daarna. Met `PruneLast=true` komt een prune
+  bovendien pas aan het eind van een sync.
+
+`Prune=false` raakt het verwijderen van een project niet: de cascade achter de
+`resources-finalizer` leest `Delete`, niet `Prune`, dus ze verdwijnen met het project.
+
 ### Wat dit voor een helm-chart verandert
 
 Een pod zonder `deployment:`-label houdt DNS, de gedeelde services uit `ops_egress`,

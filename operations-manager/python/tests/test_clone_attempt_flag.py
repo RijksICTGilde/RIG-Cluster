@@ -157,6 +157,9 @@ class FakePostgres:
     async def set_role_search_path(self, **_: Any) -> None:
         return None
 
+    async def set_role_setting(self, *_: Any) -> None:
+        return None
+
     async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, str]:
         return {"status": "restricted"}
 

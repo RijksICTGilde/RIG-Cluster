@@ -11,9 +11,6 @@ dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '{{if not .CLUSTER_TYPE}}.en
 
 vars:
   KIND_VERSION: 1.32.0
-  # Waar scripts/postgres-standalone-start.sh in de container hangt. De CNPG-image start
-  # niet zelf; zie dat script.
-  PG_START_IN_CONTAINER: /zad/postgres-standalone-start.sh
   # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
   KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
@@ -900,46 +897,66 @@ tasks:
         echo "Verify with: kubectl get pods -n cnpg-system"
     silent: true
 
-  install-ingress-nginx:
-    desc: "Install NGINX Ingress Controller for Kind"
+  sandbox:routing-bootstrap:
+    desc: "Installeer de routing-platformlaag (beide controllers) en zet de stand uit git eenmalig neer"
     cmds:
       - |
-        echo "========================================="
-        echo "Installing NGINX Ingress Controller"
-        echo "========================================="
-        echo ""
+        # DE PLATFORMLAAG. Beide controllers, ongeacht de stand in git, zoals een platform als
+        # ODCN of Fundament zijn operators zelf levert; ZAD levert daar alleen de routes. Geen
+        # stand-keuze hier, dus een wissel vraagt nooit een bootstrapstap.
+        echo "De routing-platformlaag installeren (Envoy Gateway en ingress-nginx)..."
 
-        # Check if ingress is already installed
-        if kubectl get namespace ingress-nginx 2>/dev/null; then
-          echo "✅ NGINX Ingress Controller already installed"
-          exit 0
+        ROUTING=infrastructure/bootstrap/routing
+
+        # --server-side: de 41 CRD's uit het manifest van Envoy Gateway zijn te groot voor de
+        # last-applied-configuration annotatie van een client-side apply. Twee passes: de
+        # GatewayClass kan pas als zijn CRD uit datzelfde manifest Established is.
+        RENDER=$(mktemp)
+        kustomize build "$ROUTING/platform/sandboxed-local/envoy-gateway" > "$RENDER"
+        kubectl apply --server-side -f "$RENDER" 2>&1 | grep -v "^serverside-applied" || true
+        kubectl wait --for=condition=Established --timeout=120s \
+          crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io \
+          crd/httproutes.gateway.networking.k8s.io crd/listenersets.gateway.networking.k8s.io
+        kubectl apply --server-side -f "$RENDER" 2>&1 | grep -v "^serverside-applied" || true
+        rm -f "$RENDER"
+        kubectl wait --for=condition=Available --timeout=300s deployment/envoy-gateway -n envoy-gateway-system
+
+        # ingress-nginx gaat er op termijn uit. Dat is deze regel, plus de drie mappen
+        # platform/sandboxed-local/ingress-nginx, sandboxed-local/ingress en base/ingress.
+        kustomize build "$ROUTING/platform/sandboxed-local/ingress-nginx" | kubectl apply -f -
+      - |
+        # DE STAND UIT GIT, eenmalig op een vers cluster. Geen wisselstap: de Application
+        # routing-infrastructure neemt deze resources over zodra ArgoCD er is en is vanaf dan
+        # de enige die ze beheert. Een verse setup heeft de ingang nodig voordat ArgoCD er is,
+        # want anders krijgt geen Ingress of HTTPRoute een adres en komt het clonen over
+        # https://forgejo.sandbox... niet op gang.
+        echo "De routing-stand uit git neerzetten (eenmalig, voor ArgoCD er is)..."
+
+        # Dezelfde vorm als de Application (ServerSideApply), zodat ArgoCD het eigendom van
+        # deze velden overneemt in plaats van op een conflict te blijven staan. Een resource
+        # waarvan de namespace nog niet bestaat (de route van de mailsink in rig-ron op een
+        # testcluster) mag hier falen: ArgoCD haalt die bij zijn eerste sync binnen, en de
+        # wait hieronder is de echte poort.
+        RENDER=$(mktemp)
+        kustomize build infrastructure/bootstrap/routing/sandboxed-local > "$RENDER"
+        kubectl apply --server-side -f "$RENDER" 2>&1 | grep -v "^serverside-applied" || true
+        rm -f "$RENDER"
+
+        echo "Wachten tot de ingang verkeer aanneemt..."
+        # De stand uit git en niet uit het cluster: hier is net toegepast wat in git staat, en
+        # een lege waarde zou de wait op de verkeerde ingang laten wachten.
+        STAND=$(yq '.components[0]' infrastructure/bootstrap/routing/sandboxed-local/kustomization.yaml | sed 's|.*/||')
+        if [ "$STAND" = "gateway" ]; then
+          kubectl wait --for=condition=Programmed --timeout=300s gateway/rig-gateway -n rig-gateway
+        else
+          until kubectl get pods -n ingress-nginx --selector=app.kubernetes.io/component=controller -o name 2>/dev/null | grep -q .; do
+            sleep 5
+          done
+          kubectl wait --namespace ingress-nginx --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller --timeout=300s
         fi
 
-        echo "📦 Installing NGINX Ingress Controller for Kind..."
-        # Using local kustomization that:
-        # - References upstream KIND manifest
-        # - Enables snippet annotations (for security headers)
-        # - Configures nodeSelector for control-plane node
-        kustomize build bootstrap/rig-system/kustomize/ingress-nginx/base | kubectl apply -f -
-
-        echo ""
-        echo "⏳ Waiting for ingress controller to be ready..."
-        # Wait for pods to be created before waiting for readiness
-        until kubectl get pods --namespace ingress-nginx --selector=app.kubernetes.io/component=controller -o name 2>/dev/null | grep -q .; do
-          echo "  Waiting for controller pod to be created..."
-          sleep 5
-        done
-        kubectl wait --namespace ingress-nginx \
-          --for=condition=ready pod \
-          --selector=app.kubernetes.io/component=controller \
-          --timeout=300s
-
-        echo ""
-        echo "✅ NGINX Ingress Controller installed successfully!"
-        echo "   Configured to run on control-plane node (ingress-ready=true)"
-        echo "   Snippet annotations enabled for security headers"
-        echo ""
-        echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
+        echo "De ingang staat in stand '$STAND'. ArgoCD neemt hem over zodra routing-infrastructure synct."
     silent: true
 
   generate-env-secrets-for-operations-manager:
@@ -1922,7 +1939,7 @@ tasks:
                 if [ -n "{{.FIXED_PASSWORD}}" ]; then
                   password="{{.FIXED_PASSWORD}}"
                 else
-                  password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
+                  password=$(openssl rand -base64 $password_length | tr -d "=+/\n" | cut -c1-$password_length)
                 fi
                 ;;
               "bcrypt")
@@ -2209,8 +2226,7 @@ tasks:
           -p 127.0.0.1:{{.PORT}}:5432 \
           -e POSTGRES_PASSWORD='{{.PASSWORD}}' \
           -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       - task: _wacht-op
         vars:
           WAT: "De wegwerp-PostgreSQL op poort {{.PORT}}"
@@ -2590,8 +2606,7 @@ tasks:
           -p 127.0.0.1:{{.PG_PORT}}:5432 \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
           -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.PG_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.PG_IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       - task: _wacht-op
         vars:
           WAT: "De wegwerp-PostgreSQL op poort {{.PG_PORT}}"
@@ -2969,8 +2984,7 @@ tasks:
           -e POSTGRES_DB=keycloak \
           -e POSTGRES_USER=keycloak \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
-          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
-          {{.DB_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+          {{.DB_IMAGE}} bash -c "$(cat {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh)" >/dev/null
       # Over TCP en niet over de socket: de opstart draait initdb eerst op een tijdelijke
       # server die alleen op de socket luistert, en in dat gat valt de eerste query.
       - task: _wacht-op
@@ -4155,9 +4169,10 @@ tasks:
         OVERLAY=bootstrap/rig-system/kustomize/overlays/sandboxed-local
         yq 'select(.metadata.name == "forgejo-repo-secret")' "$OVERLAY/argocd-repo-forgejo-secret.yaml" | kubectl apply -f -
         kubectl apply -f "$OVERLAY/argocd-appproject-zad-app-of-apps.yaml"
-      # De ingress-controller van de sandbox: zonder hem krijgt geen Ingress een adres, en
-      # houdt ArgoCD elke app die op het web publiceert op Progressing.
-      - task: install-ingress-nginx
+      # De platformlaag van de routing (beide controllers) en de ingang van de stand in git:
+      # zonder die ingang krijgt geen Ingress of HTTPRoute een adres, en houdt ArgoCD elke
+      # app die op het web publiceert op Progressing.
+      - task: sandbox:routing-bootstrap
       - |
         # De CSI-hostpath-driver met csi-hostpath-sc en csi-hostpath-snapclass, de base die
         # de sandbox-overlay ook neemt: de clusterconfiguratie van sandboxed-local vraagt die
@@ -4252,7 +4267,6 @@ tasks:
       # CMP-sidecar geladen in kind (Never), operations-manager in de registry.
       # No-op in demo-mode.
       - task: sandbox:build-local-images-if-dev
-      - task: install-ingress-nginx
       - task: install-cnpg-operator
       - task: sandbox:install-csi-snapshot
       - task: sandbox:configure-coredns
@@ -4260,6 +4274,11 @@ tasks:
       - task: sandbox:import-wildcard-cert
       - task: sandbox:generate-argocd-tls
       - task: sandbox:create-sops-age-secret
+      # Beide controllers als platformlaag, en daarna de stand uit git. Na
+      # create-sops-age-secret: die maakt rig-ron aan, waar de route van de mailsink in
+      # staat. De ReferenceGrant van de gedeelde Gateway staat in rig-system, dus die is er
+      # sinds create-namespace ook.
+      - task: sandbox:routing-bootstrap
       - task: sandbox:create-git-signing-key-secret
       # Phase 2: Bootstrap Forgejo (minimal direct deploys, just enough for git)
       - task: sandbox:deploy-postgresql-direct
@@ -4359,34 +4378,46 @@ tasks:
     silent: true
 
   sandbox:configure-coredns:
-    desc: "Configure CoreDNS to resolve *.sandbox.rijksapp.dev domains to ingress controller"
+    desc: "Configure CoreDNS to resolve *.sandbox.rijksapp.dev domains to the fixed entrypoint zad-ingang"
+    vars:
+      # De vaste naam van de ingang. Welke controller daarachter zit bepaalt de
+      # ExternalName-Service zad-ingang, die elke routing-stand zelf meebrengt, dus deze
+      # rewrite verandert nooit meer. Zie docs/sandbox/routing-wisselen.md.
+      ROUTING_TARGET: 'zad-ingang.rig-system.svc.cluster.local'
     cmds:
       - |
-        echo "Configuring CoreDNS to resolve *.sandbox.rijksapp.dev domains..."
+        echo "Configuring CoreDNS to resolve *.sandbox.rijksapp.dev to {{.ROUTING_TARGET}}..."
 
         # Get current CoreDNS Corefile
         CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
 
-        # Check if rewrite rule already exists
-        if echo "$CURRENT_COREFILE" | grep -q "name regex.*\.sandbox\.rijksapp\.dev"; then
-          echo "CoreDNS rewrite rule for *.sandbox.rijksapp.dev already exists"
+        # De regex in de Corefile draagt zelf backslashes ((.+)\.sandbox\.rijksapp\.dev),
+        # dus matchen gaat op "name regex ... dev <doel>" en niet op die regex.
+        if echo "$CURRENT_COREFILE" | grep -qE "^ *name regex .*dev {{.ROUTING_TARGET}}$"; then
+          echo "CoreDNS rewrite rule for *.sandbox.rijksapp.dev already points at {{.ROUTING_TARGET}}"
           exit 0
         fi
 
-        echo "Adding rewrite rule for *.sandbox.rijksapp.dev domains..."
-
-        # Create new Corefile with rewrite rule inserted after 'ready' line
-        NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
-          /ready/ {
-            print
-            print "    rewrite stop {"
-            print "        name regex (.+)\\.sandbox\\.rijksapp\\.dev ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-            print "        answer auto"
-            print "    }"
-            next
-          }
-          {print}
-        ')
+        if echo "$CURRENT_COREFILE" | grep -qE "^ *name regex .*dev "; then
+          # Een regel naar het doel van de ANDERE stand: vervangen, niet laten staan. Dit
+          # is de stap die een wissel op een draaiend cluster nodig heeft.
+          echo "Replacing the existing rewrite target..."
+          NEW_COREFILE=$(echo "$CURRENT_COREFILE" | sed -E "s|^( *name regex .*dev )[^ ]*$|\1{{.ROUTING_TARGET}}|")
+        else
+          echo "Adding rewrite rule for *.sandbox.rijksapp.dev domains..."
+          # Create new Corefile with rewrite rule inserted after 'ready' line
+          NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
+            /ready/ {
+              print
+              print "    rewrite stop {"
+              print "        name regex (.+)\\.sandbox\\.rijksapp\\.dev {{.ROUTING_TARGET}}"
+              print "        answer auto"
+              print "    }"
+              next
+            }
+            {print}
+          ')
+        fi
 
         # Create a temporary file with the patch
         TEMP_FILE=$(mktemp)
@@ -4614,19 +4645,9 @@ tasks:
 
         echo "Wildcard TLS certificate imported as sandbox-wildcard-tls"
 
-        # Wire the wildcard as nginx's default certificate so every tenant-namespace
-        # ingress (which cannot reference the rig-system secret) serves a trusted cert
-        # instead of nginx's self-signed fallback. Idempotent: only patches when the
-        # flag is absent, so re-runs and any other mechanism that already set it are safe.
-        if ! kubectl -n ingress-nginx get deployment ingress-nginx-controller \
-             -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null | grep -q 'default-ssl-certificate'; then
-          echo "Setting nginx default certificate to rig-system/sandbox-wildcard-tls..."
-          kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type=json \
-            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--default-ssl-certificate=rig-system/sandbox-wildcard-tls"}]'
-          kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=120s
-        else
-          echo "nginx default certificate already configured"
-        fi
+        # De vlag --default-ssl-certificate op de nginx-controller staat in
+        # infrastructure/bootstrap/routing/sandboxed-local/ingress/controller: ArgoCD beheert
+        # die Deployment, dus een patch van hier zou door selfHeal worden teruggedraaid.
     silent: true
 
   sandbox:generate-argocd-tls:

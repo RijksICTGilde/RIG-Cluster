@@ -155,6 +155,7 @@ def _handler_with_fake_connector(realm: dict | None = None) -> tuple[KeycloakYam
         return_value=realm
         if realm is not None
         else {
+            "bruteForceProtected": True,
             "registrationAllowed": False,
             "loginWithEmailAllowed": False,
             "resetPasswordAllowed": False,
@@ -257,10 +258,12 @@ async def test_een_bestaande_realm_krijgt_de_drie_taalvelden(template: str) -> N
     realm zoals het is, en de vier velden die hij wel noemt staan hier al goed.
     """
     realm = {
+        "bruteForceProtected": True,
         "registrationAllowed": False,
         "loginWithEmailAllowed": False,
         "resetPasswordAllowed": False,
         "verifyEmail": template == "sso-support",
+        "emailTheme": "keycloak",
         "smtpServer": {"from": "noreply-rijksapp@rijksoverheid.nl"},
         "loginTheme": "iets-eigens",
     }
@@ -289,10 +292,12 @@ async def test_dezelfde_taalvelden_nog_eens_schrijven_doet_niets() -> None:
     """
     handler, keycloak = _handler_with_fake_connector(
         realm={
+            "bruteForceProtected": True,
             "registrationAllowed": False,
             "loginWithEmailAllowed": False,
             "resetPasswordAllowed": False,
             "verifyEmail": True,
+            "emailTheme": "keycloak",
             "internationalizationEnabled": True,
             "supportedLocales": ["nl", "en"],
             "defaultLocale": "nl",
@@ -320,6 +325,7 @@ async def test_de_volgorde_van_de_talen_is_geen_wijziging() -> None:
     """
     handler, keycloak = _handler_with_fake_connector(
         realm={
+            "bruteForceProtected": True,
             "registrationAllowed": False,
             "loginWithEmailAllowed": False,
             "resetPasswordAllowed": False,

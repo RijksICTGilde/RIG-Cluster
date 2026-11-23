@@ -114,9 +114,17 @@ def _usage_expressions(selector: str) -> dict[str, str]:
         "memory_bytes": f'container_memory_working_set_bytes{{{selector},container!=""}}',
         "memory_limit_bytes": _reserved(selector, "limits", "memory"),
         "memory_request_bytes": _reserved(selector, "requests", "memory"),
-        "storage_used_bytes": f"kubelet_volume_stats_used_bytes{{{selector}}}",
-        "storage_capacity_bytes": f"kubelet_volume_stats_capacity_bytes{{{selector}}}",
+        "storage_used_bytes": _last_known_volume_usage(selector),
+        # Not kubelet_volume_stats_capacity_bytes: kubelet only reports PVCs a running pod mounts.
+        "storage_capacity_bytes": f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}",
     }
+
+
+def _last_known_volume_usage(selector: str) -> str:
+    """Usage per existing PVC, also while unmounted: kubelet only measures mounted volumes."""
+    usage = f"last_over_time(kubelet_volume_stats_used_bytes{{{selector}}}[30d])"
+    existing = f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}"
+    return f"max by (namespace, persistentvolumeclaim) ({usage}) and on (namespace, persistentvolumeclaim) {existing}"
 
 
 def _reserved(selector: str, kind: str, resource: str) -> str:
@@ -275,36 +283,50 @@ async def pvc_storage(backend: MetricsBackend, namespace: str, window: TimeWindo
     """Used space over *window* per volume claim in *namespace*, in GB, with its capacity.
 
     No name matching: every claim the namespace has, so this reads the same on every
-    cluster. A claim without a capacity reading gets a capacity of zero.
+    cluster. A claim without a capacity reading gets a capacity of zero. A claim nothing
+    mounted during the window is flat at its last known usage: kubelet only measures
+    mounted volumes, and an unmounted one does not change.
     """
     result: dict[str, dict[str, Any]] = {}
     if not backend.is_connected:
         return result
 
+    selector = f'namespace="{namespace}"'
     start_time, end_time = window.bounds()
     try:
         used = await backend.query_range_batch(
-            {"used": f'kubelet_volume_stats_used_bytes{{namespace="{namespace}"}}'},
+            {"used": f"kubelet_volume_stats_used_bytes{{{selector}}}"},
             start_time,
             end_time,
             window.step,
         )
-        capacities = await backend.query_batch(
-            {"capacity": f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}'}
+        latest = await backend.query_batch(
+            {
+                "capacity": f"kube_persistentvolumeclaim_resource_requests_storage_bytes{{{selector}}}",
+                "last_known": _last_known_volume_usage(selector),
+            }
         )
-        capacity_bytes = {
-            name: float(series["value"][1])
-            for series in capacities.get("capacity", [])
-            if (name := series.get("metric", {}).get("persistentvolumeclaim", ""))
-        }
+        capacity_bytes = _value_per_claim(latest.get("capacity", []))
         for series in used.get("used", []):
             name = series.get("metric", {}).get("persistentvolumeclaim", "")
             if name and "values" in series:
                 result[name] = _volume(series["values"], capacity_bytes.get(name, 0))
+        flat = [start_time.timestamp(), end_time.timestamp()]
+        for name, last_known in _value_per_claim(latest.get("last_known", [])).items():
+            if name not in result:
+                result[name] = _volume([[timestamp, last_known] for timestamp in flat], capacity_bytes.get(name, 0))
     except _FETCH_ERRORS as error:
         logger.warning("Failed to get PVC storage metrics for namespace %s: %s", namespace, error)
 
     return result
+
+
+def _value_per_claim(series: list[dict[str, Any]]) -> dict[str, float]:
+    return {
+        name: float(sample["value"][1])
+        for sample in series
+        if (name := sample.get("metric", {}).get("persistentvolumeclaim", ""))
+    }
 
 
 def _volume(values: list[list[Any]], capacity_bytes: float) -> dict[str, Any]:

@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# De gateway-stand VAN DE SANDBOX: de routes uit de base, plus wat aan dit cluster en aan
+# Envoy Gateway hangt. De gedeelde Gateway staat hier omdat ZAD hem op de sandbox zelf
+# aanmaakt; op een cluster waar het platform hem levert blijft hij hier weg. EnvoyProxy en
+# BackendTrafficPolicy zijn CRD's van Envoy Gateway en bestaan alleen op dit cluster.
+#
+# De controller van Envoy Gateway en de GatewayClass zijn platform en staan altijd op het
+# cluster (../../platform/sandboxed-local/envoy-gateway); ArgoCD beheert alleen wat hier staat.
+components:
+  - ../../base/gateway
+
+resources:
+  - gateway.yaml
+  - envoy-proxy.yaml
+  - backend-traffic-policy.yaml
+  - reference-grant-wildcard-tls.yaml
+  - service-zad-ingang.yaml

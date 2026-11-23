@@ -126,9 +126,7 @@ class DedicatedPostgresFields(BaseModel):
     )
     # The bounds live in POSTGRES_STORAGE (shared/postgres_settings.py), not here: a bound on a
     # service field is a declaration, not an ``le=`` on the model.
-    # 1Gi and not more: the form's option list (StorageSizeOptionsProvider) runs to 1Gi, and a
-    # default outside that list cannot be chosen. It is the top of the list, because a database
-    # is where space runs out first.
+    # 1Gi and not more: a starting size, and a database volume can grow.
     storage: str = Field(default="1Gi", description="Size of the database volume as a Kubernetes quantity, e.g. 1Gi.")
     privileges: list[DatabasePrivilege] = Field(
         default_factory=list,

@@ -222,7 +222,9 @@ class InviteService(Service):
             for stale in ("application-url", "application_url"):
                 entry.pop(stale, None)
 
-    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+    def validate_project_change(
+        self, previous: dict[str, Any], project_data: dict[str, Any], *, approval_decision: bool = False
+    ) -> list[str]:
         """A NEW invite key is at least ``INVITE_KEY_MIN_LENGTH`` characters long.
 
         New only: a key that was already in the previous version stays valid. Project files

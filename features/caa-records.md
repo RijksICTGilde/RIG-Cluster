@@ -41,8 +41,10 @@ De reconciler is **add-only**:
    duplicaat POST'en), en toevoegen wat mist.
 4. Een CAA-record dat wij niet verwachten wordt gelogd en **blijft staan**. Zo'n record kan
    een bewuste uitzondering zijn tijdens een CA-migratie; automatisch wegpoetsen breekt
-   iemands uitgifte zonder dat het opvalt. Opruimen is mensenwerk - de connector heeft
-   daarom niet eens een verwijdermethode.
+   iemands uitgifte zonder dat het opvalt. Opruimen is mensenwerk, en de reconciler roept
+   `delete_dns_entry` van de connector dus niet aan. Die methode bestaat sinds de
+   Fundament-registratie wel, voor een record dat vervangen moet worden; zie
+   `features/fundament-registratie.md`.
 
 Alleen de apex (`@`), nooit een diepere naam: TransIP handhaaft RFC 1035 strikt en weigert
 een record naast een CNAME. Nodig is het ook niet, want een CA klimt bij uitgifte omhoog tot

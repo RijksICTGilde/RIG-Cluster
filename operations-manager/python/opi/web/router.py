@@ -20,10 +20,12 @@ from opi.core.request_user import get_current_user
 from opi.http.auth.auth_decorators import requires_sso, requires_step_up
 from opi.http.auth.authz import enforce_route_action, may
 from opi.http.render.lotc_switch import (
+    COMPONENT_RESOURCE_FIELDS,
     CONDITIONAL_TABS,
     DEFAULT_TAB,
     TABS_WITH_DEPLOYMENT,
     audit_page,
+    build_component_resource_rows,
     build_deployment_status_column,
     build_lotc_dashboard,
     build_lotc_introduction,
@@ -89,6 +91,7 @@ from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
 from .router_otp import otp_router
+from .router_platform_admin import platform_admin_router
 from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
@@ -124,6 +127,7 @@ web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
+web_router.include_router(platform_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(shared_services_router)
 web_router.include_router(rolmatrix_router)
@@ -506,6 +510,53 @@ async def delete_component_web(request: Request, project_name: str, component_na
         current_step=f"Component '{component_name}' verwijderen gestart...",
         success_message=f"Component '{component_name}' succesvol verwijderd",
     )
+
+
+@web_router.post("/projects/{project_name}/componenten/{component_name}/resources/{field}/loslaten")
+@action(Action.COMPONENT_UPDATE)
+@requires_sso
+async def release_component_resource_pin(
+    request: Request, project_name: str, component_name: str, field: str
+) -> Response:
+    """Hand one pinned resource field back to the tuner.
+
+    No reprocessing: the value itself does not change, only who may change it from now on.
+    The commit is the record, as it is for every other change to a project file.
+    """
+    if field not in dict(COMPONENT_RESOURCE_FIELDS):
+        raise HTTPException(status_code=404, detail=f"Onbekend resourceveld '{field}'")
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_component(project.data or {}, project_name, component_name)
+
+    from opi.manager.project_manager import ProjectManager
+    from opi.services.project_file_handler import ProjectFileHandler
+
+    # Fresh from git and not from the cache, so a lagging cache is never committed back.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        project_data = await project_manager.get_contents()
+        released = ProjectFileHandler().release_user_resource_intent(
+            project_data, component_name, [field], origin="portal"
+        )
+        if released:
+            await project_manager.save_and_commit_project(
+                project_data,
+                f"Resource {field} of component '{component_name}' in '{project_name}' released to the tuner",
+            )
+    finally:
+        await project_manager.close()
+
+    logger.info(
+        f"Resource pin {field} on '{component_name}' in '{project_name}' "
+        f"{'released' if released else 'was not set'} by {get_current_user(request).get('email', '')}"
+    )
+    url = project_tab_url(project_name, "componenten")
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(content="", headers={"HX-Redirect": url})
+    return RedirectResponse(url=url, status_code=303)
 
 
 @web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
@@ -1648,12 +1699,19 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The ungranted approvals per deployment, asked of the catalog, where each service
         # writes its own notice, so this page holds no domain knowledge.
         from opi.services.approvals import collect_deployment_approval_notices
+        from opi.services.catalog.publish_on_web.urls import address_approval_notices
 
         approval_notices: dict[str, list[dict[str, Any]]] = {}
+        # The subset about the web ADDRESS, for the notice under the public links; the
+        # service that owns the address decides which notices those are.
+        address_notices: dict[str, list[dict[str, Any]]] = {}
         for deployment in project_details["deployments"]:
             notices = collect_deployment_approval_notices(project_data_decrypted, deployment)
             if notices:
                 approval_notices[deployment.get("name", "")] = notices
+                address = address_approval_notices(notices)
+                if address:
+                    address_notices[deployment.get("name", "")] = address
 
         backups_available = False
         if not map_tab:
@@ -1681,6 +1739,11 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # one page cannot disagree.
         for component in project_details["components"]:
             component_name = component.get("name")
+            # Which resource fields the tuner manages and which the user pinned. Read from
+            # the project file that is loaded here anyway.
+            component["resource_rows"] = build_component_resource_rows(
+                project_data, component_name, project_file_handler
+            )
             component["ingress_links"] = [
                 {**link, "deployment_name": deployment["name"], "cluster": deployment.get("cluster")}
                 for deployment in project_details["deployments"]
@@ -1848,6 +1911,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
                 "approval_notices": approval_notices,
+                "address_approval_notices": address_notices,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
@@ -1953,6 +2017,7 @@ async def _fetch_argocd_deployment_status(
         conditions_to_errors,
         describe_image_pull_failures,
         gather_deployment_errors,
+        gather_excluded_resources,
         gather_sync_deviations,
         summarize_component_pods,
     )
@@ -2056,6 +2121,9 @@ async def _fetch_argocd_deployment_status(
             "operation_duration": operation_duration,
             "operation_is_stuck": is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS),
             "errors": errors,
+            # A resource ArgoCD does not roll out, while it keeps the app Synced and Healthy.
+            # Read on both branches, at no extra API call.
+            "excluded_resources": gather_excluded_resources(status_data),
             "deviations": deviations,
             "pods": pod_summaries,
             # Costs no cluster call: the observer counted this cluster at most a minute ago.

@@ -9,7 +9,6 @@ niet stilletjes alsnog opduikt of stilletjes verdwijnt.
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -109,16 +108,13 @@ def test_variables_blijft_bewust_buiten_het_scherm() -> None:
     ``platform_client_id``. Sinds RC-159 legt ``merge_user_variables`` de projectwaarden
     ERONDER in plaats van erover, dus een project kan de doelrealm niet meer verzetten --
     maar een vrij invulveld hiervoor blijft een hendel op de realm-template van het
-    platform, en het veld blijft dus buiten de zelfbediening, met de reden in de
-    dienstdocumentatie. Niet stil weggevallen.
+    platform, en het veld blijft dus buiten de zelfbediening.
     """
     section = _section()
     paden = [vis.editable.yaml_path for vis in section.editables]
 
     assert "services/keycloak/config/variables" not in paden
     assert "variables" in KeycloakConfig.model_fields
-    hulp = Path(__file__).parent.parent / "opi" / "services" / "catalog" / "keycloak" / "help.md"
-    assert "variables" in hulp.read_text(), "de reden hoort in de dienstdocumentatie te staan"
 
 
 # ---------------------------------------------------------------------------

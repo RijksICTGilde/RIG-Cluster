@@ -777,7 +777,20 @@ class TestGetDeploymentHostnames:
             "myapp",
             ".dev.example.com",
             subdomain="myapp",
-            project_data={},
+            project_data={
+                "services": [
+                    {
+                        "name": "publish-on-web",
+                        "config": {
+                            "domains": {
+                                "allowed-subdomains": [
+                                    {"domain": "kind", "subdomains": [{"name": "myapp", "status": "approved"}]}
+                                ]
+                            }
+                        },
+                    }
+                ]
+            },
             cluster=_CLUSTER,
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname

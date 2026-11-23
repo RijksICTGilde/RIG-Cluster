@@ -110,6 +110,7 @@ class Action(StrEnum):
     PLATFORM_FEDERATION = "platform.federation"
     PLATFORM_BACKUP = "platform.backup"
     PLATFORM_PROJECT_KEY = "platform.project-key"
+    PLATFORM_SSO_OUTAGE = "platform.sso-outage"
 
 
 #: Marking on a route that says which action it asks for. An attribute and not a register,

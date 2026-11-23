@@ -9,7 +9,6 @@ generators:
 resources:
   - ../../base
   - network-policies/mail-relay-networkpolicy.yaml
-  - ingress-mailsink.yaml
 
 # De SMTP-sink als testupstream, MET de schakelaar die de relay zijn zelfondertekende
 # certificaat laat aannemen - de component levert die twee samen, zodat de ene niet zonder
@@ -38,12 +37,9 @@ patches:
                 env:
                   - name: MAIL_DB_HOST
                     value: rig-db-rw.rig-system.svc.cluster.local
-  # De Namespace uit de base kan hier niet meedoen: de ArgoCD op dit clustertype draait
-  # in namespaced mode en weigert cluster-scoped resources ('cluster level Namespace
-  # "rig-ron" can not be managed when in namespaced mode', gemeten 19 augustus 2026).
-  # De namespace rig-ron wordt op dit clustertype HANDMATIG aangemaakt door
-  # task sandbox:create-sops-age-secret - de CMP van deze app heeft hem bij het renderen
-  # toch al nodig, dus GitOps kon hem nooit zelf brengen. (Een losse file-referentie
+  # De Namespace uit de base kan hier niet meedoen: de CMP van deze app heeft rig-ron bij
+  # het renderen al nodig, dus GitOps kan hem niet zelf brengen. Op dit clustertype maakt
+  # task sandbox:create-sops-age-secret hem daarom aan. (Een losse file-referentie
   # naar base naast de map-referentie kan ook niet: de load restrictor van de CMP laat
   # alleen mappen buiten de overlay-root toe, geen losse bestanden.)
   - target:

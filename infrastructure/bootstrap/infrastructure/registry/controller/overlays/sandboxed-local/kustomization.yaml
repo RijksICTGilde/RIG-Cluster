@@ -3,5 +3,4 @@ kind: Kustomization
 
 resources:
   - ../../base
-  - ingress.yaml
   - htpasswd-secret.yaml

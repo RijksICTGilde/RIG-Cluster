@@ -6,7 +6,12 @@ from typing import Any
 
 from opi.core import config as opi_config
 from opi.core.cluster_config import CLUSTER_CONFIG
-from opi.services.catalog.publish_on_web.domain_config import DOMAIN_FORMAT_TEMPLATES, DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    DOMAIN_FORMAT_TEMPLATES,
+    DomainSetting,
+    get_domain_setting,
+    subdomain_used_by_format,
+)
 from opi.services.catalog.publish_on_web.hostnames import generate_hostname_from_format
 from opi.services.catalog.publish_on_web.subdomain import is_deployment_domain_approved
 
@@ -130,6 +135,7 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
     cluster = opi_config.settings.CLUSTER_MANAGER
     effective_domain = domain if base_domain != "__custom__" else custom_domain
     if effective_domain and cluster:
-        needs_approval = not is_deployment_domain_approved(yaml_data, effective_domain, subdomain or None, cluster)
+        used_subdomain = subdomain_used_by_format(subdomain or None, domain_format)
+        needs_approval = not is_deployment_domain_approved(yaml_data, effective_domain, used_subdomain, cluster)
 
     return {"urls": urls, "has_urls": bool(urls), "needs_approval": needs_approval}

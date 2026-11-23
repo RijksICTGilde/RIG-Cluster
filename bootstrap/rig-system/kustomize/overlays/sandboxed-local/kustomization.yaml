@@ -18,9 +18,11 @@ resources:
 - ../../appprojects
 - argocd-appproject-zad-app-of-apps.yaml
 - argocd-appproject-zad-platform.yaml
+- argocd-appproject-zad-routing.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - argocd-application-ron-infrastructure.yaml
+- argocd-application-routing-infrastructure.yaml
 - ../../operations-manager/overlays/sandboxed-local
 # Backup destination MinIO for local development/testing
 - ../../backup-destination/base

@@ -1,8 +1,8 @@
 """namespace-postgresql-database service (dedicated per-namespace CNPG cluster).
 
-Owns its project-level config UI (instances + storage). Note the API surface
+Owns its project-level config UI (instances, storage and registry). Note the API surface
 (config_api_fields, from the model) is broader than the wizard section: the model has
-image/registry/privileges/postInitSQL/resources too, which are API/YAML-only for now.
+image/privileges/postInitSQL/resources too, which are API/YAML-only for now.
 """
 
 from __future__ import annotations
@@ -70,10 +70,11 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
             return []
         from opi.services.catalog.namespace_postgres.editables import (
             POSTGRESQL_INSTANCES_EDITABLE,
+            POSTGRESQL_REGISTRY_EDITABLE,
             POSTGRESQL_STORAGE_EDITABLE,
         )
 
-        return [POSTGRESQL_INSTANCES_EDITABLE, POSTGRESQL_STORAGE_EDITABLE]
+        return [POSTGRESQL_INSTANCES_EDITABLE, POSTGRESQL_STORAGE_EDITABLE, POSTGRESQL_REGISTRY_EDITABLE]
 
     def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         if layer is not ConfigLayer.PROJECT:
@@ -81,7 +82,11 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
             from opi.forms.visualizers.sections import FormSection
-            from opi.services.catalog.namespace_postgres.visualizers import POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE
+            from opi.services.catalog.namespace_postgres.visualizers import (
+                POSTGRESQL_INSTANCES,
+                POSTGRESQL_REGISTRY,
+                POSTGRESQL_STORAGE,
+            )
 
             cached = FormSection(
                 section_id="postgresql-config",
@@ -90,10 +95,11 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
                 description="PostgreSQL database-instellingen",
                 visible=self._config_selected,
                 post_save_action="process_project",
-                editables=[POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE],
+                editables=[POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE, POSTGRESQL_REGISTRY],
                 layout=[
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "instances"),
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "storage"),
+                    config_path(ConfigLayer.PROJECT, self.service_type, "config", "registry"),
                 ],
             )
             self._config_section_cache = cached
