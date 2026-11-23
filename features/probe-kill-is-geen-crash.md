@@ -84,3 +84,5 @@ waarschuwen, en wat te doen met wat er nu al staat).
 
 - `features/health-check-service.md` -- de dienst zelf en zijn configuratie.
 - `features/deployment-state-and-health.md` -- hoe de deploymentkaart zijn oordeel opbouwt.
+- `features/startfout-is-geen-crash.md` -- een container die nooit gestart is, verdringt de
+  crashmelding op dezelfde manier.

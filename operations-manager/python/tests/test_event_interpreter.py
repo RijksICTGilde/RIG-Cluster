@@ -262,8 +262,18 @@ class TestInterpretEvents:
         assert len(result) == 1
         assert "root" in result[0].title.lower()
 
-    def test_unrecognized_event_is_dropped(self):
+    def test_unrecognized_event_is_shown_with_its_own_text(self):
         events = [{"reason": "SomeRandomReason", "message": "something random happened", "object": "pod-1", "time": ""}]
+        result = interpret_events(events)
+        assert len(result) == 1
+        assert result[0].title == "Melding van Kubernetes: SomeRandomReason"
+        assert result[0].description == "something random happened"
+        assert result[0].severity == EventSeverity.INFORMATIONAL
+
+    def test_unrecognized_event_without_a_message_is_still_dropped(self):
+        """An unknown reason is shown with its own text, but there has to be text:
+        nothing to show is nothing to add to the card."""
+        events = [{"reason": "SomeRandomReason", "message": "", "object": "pod-1", "time": ""}]
         result = interpret_events(events)
         assert len(result) == 0
 
@@ -391,8 +401,10 @@ class TestInterpretArgocdErrors:
             {"resource": "Event/pod-1", "message": "some message without brackets"},
         ]
         result = interpret_argocd_errors(errors)
-        # No reason match, no pattern match -> dropped
-        assert len(result) == 0
+        # No reason match, no pattern match -> passed through with its own text
+        assert len(result) == 1
+        assert result[0]["message"] == "Melding van Kubernetes"
+        assert result[0]["original_message"] == "some message without brackets"
 
     def test_preserves_age_on_non_event_errors(self):
         errors = [

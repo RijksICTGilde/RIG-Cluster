@@ -129,6 +129,22 @@ def _label_failure_is_transient(error: BaseException) -> bool:
     return not any(marker in message for marker in _PERMANENT_LABEL_MARKERS)
 
 
+def _event_last_seen(event: dict[str, Any]) -> str:
+    """When an event last occurred, as an ISO timestamp.
+
+    A repeating event keeps the creationTimestamp of its first occurrence, so a pod that has
+    been failing for hours would otherwise look old. Events created through events.k8s.io leave
+    lastTimestamp empty and carry eventTime and series instead.
+    """
+    return (
+        (event.get("series") or {}).get("lastObservedTime")
+        or event.get("lastTimestamp")
+        or event.get("eventTime")
+        or event.get("metadata", {}).get("creationTimestamp")
+        or ""
+    )
+
+
 class KubectlConnector:
     _instance = None
     is_connected = False
@@ -1241,7 +1257,7 @@ class KubectlConnector:
         logger.debug(f"Getting events for namespace {namespace}")
 
         try:
-            args = ["get", "events", "-n", namespace, "--sort-by=.metadata.creationTimestamp", "-o", "json"]
+            args = ["get", "events", "-n", namespace, "-o", "json"]
             if event_type:
                 args.extend(["--field-selector", f"type={event_type}"])
             stdout, stderr, code = await self._run_kubectl_command(args)
@@ -1255,8 +1271,9 @@ class KubectlConnector:
             events_data = json.loads(stdout)
             now = datetime.now(UTC)
             events: list[dict[str, str]] = []
-            for event in reversed(events_data.get("items", [])):
-                timestamp = event.get("metadata", {}).get("creationTimestamp", "")
+            items = sorted(events_data.get("items", []), key=_event_last_seen, reverse=True)
+            for event in items:
+                timestamp = _event_last_seen(event)
                 if timestamp and max_age_hours > 0:
                     try:
                         event_dt = datetime.fromisoformat(timestamp)

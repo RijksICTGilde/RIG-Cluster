@@ -582,7 +582,9 @@ class CommandLineValidator:
       user meant, and that only shows up as a CrashLoopBackOff;
     * a control character, which nobody types by accident and which reaches the container
       unchanged;
-    * a line that yields no arguments at all while something was typed.
+    * a line that yields no arguments at all while something was typed;
+    * a YAML or JSON list typed into the line (``sh, -c, ...`` or ``["sh", ...]``), because the
+      line splits on spaces and runc then looks for a program called ``sh,``.
 
     No defence against YAML injection: the canonical writer puts a multi-line value down as a
     literal block, so a crafted argument comes back as a string and not as extra keys.
@@ -604,8 +606,15 @@ class CommandLineValidator:
             return ["Dit commando bevat een stuurteken dat er niet in hoort."]
         if command_line_has_unbalanced_quote(text):
             return ['Er staat een dubbele quote open. Sluit hem, of typ "" als je er letterlijk een bedoelt.']
-        if not split_command_line(text):
+        arguments = split_command_line(text)
+        if not arguments:
             return ["Dit commando levert geen argumenten op."]
+        # A program name never ends in a comma: this is a YAML or JSON list typed into the line.
+        if isinstance(value, str) and (text.lstrip().startswith("[") or arguments[0].endswith(",")):
+            return [
+                "Scheid de argumenten met spaties, niet met komma's of haken. Bijvoorbeeld: "
+                'sh -c "date > /data/index.html && exec nginx"'
+            ]
         return []
 
 

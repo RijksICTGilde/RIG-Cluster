@@ -50,6 +50,8 @@ _CRASH_TITLE = "Applicatie crasht herhaaldelijk"
 #: one: the title is what stands in the list, and "crasht herhaaldelijk" is exactly the
 #: sentence that misleads the reader there.
 _CRASH_WITH_SERVING_TITLE = "Nieuwe versie start niet op"
+_START_FAILURE_TITLE = "Container kan niet starten"
+_UNTRANSLATED_TITLE = "Melding van Kubernetes"
 
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     # Image problems (ErrImagePull / ImagePullBackOff get a dynamic suggestion,
@@ -167,6 +169,19 @@ _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
         re.compile(r"permission denied"),
         "Geen toegang tot bestand of directory",
         "De applicatie heeft geen rechten om bestanden te lezen of schrijven. Controleer de bestandspermissies in het image.",
+        EventSeverity.ACTIONABLE,
+    ),
+    # After the two above: exec format error and permission denied are runc failures too, with
+    # a more precise cause.
+    (
+        re.compile(
+            r"executable file not found|runc create failed"
+            r"|failed to create (?:containerd|shim) task|StartError|RunContainerError|CreateContainerError\b",
+            re.IGNORECASE,
+        ),
+        _START_FAILURE_TITLE,
+        "De container kan niet starten. Meestal klopt het startcommando niet: scheid de argumenten "
+        "met spaties, niet met komma's. Zie het originele bericht voor details.",
         EventSeverity.ACTIONABLE,
     ),
     (
@@ -413,6 +428,7 @@ _SYMPTOM_TITLES: set[str] = {
 _ROOT_CAUSE_TITLES: set[str] = {
     _CRASH_TITLE,
     _PROBE_KILL_TITLE,
+    _START_FAILURE_TITLE,
     "Container image kan niet worden opgehaald",
     "Ongeldige image-naam",
     "Applicatie gestopt wegens geheugengebrek",
@@ -447,15 +463,18 @@ def _suppress_symptoms(
     an outage, and that difference decides whether anyone gets up at night. The same kind of
     correction as the probe kill above: a more precise observation displaces a less precise
     one, in the same place and not in a second mechanism beside it.
+
+    A start failure displaces the crash message the same way as a probe kill: the container
+    never ran, so the backoff is not a crash.
     """
     root_cause_components: set[str] = set()
-    probe_kill_components: set[str] = set()
+    crash_displacing_components: set[str] = set()
     for error in errors:
         title = error.get("message", "")
         if title in _ROOT_CAUSE_TITLES:
             root_cause_components.add(_resource_base_name(error.get("resource", "")))
-        if title == _PROBE_KILL_TITLE:
-            probe_kill_components.add(_resource_base_name(error.get("resource", "")))
+        if title in (_PROBE_KILL_TITLE, _START_FAILURE_TITLE):
+            crash_displacing_components.add(_resource_base_name(error.get("resource", "")))
 
     if not root_cause_components:
         return errors
@@ -466,7 +485,7 @@ def _suppress_symptoms(
         component = _resource_base_name(error.get("resource", ""))
         if title in _SYMPTOM_TITLES and component in root_cause_components:
             continue
-        if title == _CRASH_TITLE and component in probe_kill_components:
+        if title == _CRASH_TITLE and component in crash_displacing_components:
             continue
         result.append(error)
     return _restate_crash_with_serving_pod(result, serving_components)
@@ -546,7 +565,10 @@ def interpret_events(
 
         translation = _interpret_by_reason(reason, message, project_data)
         if translation is None:
-            continue
+            if reason in _NOISE_REASONS or not message:
+                continue
+            title = f"{_UNTRANSLATED_TITLE}: {reason}" if reason else _UNTRANSLATED_TITLE
+            translation = (title, "", EventSeverity.INFORMATIONAL)
 
         title, suggestion, severity = translation
         if severity == EventSeverity.NOISE:
@@ -672,6 +694,8 @@ def interpret_argocd_errors(
             "suggestion": event.suggestion,
             "severity": event.severity.value,
         }
+        if event.description and event.description != event.title:
+            entry["original_message"] = event.description
         if event.count > 1:
             entry["count"] = str(event.count)
         if event.timestamp:

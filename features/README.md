@@ -14,6 +14,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [De speelruimte van een dienst](speelruimte-van-een-dienst.md)
 - [Diensten die elkaars toestand kennen, en een gezondheidscheck die dat gebruikt](deployment-state-and-health.md)
 - [E-mail versturen (send-email)](send-email.md)
+- [Een container die niet start, is niet gecrasht](startfout-is-geen-crash.md)
 - [Een dienst beschrijven via de API](service-describe-api.md)
 - [Een dienst vervangen door een opvolger](dienst-vervangen-door-een-opvolger.md)
 - [Een dienst zegt zelf of je hem per component aanvinkt](dienst-per-component-aanvinken.md)
