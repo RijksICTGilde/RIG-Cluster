@@ -158,6 +158,25 @@ async def test_a_commit_and_push_lands_on_forgejo(repo_url: str, api: ForgejoApi
         await git.close()
 
 
+async def test_create_or_update_file_stages_without_committing_until_asked(repo_url: str, api: ForgejoApi) -> None:
+    """The one-off migration's write path (RC-518): stage the file, then commit and push
+    separately, once, after every project file in a run is staged."""
+    git = connector(repo_url, api)
+    try:
+        await git.ensure_repo_cloned()
+        before = api.tip(REPO)
+
+        await git.create_or_update_file(PROJECT_FILE, "name: alfa\nversion: 5\n", do_commit_and_push=False)
+
+        assert api.tip(REPO) == before, "staging alone must not push"
+        await git.commit_and_push("zadlive: bump naar 5")
+
+        assert api.file_content(REPO, PROJECT_FILE) == "name: alfa\nversion: 5\n"
+        assert api.tip(REPO) != before
+    finally:
+        await git.close()
+
+
 async def test_a_push_forgejo_refuses_raises_instead_of_reporting_success(repo_url: str, api: ForgejoApi) -> None:
     """Een beschermde branch: de weigering komt van de server, niet van git zelf."""
     git = connector(repo_url, api)

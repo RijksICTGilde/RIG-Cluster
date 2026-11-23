@@ -272,65 +272,22 @@ def _unanswered_oom_window_minutes(
     return max(1, min(full_window, since))
 
 
-def _entry_is_old_enough(set_at: str | None, min_age_days: int) -> bool:
-    """Whether *set_at* is at least *min_age_days* old. Unusable timestamps say no.
-
-    Same fail-safe as ``_floor_is_expired``: a timestamp that cannot be read never
-    ages, so protection stays on rather than silently lapsing.
-    """
-    if not set_at:
-        return False
-    try:
-        moment = datetime.fromisoformat(set_at)
-    except ValueError:
-        return False
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - moment).days >= min_age_days
-
-
-def _intent_field_is_expired(name: str, value: str, set_at: str | None, measured: float | None) -> bool:
-    """Whether a hand-set resource value is stale and may be tuned again.
-
-    One rule, two metrics, mirroring the OOM floor: the entry is old enough AND the
-    component has since been measured running well below what the user set. Memory is
-    measured by the observed max, CPU by the VPA target; without a measurement nothing
-    expires (fail safe: keep respecting the user).
-    """
-    cfg = resource_tuning_config()
-    if not _entry_is_old_enough(set_at, cfg.user_intent_min_age_days):
-        return False
-    if measured is None or measured <= 0:
-        return False
-    set_value = _k8s_memory_to_mb(value) if name.endswith("_memory") else parse_k8s_cpu_to_m(value)
-    return measured < set_value * cfg.user_intent_stable_percent / 100
-
-
 def _live_intent_fields(
     intent: UserResourceIntent,
-    max_observed_mb: float,
-    target_cpu_m: float | None,
     has_oom_kills: bool,
     component_ref: str,
     dep_name: str,
 ) -> set[str]:
     """The resource fields the tuner must leave alone for this component.
 
-    A field drops out when its entry has expired (see ``_intent_field_is_expired``), and
-    ``limits_memory`` drops out while the component is being OOM-killed: a pod dying right
-    now is the one case where the tuner overrules the user, because the alternative is a
-    component that stays down. Both exits are logged; the fields that stay are logged by
+    A pinned field stays pinned until the user releases it (RC-518). The one exit is
+    ``limits_memory`` while the component is being OOM-killed: a pod dying right now is
+    the one case where the tuner overrules the user, because the alternative is a
+    component that stays down. That exit is logged; the fields that stay are logged by
     ``_honour_user_intent``, at the moment they actually hold a recommendation back.
     """
     live: set[str] = set()
     for name, value in intent.fields.items():
-        measured = max_observed_mb if name.endswith("_memory") else target_cpu_m
-        if _intent_field_is_expired(name, value, intent.set_at, measured):
-            logger.info(
-                f"User-set {name}={value} for {component_ref} in {dep_name} expired "
-                f"(set {intent.set_at}, measured {measured}) -- tuning it again"
-            )
-            continue
         if name == "limits_memory" and has_oom_kills:
             logger.info(
                 f"User-set limits_memory={value} for {component_ref} in {dep_name} is being "
@@ -408,6 +365,28 @@ def _honour_user_intent(
     return new_limit, new_request, new_cpu_limit, new_cpu_request
 
 
+async def _deployment_is_available(kubectl: KubectlConnector, namespace: str, unique_name: str) -> bool | None:
+    """Whether this deployment reports Available=True, or None when that cannot be read.
+
+    None is deliberately not False: a failed read or a deployment without conditions is
+    not a statement about health, and the callers treat it as "no signal".
+    """
+    try:
+        conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
+    except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
+        logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
+        return None
+    if conditions is None:
+        return None
+    condition = next((c for c in conditions if c.get("type") == "Available"), None)
+    if condition is None:
+        return None
+    if condition.get("status") != "True":
+        logger.info(f"{unique_name} is not available (reason: {condition.get('reason', 'unknown')})")
+        return False
+    return True
+
+
 async def _analyze_component_resources(
     connector: MetricsBackend,
     file_handler: ProjectFileHandler,
@@ -454,16 +433,23 @@ async def _analyze_component_resources(
     current_limit_mb = _k8s_memory_to_mb(current_resources["limits_memory"])
     current_request_mb = _k8s_memory_to_mb(current_resources["requests_memory"])
 
-    # Repair an override that already sits below the declared root, before anything
-    # is measured. Such an override starves the component, and both mechanisms that
-    # would otherwise correct it are blocked by exactly that starvation: the
-    # availability guard below skips a component that is not Available, and the
-    # measurement comes from a pod that never got to run. Restoring the declared
-    # value needs neither, so it happens first. Raises only the deficient side; the
-    # root is a lower bound here, never a ceiling.
     root_limit_mb = _k8s_memory_to_mb(root_resources["limits_memory"])
     root_request_mb = _k8s_memory_to_mb(root_resources["requests_memory"])
-    if current_limit_mb < root_limit_mb or current_request_mb < root_request_mb:
+
+    # Is the deployment up? Read once, because two decisions hang on it: the repair just
+    # below and the guard after it. Unknown (no kubectl, or the OOM path, which must not
+    # be stopped by it) counts as neither up nor down.
+    available: bool | None = None
+    if not oom_triggered and kubectl is not None and KubectlConnector.is_connected:
+        available = await _deployment_is_available(kubectl, namespace, unique_name)
+
+    # Repair an override that starves the component: below the declared component AND the
+    # deployment is down. Tuning below the component is the normal case now (RC-518), so
+    # only a pod that cannot run is restored. That component is unreachable for both
+    # routes that would otherwise correct it: the guard below skips it for being
+    # unavailable, and the measurement comes from a pod that never got to run. Restoring
+    # the declared value needs neither. Raises only the deficient side.
+    if available is False and (current_limit_mb < root_limit_mb or current_request_mb < root_request_mb):
         repaired_limit = root_resources["limits_memory"] if current_limit_mb < root_limit_mb else None
         repaired_request = root_resources["requests_memory"] if current_request_mb < root_request_mb else None
         new_limit = repaired_limit or current_resources["limits_memory"]
@@ -489,23 +475,10 @@ async def _analyze_component_resources(
             root_repair=True,
         )
 
-    # Skip unhealthy deployments — their low memory usage is misleading. Not on the
-    # OOM path: an OOM'ing component is unavailable precisely when it needs a bump,
-    # so the availability guard (built for the nightly sweep) must not fire there.
-    if not oom_triggered and kubectl is not None and KubectlConnector.is_connected:
-        try:
-            conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
-            if conditions is not None:
-                available = next((c for c in conditions if c.get("type") == "Available"), None)
-                if available and available.get("status") != "True":
-                    reason = available.get("reason", "unknown")
-                    logger.info(
-                        f"Skipping {unique_name}: deployment is not available "
-                        f"(reason: {reason}), memory data would be misleading"
-                    )
-                    return None
-        except (OSError, ValueError, KeyError, TypeError, KubectlConnectionError, KubectlExecutionError) as e:
-            logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
+    # Skip unhealthy deployments: their low memory usage is misleading.
+    if available is False:
+        logger.info(f"Skipping {unique_name}: deployment is not available, memory data would be misleading")
+        return None
 
     # Query Prometheus for max and average memory usage (app container only)
     max_observed_mb = 0.0
@@ -757,16 +730,6 @@ async def _analyze_component_resources(
             new_cpu_request = cpu_request
             cpu_reason = cpu_reason_text
 
-    # Floor at the declared root: a deployment override must never be tuned below the
-    # memory the user declared on the component. This is a lower bound (the user's
-    # floor), never a ceiling — a deployment may still raise itself above root (see the
-    # OOM path). Guards a temporarily-idle PR deployment from being pulled under the
-    # declared value by the nightly sweep.
-    if _k8s_memory_to_mb(new_limit) < _k8s_memory_to_mb(root_resources["limits_memory"]):
-        new_limit = root_resources["limits_memory"]
-    if _k8s_memory_to_mb(new_request) < _k8s_memory_to_mb(root_resources["requests_memory"]):
-        new_request = root_resources["requests_memory"]
-
     # Keep the memory limit measurably above the request. A container with
     # limit == request has no burst headroom and dies on the first spike (the
     # headscale OOM cascade, 2026-07-28). The margin is absolute rather than a factor:
@@ -840,20 +803,12 @@ async def _analyze_component_resources(
             floor_blocked = False
 
     # A value the user set by hand wins over the tuner for exactly the fields they set,
-    # for as long as that intent lives (RC-141). Applied here, at the end: everything
-    # above may compute freely, this puts the pinned fields back before anything is
-    # written. The one exception is an active OOM on the memory limit; see
-    # _live_intent_fields.
+    # until they release it (RC-141, RC-518). Applied here, at the end: everything above
+    # may compute freely, this puts the pinned fields back before anything is written.
+    # The one exception is an active OOM on the memory limit; see _live_intent_fields.
     intent = file_handler.get_user_resource_intent(project_data, dep_name, component_ref)
     if intent is not None:
-        live = _live_intent_fields(
-            intent,
-            max_observed_mb,
-            vpa_rec.target_cpu_m if vpa_rec is not None else None,
-            has_oom_kills,
-            component_ref,
-            dep_name,
-        )
+        live = _live_intent_fields(intent, has_oom_kills, component_ref, dep_name)
         if live:
             new_limit, new_request, new_cpu_limit, new_cpu_request = _honour_user_intent(
                 live,

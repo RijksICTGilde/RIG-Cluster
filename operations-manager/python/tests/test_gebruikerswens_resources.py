@@ -768,20 +768,20 @@ async def test_zonder_wens_verzet_de_tuner_de_cpu_wel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_de_tuner_pakt_een_vervallen_wens_weer_op() -> None:
-    """Oud genoeg EN sindsdien ruim onder de gezette waarde: de wens vervalt.
+async def test_een_vastgezet_veld_vervalt_niet() -> None:
+    """Oud en ruim onder de gezette waarde: de wens blijft staan (RC-518).
 
-    Zonder die vervalregel kan een veel te ruim gezette waarde nooit meer worden
-    rechtgezet, en dat is precies waar de tuner voor is.
+    Tot RC-518 verviel een wens na tien dagen bij gebruik onder de helft. Dat strookt
+    niet met "dit heb ik echt nodig": alleen de gebruiker heft het vastzetten op.
     """
     lang_geleden = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     project = _tuner_project(lang_geleden, intent_velden={"limits": {"cpu": "1"}, "requests": {"cpu": "50m"}})
 
-    # VPA-target 10m tegen een gezette request van 50m: ruim onder de 50%-drempel.
+    # VPA-target 10m tegen een gezette request van 50m: ruim onder de oude 50%-drempel.
     changes = await _draai_tuner(project, max_mb=400, vpa_cpu_m=10.0, vpa_memory_mi=400.0)
 
     assert len(changes) == 1
-    assert changes[0]["new_requests_cpu"] == "25m", "de tuner pakt de CPU weer op"
+    assert "new_requests_cpu" not in changes[0], "de CPU van de gebruiker is aangeraakt"
 
 
 @pytest.mark.asyncio
@@ -826,9 +826,8 @@ async def test_zonder_oom_blijft_de_geheugenwens_staan() -> None:
 # 's nachts recht.
 #
 # Dit mechanisme haalt die tweede lijn weg: een handmatig gezette waarde wordt gepind en de
-# tuner laat hem staan. Een pin boven de cap loopt bovendien niet vanzelf af, want
-# `_intent_field_is_expired` eist ouderdom EN gebruik onder de helft van de gezette waarde --
-# een workload die zijn eigen pin vol houdt, houdt hem onbeperkt. Daarom moet het profiel op
+# tuner laat hem staan. Een pin boven de cap loopt bovendien niet vanzelf af, want een pin
+# vervalt sinds RC-518 niet meer. Daarom moet het profiel op
 # de bijwerkweg dezelfde regel toetsen als de aanmaakweg. Er is geen derde lijn: er staat geen
 # ResourceQuota of LimitRange in manifests/, en het projectschema typeert `resources` kaal als
 # string.
@@ -943,3 +942,138 @@ def test_beide_routers_valideren_de_bijwerkweg(module: str) -> None:
     assert any(naam.startswith("update_component") for naam in functies), (
         f"{module} draait UPDATE_COMPONENT_VALIDATORS niet op de bijwerkweg"
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. Releasing a pin (RC-518): a new manual entry without the released field
+# ---------------------------------------------------------------------------
+
+
+def test_release_drops_one_field_and_keeps_the_rest_pinned() -> None:
+    """Two pinned fields, one released: the wish on the other field stays standing."""
+    handler = ProjectFileHandler()
+    project = _project()
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1", "limits_memory": "900Mi"}, origin="portal")
+
+    released = handler.release_user_resource_intent(project, "api", ["limits_cpu"], origin="portal")
+
+    assert released == ["limits_cpu"]
+    intent = handler.get_user_resource_intent(project, "productie", "api")
+    assert intent is not None
+    assert intent.fields == {"limits_memory": "900Mi"}, "the released field must no longer be in the intent"
+
+
+def test_release_without_a_pinned_field_writes_nothing() -> None:
+    """Nothing pinned, so nothing to release: no history entry, no change."""
+    handler = ProjectFileHandler()
+    project = _project()
+
+    released = handler.release_user_resource_intent(project, "api", ["limits_cpu"], origin="portal")
+
+    assert released == []
+    assert "history" not in project["components"][0]["resources"]
+
+
+def test_release_on_an_unknown_component_returns_empty() -> None:
+    handler = ProjectFileHandler()
+    project = _project()
+
+    assert handler.release_user_resource_intent(project, "unknown", ["limits_cpu"], origin="portal") == []
+
+
+def test_releasing_everything_leaves_get_user_resource_intent_with_nothing() -> None:
+    """Releasing the only pinned field leaves no intent at all."""
+    handler = ProjectFileHandler()
+    project = _project()
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1"}, origin="portal")
+
+    released = handler.release_user_resource_intent(project, "api", ["limits_cpu"], origin="portal")
+
+    assert released == ["limits_cpu"]
+    assert handler.get_user_resource_intent(project, "productie", "api") is None
+
+
+@pytest.mark.asyncio
+async def test_after_release_the_tuner_tunes_the_field_again() -> None:
+    """The closing half of task 2: releasing frees the tuner on exactly that field."""
+    today = datetime.now(UTC).isoformat()
+    project = _tuner_project(today, intent_velden={"limits": {"cpu": "1"}, "requests": {"cpu": "50m"}})
+
+    ProjectFileHandler().release_user_resource_intent(project, "api", ["limits_cpu", "requests_cpu"], origin="portal")
+
+    changes = await _draai_tuner(project, max_mb=400, vpa_cpu_m=500.0, vpa_memory_mi=400.0)
+
+    assert len(changes) == 1
+    assert "new_requests_cpu" in changes[0], "without an intent the CPU is tuned again"
+
+
+# ---------------------------------------------------------------------------
+# 10. The component-wide reader for the portal: get_component_resource_pins
+# ---------------------------------------------------------------------------
+
+
+def test_get_component_resource_pins_reads_the_newest_intent() -> None:
+    handler = ProjectFileHandler()
+    project = _project()
+    handler.apply_user_resource_intent(project, "api", {"limits_cpu": "1"}, origin="portal")
+
+    pins = handler.get_component_resource_pins(project, "api")
+
+    assert pins is not None
+    assert pins.fields == {"limits_cpu": "1"}
+    assert pins.set_at is not None
+
+
+def test_get_component_resource_pins_without_an_intent_returns_none() -> None:
+    handler = ProjectFileHandler()
+    project = _project()
+
+    assert handler.get_component_resource_pins(project, "api") is None
+
+
+def test_get_component_resource_pins_unknown_component_returns_none() -> None:
+    handler = ProjectFileHandler()
+    project = _project()
+
+    assert handler.get_component_resource_pins(project, "unknown") is None
+
+
+# ---------------------------------------------------------------------------
+# 11. pin_resource_fields: recording the current value without the user
+#     changing anything right now (task 4, the one-off migration)
+# ---------------------------------------------------------------------------
+
+
+def test_pin_resource_fields_records_the_current_catalog_value() -> None:
+    handler = ProjectFileHandler()
+    project = _project(component_resources={"requests": {"memory": "64Mi"}, "limits": {"memory": "900Mi"}})
+
+    pinned = handler.pin_resource_fields(project, "api", ["limits_memory"], reason="Migration RC-518: test")
+
+    assert pinned == ["limits_memory"]
+    entry = project["components"][0]["resources"]["history"][0]
+    assert entry["source"] == "manual"
+    assert entry["limits"] == {"memory": "900Mi"}, "the CURRENT value is pinned, not a new one"
+    assert entry["reason"] == "Migration RC-518: test"
+
+    pins = handler.get_component_resource_pins(project, "api")
+    assert pins is not None
+    assert pins.fields == {"limits_memory": "900Mi"}
+
+
+def test_pin_resource_fields_without_a_declared_value_writes_nothing() -> None:
+    """The component does not declare the requested field: nothing to pin."""
+    handler = ProjectFileHandler()
+    project = _project(component_resources={"requests": {"memory": "64Mi"}})
+
+    pinned = handler.pin_resource_fields(project, "api", ["limits_cpu"], reason="migration")
+
+    assert pinned == []
+    assert "history" not in project["components"][0]["resources"]
+
+
+def test_pin_resource_fields_unknown_component_returns_empty() -> None:
+    handler = ProjectFileHandler()
+    project = _project()
+
+    assert handler.pin_resource_fields(project, "unknown", ["limits_cpu"], reason="migration") == []

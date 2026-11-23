@@ -30,7 +30,7 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
                          |
                          v
    Project YAML  --(git commit)-->  reprocess  -->  ArgoCD  -->  pod rollout
-   (deployment override only; root component untouched)
+   (deployment override only; declared component untouched)
 ```
 
 ### Tuning Flow
@@ -38,7 +38,7 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
 For each component in the target deployment(s):
 
 1. Skip if opted out (`auto-tune-resources: false`).
-2. **Repair first**: if the current override already sits below the declared root, restore it to the root and stop there (see Root Component below). This happens before anything is measured and before the guard below, because a component starved by such an override is exactly the one that neither of them can reach.
+2. **Repair a starved component**: an override below the declared component while the deployment is NOT Available is restored to the declared value, and nothing else happens (see Root Component below). Tuning below the declared component is the normal case, so only a pod that cannot run is repaired.
 3. Skip if the deployment is not Available — **except on the OOM path**, where the not-Available guard is deliberately skipped (a component that just OOM'd is Available=False by definition, and that is exactly when it must be raised).
 4. Determine the recommendation source:
    - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
@@ -46,14 +46,14 @@ For each component in the target deployment(s):
    - OOM kills come from **two** sources, ORed together: the watcher's own signal (`oom_triggered`, read straight off the pod status as `reason=OOMKilled`) and a Prometheus confirmation query (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`). The watcher's signal is a fact, not a measurement, so an empty or failing query can never cancel it — exactly the path where Prometheus is emptiest, because a container that OOMs a second after start reaches no scrape interval. When OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
 5. Skip if nothing at all was observed (see Plausibility Floor below), unless OOM kills were detected. A measured value below the cluster minimum is sized on that minimum.
 6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps, then re-check the deadband on the values that would actually be written (see Deviation Deadband below).
-7. **Leave the fields the user set by hand alone** for as long as that intent lives (see
+7. **Leave the fields the user set by hand alone** until the user releases them (see
    `features/handmatig-gezette-resources.md`). Per field, not per component: a pinned CPU
    does not stop memory from being tuned. The one exception is an active OOM kill, which
    may still raise the memory *limit*. Only a real edit pins a field: the values a
    component is CREATED with (the wizard prefills 1 CPU / 256Mi) record no intent, so a
    fresh component is tuned like any other -- pinning them would freeze every new
    component at its creation value with request == limit and no burst headroom.
-8. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it — it is not ratcheted by the tuner (see Root Component below).
+8. Write changed values to the **deployment-level override only**. The base (root) component is left exactly as the user declared it: it is not ratcheted by the tuner (see Root Component below). The override may sit **below** that declared value: the tuner tunes everything except what the user pinned.
 9. Commit once per project, then reprocess so ArgoCD redeploys.
 
 ### Recommendation Algorithm (Memory)
@@ -229,7 +229,7 @@ Resource tuning writes to **deployment-level overrides only**. The base (root) c
 
 A new deployment therefore inherits exactly the declared root. If that is too tight it OOMs once and the OOM watcher raises **that deployment's own override** — the root stays put.
 
-The root is also the **floor**: an override the tuner writes is never tuned below the memory the user declared on the component (a lower bound only — a deployment may always raise itself above it).
+The root is **not a floor** (RC-518). A declared value nobody chose on purpose is a wizard default, and treating it as a lower bound meant the tuner could never lower memory in practice: `dp-j8g` measured a maximum of 24Mi for 24 hours against a declared 64Mi/256Mi, the tuner computed 30Mi/36Mi, and wrote 64Mi/256Mi back every night. What protects a value the user really needs is the pin on that field, not the declared value (see `features/handmatig-gezette-resources.md`).
 
 ### Growth Ceiling
 
@@ -269,7 +269,7 @@ inflated keep their value; `scripts/oom_growth_report.py` (`PROJECTS=... task
 oom-growth-report`) reports them read-only. What to do with them is an open decision, see
 `TODO.md`.
 
-An override that already sits below the root is **repaired** at the top of the tuning flow, before any measurement and ahead of the not-Available guard. Such an override starves the component, and that starvation blocks both routes that would otherwise correct it: there is no running pod to measure, and the deployment reports Available=False. The repair restores the declared value (only the deficient side of it), which needs neither. Deployment-level overrides are written by the tuner alone — there is no editable or API for them — so a repair can never overwrite a value someone set on purpose.
+An override that sits below the declared component **and** leaves the deployment not Available is **repaired** at the top of the tuning flow: such a component is starved, and that starvation blocks both routes that would otherwise correct it (there is no running pod to measure, and the not-Available guard skips it). The repair restores the declared value, only the deficient side of it, and needs neither. Since RC-518 it is conditional on that unavailability: tuning below the declared component is now the normal case, and an unconditional repair would undo the tuner's own work every night.
 
 If the component was auto-disabled for an OOM kill, the repair also **clears that disable**. Leaving it would make the repair invisible and permanent: a component scaled to zero has no pods, so no OOM metric, so nothing that would ever switch it back on. Image-pull failures used to be disabled the same way; since RC-243 they are not disabled at all, because scaling to zero removes the pod that would have retried the pull. Disables for any other reason are left alone: memory says nothing about a missing image.
 
@@ -357,8 +357,6 @@ vars in practice, and a system service owns its own config. Change a value in
 | `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
 | `min_observed_mi` | `5.0` | Below this observed max a measurement is implausible; above 0 it is sized on the cluster minimum, at 0 it counts as "no data" |
 | `max_growth_factor` | `8.0` | The automatic path may raise a deployment override to at most this multiple of the declared limit (see Growth Ceiling) |
-| `user_intent_min_age_days` | `10` | A value a user set by hand may expire after this many days... |
-| `user_intent_stable_percent` | `50` | ...if the measured usage stays below this percent of what they set |
 | `scheduler_enabled` | `true` | Run the nightly fleet-wide tuner |
 | `hour` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
 | `pace_seconds` | `15` | Delay after each changed project, to spread pod rollouts |
@@ -399,7 +397,7 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 | File | Purpose |
 |------|---------|
 | `opi/services/resource_analyzer.py` | Pure computation: usage/VPA target → memory & CPU recommendation, asymmetric gate |
-| `opi/services/resource_tuning_service.py` | `apply_resource_tuning` (mutate project_data in place: analysis, root floor, margin) + `tune_deployment_resources` (git read + single commit) |
+| `opi/services/resource_tuning_service.py` | `apply_resource_tuning` (mutate project_data in place: analysis, clamps, margin) + `tune_deployment_resources` (git read + single commit) |
 | `opi/services/catalog/resource_tuning/` | The resource-tuning **system service**: its owned config (`config.py`/`config_model.py`) and its `@on(ActionEvent.AFTER_SYNC)` handler |
 | `opi/services/deployment_observation.py` | Generic after-sync runner: asks `registry.listeners(ActionEvent.AFTER_SYNC)`, lets each service observe, commits once |
 | `opi/runtime/periodic/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
@@ -427,7 +425,6 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m), measured twice: on the recommendation and on the final values |
 | **OOM kill priority** | Always increase memory when OOM kills are present; the not-Available guard is skipped on the OOM path so it never blocks a needed bump |
 | **Root left untouched** | The tuner writes only deployment overrides; the declared root component is never ratcheted (no last-writer-wins race across deployments) |
-| **Declared root as floor** | An override is never tuned below the memory the user declared on the component (lower bound only) |
 | **Declared root as ceiling** | An OOM-driven increase never goes above 8x the declared limit; a decrease is never blocked by it (working ceiling = `max(ceiling, current limit)`) |
 | **Limit/request margin** | A written memory limit stays at least 64Mi above the request, so a container never ends up with limit == request |
 | **OOM floor (memory limit)** | A valid (recent, not-yet-stale) OOM floor is the lower bound for the memory limit, so a real past peak is never undercut; the limit only decays once the floor expires |

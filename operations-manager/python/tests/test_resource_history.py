@@ -501,8 +501,7 @@ class TestTuneBaseComponentUpdate:
                 "source": "oom-watcher",
             }
         ]
-        # Root request is low (64Mi) so the request may still drop; a high declared
-        # root request would floor it (task 4) and defeat this scenario.
+        # Root request is low (64Mi), the same shape the scenario came from.
         data = _make_project_data(
             component_limits="512Mi",
             component_requests="64Mi",
@@ -548,8 +547,7 @@ class TestTuneBaseComponentUpdate:
                 "source": "oom-watcher",
             }
         ]
-        # Low declared root (128Mi) so downward tuning has room below the 512Mi
-        # override; the declared root is the floor the override cannot cross.
+        # Low declared root (128Mi), the same shape the scenario came from.
         data = _make_project_data(
             component_limits="128Mi",
             component_requests="128Mi",
@@ -572,7 +570,7 @@ class TestTuneBaseComponentUpdate:
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
         dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
         lim = int(dep_resources["limits"]["memory"].removesuffix("Mi"))
-        # Tuned down from 512, but never below the declared root (128Mi).
+        # Tuned down from 512 to the measurement plus its burst factor.
         assert 128 <= lim < 512
 
 
@@ -712,9 +710,16 @@ class TestImplausibleMeasurement:
     @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_fraction_of_a_mi_counts_as_no_data(
+    async def test_fraction_of_a_mi_is_sized_on_the_cluster_minimum(
         self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
     ):
+        """Not sized on 0.3Mi but on the lowest value this cluster can set.
+
+        Until RC-518 this test asserted "no change at all", and the declared component
+        was what held it: the measurement was already sized on the 25Mi minimum, and the
+        root floor then put 1418Mi/512Mi back. The tuner now tunes below the declared
+        component, so what the minimum sizing produces is what gets written.
+        """
         data = _make_project_data(component_limits="1418Mi", component_requests="512Mi")
         mock_git_data.return_value = (data, "test.yaml")
         # 0.3Mi: real enough to survive "== 0", far too small to size on.
@@ -727,8 +732,13 @@ class TestImplausibleMeasurement:
 
         result = await tune_deployment_resources("test-project", "production")
 
-        assert result.changes == []
-        mock_pm.save_and_commit_project.assert_not_called()
+        assert len(result.changes) == 1
+        dep_res = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]["resources"]
+        request_mi = int(dep_res["requests"]["memory"].removesuffix("Mi"))
+        limit_mi = int(dep_res["limits"]["memory"].removesuffix("Mi"))
+        assert request_mi >= 25, "sized on the cluster minimum, not on the 0.3Mi measurement"
+        assert request_mi < 64
+        assert limit_mi >= request_mi + 64
 
 
 def _starved_project_data(disabled_reason=None):
@@ -850,8 +860,8 @@ class TestRootRepair:
     async def test_override_above_root_is_left_to_the_measurement(
         self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
     ):
-        """The root is a floor, not a target: an override above it is not pulled down
-        by the repair, and an unavailable deployment is still skipped."""
+        """The repair is only for starvation: an override ABOVE the declared component
+        is not touched by it, and an unavailable deployment is still skipped."""
         data = _make_project_data(
             component_limits="128Mi",
             component_requests="64Mi",
@@ -871,6 +881,53 @@ class TestRootRepair:
 
         assert result.changes == []
         mock_pm.save_and_commit_project.assert_not_called()
+
+
+def _kubectl_available():
+    """A kubectl mock whose deployment reports Available=True (the healthy state)."""
+    mock = MagicMock()
+    mock.get_deployment_conditions = AsyncMock(return_value=[{"type": "Available", "status": "True"}])
+    mock.get_vpa_recommendation = AsyncMock(return_value=None)
+    return mock
+
+
+class TestRootRepairGatedOnAvailability:
+    """RC-518: the repair fires only for a starved AND unavailable deployment.
+
+    Tuning below the declared component is now the normal case (task 1), so the repair
+    that restores the root must not fire just because an override sits below root -- a
+    healthy, measurable deployment there is tuned by the measurement, not restored."""
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_available_deployment_below_root_is_tuned_not_restored(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        # Same starved shape as TestRootRepair (25Mi override under a 1418Mi/512Mi
+        # root), but the deployment is Available=True and has real measurements.
+        mock_git_data.return_value = (_starved_project_data(), "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=20, avg_mb=15)
+        mock_kubectl.is_connected = True
+        mock_kubectl.return_value = _kubectl_available()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert len(result.changes) == 1
+        assert result.changes[0]["source"] != "root", "an available deployment must not take the repair route"
+        dep_res = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]["resources"]
+        assert dep_res["limits"]["memory"] != "1418Mi", "the root value must not be restored while available"
+        assert dep_res["requests"]["memory"] != "512Mi"
 
 
 # ---------------------------------------------------------------------------

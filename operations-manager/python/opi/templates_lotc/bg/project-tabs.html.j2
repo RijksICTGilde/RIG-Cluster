@@ -557,22 +557,11 @@
                                     </c-paragraph>
                                 {% endif %}
 
-                                {% if component.resources %}
-                                    {% set req = component.resources.get('requests', {}) or {} %}
-                                    {% set lim = component.resources.get('limits', {}) or {} %}
-                                    <c-paragraph size="sm">
-                                        <b>Resources:</b>
-                                        {% if req.get('memory') or lim.get('memory') %}
-                                            Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
-                                        {% elif component.resources.memory is string %}
-                                            Memory: {{ component.resources.memory }}
-                                        {% endif %}
-                                        {% if req.get('cpu') or lim.get('cpu') %}
-                                            | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
-                                        {% elif component.resources.cpu is string %}
-                                            | CPU: {{ component.resources.cpu }}
-                                        {% endif %}
-                                    </c-paragraph>
+                                {% if component.resource_rows %}
+                                    <c-stack gap="xs">
+                                        <c-heading type="h4" size="6" label="Resources" />
+                                        {% include "bg/_component-resources.html.j2" with context %}
+                                    </c-stack>
                                 {% endif %}
 
                                 {% if component.services %}

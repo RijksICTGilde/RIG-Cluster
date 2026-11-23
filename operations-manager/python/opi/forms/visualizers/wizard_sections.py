@@ -179,7 +179,8 @@ COMPONENTS_SECTION = FormSection(
                 Fieldset(
                     legend="Resources",
                     description="Geheugen limieten voor dit component. Gebruik de standaardwaarden als je niet zeker weet wat je nodig hebt. Dit kan later aangepast worden. "
-                    "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik.",
+                    "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik. "
+                    "Zet je zo'n waarde later zelf, dan laat het platform dat veld met rust tot je het vastzetten opheft bij Componenten.",
                     children=[
                         "resources/requests/memory",
                         "resources/limits/memory",

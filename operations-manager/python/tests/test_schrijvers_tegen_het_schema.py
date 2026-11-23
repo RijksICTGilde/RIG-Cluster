@@ -231,6 +231,34 @@ def test_een_handmatig_gezette_waarde_blijft_geldig() -> None:
     poorten(project)
 
 
+def test_releasing_a_resource_pin_stays_valid() -> None:
+    """``opi/web/router.py``: the release endpoint calls ``release_user_resource_intent``
+    directly, writing a new ``manual`` entry carrying the remaining fields (RC-518)."""
+    project = _basis_project()
+    handler = ProjectFileHandler()
+    handler.apply_user_resource_intent(project, "api", {"requests_cpu": "50m", "limits_cpu": "1"}, origin="portal")
+    poorten(project)
+
+    released = handler.release_user_resource_intent(project, "api", ["limits_cpu"], origin="portal")
+
+    assert released == ["limits_cpu"], "without a release this test measures nothing"
+    poorten(project)
+
+
+def test_pinning_a_resource_field_by_migration_stays_valid() -> None:
+    """``opi/tools/resource_pin_migration.py``: pins the component's current value
+    without the user changing anything right now (RC-518, task 4)."""
+    project = _basis_project()
+    poorten(project)
+
+    pinned = ProjectFileHandler().pin_resource_fields(
+        project, "api", ["limits_memory"], reason="Migration RC-518: set by hand before RC-141"
+    )
+
+    assert pinned == ["limits_memory"], "without a pin this test measures nothing"
+    poorten(project)
+
+
 def test_de_wortelcomponent_bijstellen_blijft_geldig() -> None:
     """De OOM-reparatie schrijft ook op de wortelcomponent: resources en een eigen historie."""
     project = _basis_project()

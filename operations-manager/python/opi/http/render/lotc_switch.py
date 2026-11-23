@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
 
+    from opi.services.project_file_handler import ProjectFileHandler
+
 logger = logging.getLogger(__name__)
 
 
@@ -516,6 +518,40 @@ def build_deployment_status_column(
         for name in (deployment["name"],)
         for state in (deployment_states.get(name),)
     }
+
+
+#: The resource fields the portal shows per component, in reading order, with their label.
+COMPONENT_RESOURCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("requests_memory", "Geheugen request"),
+    ("limits_memory", "Geheugen limiet"),
+    ("requests_cpu", "CPU request"),
+    ("limits_cpu", "CPU limiet"),
+)
+
+
+def build_component_resource_rows(
+    project_data: dict[str, Any],
+    component_name: str,
+    file_handler: ProjectFileHandler,
+) -> list[dict[str, Any]]:
+    """Per resource field of a component: the value, and who manages it.
+
+    Read through the same two readers the tuner uses, so the screen and the tuner cannot
+    disagree about which field is pinned.
+    """
+    values = file_handler.extract_component_resources(project_data, component_name)
+    pins = file_handler.get_component_resource_pins(project_data, component_name)
+    pinned = pins.fields if pins else {}
+    return [
+        {
+            "field": field,
+            "label": label,
+            "value": values[field],
+            "pinned": field in pinned,
+            "set_at": pins.set_at if pins is not None and field in pinned else None,
+        }
+        for field, label in COMPONENT_RESOURCE_FIELDS
+    ]
 
 
 #: The tabs of the project page.

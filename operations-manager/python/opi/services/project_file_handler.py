@@ -432,6 +432,21 @@ def _flat_fields_from_history_entry(entry: dict[str, Any] | None) -> dict[str, s
     return fields
 
 
+def _manual_history_entry(values: Mapping[str, str], reason: str) -> dict[str, Any]:
+    """A ``manual`` history entry carrying exactly these fields, newest-first shape.
+
+    One builder for the three writers of such an entry (set by hand, released, migrated),
+    because the reader takes the newest entry as the WHOLE standing wish: a writer that
+    shapes the entry differently silently changes what is pinned.
+    """
+    entry: dict[str, Any] = {"timestamp": datetime.now(UTC).isoformat(), "source": "manual"}
+    for key, value in sorted(values.items()):
+        block, nested_key = _FLAT_RESOURCE_FIELDS[key]
+        entry.setdefault(block, {})[nested_key] = value
+    entry["reason"] = reason
+    return entry
+
+
 def _newest_history_entry(component: dict[str, Any], source: str) -> dict[str, Any] | None:
     """The newest history entry of *source* that holds for the whole component.
 
@@ -1588,11 +1603,12 @@ class ProjectFileHandler:
            wrote earlier silently wins over anything a user sets. Only the fields the
            user touched go; a CPU edit leaves the tuned memory of that deployment alone.
         3. One ``manual`` history entry on the catalog component records which fields
-           this was, so the tuner can leave exactly those alone until they expire
-           (``get_user_resource_intent``). No ``deployment`` field: the wish holds for
-           every deployment of this component. That entry carries the COMPLETE standing
-           wish: fields an earlier entry pinned and this edit leaves alone come along,
-           because only the newest entry is read back.
+           this was, so the tuner can leave exactly those alone until the user releases
+           them (``get_user_resource_intent``, ``release_user_resource_intent``). No
+           ``deployment`` field: the wish holds for every deployment of this component.
+           That entry carries the COMPLETE standing wish: fields an earlier entry pinned
+           and this edit leaves alone come along, because only the newest entry is read
+           back.
 
         Only fields that actually differ from the current value count. The component
         modal posts all four resource fields on every save, so without that diff any
@@ -1693,17 +1709,14 @@ class ProjectFileHandler:
                         f"request above its limit after the merge"
                     )
 
-        entry: dict[str, Any] = {"timestamp": datetime.now(UTC).isoformat(), "source": "manual"}
-        for key, value in sorted(intent.items()):
-            block, nested_key = _FLAT_RESOURCE_FIELDS[key]
-            entry.setdefault(block, {})[nested_key] = value
-        entry["reason"] = f"Set by hand via {origin}: " + ", ".join(
+        reason = f"Set by hand via {origin}: " + ", ".join(
             f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(asked.items())
         )
         if standing:
-            entry["reason"] += "; still standing: " + ", ".join(
+            reason += "; still standing: " + ", ".join(
                 f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(standing.items())
             )
+        entry = _manual_history_entry(intent, reason)
         self.append_component_resource_history(project_data, component_name, entry)
 
         logger.info(
@@ -1711,6 +1724,104 @@ class ProjectFileHandler:
             f"changed {sorted(changed)}, still standing {sorted(standing)}"
         )
         return sorted(changed)
+
+    def get_component_resource_pins(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+    ) -> UserResourceIntent | None:
+        """The fields a user pinned on this component, for every deployment of it.
+
+        The component-wide half of ``get_user_resource_intent``, for callers that have no
+        deployment in hand (the portal shows this per component). Reads the same newest
+        ``manual`` entry, so screen and tuner never disagree about what is pinned.
+        """
+        component = self._find_component(project_data, component_name)
+        if component is None:
+            return None
+        entry = _newest_history_entry(component, "manual")
+        fields = _flat_fields_from_history_entry(entry)
+        if not fields:
+            return None
+        timestamp = (entry or {}).get("timestamp")
+        return UserResourceIntent(fields=fields, set_at=str(timestamp) if timestamp else None)
+
+    def release_user_resource_intent(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+        fields: Iterable[str],
+        origin: str,
+    ) -> list[str]:
+        """Hand the named fields back to the tuner, keeping the rest pinned.
+
+        The counterpart of ``apply_user_resource_intent``: it writes a new ``manual``
+        entry carrying the standing wish MINUS the released fields. Only the newest entry
+        is read back, so that entry is the whole statement; an entry without any resource
+        field means nothing is pinned any more. The catalog values stay exactly as they
+        are, the tuner is simply free to move them again.
+
+        Returns the fields that were actually released, sorted. Empty when none of them
+        was pinned, and then nothing is written.
+        """
+        component = self._find_component(project_data, component_name)
+        if component is None:
+            logger.warning(f"Component '{component_name}' not found to release a resource pin")
+            return []
+
+        standing = _flat_fields_from_history_entry(_newest_history_entry(component, "manual"))
+        released = sorted(field for field in fields if field in standing)
+        if not released:
+            logger.debug(f"No pinned resource field to release on component '{component_name}' from {origin}")
+            return []
+
+        keep = {key: value for key, value in standing.items() if key not in released}
+        reason = f"Released via {origin}, the tuner manages it again: " + ", ".join(
+            ".".join(_FLAT_RESOURCE_FIELDS[key]) for key in released
+        )
+        if keep:
+            reason += "; still standing: " + ", ".join(
+                f"{'.'.join(_FLAT_RESOURCE_FIELDS[key])} -> {value}" for key, value in sorted(keep.items())
+            )
+        self.append_component_resource_history(project_data, component_name, _manual_history_entry(keep, reason))
+
+        logger.info(
+            f"Released resource pin {released} on component '{component_name}' from {origin}; "
+            f"still pinned {sorted(keep)}"
+        )
+        return released
+
+    def pin_resource_fields(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+        fields: Iterable[str],
+        reason: str,
+    ) -> list[str]:
+        """Pin the component's CURRENT value for these fields, with a free-form reason.
+
+        For a writer that records a wish it did not itself make: the one-off migration of
+        components that were set by hand before the wish was recorded (RC-518). The normal
+        path is ``apply_user_resource_intent``, which also writes the value and clears the
+        overrides; here the value already stands and only the record is missing.
+
+        Returns the fields that were pinned, sorted. Empty when the component has no value
+        for any of them, and then nothing is written.
+        """
+        component = self._find_component(project_data, component_name)
+        if component is None:
+            logger.warning(f"Component '{component_name}' not found to pin a resource field")
+            return []
+
+        current = _parse_resources_block_partial(component.get("resources"))
+        values = {field: current[field] for field in sorted(set(fields)) if field in current}
+        if not values:
+            logger.debug(f"Component '{component_name}' declares none of {sorted(set(fields))}; nothing pinned")
+            return []
+
+        self.append_component_resource_history(project_data, component_name, _manual_history_entry(values, reason))
+        logger.info(f"Pinned {sorted(values)} on component '{component_name}': {reason}")
+        return sorted(values)
 
     def append_component_resource_history(
         self,
